@@ -22,11 +22,16 @@ export const target = (e: Evidence): string => e.file ?? `${e.files ?? 0} file${
 
 export const verdictOf = (e: Evidence): string => e.result ?? (e.outcome === "ran" ? "no result recorded" : (e.outcome ?? ""));
 
-export const NOT_RECORDED = "rules not recorded (older Warden)";
+export const msText = (n: number): string => `${n < 10 ? n.toFixed(1) : Math.round(n)} ms`;
+
+export const older = (e: Evidence): boolean => e.trigger === undefined;
+
+export const noRules = (e: Evidence): string =>
+  !older(e) && (e.outcome === "tampered" || e.outcome === "unstaged" || e.outcome === "error") ? `no rules ran: ${e.outcome}` : "rules not recorded (older Warden)";
 
 export const ruleParts = (e: Evidence): string[] | undefined => {
   if (e.rules === undefined) return undefined;
-  const ms = (n: number): string => `${Math.round(n)} ms`;
+  const ms = msText;
   return [
     ...Object.entries(e.rules).map(([id, n]) => `${id} ${ms(n)}`),
     ...Object.entries(e.passes ?? {}).map(([id, n]) => `${id} pass ${ms(n)}`),
@@ -34,7 +39,7 @@ export const ruleParts = (e: Evidence): string[] | undefined => {
   ];
 };
 
-export const ruleTimes = (e: Evidence): string => ruleParts(e)?.join(" · ") ?? NOT_RECORDED;
+export const ruleTimes = (e: Evidence): string => ruleParts(e)?.join(" · ") ?? noRules(e);
 
 export const firstFailure = (e: Evidence): string => {
   const f = e.failures?.[0];
@@ -65,7 +70,7 @@ const escape = (text: string): string => text.replaceAll("&", "&amp;").replaceAl
 const page = (project: string, runs: Evidence[], report: Report): string => {
   const timeline = [...runs]
     .reverse()
-    .map((e) => `<tr class="${escape(verdictOf(e))}">${[e.at.replace("T", " ").slice(0, 19), e.trigger ?? "-", e.tier ?? "-", target(e), verdictOf(e), `${Math.round(e.ms ?? 0)} ms`, (e.commit ?? "").slice(0, 7), ruleTimes(e), e.next ?? ""].map((c) => `<td>${escape(c)}</td>`).join("")}</tr>`)
+    .map((e) => `<tr class="${escape(verdictOf(e))}">${[e.at.replace("T", " ").slice(0, 19), e.trigger ?? "-", e.tier ?? "-", target(e), verdictOf(e), msText(e.ms ?? 0), (e.commit ?? "").slice(0, 7), ruleTimes(e), e.next ?? ""].map((c) => `<td>${escape(c)}</td>`).join("")}</tr>`)
     .join("\n");
   const practices = report.practices
     .map((p) => {

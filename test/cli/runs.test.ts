@@ -53,7 +53,7 @@ it("lists the newest runs as a table, newest last, with the first failure", asyn
   expect(await runRuns(root, wardenRoot, { limit: 20, format: "text" })).toBe(0);
   const rows = out.trimEnd().split("\n");
   expect(rows[0]).toMatch(/^time\s+trigger\s+tier\s+files\s+rules\s+cached\s+result\s+ms\s+first failure\s+rule times$/);
-  expect(rows[1]).toMatch(/^14:01:40\s+git-commit\s+commit\s+3 files\s+4\s+2\s+pass\s+9\s+-\s+warden-no-comments 3 ms · eslint pass 2 ms · 2 cached$/);
+  expect(rows[1]).toMatch(/^14:01:40\s+git-commit\s+commit\s+3 files\s+4\s+2\s+pass\s+9\s+-\s+warden-no-comments 3.0 ms · eslint pass 2.0 ms · 2 cached$/);
   expect(rows[2]).toMatch(/^14:02:11\s+agent-edit\s+edit\s+src\/useRx\.ts\s+2\s+0\s+fail\s+5\s+src\/useRx\.ts:2 warden-no-comments\s+rules not recorded \(older Warden\)$/);
   expect(rows).toHaveLength(3);
 });
@@ -102,6 +102,13 @@ it("shows control characters in a file name as visible escapes", async () => {
   expect(out).toContain("q\\u001b]0;PWNED\\u0007<b>.ts");
 });
 
+it("a current tampered run says no rules ran instead of older Warden", async () => {
+  await appendFile(join(home, "evidence/p.jsonl"), lines([{ kind: "cost", guardrail: "run", run: "t", at: "2026-11-18T14:09:00.000Z", tier: "commit", trigger: "manual", outcome: "tampered", exit: 1, ms: 3, files: 0, bytes: 0 }]));
+  await runRuns(root, wardenRoot, { limit: 1, format: "text" });
+  expect(out).toMatch(/no rules ran: tampered$/m);
+  expect(out).not.toContain("older Warden");
+});
+
 it("--html writes one self-contained page with the latest run's commit and result, each Practice's strength, and failures with Do this", async () => {
   const file = join(root, "runs.html");
   expect(await runRuns(root, wardenRoot, { limit: 20, format: "text", html: file })).toBe(0);
@@ -111,7 +118,7 @@ it("--html writes one self-contained page with the latest run's commit and resul
   expect(page).toContain("no-comments");
   expect(page).toContain("proven");
   expect(page).toContain("export const sumOfPrices = 1;");
-  expect(page).toContain("warden-no-comments 3 ms · eslint pass 2 ms · 2 cached");
+  expect(page).toContain("warden-no-comments 3.0 ms · eslint pass 2.0 ms · 2 cached");
   expect(page).not.toMatch(/<script|<link|https?:\/\//);
   expect(out).toContain(file);
 });

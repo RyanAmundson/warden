@@ -7,7 +7,7 @@ import { type Kind, type Tier, kindRank } from "../records/types.js";
 import { type Evidence, type Step, readEvidence } from "../runner/evidence.js";
 import { listPacks } from "./packs.js";
 import { buildReport } from "./report.js";
-import { NOT_RECORDED, clock, firstFailure, ruleParts, runRecords, target, visible } from "./runs.js";
+import { clock, firstFailure, msText, noRules, older, ruleParts, runRecords, target, visible } from "./runs.js";
 
 export interface RuleRow {
   guardrail: string;
@@ -26,7 +26,6 @@ export interface ViewModel {
   rules: RuleRow[];
   evidence: Evidence[];
   now: number;
-  budgets: Record<Tier, number>;
   layers: LayerRule[];
   practices: { practice: string; strongestKind: Kind; promote: boolean }[];
   packList: { id: string; source: "bundled" | "local"; on: boolean; rules: number }[];
@@ -60,7 +59,6 @@ export async function loadView(root: string, wardenRoot: string): Promise<ViewMo
     rules: report.guardrails.map((g) => ({ guardrail: g.guardrail, strength: g.strength, fired: g.fired, median: g.costShared === undefined ? `${g.medianMs ?? 0} ms` : "shared", budgetMs: budget.get(g.guardrail) ?? 0 })),
     evidence: readEvidence(set.config.project),
     now: Date.now(),
-    budgets: set.config.tierBudgetMs,
     layers: set.packs.flatMap((p) =>
       p.practices.flatMap((x) =>
         x.guardrails.map((g) => ({ pack: p.id, guardrail: g.id, practice: x.id, kind: g.kind, adapter: g.implementation.slice(0, g.implementation.indexOf(":")), runs: g.runs, median: median(g.id) })),
@@ -138,7 +136,7 @@ const partLines = (first: string, parts: string[], right: string, width: number)
 const stepLines = (shown: Shown | undefined, tools: Record<string, string>, width: number): string[] => {
   const all = shown?.steps ?? [];
   const record = shown?.record;
-  if (record !== undefined && all.length === 0) return [clip(`   steps not recorded (older Warden) · total ${Math.round(record.ms ?? 0)} ms`, width)];
+  if (record !== undefined && all.length === 0) return [clip(`   ${record.steps === undefined ? "steps not recorded (older Warden)" : "stopped before the first step"} · total ${msText(record.ms ?? 0)}`, width)];
   const finished = STEPS.filter(({ step }) => {
     const last = all.filter((e) => e.step === step).at(-1);
     return last !== undefined && last.state !== "start";
@@ -160,11 +158,11 @@ const stepLines = (shown: Shown | undefined, tools: Record<string, string>, widt
     const ms = events.filter((e) => e.state !== "start").reduce((sum, e) => sum + (e.ms ?? 0), 0);
     const cached = events.some((e) => e.status === "cached") && step === "tools-ready";
     const first = `   ${failed ? "✗" : "✓"} ${n} ${done.padEnd(18)}`;
-    const right = cached ? "cached" : `${Math.round(ms)} ms`;
+    const right = cached ? "cached" : msText(ms);
     if (step === "rules" && record !== undefined) {
       const listed = Object.values(record.rules ?? {}).reduce((a, b) => a + b, 0) + Object.values(record.passes ?? {}).reduce((a, b) => a + b, 0);
-      const setup = Math.round(ms - listed);
-      const parts = [...(ruleParts(record) ?? [NOT_RECORDED]), ...(record.rules !== undefined && setup >= 1 ? [`loading and cache ${setup} ms`] : [])];
+      const setup = ms - listed;
+      const parts = [...(ruleParts(record) ?? [noRules(record)]), ...(record.rules !== undefined && setup >= 0.05 ? [`loading and cache ${msText(setup)}`] : [])];
       return partLines(first, parts.length === 0 ? [last.status === "empty" ? "no changed files" : "every result cached"] : parts, right, width);
     }
     const detail = (() => {
@@ -178,7 +176,7 @@ const stepLines = (shown: Shown | undefined, tools: Record<string, string>, widt
   });
   if (record === undefined) return lines;
   const stepped = all.filter((e) => e.state !== "start").reduce((sum, e) => sum + (e.ms ?? 0), 0);
-  return [...lines, spread("     setup and records", `${Math.round((record.ms ?? 0) - stepped)} ms`, width)];
+  return [...lines, spread("     setup and records", msText((record.ms ?? 0) - stepped), width)];
 };
 
 const verdictCell = (e: Evidence): string => {
@@ -208,8 +206,10 @@ const footer = (shown: Shown | undefined, live: boolean): string => {
 export const liveDeadline = (model: ViewModel): number | undefined => {
   const lastStep = model.evidence.filter((e) => e.kind === "step").at(-1);
   if (lastStep === undefined || runRecords(model.evidence).some((r) => r.run === lastStep.run)) return undefined;
-  const tier = model.evidence.find((e) => e.kind === "step" && e.run === lastStep.run && e.tier !== undefined)?.tier ?? "commit";
-  const at = Date.parse(lastStep.at) + model.budgets[tier];
+  const budget = new Map(model.rules.map((r) => [r.guardrail, r.budgetMs]));
+  const open = model.evidence.filter((e) => e.kind === "step" && e.run === lastStep.run && e.step === "rules" && e.state === "start").at(-1);
+  const members = lastStep.step === "rules" && open !== undefined ? (open.members ?? []) : [...budget.keys()];
+  const at = Date.parse(lastStep.at) + members.reduce((n, id) => n + (budget.get(id) ?? 0), 0);
   return at >= model.now ? at : undefined;
 };
 
@@ -232,7 +232,7 @@ export function render(model: ViewModel, size: Size, selected: number): string[]
     const tier = shown.record?.tier ?? first?.tier ?? "";
     const trigger = shown.record?.trigger ?? first?.trigger;
     const where = shown.record === undefined ? shown.steps.find((e) => e.files !== undefined) : shown.record;
-    return [` NOW  ${tier === "" ? "" : `${tier} `}check`, ...(where === undefined ? [] : [target(where)]), ...(trigger === undefined ? [] : [`triggered by ${TRIGGER[trigger] ?? trigger}`]), ...(shown.interrupted === true ? ["interrupted"] : []), ...(shown.record?.ms === undefined ? [] : [`${Math.round(shown.record.ms)} ms`])].join(" · ");
+    return [` NOW  ${tier === "" ? "" : `${tier} `}check`, ...(where === undefined ? [] : [target(where)]), ...(trigger === undefined ? [] : [`triggered by ${TRIGGER[trigger] ?? trigger}`]), ...(shown.interrupted === true ? ["interrupted"] : []), ...(shown.record?.ms === undefined ? [] : [msText(shown.record.ms)])].join(" · ");
   })();
   const top = [spread(` WARDEN  ${model.project} · base ${model.base} · v${model.version}`, "q quit  r rerun  l layers", width), rule, clip(head, width), ...stepLines(shown, model.tools, width), ""];
   const bottom = [rule, ...wrap(footer(shown, live), width, 3)];
@@ -248,10 +248,10 @@ export function render(model: ViewModel, size: Size, selected: number): string[]
   const rows = runs.slice(start, start + runRows).map((e, i) => {
     const mark = !live && start + i === pick ? ">" : " ";
     const trigger = SHORT[e.trigger ?? ""] ?? e.trigger ?? "-";
-    const ms = `${Math.round(e.ms ?? 0)} ms`;
+    const ms = msText(e.ms ?? 0);
     const lead = ` ${mark} ${clock(e.at)}  ${trigger.padEnd(6)}  ${basename(target(e)).padEnd(14)} `;
     if (e.rules === undefined) {
-      const what = e.outcome === "ran" && e.result === undefined ? "? result and rules not recorded" : `${verdictCell(e)} · rules not recorded`;
+      const what = older(e) ? (e.outcome === "ran" && e.result === undefined ? "? result and rules not recorded" : `${verdictCell(e)} · rules not recorded`) : `${verdictCell(e)} · ${noRules(e)}`;
       return clip(`${lead}${what} · ${ms}`, width);
     }
     const left = `${lead}${verdictCell(e).padEnd(22)} ${ms.padStart(7)}  `;
@@ -260,12 +260,12 @@ export function render(model: ViewModel, size: Size, selected: number): string[]
     const counted = `${n} rule${n === 1 ? "" : "s"}`;
     const named = `${counted}: ${Object.keys(e.rules ?? {}).join(" · ")}`;
     const rules = left.length + named.length <= width ? named : counted;
-    const line = `${left}${rules}`;
+    const line = visible(`${left}${rules}`);
     return ratchet !== "" && line.length + ratchet.length + 2 <= width ? `${line.padEnd(width - ratchet.length)}${ratchet}` : clip(line, width);
   });
   const recent = [spread(" RECENT RUNS", width >= 100 ? "ratchet left" : "", width), ...rows];
   const middle = size.rows - top.length - bottom.length >= 3 ? [...rules, "", ...recent] : [];
-  return [...top, ...middle, ...bottom].slice(0, Math.max(size.rows, 2)).map((l) => l.trimEnd());
+  return [...top, ...middle, ...bottom].slice(0, Math.max(size.rows, 2)).map((l) => visible(l).trimEnd());
 }
 
 const BANDS: { name: string; kinds: Kind[] }[] = [
@@ -315,10 +315,10 @@ export function renderLayers(model: ViewModel, size: Size): string[] {
     weakest === undefined || DETERMINISTIC.has(weakest.strongestKind)
       ? " Weakest practice: none. Every practice is held by a deterministic rule."
       : ` Weakest practice: ${weakest.practice}, held only by ${weakest.strongestKind}. Next action: add a type, lint, or runtime Guardrail to ${weakest.practice}`;
-  const top = [spread(` WARDEN  ${model.project} · base ${model.base} · v${model.version}`, "q quit  l layers  ↑↓ runs", width), rule, spread(" LAYERS  strongest first · a rule can only move up", "rules  proven", width - 1)];
+  const top = [spread(` WARDEN  ${model.project} · base ${model.base} · v${model.version}`, "q quit  r rerun  l runs", width), rule, spread(" LAYERS  strongest first · a rule can only move up", "rules  proven", width - 1)];
   const bottom = [clip(` PACKS   ${packs}`, width), rule, ...wrap(verdict, width, 3)];
   const room = Math.max(0, size.rows - top.length - bottom.length);
-  return [...top, ...body.slice(0, room), ...bottom].map((l) => l.trimEnd());
+  return [...top, ...body.slice(0, room), ...bottom].map((l) => visible(l).trimEnd());
 }
 
 export const plainLayers = (model: ViewModel): string => `${renderLayers(model, { cols: 80, rows: 60 }).join("\n")}\n`;

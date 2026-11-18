@@ -38,7 +38,6 @@ const model = (evidence: Evidence[]): ViewModel => ({
   ],
   evidence,
   now: Date.parse(at("14:03:00")) + 500,
-  budgets: { edit: 2000, commit: 10000, boundary: 120000 },
   layers: [],
   practices: [],
   packList: [{ id: "core", source: "bundled", on: true, rules: 2 }],
@@ -54,6 +53,12 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+const rulesBlock = (lines: string[]): string => {
+  const at = lines.findIndex((l) => /^ {3}. 3 rules/.test(l));
+  const end = lines.findIndex((l, i) => i > at && !l.startsWith(" ".repeat(25)));
+  return [(lines[at] as string).slice(25).replace(/ +\S+ ms$/, ""), ...lines.slice(at + 1, end).map((l) => l.trim())].join(" · ");
+};
+
 const fits = (lines: string[]): void => {
   for (const l of lines) expect(l.length, l).toBeLessThanOrEqual(80);
 };
@@ -64,12 +69,13 @@ it("renders a passing run at 80 columns", () => {
   expect(lines[0]).toMatch(/^ WARDEN {2}context-manager · base origin\/main · v9\.8\.7 +q quit {2}r rerun {2}l layers$/);
   expect(lines[1]).toBe("─".repeat(80));
   expect(lines[2]).toBe(" NOW  commit check · 3 files · triggered by git commit · 13 ms");
-  expect(lines[3]).toMatch(/^ {3}✓ 1 rules intact {6}lock matches, 0 tampered files +2 ms$/);
+  expect(lines[3]).toMatch(/^ {3}✓ 1 rules intact {6}lock matches, 0 tampered files +2\.0 ms$/);
   expect(lines[4]).toMatch(/^ {3}✓ 2 tools ready {7}eslint 9\.39\.5 · typescript 5\.9\.3 +cached$/);
-  expect(lines[5]).toMatch(/^ {3}✓ 3 rules {13}warden-no-comments 3 ms +8 ms$/);
-  expect(lines[6]).toBe(`${" ".repeat(25)}warden-no-suppressions 3 ms · eslint pass 2 ms`);
-  expect(lines[7]).toMatch(/^ {3}✓ 4 verdict {11}pass +1 ms$/);
-  expect(lines[8]).toMatch(/^ {5}setup and records +2 ms$/);
+  expect(lines[5]).toMatch(/^ {3}✓ 3 rules {13}warden-no-comments 3\.0 ms +8\.0 ms$/);
+  expect(lines[6]).toBe(`${" ".repeat(25)}warden-no-suppressions 3.0 ms`);
+  expect(lines[7]).toBe(`${" ".repeat(25)}eslint pass 2.0 ms`);
+  expect(lines[8]).toMatch(/^ {3}✓ 4 verdict {11}pass +1\.0 ms$/);
+  expect(lines[9]).toMatch(/^ {5}setup and records +2\.0 ms$/);
   expect(lines).toContainEqual(expect.stringMatching(/^ RULES \(core pack\) +strength +fired +median +budget$/));
   expect(lines).toContainEqual(expect.stringMatching(/^ {3}warden-no-comments +proven +12 +4 ms +2000 ms$/));
   expect(lines).toContainEqual(expect.stringMatching(/^ > 14:01:40 {2}commit {2}3 files +✓ pass +13 ms {2}2 rules$/));
@@ -81,7 +87,7 @@ it("renders a blocked run at 80 columns with its failure and one next action", (
   const lines = render(model([...steps("r1", "14:01:40"), passRun, ...steps("r2", "14:02:11", "fail"), blockRun]), size, 0);
   fits(lines);
   expect(lines[2]).toBe(" NOW  edit check · src/hooks/useRx.ts · triggered by agent edit · 12 ms");
-  expect(lines[7]).toMatch(/^ {3}✗ 4 verdict {11}BLOCK {2}src\/hooks\/useRx\.ts:2 warden-no-comments +1 ms$/);
+  expect(lines[8]).toMatch(/^ {3}✗ 4 verdict {11}BLOCK {2}src\/hooks\/useRx\.ts:2 warden-no-comments +1\.0 ms$/);
   expect(lines).toContainEqual(expect.stringMatching(/^ > 14:02:11 {2}edit {4}useRx\.ts +✗ BLOCK no-comments L2 +12 ms {2}2 rules$/));
   expect(lines).toContainEqual(expect.stringMatching(/^ {3}14:01:40 {2}commit/));
   expect(lines.filter((l) => l.includes("Next action:"))).toEqual([' Next action: change the code at the lines above to match "Do this"']);
@@ -92,11 +98,11 @@ it("a selected run lists each step's time and each rule's time, and the parts ad
   const events = steps("r9", "14:01:40").map((e) => (e.state === "start" ? e : { ...e, ms: run.steps?.[e.step as keyof typeof run.steps] ?? 0 }));
   const lines = render(model([...events, run]), size, 0);
   fits(lines);
-  const ms = (line: string): number[] => [...line.matchAll(/(\d+) ms/g)].map((m) => Number(m[1]));
-  const rulesAt = lines.findIndex((l) => l.startsWith("   ✓ 3 rules"));
-  expect(lines[rulesAt]).toMatch(/warden-no-comments 4 ms +65 ms$/);
-  expect(lines[rulesAt + 1]).toBe(`${" ".repeat(25)}warden-no-suppressions 4 ms · eslint pass 57 ms`);
-  const parts = [...ms(lines[rulesAt] as string).slice(0, -1), ...ms(lines[rulesAt + 1] as string)];
+  const ms = (line: string): number[] => [...line.matchAll(/([\d.]+) ms/g)].map((m) => Number(m[1]));
+  expect(lines.find((l) => l.startsWith("   ✓ 3 rules"))).toMatch(/ 65 ms$/);
+  const block = rulesBlock(lines);
+  expect(block).toBe("warden-no-comments 4.0 ms · warden-no-suppressions 4.0 ms · eslint pass 57 ms");
+  const parts = [...block.matchAll(/([\d.]+) ms/g)].map((m) => Number(m[1]));
   expect(parts.reduce((a, b) => a + b, 0)).toBe(65);
   const stepTotals = lines.filter((l) => /^ {3}✓ \d /.test(l)).map((l) => (l.endsWith("cached") ? 0 : (ms(l).at(-1) as number)));
   const setup = ms(lines.find((l) => l.startsWith("     setup and records")) as string)[0] as number;
@@ -107,7 +113,7 @@ it("a selected run lists each step's time and each rule's time, and the parts ad
 it("time in the rules step that no rule or pass accounts for is shown as loading and cache", () => {
   const run: Evidence = { ...passRun, run: "r8", rules: { "warden-no-comments": 1 }, passes: { eslint: 2 } };
   const lines = render(model([...steps("r8", "14:01:40"), run]), size, 0);
-  expect(lines.join("\n").replace(/ +8 ms\n {25}/, " · ")).toContain("warden-no-comments 1 ms · eslint pass 2 ms · loading and cache 5 ms");
+  expect(rulesBlock(lines)).toBe("warden-no-comments 1.0 ms · eslint pass 2.0 ms · loading and cache 5.0 ms");
 });
 
 it("an old record says what it did not record, never a blank or a bare ran", () => {
@@ -186,6 +192,52 @@ it("a run whose steps stopped without a record is interrupted, with one next act
   expect(lines[5]).toMatch(/^ {3}✗ 3 rules {13}warden-no-comments · warden-no-suppressions +interrupted$/);
   expect(lines[6]).toBe("   ○ 4 verdict");
   expect(lines.at(-1)).toBe(" Next action: press r to run warden check");
+});
+
+it("a step-only run stays live until its rules' kill timeout, past the tier budget", () => {
+  const slow = steps("r3", "14:03:00").slice(0, 5);
+  const lines = render({ ...model([...steps("r1", "14:01:40"), passRun, ...slow]), now: Date.parse(at("14:03:00")) + 3_000 }, size, 0);
+  expect(lines[2]).toBe(" NOW  edit check · src/hooks/useRx.ts · triggered by agent edit");
+  expect(lines.at(-1)).toBe(" Running warden check…");
+});
+
+it("a wide terminal still shows control characters as visible escapes on every line", () => {
+  const file = "q\x1b]0;PWNED\x07\r\x1b[2K.ts";
+  const hostile: Evidence = { ...blockRun, file, failures: [{ file, line: 2, guardrail: "warden-no-comments", practice: "no-comments" }] };
+  for (const cols of [120, 200]) {
+    const lines = render(model([...steps("r2", "14:02:11", "fail"), hostile]), { cols, rows: 30 }, 0);
+    expect(lines.join("\n")).not.toMatch(CONTROL);
+    for (const l of lines) expect(l.length).toBeLessThanOrEqual(cols);
+    expect(lines).toContainEqual(expect.stringMatching(/44,174 → 44,174$/));
+  }
+  const layers = renderLayers({ ...model([]), layers: [{ pack: "lo\x1bcal", guardrail: "g\r", practice: "p", kind: "lint", adapter: "eslint", runs: ["edit"], median: "1.0 ms" }] }, { cols: 120, rows: 40 });
+  expect(layers.join("\n")).not.toMatch(CONTROL);
+});
+
+it("a tampered run says no rules ran, and an error that stopped before any step says so, not older Warden", () => {
+  const tampered: Evidence = { at: at("14:04:00"), kind: "cost", guardrail: "run", run: "t", tier: "commit", trigger: "manual", outcome: "tampered", exit: 1, ms: 30, files: 0, bytes: 0, steps: { "rules-intact": 20 }, next: "revert your change to .warden/lock.json" };
+  const errored: Evidence = { at: at("14:05:00"), kind: "cost", guardrail: "run", run: "e", tier: "commit", trigger: "manual", outcome: "error", exit: 2, ms: 12, files: 0, bytes: 0, steps: {}, next: "run warden check --base main" };
+  const events: Evidence[] = [
+    { at: at("14:04:00"), kind: "step", run: "t", step: "rules-intact", state: "start", ms: 0, tier: "commit", trigger: "manual" },
+    { at: at("14:04:00"), kind: "step", run: "t", step: "rules-intact", state: "fail", ms: 20 },
+  ];
+  const lines = render(model([...events, tampered, errored]), size, 0);
+  fits(lines);
+  const text = lines.join("\n");
+  expect(text).not.toContain("older Warden");
+  expect(lines[3]).toBe("   stopped before the first step · total 12 ms");
+  expect(lines).toContainEqual(expect.stringMatching(/^ > 14:05:00 {2}manual {2}0 files +✗ error · no rules ran: error · 12 ms$/));
+  expect(lines).toContainEqual(expect.stringMatching(/^ {3}14:04:00 {2}manual {2}0 files +✗ TAMPERED · no rules ran: tampered · 30 ms$/));
+  const older = render(model([...events, tampered, errored]), size, 1);
+  expect(older.join("\n")).not.toContain("older Warden");
+});
+
+it("times under 10 ms show one decimal, so the parts visibly add up", () => {
+  const run: Evidence = { ...passRun, run: "r7", ms: 9.9, rules: { "warden-no-comments": 1.2, "warden-no-suppressions": 1.3 }, passes: { eslint: 2.5 }, steps: { "rules-intact": 2, "tools-ready": 0, rules: 5, verdict: 1 } };
+  const events = steps("r7", "14:01:40").map((e) => (e.step === "rules" && e.state === "done" ? { ...e, ms: 5 } : e));
+  const lines = render(model([...events, run]), size, 0);
+  expect(rulesBlock(lines)).toBe("warden-no-comments 1.2 ms · warden-no-suppressions 1.3 ms · eslint pass 2.5 ms");
+  expect(lines[2]).toMatch(/· 9\.9 ms$/);
 });
 
 it("plain text carries no escape codes", () => {
@@ -323,7 +375,7 @@ const layered = (extra: Partial<ViewModel> = {}): ViewModel => ({
 it("renders the layers screen at 80 columns, strongest first, with every layer and the packs", () => {
   const lines = renderLayers(layered(), size);
   fits(lines);
-  expect(lines[0]).toMatch(/^ WARDEN {2}warden · base main · v0\.1\.5 +q quit {2}l layers {2}↑↓ runs$/);
+  expect(lines[0]).toMatch(/^ WARDEN {2}warden · base main · v0\.1\.5 +q quit {2}r rerun {2}l runs$/);
   expect(lines[2]).toMatch(/^ LAYERS {2}strongest first · a rule can only move up +rules {2}proven$/);
   expect(lines[3]).toMatch(/^ ┌ DETERMINISTIC ─+┐$/);
   expect(lines[4]).toMatch(/^ │ 0 type +compiler proves it +\(none yet\) +0 +│$/);
