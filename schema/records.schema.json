@@ -52,7 +52,7 @@
         {
           "type": "object",
           "minProperties": 1,
-          "propertyNames": { "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$))" },
+          "propertyNames": { "minLength": 1, "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$))" },
           "additionalProperties": { "type": "string" }
         }
       ]
@@ -75,7 +75,9 @@
         "options": {},
         "mustFail": { "$ref": "#/$defs/example" },
         "mustPass": { "$ref": "#/$defs/example" }
-      }
+      },
+      "if": { "properties": { "kind": { "not": { "const": "instruction" } } } },
+      "then": { "properties": { "implementation": { "type": "string", "pattern": "^[^:]+:.+" } } }
     },
     "practice": {
       "type": "object",

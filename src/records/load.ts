@@ -44,8 +44,20 @@ function parseYaml(file: string, text: string): unknown {
   }
 }
 
+const SHAPES: Record<string, string> = {
+  mustFail: "an example is a non-empty string or a map of relative paths to file contents",
+  mustPass: "an example is a non-empty string or a map of relative paths to file contents",
+  implementation: "an implementation is <adapter>:<target>, such as eslint:no-var",
+};
+
 function check(file: string, validate: typeof validateConfig, value: unknown): void {
   if (validate(value)) return;
+  const shaped = (validate.errors ?? []).find((e) => ["anyOf", "pattern"].includes(e.keyword) && SHAPES[e.instancePath.split("/").at(-1) as string] !== undefined);
+  if (shaped !== undefined) {
+    const leaf = shaped.instancePath.split("/").at(-1) as string;
+    const parent = shaped.instancePath.slice(0, -leaf.length - 1);
+    throw new RecordError(file, shaped.instancePath, `${SHAPES[leaf]}. Next action: fix ${leaf} at ${parent} in ${file}, then run warden compile.`);
+  }
   const error = (validate.errors ?? []).find((e) => e.keyword !== "if");
   if (error === undefined) throw new RecordError(file, "", "record failed validation");
   const { missingProperty } = error.params as { missingProperty?: string };

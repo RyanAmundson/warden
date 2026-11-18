@@ -135,6 +135,37 @@ describe("compile", () => {
     expect(readLock(root).generated[".claude/settings.json#warden"]).toBe(before);
   });
 
+  it("an unknown adapter fails compile, writes no lock, and its next action compiles", async () => {
+    await usePack(
+      localPack(
+        [
+          "    guardrails:",
+          "      - id: local-no-var",
+          "        kind: lint",
+          "        runs: [edit]",
+          "        budgetMs: 5000",
+          "        version: 1",
+          "        implementation: \"eslnt:no-var\"",
+          "        mustFail: \"var a = 1;\\n\"",
+          "        mustPass: \"const a = 1;\\n\"",
+        ].join("\n"),
+      ),
+    );
+    const file = join(root, ".warden/packs/local/pack.yaml");
+    const { findings, written } = await compile(root, wardenRoot);
+    expect(findings).toEqual([
+      {
+        code: "unknown-adapter",
+        record: "local-no-var",
+        message: `Guardrail local-no-var names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...> in ${file}, then run warden compile.`,
+      },
+    ]);
+    expect(written).toEqual([]);
+    await expect(readFile(join(root, ".warden/lock.json"))).rejects.toThrow();
+    await writeFile(file, (await readFile(file, "utf8")).replace("eslnt:", "eslint:"));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+  });
+
   it("findings block writing", async () => {
     await usePack(
       localPack(
@@ -159,24 +190,10 @@ describe("compile", () => {
   });
 
   it("slow examples are rejected", async () => {
-    await usePack(
-      localPack(
-        [
-          "    guardrails:",
-          "      - id: local-no-var",
-          "        kind: lint",
-          "        runs: [edit]",
-          "        budgetMs: 1",
-          "        version: 1",
-          "        implementation: \"eslint:no-var\"",
-          "        mustFail: \"var a = 1;\\n\"",
-          "        mustPass: \"const a = 1;\\n\"",
-        ].join("\n"),
-      ),
-    );
+    await usePack(localPack(legacyGuardrail("sleep 1.913", PROVEN_TREES, 100)));
     const { findings, written } = await compile(root, wardenRoot);
-    expect(findings.length).toBeGreaterThan(0);
-    expect(findings.every((f) => f.code === "over-budget" && f.record === "local-no-var")).toBe(true);
+    expect(findings.map((f) => `${f.code} ${f.record}`)).toEqual(["over-budget local-script", "over-budget local-script"]);
+    expect(findings[0]?.message).toContain("Next action: make the mustFail example of Guardrail local-script finish within 100 ms");
     expect(written).toEqual([]);
   });
 
@@ -319,37 +336,6 @@ describe("compile", () => {
     expect((await runExamples(await loadRecords(root, wardenRoot), wardenRoot)).map((f) => `${f.code} ${f.record}`)).toEqual(["example-conflict in-a-g"]);
   });
 
-  it("an unknown adapter fails compile, writes no lock, and its next action compiles", async () => {
-    await usePack(
-      localPack(
-        [
-          "    guardrails:",
-          "      - id: local-no-var",
-          "        kind: lint",
-          "        runs: [edit]",
-          "        budgetMs: 5000",
-          "        version: 1",
-          "        implementation: \"eslnt:no-var\"",
-          "        mustFail: \"var a = 1;\\n\"",
-          "        mustPass: \"const a = 1;\\n\"",
-        ].join("\n"),
-      ),
-    );
-    const file = join(root, ".warden/packs/local/pack.yaml");
-    const { findings, written } = await compile(root, wardenRoot);
-    expect(findings).toEqual([
-      {
-        code: "unknown-adapter",
-        record: "local-no-var",
-        message: `Guardrail local-no-var names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...> in ${file}, then run warden compile.`,
-      },
-    ]);
-    expect(written).toEqual([]);
-    await expect(readFile(join(root, ".warden/lock.json"))).rejects.toThrow();
-    await writeFile(file, (await readFile(file, "utf8")).replace("eslnt:", "eslint:"));
-    expect((await compile(root, wardenRoot)).findings).toEqual([]);
-  });
-
   it("emitting outputs for an unknown adapter refuses with the shared finding's message", async () => {
     await usePack(localPack(legacyGuardrail("true", PROVEN_TREES).replace('"cmd:true"', '"cmdd:true"')));
     const file = join(root, ".warden/packs/local/pack.yaml");
@@ -391,14 +377,6 @@ describe("compile", () => {
     ]);
     expect(written).toEqual([]);
     await expect(readFile(join(root, ".warden/lock.json"))).rejects.toThrow();
-  });
-
-  it("a legacy Guardrail that runs past its budget on a fixture tree fails compile", async () => {
-    await usePack(localPack(legacyGuardrail("test ! -e broken || sleep 3.217", PROVEN_TREES, 300)));
-    const { findings, written } = await compile(root, wardenRoot);
-    expect(findings.map((f) => `${f.code} ${f.record}`)).toEqual(["over-budget local-script"]);
-    expect(findings[0]?.message).toContain("Next action: make the mustFail example of Guardrail local-script");
-    expect(written).toEqual([]);
   });
 
   it("the prose-only refusal ends in a next action that compiles once followed", async () => {
@@ -471,6 +449,42 @@ describe("compile", () => {
       expect(await installed()).toBe(before);
       await expect(readFile(join(wardenRoot, "node_modules/warden-proof-sentinel.txt"))).rejects.toThrow();
     });
+  });
+
+  it.each([
+    ["mustFail", '        mustFail:\n          ok.txt: 1\n        mustPass: "y"'],
+    ["mustFail", '        mustFail:\n          "": "x"\n        mustPass: "y"'],
+    ["mustPass", '        mustFail: "x"\n        mustPass: ""'],
+  ])("a malformed %s example is refused with what an example is and a next action", async (label, examples) => {
+    await usePack(localPack(legacyGuardrail("true", [examples])));
+    const file = join(root, ".warden/packs/local/pack.yaml");
+    await expect(compile(root, wardenRoot)).rejects.toMatchObject({
+      file,
+      pointer: `/practices/0/guardrails/0/${label}`,
+      message: `an example is a non-empty string or a map of relative paths to file contents. Next action: fix ${label} at /practices/0/guardrails/0 in ${file}, then run warden compile.`,
+    });
+  });
+
+  it("an implementation without an adapter prefix is refused by the schema with a next action", async () => {
+    await usePack(localPack(legacyGuardrail("true", PROVEN_TREES).replace('"cmd:true"', '"eslint"')));
+    const file = join(root, ".warden/packs/local/pack.yaml");
+    await expect(compile(root, wardenRoot)).rejects.toMatchObject({
+      file,
+      pointer: "/practices/0/guardrails/0/implementation",
+      message: `an implementation is <adapter>:<target>, such as eslint:no-var. Next action: fix implementation at /practices/0/guardrails/0 in ${file}, then run warden compile.`,
+    });
+  });
+
+  it("a fixture tree's directories are gone before the next example runs", async () => {
+    await usePack(
+      localPack(
+        [
+          legacyGuardrail("test ! -e left/deep/broken", ["        mustFail:", '          left/deep/broken: "x\\n"', "        mustPass:", '          left/deep/ok.txt: "x\\n"']),
+          legacyGuardrail("test ! -e left && test ! -e broken", PROVEN_TREES).replace("    guardrails:\n", "").replace("local-script", "local-clean"),
+        ].join("\n"),
+      ),
+    );
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
   });
 
   it("invalid settings JSON leaves no generated file, no settings change, and no lock", async () => {

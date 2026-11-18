@@ -100,13 +100,15 @@ async function runExample(
   ctx: { root: string; generatedDir: string },
 ): Promise<string> {
   const tree = typeof source === "string" ? { [file]: source } : source;
+  const made: string[] = [];
   try {
     for (const [path, content] of Object.entries(emitted)) {
       await mkdir(dirname(join(ctx.root, path)), { recursive: true });
       await writeFile(join(ctx.root, path), content);
     }
     for (const [path, content] of Object.entries(tree)) {
-      await mkdir(dirname(join(ctx.root, path)), { recursive: true });
+      const dir = await mkdir(dirname(join(ctx.root, path)), { recursive: true });
+      if (dir !== undefined) made.push(dir);
       await writeFile(join(ctx.root, path), content);
     }
     const results = await runGuardrails(set, [g], Object.keys(tree), ctx);
@@ -116,5 +118,6 @@ async function runExample(
     return own.status === "killed" || own.overBudget === true ? "over-budget" : own.status;
   } finally {
     for (const path of Object.keys(tree)) await rm(join(ctx.root, path), { force: true });
+    for (const dir of made) await rm(dir, { recursive: true, force: true });
   }
 }
