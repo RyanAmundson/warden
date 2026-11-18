@@ -17,7 +17,7 @@ practices:
   - id: architecture-world-only-in-sources
     statement: Only a source reaches the world.
     terms: [source, world]
-    paths: ["!**/{sources/**,*.test.*,*.spec.*}"]
+    paths: ["!**/{sources/**,test/**,tests/**,__tests__/**,*.test.*,*.spec.*,*.config.*}"]
     conflictsWith: []
     guardrails:
       - id: architecture-world-modules
@@ -28,13 +28,14 @@ practices:
         implementation: "eslint:no-restricted-imports"
         options:
           patterns:
-            - regex: "^(node:)?(fs|fs/promises|child_process|net|http|https|http2|dgram|dns|dns/promises|tls|worker_threads)$"
+            - regex: "^(node:)?(fs|fs/promises|child_process|net|http|https|http2|dgram|dns|dns/promises|tls|worker_threads|timers|timers/promises)$"
               message: "Only a source reaches the world. Move this read into the sources folder of its group, and return its data as an Observable."
         mustFail:
           src/git/format.ts: "import { readFileSync } from \"node:fs\";\nexport const readConfig = (path: string): string => readFileSync(path, \"utf8\");\n"
         mustPass:
           src/git/sources/config-file.ts: "import { readFileSync } from \"node:fs\";\nexport const readConfig = (path: string): string => readFileSync(path, \"utf8\");\n"
-      - id: architecture-world-timers
+          src/git/format.ts: "export const trimConfig = (text: string): string => text.trim();\n"
+      - id: architecture-world-globals
         kind: lint
         runs: [edit, commit]
         budgetMs: 5000
@@ -51,6 +52,7 @@ practices:
           src/git/retry.ts: "export const later = (run: () => void): void => {\n  setTimeout(run, 1000);\n};\n"
         mustPass:
           src/git/sources/ticks.ts: "export const later = (run: () => void): void => {\n  setTimeout(run, 1000);\n};\n"
+          src/git/format.ts: "export const trimConfig = (text: string): string => text.trim();\n"
   - id: architecture-sources-only-emit
     statement: A source imports no sink, and every function a source exports returns an Observable.
     terms: [source, sink]
@@ -64,11 +66,19 @@ practices:
         version: 1
         implementation: "eslint:no-restricted-syntax"
         options:
-          - selector: "ImportDeclaration[source.value=/(^|\\/)sinks(\\/|$)/]"
+          - selector: "ImportDeclaration[importKind!='type'][source.value=/(^|\\/)sinks(\\/|$)/]"
             message: "A source imports no sink. Return an Observable, and let the composition root connect it to the sink."
-          - selector: "ExportAllDeclaration[source.value=/(^|\\/)sinks(\\/|$)/], ExportNamedDeclaration[source.value=/(^|\\/)sinks(\\/|$)/], ImportExpression[source.value=/(^|\\/)sinks(\\/|$)/]"
+          - selector: "ExportAllDeclaration[exportKind!='type'][source.value=/(^|\\/)sinks(\\/|$)/], ExportNamedDeclaration[exportKind!='type'][source.value=/(^|\\/)sinks(\\/|$)/], ImportExpression[source.value=/(^|\\/)sinks(\\/|$)/], CallExpression[callee.name='require'] > Literal[value=/(^|\\/)sinks(\\/|$)/]"
             message: "A source re-exports or loads no sink. Return an Observable, and let the composition root connect it to the sink."
-          - selector: "ExportNamedDeclaration > FunctionDeclaration:not([returnType.typeAnnotation.typeName.name='Observable']), ExportDefaultDeclaration > FunctionDeclaration:not([returnType.typeAnnotation.typeName.name='Observable']), ExportNamedDeclaration > VariableDeclaration > VariableDeclarator > ArrowFunctionExpression:not([returnType.typeAnnotation.typeName.name='Observable']), ExportNamedDeclaration > VariableDeclaration > VariableDeclarator > FunctionExpression:not([returnType.typeAnnotation.typeName.name='Observable'])"
+          - selector: "ExportAllDeclaration[exportKind!='type'][source.value=/^(node:)?(fs|fs\\/promises|child_process|net|http|https|http2|dgram|dns|dns\\/promises|tls|worker_threads|timers|timers\\/promises)$/], ExportNamedDeclaration[exportKind!='type'][source.value=/^(node:)?(fs|fs\\/promises|child_process|net|http|https|http2|dgram|dns|dns\\/promises|tls|worker_threads|timers|timers\\/promises)$/]"
+            message: "A source re-exports no world module. Read the world inside the source, and export a function that returns its data as an Observable."
+          - selector: "ExportNamedDeclaration > VariableDeclaration > VariableDeclarator[init.type='Identifier'], ExportDefaultDeclaration > Identifier"
+            message: "A source exports no alias of another value. Export a function that returns an Observable."
+          - selector: "ExportNamedDeclaration[source=null][exportKind='value'][specifiers.length>0]"
+            message: "A source exports no list of local values. Export each function at its declaration, with an Observable return type."
+          - selector: "ExportNamedDeclaration > ClassDeclaration, ExportDefaultDeclaration > ClassDeclaration"
+            message: "A source exports no class. Export a function that returns an Observable."
+          - selector: "ExportNamedDeclaration > FunctionDeclaration:not([returnType.typeAnnotation.typeName.name='Observable'], [returnType.typeAnnotation.typeName.right.name='Observable']), ExportDefaultDeclaration > FunctionDeclaration:not([returnType.typeAnnotation.typeName.name='Observable'], [returnType.typeAnnotation.typeName.right.name='Observable']), ExportNamedDeclaration > VariableDeclaration > VariableDeclarator > ArrowFunctionExpression:not([returnType.typeAnnotation.typeName.name='Observable'], [returnType.typeAnnotation.typeName.right.name='Observable']), ExportNamedDeclaration > VariableDeclaration > VariableDeclarator > FunctionExpression:not([returnType.typeAnnotation.typeName.name='Observable'], [returnType.typeAnnotation.typeName.right.name='Observable']), ExportDefaultDeclaration > ArrowFunctionExpression:not([returnType.typeAnnotation.typeName.name='Observable'], [returnType.typeAnnotation.typeName.right.name='Observable']), ExportDefaultDeclaration > FunctionExpression:not([returnType.typeAnnotation.typeName.name='Observable'], [returnType.typeAnnotation.typeName.right.name='Observable'])"
             message: "Every function a source exports declares an Observable return type."
         mustFail:
           src/git/sources/status.ts: "import { writeStatus } from \"../sinks/status\";\nexport const readStatus = (): number => writeStatus(1);\n"

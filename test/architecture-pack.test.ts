@@ -35,17 +35,19 @@ const write = async (file: string, content: string): Promise<void> => {
   await writeFile(join(root, file), content);
 };
 
-const check = async (id: string, source: string, file: string) => {
+const lint = async (id: string, source: string, file: string) => {
   const gs = guardrails.filter((g) => g.id === id);
   await write(file, source);
   for (const [path, content] of Object.entries(eslintAdapter.emit(gs, set))) await write(path, content);
   const [result] = await runGuardrails(set, gs, [file], { root, generatedDir: join(root, ".warden/generated") });
-  return result?.status;
+  return result;
 };
+
+const check = async (id: string, source: string, file: string) => (await lint(id, source, file))?.status;
 
 const importing = (name: string): string => `import * as m from "${name}";\nexport const used = m;\n`;
 const modules = "architecture-world-modules";
-const timers = "architecture-world-timers";
+const globals = "architecture-world-globals";
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "warden-architecture-"));
@@ -72,7 +74,28 @@ describe("architecture pack world boundary", () => {
     expect(await check(modules, importing(name), "src/g/a.ts")).toBe("fail");
   });
 
-  it.each(["src/g/sources/a.ts", "src/g/a.test.ts", "src/g/sources/deep/a.ts"])("allows a node:fs import in %s", async (file) => {
+  it.each(["node:timers", "timers/promises", "node:timers/promises"])("fails a %s import outside sources", async (name) => {
+    expect(await check(modules, importing(name), "src/g/a.ts")).toBe("fail");
+  });
+
+  it("fails a setTimeout import from node:timers/promises outside sources", async () => {
+    expect(await check(modules, "import { setTimeout } from \"node:timers/promises\";\nexport const wait = setTimeout;\n", "src/g/a.ts")).toBe("fail");
+  });
+
+  it("fails a composition root that reaches the world", async () => {
+    expect(await check(modules, importing("node:http"), "src/main.ts")).toBe("fail");
+  });
+
+  it.each([
+    "src/g/sources/a.ts",
+    "src/g/a.test.ts",
+    "src/g/a.spec.ts",
+    "src/g/sources/deep/a.ts",
+    "test/helpers/fixture.ts",
+    "packages/x/tests/setup.ts",
+    "src/g/__tests__/a.ts",
+    "vitest.config.ts",
+  ])("allows a node:fs import in %s", async (file) => {
     expect(await check(modules, importing("node:fs"), file)).toBe("pass");
   });
 
@@ -85,12 +108,20 @@ describe("architecture pack world boundary", () => {
     ["setInterval", "export const again = (run: () => void): void => {\n  setInterval(run, 1);\n};\n"],
     ["fetch", "export const load = (): void => {\n  fetch(\"x\");\n};\n"],
   ])("fails %s outside sources and passes it in sources", async (_name, source) => {
-    expect(await check(timers, source, "src/g/a.ts")).toBe("fail");
-    expect(await check(timers, source, "src/g/sources/a.ts")).toBe("pass");
+    expect(await check(globals, source, "src/g/a.ts")).toBe("fail");
+    expect(await check(globals, source, "src/g/sources/a.ts")).toBe("pass");
+  });
+
+  it.each([modules, globals])("lints a compliant file inside the paths of %s in its mustPass example", async (id) => {
+    const guardrail = guardrails.find((g) => g.id === id);
+    const [violating] = Object.values(guardrail?.mustFail ?? {});
+    const linted = [];
+    for (const file of Object.keys(guardrail?.mustPass ?? {})) linted.push(await check(id, violating as string, file));
+    expect(linted).toContain("fail");
   });
 
   it("allows a parameter named fetch", async () => {
-    expect(await check(timers, "export const call = (fetch: () => void): void => fetch();\n", "src/g/a.ts")).toBe("pass");
+    expect(await check(globals, "export const call = (fetch: () => void): void => fetch();\n", "src/g/a.ts")).toBe("pass");
   });
 });
 
@@ -99,14 +130,12 @@ describe("architecture pack sources only emit", () => {
   const sinkMessage = "A source imports no sink.";
   const reexportMessage = "A source re-exports or loads no sink.";
   const returnMessage = "Every function a source exports declares an Observable return type.";
+  const worldMessage = "A source re-exports no world module.";
+  const aliasMessage = "A source exports no alias of another value.";
+  const listMessage = "A source exports no list of local values.";
+  const classMessage = "A source exports no class.";
   const bad = "src/g/sources/bad.ts";
 
-  const messages = async (source: string): Promise<string> => {
-    await check(shape, source, bad);
-    const gs = guardrails.filter((g) => g.id === shape);
-    const [result] = await runGuardrails(set, gs, [bad], { root, generatedDir: join(root, ".warden/generated") });
-    return JSON.stringify(result);
-  };
 
   it.each([
     ["an import from a sink", "import { write } from \"../sinks/status\";\nexport const used = write;\n", sinkMessage],
@@ -117,9 +146,21 @@ describe("architecture pack sources only emit", () => {
     ["an arrow function returning a number", "export const read = (): number => 1;\n", returnMessage],
     ["an exported function with no return type", "export function read() {\n  return 1;\n}\n", returnMessage],
     ["a default function returning a number", "export default function read(): number {\n  return 1;\n}\n", returnMessage],
+    ["export * from a world module", "export * from \"node:fs\";\n", worldMessage],
+    ["a re-export from a world module", "export { readFile } from \"fs/promises\";\n", worldMessage],
+    ["a re-export from node:timers/promises", "export { setTimeout } from \"node:timers/promises\";\n", worldMessage],
+    ["an exported identifier alias", "import { readFile } from \"node:fs\";\nexport const read = readFile;\n", aliasMessage],
+    ["a default-exported identifier", "import { readFile } from \"node:fs\";\nexport default readFile;\n", aliasMessage],
+    ["a local export list", "import { readFile } from \"node:fs\";\nexport { readFile };\n", listMessage],
+    ["an exported class", "export class Reader {\n  read(): number {\n    return 1;\n  }\n}\n", classMessage],
+    ["a default-exported class", "export default class Reader {\n  read(): number {\n    return 1;\n  }\n}\n", classMessage],
+    ["a default-exported arrow function", "export default (): number => 1;\n", returnMessage],
+    ["a default-exported function expression", "export default (function read(): number {\n  return 1;\n});\n", returnMessage],
+    ["a require of a sink", "import { Observable } from \"rxjs\";\nexport const load = (): Observable<number> => { require(\"../sinks/y\"); return new Observable<number>(); };\n", reexportMessage],
   ])("fails %s", async (_name, source, message) => {
-    expect(await check(shape, source, bad)).toBe("fail");
-    expect(await messages(source)).toContain(message);
+    const result = await lint(shape, source, bad);
+    expect(result?.status).toBe("fail");
+    expect(result?.violations.map((v) => v.message)).toContainEqual(expect.stringContaining(message));
   });
 
   it("passes observables, types, constants, and a plain import", async () => {
@@ -132,8 +173,22 @@ describe("architecture pack sources only emit", () => {
       "  return new Observable<number>((subscriber) => subscriber.next(parse(label)));",
       "}",
       "export const watchAgain = (): Observable<number> => watch();",
+      "export default (): Observable<number> => watch();",
       "",
     ].join("\n");
+    expect(await check(shape, source, "src/g/sources/good.ts")).toBe("pass");
+  });
+
+  it.each([
+    ["a type-only export list", "type X = number;\nexport type { X };\n"],
+    ["a constant", "export const KEY = \"k\";\n"],
+    ["a function returning Observable", "import { Observable } from \"rxjs\";\nexport function watch(): Observable<number> {\n  return new Observable<number>();\n}\n"],
+    ["a type import from a sink", "import type { Row } from \"../sinks/x\";\nexport type Rows = Row[];\n"],
+    ["a type re-export from a sink", "export type { Row } from \"../sinks/x\";\n"],
+    ["a qualified Observable arrow", "import * as rx from \"rxjs\";\nexport const watch = (): rx.Observable<number> => new rx.Observable<number>();\n"],
+    ["a qualified Observable function", "import * as rx from \"rxjs\";\nexport function watch(): rx.Observable<number> {\n  return new rx.Observable<number>();\n}\n"],
+    ["a qualified Observable default", "import * as rx from \"rxjs\";\nexport default (): rx.Observable<number> => new rx.Observable<number>();\n"],
+  ])("passes %s in a source", async (_name, source) => {
     expect(await check(shape, source, "src/g/sources/good.ts")).toBe("pass");
   });
 
@@ -142,6 +197,6 @@ describe("architecture pack sources only emit", () => {
   });
 
   it("allows an import from sinkhole in a source", async () => {
-    expect(await check(shape, "import { x } from \"../sinkhole/x\";\nexport const used = x;\n", "src/g/sources/a.ts")).toBe("pass");
+    expect(await check(shape, "import { x } from \"../sinkhole/x\";\nexport type Used = typeof x;\n", "src/g/sources/a.ts")).toBe("pass");
   });
 });

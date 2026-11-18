@@ -470,13 +470,18 @@ Version 1 ships two practices and three Guardrails.
 
 - `architecture-world-only-in-sources` has two Guardrails.
   `architecture-world-modules` bans importing the world modules `fs`,
-  `child_process`, `net`, `http`, and similar outside a sources folder.
-  `architecture-world-timers` bans `setTimeout`, `setInterval`,
-  `setImmediate`, `fetch`, `XMLHttpRequest`, and `WebSocket` there.
+  `child_process`, `net`, `http`, `timers`, and similar outside a sources
+  folder. `architecture-world-globals` bans `setTimeout`, `setInterval`,
+  `setImmediate`, `fetch`, `XMLHttpRequest`, and `WebSocket` there. This
+  Guardrail was named `architecture-world-timers` before version 1 shipped.
 - `architecture-sources-only-emit` has one Guardrail,
   `architecture-source-shape`. It bans a source from importing, re-exporting,
-  or dynamically loading a sink. It also requires every function a source
-  exports to declare an `Observable` return type.
+  requiring, or dynamically loading a sink. A type-only import or re-export
+  from a sink passes. It also bans a source from re-exporting a world module,
+  exporting an alias of another value, exporting a list of local values, or
+  exporting a class. Every function a source exports must declare an
+  `Observable` return type, either `Observable` or a qualified name such as
+  `rx.Observable`.
 
 Limits of what version 1 covers:
 
@@ -488,4 +493,19 @@ Limits of what version 1 covers:
 - `architecture-world-modules` doesn't see `require("fs")` or a dynamic
   `import("fs")`. The clock check covers timers only, not `Date.now()` or
   `new Date()`. Both gaps are recorded in `cm-wkqedr.25`.
+- Member-access globals, such as `globalThis.setTimeout` and `window.fetch`,
+  pass the world boundary. So do third-party packages that reach the world,
+  such as `fs-extra`. Both gaps are recorded in `cm-wkqedr.25`.
+- `import type` from a world module still fails the world boundary, because
+  the core rule has no option for type-only imports.
+- Version 1 has no composition-root exemption, so a composition root that
+  reaches the world fails. Until per-pack settings exist (`cm-wkqedr.25`), a
+  project scopes the pack with the `paths` in its config to its group
+  collections, so composition roots fall outside the pack.
+- Only `*.test.*`, `*.spec.*`, and `*.config.*` files, and files under a
+  `test/`, `tests/`, or `__tests__/` folder, count as test or config files.
+  The world boundary skips them.
+- This pack owns the ESLint core rules `no-restricted-imports`,
+  `no-restricted-globals`, and `no-restricted-syntax`. No other pack can use
+  them until `cm-wkqedr.25` lets Guardrails share a rule.
 - Every other ARCH practice waits on `cm-wkqedr.25`.
