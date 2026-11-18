@@ -3,6 +3,7 @@ import { join, relative } from "node:path";
 import { ESLint } from "eslint";
 import tseslint from "typescript-eslint";
 import { plugin } from "../../eslint-plugin/index.js";
+import { pathGroups } from "../records/paths.js";
 import type { Guardrail, Practice, RecordSet } from "../records/types.js";
 import { type Adapter, PARSE_ERROR, type RunContext, type RunResult, type Violation } from "./types.js";
 
@@ -13,13 +14,12 @@ const ruleId = (g: Guardrail): string => g.implementation.slice(g.implementation
 const ruleValue = (options: unknown): unknown =>
   options === undefined ? "error" : Array.isArray(options) ? ["error", ...options] : ["error", options];
 
-const owner = (g: Guardrail, set: RecordSet): { practice?: Practice; paths: string[] } => {
+const owner = (g: Guardrail, set: RecordSet): { practice?: Practice; paths: (string | string[])[] } => {
   for (const pack of set.packs) {
     for (const practice of pack.practices) {
       if (!practice.guardrails.some((x) => x.id === g.id)) continue;
-      if (practice.paths.length > 0) return { practice, paths: practice.paths };
       const entry = set.config.packs.find((p) => p.id === pack.id);
-      return { practice, paths: entry ? entry.paths : [] };
+      return { practice, paths: pathGroups(practice.paths, entry ? entry.paths : []).map((grp) => (grp.length === 1 ? (grp[0] as string) : grp)) };
     }
   }
   return { paths: [] };

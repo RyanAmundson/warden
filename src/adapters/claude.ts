@@ -6,7 +6,7 @@ const DENY = ["Edit(.warden/**)", "Write(.warden/**)", "Bash(git commit*--no-ver
 
 const HOOK = {
   matcher: "Edit|Write|MultiEdit",
-  hooks: [{ type: "command", command: "npx warden check --format agent --hook claude" }],
+  hooks: [{ type: "command", command: "npx --no -- warden check --format agent --hook claude" }],
 };
 
 export const claudeSettingsAdapter: Adapter = {

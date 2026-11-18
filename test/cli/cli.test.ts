@@ -66,7 +66,7 @@ describe("warden CLI", () => {
     expect(r.err).toContain("already exists");
   });
 
-  it("explain no-comments prints its compliant example path", () => {
+  it("explain no-comments prints its compliant example source", () => {
     init();
     const r = warden("explain", "no-comments");
     expect(r.code, r.err).toBe(0);
@@ -120,5 +120,72 @@ describe("warden CLI", () => {
     git("commit", "-q", "-m", "adopt");
     await writeFile(join(root, "src/b.ts"), "// new\nexport const b = 1;\n");
     expect(warden("check").code).toBe(1);
+  });
+
+  it("a failed init leaves nothing behind, so the retry after the fix succeeds", async () => {
+    await writeFile(join(root, "src/broken.ts"), "export const = ;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "broken");
+    const r = warden("init");
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("src/broken.ts");
+    expect(r.err).toContain("Next action");
+    expect(existsSync(join(root, ".warden"))).toBe(false);
+    expect(existsSync(join(root, ".claude"))).toBe(false);
+    await writeFile(join(root, "src/broken.ts"), "export const b = 1;\n");
+    expect(warden("init").code).toBe(0);
+  });
+
+  it("a failed init restores a settings file that already existed", async () => {
+    await mkdir(join(root, ".claude"));
+    await writeFile(join(root, ".claude/settings.json"), '{"model":"x"}\n');
+    await writeFile(join(root, "src/broken.ts"), "export const = ;\n");
+    expect(warden("init").code).toBe(2);
+    expect(await readFile(join(root, ".claude/settings.json"), "utf8")).toBe('{"model":"x"}\n');
+    expect(existsSync(join(root, ".warden"))).toBe(false);
+  });
+
+  it("init outside a git repository exits 2 and leaves nothing behind", async () => {
+    await rm(join(root, ".git"), { recursive: true });
+    const r = warden("init");
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("not a git repository");
+    expect(existsSync(join(root, ".warden"))).toBe(false);
+    expect(existsSync(join(root, ".claude"))).toBe(false);
+  });
+
+  it("compile exits 2 when records have findings", async () => {
+    await mkdir(join(root, ".warden/packs/local"), { recursive: true });
+    await writeFile(
+      join(root, ".warden/config.yaml"),
+      'warden: "0.1.0"\nproject: p\nbase: main\npacks:\n  - id: local\n    paths: ["src/**"]\ntierBudgetMs: { edit: 1, commit: 1, boundary: 1 }\nloopBreakerRepeats: 3\n',
+    );
+    await writeFile(
+      join(root, ".warden/packs/local/pack.yaml"),
+      [
+        "id: local",
+        "layer: 1",
+        "terms: []",
+        "practices:",
+        "  - id: no-var",
+        "    statement: Declare with const.",
+        "    terms: []",
+        "    paths: []",
+        "    conflictsWith: []",
+        "    guardrails:",
+        "      - id: local-no-var",
+        "        kind: lint",
+        "        runs: [edit]",
+        "        budgetMs: 5000",
+        "        version: 1",
+        '        implementation: "eslint:no-var"',
+        '        mustFail: "const a = 1;\\n"',
+        '        mustPass: "const a = 1;\\n"',
+        "",
+      ].join("\n"),
+    );
+    const r = warden("compile");
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("example-failed");
   });
 });

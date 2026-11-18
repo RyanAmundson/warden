@@ -5,8 +5,8 @@
     "packs/core/pack.yaml": "c7505f2b6ac97f958e796666b00c2afa6c9837856f1b4115cf0236da0d226037"
   },
   "generated": {
-    ".claude/settings.json#warden": "ce571216c5471f897acfe719c1e7a96e953197954436214540e000697de27fc7",
-    ".warden/generated/eslint.rules.json": "476d3a138c33c2106a0ee51cb12dc8b35ee49d81fcf4273e5c5fba90803ec86e"
+    ".claude/settings.json#warden": "25442c509b425992d4d264b54b5e5df9a3141d8f92a972248a704afaf737cc6b",
+    ".warden/generated/eslint.rules.json": "37614007bd1e9526df7229bb8c62b4ee2ddd703812b734d9da56217e2a04949a"
   },
   "guardrails": {
     "warden-no-comments": {
@@ -20,7 +20,16 @@
         "edit"
       ],
       "paths": [
-        "**/*.{ts,tsx,mts,cts}"
+        "**/*.{ts,tsx,mts,cts} & eslint-plugin/**/*.ts",
+        "**/*.{ts,tsx,mts,cts} & src/**/*.ts",
+        "**/*.{ts,tsx,mts,cts} & test/*.ts",
+        "**/*.{ts,tsx,mts,cts} & test/adapters/*.ts",
+        "**/*.{ts,tsx,mts,cts} & test/cli/*.ts",
+        "**/*.{ts,tsx,mts,cts} & test/compiler/*.ts",
+        "**/*.{ts,tsx,mts,cts} & test/eslint-plugin/*.ts",
+        "**/*.{ts,tsx,mts,cts} & test/records/*.ts",
+        "**/*.{ts,tsx,mts,cts} & test/runner/*.ts",
+        "**/*.{ts,tsx,mts,cts} & vitest.config.ts"
       ]
     },
     "warden-no-suppressions": {
@@ -34,7 +43,16 @@
         "edit"
       ],
       "paths": [
-        "**/*.{ts,tsx,mts,cts}"
+        "**/*.{ts,tsx,mts,cts} & eslint-plugin/**/*.ts",
+        "**/*.{ts,tsx,mts,cts} & src/**/*.ts",
+        "**/*.{ts,tsx,mts,cts} & test/*.ts",
+        "**/*.{ts,tsx,mts,cts} & test/adapters/*.ts",
+        "**/*.{ts,tsx,mts,cts} & test/cli/*.ts",
+        "**/*.{ts,tsx,mts,cts} & test/compiler/*.ts",
+        "**/*.{ts,tsx,mts,cts} & test/eslint-plugin/*.ts",
+        "**/*.{ts,tsx,mts,cts} & test/records/*.ts",
+        "**/*.{ts,tsx,mts,cts} & test/runner/*.ts",
+        "**/*.{ts,tsx,mts,cts} & vitest.config.ts"
       ]
     }
   },

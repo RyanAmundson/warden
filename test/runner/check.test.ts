@@ -7,7 +7,7 @@ import { eslintAdapter } from "../../src/adapters/eslint.js";
 import { PARSE_ERROR, type RunResult } from "../../src/adapters/types.js";
 import { runCheck } from "../../src/cli/check.js";
 import { compile } from "../../src/compiler/compile.js";
-import { sha256 } from "../../src/compiler/lock.js";
+import { readLock, sha256 } from "../../src/compiler/lock.js";
 import { applyBaseline } from "../../src/runner/baseline.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
@@ -491,6 +491,19 @@ describe("review fixes", () => {
     await write("b.ts", "var b = 1;\n");
     expect((await check()).code).toBe(1);
     expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "loosened" }]);
+  });
+
+  it("a Guardrail runs only where the pack paths and the Practice paths both match", async () => {
+    await write(".warden/config.yaml", config(["core", "local"]).replace('paths: ["**/*.ts"]', 'paths: ["src/**/*.ts"]'));
+    await recompile();
+    git("add", "-A");
+    git("commit", "-q", "-m", "narrow");
+    git("branch", "-f", "main", "HEAD");
+    expect(readLock(root).guardrails["warden-no-comments"]?.paths).toEqual(["**/*.{ts,tsx,mts,cts} & src/**/*.ts"]);
+    await write("fixtures/y.ts", "// c\nconst y = 1;\n");
+    expect((await check({ paths: ["fixtures/y.ts"] })).code).toBe(0);
+    await write("src/x.ts", "// c\nconst x = 1;\n");
+    expect((await check({ paths: ["src/x.ts"] })).code).toBe(1);
   });
 
   it("adding a path and recompiling passes", async () => {

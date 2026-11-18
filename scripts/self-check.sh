@@ -1,9 +1,17 @@
 #!/bin/sh
 set -eu
+if [ $# -ne 1 ]; then
+  echo "usage: self-check.sh <release-tag>" >&2
+  exit 2
+fi
+tag=$1
 root=$(git rev-parse --show-toplevel)
-tag=$(git -C "$root" tag --sort=-v:refname | head -n 1)
-if [ -z "$tag" ]; then
-  echo "self-check: no release tag exists to check with" >&2
+if ! git -C "$root" diff --quiet; then
+  echo "self-check: tracked files differ from the index; stage or discard unstaged changes, then commit." >&2
+  exit 1
+fi
+if ! git -C "$root" rev-parse --verify --quiet "$tag^{commit}" >/dev/null; then
+  echo "self-check: tag $tag does not exist" >&2
   exit 2
 fi
 work=$(mktemp -d "${TMPDIR:-/tmp}/warden-self-check.XXXXXX")

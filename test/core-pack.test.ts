@@ -15,7 +15,7 @@ const config = [
   "base: main",
   "packs:",
   "  - id: core",
-  "    paths: [\"**/*.ts\"]",
+  "    paths: [\"**/*.{ts,tsx,mts,cts}\"]",
   "tierBudgetMs: { edit: 1000, commit: 2000, boundary: 5000 }",
   "loopBreakerRepeats: 3",
   "",

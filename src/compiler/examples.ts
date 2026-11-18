@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { adapters, runGuardrails } from "../runner/run.js";
+import { pathGroups } from "../records/paths.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
 import { type Adapter, PARSE_ERROR } from "../adapters/types.js";
 import type { Finding } from "./consistency.js";
@@ -21,8 +22,7 @@ export async function runExamples(set: RecordSet, wardenRoot: string): Promise<F
     const ctx = { root: project, generatedDir: join(project, ".warden/generated") };
     for (const pack of set.packs) {
       for (const practice of pack.practices) {
-        const globs = practice.paths.length > 0 ? practice.paths : (set.config.packs.find((p) => p.id === pack.id)?.paths ?? []);
-        const file = exampleFile(globs[0]);
+        const file = exampleFile(pathGroups(practice.paths, set.config.packs.find((p) => p.id === pack.id)?.paths ?? [])[0]?.at(-1));
         for (const g of practice.guardrails) {
           if (g.kind === "legacy" || g.kind === "instruction") continue;
           const adapter = adapters.get(g.implementation.slice(0, g.implementation.indexOf(":")));

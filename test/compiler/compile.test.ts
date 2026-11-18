@@ -69,7 +69,7 @@ describe("compile", () => {
       implementation: "eslint:warden/no-comments",
       options: null,
       runs: ["commit", "edit"],
-      paths: ["**/*.{ts,tsx,mts,cts}"],
+      paths: ["**/*.{ts,tsx,mts,cts} & src/**"],
     });
     expect(lock.config).toEqual({ tierBudgetMs: { edit: 2000, commit: 30000, boundary: 120000 }, loopBreakerRepeats: 3 });
   });
@@ -106,7 +106,7 @@ describe("compile", () => {
     expect(entries[0]).toEqual(other);
     expect(entries[1]).toEqual({
       matcher: "Edit|Write|MultiEdit",
-      hooks: [{ type: "command", command: "npx warden check --format agent --hook claude" }],
+      hooks: [{ type: "command", command: "npx --no -- warden check --format agent --hook claude" }],
     });
     expect(first.endsWith("}\n")).toBe(true);
   });

@@ -28,17 +28,16 @@ const oneOf = <T extends string>(name: string, value: string, allowed: readonly 
 
 const program = new Command("warden").exitOverride();
 const root = (): string => resolve(process.cwd());
-const wardenRoot = findWardenRoot();
 
 program.command("init").description("create .warden, compile, and baseline current violations").action(async () => {
-  process.exitCode = await runInit(root(), wardenRoot);
+  process.exitCode = await runInit(root(), findWardenRoot());
 });
 
 program.command("compile").description("compile records into tool configs and the lock").action(async () => {
-  const { findings, written } = await compile(root(), wardenRoot);
+  const { findings, written } = await compile(root(), findWardenRoot());
   for (const f of findings) process.stderr.write(`${f.code} ${f.record}: ${f.message}\n`);
   if (findings.length === 0) process.stdout.write(`${written.join("\n")}\n`);
-  process.exitCode = findings.length > 0 ? 1 : 0;
+  process.exitCode = findings.length > 0 ? 2 : 0;
 });
 
 program
@@ -51,7 +50,7 @@ program
   .action(async (paths: string[], o: { rule?: string; tier: string; format: string; hook?: string }) => {
     process.exitCode = await runCheck({
       root: root(),
-      wardenRoot,
+      wardenRoot: findWardenRoot(),
       paths: paths.length > 0 ? paths : undefined,
       rule: o.rule,
       tier: oneOf<Tier>("tier", o.tier, ["edit", "commit", "boundary"]),
@@ -61,11 +60,11 @@ program
   });
 
 program.command("explain <id>").description("explain a Practice or Guardrail").action(async (id: string) => {
-  process.exitCode = await runExplain(root(), wardenRoot, id);
+  process.exitCode = await runExplain(root(), findWardenRoot(), id);
 });
 
 program.command("report").description("one row per Guardrail").option("--json", "print JSON").action(async (o: { json?: boolean }) => {
-  process.exitCode = await runReport(root(), wardenRoot, o.json === true);
+  process.exitCode = await runReport(root(), findWardenRoot(), o.json === true);
 });
 
 try {

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathGroups } from "../records/paths.js";
 import type { Kind, ProjectConfig, RecordSet, Tier } from "../records/types.js";
 
 export interface Lock {
@@ -50,7 +51,7 @@ export function computeLock(
   const guardrails = set.packs
     .flatMap((pack) =>
       pack.practices.flatMap((practice) => {
-        const paths = practice.paths.length > 0 ? practice.paths : (set.config.packs.find((p) => p.id === pack.id)?.paths ?? []);
+        const paths = pathGroups(practice.paths, set.config.packs.find((p) => p.id === pack.id)?.paths ?? []).map((g) => g.join(" & "));
         return practice.guardrails.map((g): [string, LockedGuardrail] => [
           g.id,
           {
