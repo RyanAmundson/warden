@@ -653,6 +653,16 @@ describe("final review: legacy feedback", () => {
   });
 });
 
+describe("final review: project-wide baseline", () => {
+  it("a baseline entry for the whole project is tampering, so it cannot silence a legacy Guardrail", async () => {
+    await addLegacy("commit", "exit 1", 5000);
+    await write(".warden/baseline.json", JSON.stringify({ "warden-no-comments": { "a.ts": 1 }, "legacy-script": { "": 1 } }));
+    const { code } = await check();
+    expect(code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/baseline.json", detail: "loosened" }]);
+  });
+});
+
 describe("applyBaseline", () => {
   const result = (guardrail: string, files: string[], status: RunResult["status"] = "fail"): RunResult => ({
     guardrail,
@@ -667,10 +677,10 @@ describe("applyBaseline", () => {
     expect(next).toEqual({});
   });
 
-  it("keys project-wide violations under the empty file", () => {
-    const baseline = { legacy: { "": 1 } };
-    expect(applyBaseline([result("legacy", [""])], baseline, ["a.ts"], () => true)).toEqual({ failures: [], next: baseline });
-    expect(applyBaseline([result("legacy", ["", ""])], baseline, ["a.ts"], () => true).failures).toHaveLength(2);
+  it("project-wide violations always fail and are never baselined", () => {
+    const { failures, next } = applyBaseline([result("legacy", [""])], {}, ["a.ts"], () => true);
+    expect(failures).toHaveLength(1);
+    expect(next).toEqual({});
   });
 
   it("a killed result keeps the baseline", () => {

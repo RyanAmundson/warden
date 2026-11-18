@@ -15,7 +15,11 @@ export function readBaseline(root: string): Baseline {
   }
 }
 
+export const projectWideEntries = (b: Baseline): string[] => Object.keys(b).filter((g) => "" in (b[g] as Record<string, number>));
+
 export function writeBaseline(root: string, b: Baseline): void {
+  const projectWide = projectWideEntries(b);
+  if (projectWide.length > 0) throw new Error(`refusing to baseline project-wide failures of ${projectWide.join(", ")}`);
   writeFileSync(join(root, BASELINE_PATH), `${JSON.stringify(b, null, 2)}\n`);
 }
 
@@ -27,7 +31,7 @@ export function applyBaseline(
 ): { failures: Violation[]; next: Baseline } {
   const next: Baseline = {};
   for (const [g, entries] of Object.entries(baseline)) {
-    next[g] = Object.fromEntries(Object.entries(entries).filter(([f]) => f === "" || existing(f)));
+    next[g] = Object.fromEntries(Object.entries(entries).filter(([f]) => existing(f)));
   }
   const failures: Violation[] = [];
   const parseErrors = results.filter((r) => r.guardrail === PARSE_ERROR).flatMap((r) => r.violations);
@@ -36,7 +40,8 @@ export function applyBaseline(
   delete next[PARSE_ERROR];
   for (const r of results) {
     if (r.status === "killed" || r.guardrail === PARSE_ERROR) continue;
-    const byFile = new Map<string, Violation[]>(["", ...scanned].filter((f) => !unparsed.has(f)).map((f) => [f, []]));
+    const byFile = new Map<string, Violation[]>(scanned.filter((f) => !unparsed.has(f)).map((f) => [f, []]));
+    failures.push(...r.violations.filter((v) => v.file === ""));
     for (const v of r.violations) byFile.get(v.file)?.push(v);
     const entries = next[r.guardrail] ?? {};
     for (const [file, vs] of byFile) {

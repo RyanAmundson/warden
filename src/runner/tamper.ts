@@ -5,7 +5,7 @@ import { isWardenEntry } from "../compiler/emit.js";
 import { LOCK_PATH, type Lock, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError, readText } from "../records/load.js";
 import type { RecordSet } from "../records/types.js";
-import { BASELINE_PATH, type Baseline, readBaseline } from "./baseline.js";
+import { BASELINE_PATH, type Baseline, projectWideEntries, readBaseline } from "./baseline.js";
 import { showAtMergeBase } from "./changed.js";
 
 export interface Tamper {
@@ -119,5 +119,6 @@ export async function findTampering(set: RecordSet, wardenRoot: string, base: st
     if (actual === undefined || sha256(actual) !== hash) found.push({ file, detail: "generated-drift" });
   }
 
+  found.push(...projectWideEntries(readBaseline(root)).map((guardrail): Tamper => ({ file: BASELINE_PATH, detail: "loosened", guardrail })));
   return [...found, ...loosened(root, base, lock)];
 }
