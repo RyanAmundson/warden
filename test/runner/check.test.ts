@@ -663,6 +663,52 @@ describe("final review: project-wide baseline", () => {
   });
 });
 
+describe("final review: changed lines and renames", () => {
+  it("a comment swapped for another at equal count fails on the changed line", async () => {
+    await write("a.ts", "// rewritten\nconst a = 1;\n");
+    const { code, out } = await check({ format: "json" });
+    expect(code).toBe(1);
+    expect(failedFiles(out)).toEqual(["a.ts"]);
+  });
+
+  it("a violation on a changed line fails at the edit tier too", async () => {
+    await write("a.ts", "// rewritten\nconst a = 1;\n");
+    expect((await check({ tier: "edit" })).code).toBe(1);
+  });
+
+  it("a changed line in a file whose name has a space fails", async () => {
+    await write("a b.ts", "const x = 1;\n");
+    await write(".warden/baseline.json", `${JSON.stringify({ "warden-no-comments": { "a.ts": 1, "a b.ts": 1 } })}\n`);
+    git("add", "-A");
+    git("commit", "-q", "-m", "spaced");
+    git("branch", "-f", "main", "HEAD");
+    await write("a b.ts", "// c\nconst x = 1;\n");
+    expect((await check()).code).toBe(1);
+  });
+
+  it("an untouched baselined line still passes when other lines change", async () => {
+    await write("a.ts", "// one\nconst a = 1;\nexport const b = a;\n");
+    expect((await check()).code).toBe(0);
+  });
+
+  it("a renamed file keeps its baselined counts", async () => {
+    git("mv", "a.ts", "renamed.ts");
+    expect((await check()).code).toBe(0);
+    expect(JSON.parse(await read(".warden/baseline.json"))).toEqual({ "warden-no-comments": { "renamed.ts": 1 } });
+    const again = await check();
+    expect(again.code).toBe(0);
+    expect(await tampered()).toEqual([]);
+  });
+
+  it("a renamed file still fails on its changed lines", async () => {
+    git("mv", "a.ts", "renamed.ts");
+    await write("renamed.ts", "// one\nconst a = 1;\n// two\n");
+    const { code, out } = await check({ format: "json" });
+    expect(code).toBe(1);
+    expect((JSON.parse(out) as { failures: { file: string; line: number }[] }).failures.map((f) => `${f.file}:${f.line}`)).toEqual(["renamed.ts:3"]);
+  });
+});
+
 describe("applyBaseline", () => {
   const result = (guardrail: string, files: string[], status: RunResult["status"] = "fail"): RunResult => ({
     guardrail,

@@ -5,8 +5,8 @@ import { isWardenEntry } from "../compiler/emit.js";
 import { LOCK_PATH, type Lock, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError, readText } from "../records/load.js";
 import type { RecordSet } from "../records/types.js";
-import { BASELINE_PATH, type Baseline, projectWideEntries, readBaseline } from "./baseline.js";
-import { showAtMergeBase } from "./changed.js";
+import { BASELINE_PATH, type Baseline, carryRenames, projectWideEntries, readBaseline } from "./baseline.js";
+import { changesSinceMergeBase, showAtMergeBase } from "./changed.js";
 
 export interface Tamper {
   file: string;
@@ -79,8 +79,9 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
       canonicalJson(now.options) !== canonicalJson(g.options);
     if (weaker) found.push({ file: LOCK_PATH, detail: "loosened", guardrail: id });
   }
-  const baseBaseline = JSON.parse(showAtMergeBase(root, base, BASELINE_PATH) ?? "{}") as Baseline;
-  for (const [id, entries] of Object.entries(readBaseline(root))) {
+  const { renames } = changesSinceMergeBase(root, base);
+  const baseBaseline = carryRenames(JSON.parse(showAtMergeBase(root, base, BASELINE_PATH) ?? "{}") as Baseline, renames);
+  for (const [id, entries] of Object.entries(carryRenames(readBaseline(root), renames))) {
     if (id in lock.guardrails && !(id in before.guardrails)) continue;
     for (const [file, n] of Object.entries(entries)) {
       if (n > (baseBaseline[id]?.[file] ?? 0)) found.push({ file: BASELINE_PATH, detail: "loosened", guardrail: id });

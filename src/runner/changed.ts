@@ -50,8 +50,45 @@ export function lastCommittedText(root: string, path: string): string | undefine
   return before.ok ? before.out : undefined;
 }
 
+const mergeBase = (root: string, base: string): string => must(root, ["merge-base", base, "HEAD"]).trim();
+
+export interface Changes {
+  lines: Map<string, Set<number> | "all">;
+  renames: Map<string, string>;
+}
+
+const HUNK = /^@@ -\S+ \+(\d+)(?:,(\d+))? @@/;
+
+export function changesSinceMergeBase(root: string, base: string): Changes {
+  const at = mergeBase(root, base);
+  const lines: Changes["lines"] = new Map();
+  let current: Set<number> | undefined;
+  const patch = must(root, ["-c", "core.quotePath=false", "diff", "-U0", "-M", "--no-color", "--no-ext-diff", "--relative", "--src-prefix=a/", "--dst-prefix=b/", at]);
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("+++ ")) {
+      current = line.startsWith("+++ b/") ? new Set() : undefined;
+      if (current !== undefined) lines.set(line.slice("+++ b/".length).replace(/\t$/, ""), current);
+      continue;
+    }
+    const hunk = HUNK.exec(line);
+    if (hunk === null || current === undefined) continue;
+    const start = Number(hunk[1]);
+    const count = hunk[2] === undefined ? 1 : Number(hunk[2]);
+    for (let n = start; n < start + count; n++) current.add(n);
+  }
+  for (const file of names(must(root, ["ls-files", "-z", "--others", "--exclude-standard"]))) lines.set(file, "all");
+  const renames = new Map<string, string>();
+  const status = names(must(root, ["diff", "-z", "-M", "--name-status", "--relative", at]));
+  for (let i = 0; i < status.length; i++) {
+    const kind = status[i] as string;
+    if (kind.startsWith("R")) renames.set(status[i + 1] as string, status[i + 2] as string);
+    i += kind.startsWith("R") || kind.startsWith("C") ? 2 : 1;
+  }
+  return { lines, renames };
+}
+
 export function showAtMergeBase(root: string, base: string, path: string): string | undefined {
-  const spec = `${must(root, ["merge-base", base, "HEAD"]).trim()}:./${path}`;
+  const spec = `${mergeBase(root, base)}:./${path}`;
   if (!git(root, ["cat-file", "-e", spec]).ok) return undefined;
   return must(root, ["show", spec]);
 }

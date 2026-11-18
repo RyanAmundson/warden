@@ -23,11 +23,26 @@ export function writeBaseline(root: string, b: Baseline): void {
   writeFileSync(join(root, BASELINE_PATH), `${JSON.stringify(b, null, 2)}\n`);
 }
 
+export function carryRenames(b: Baseline, renames: Map<string, string>): Baseline {
+  const out: Baseline = {};
+  for (const [g, entries] of Object.entries(b)) {
+    const carried = { ...entries };
+    for (const [from, to] of renames) {
+      if (carried[from] === undefined || carried[to] !== undefined) continue;
+      carried[to] = carried[from];
+      delete carried[from];
+    }
+    out[g] = carried;
+  }
+  return out;
+}
+
 export function applyBaseline(
   results: RunResult[],
   baseline: Baseline,
   scanned: string[],
   existing: (f: string) => boolean,
+  touched: (v: Violation) => boolean = () => false,
 ): { failures: Violation[]; next: Baseline } {
   const next: Baseline = {};
   for (const [g, entries] of Object.entries(baseline)) {
@@ -44,7 +59,9 @@ export function applyBaseline(
     failures.push(...r.violations.filter((v) => v.file === ""));
     for (const v of r.violations) byFile.get(v.file)?.push(v);
     const entries = next[r.guardrail] ?? {};
-    for (const [file, vs] of byFile) {
+    for (const [file, all] of byFile) {
+      failures.push(...all.filter(touched));
+      const vs = all.filter((v) => !touched(v));
       if (vs.length > (entries[file] ?? 0)) failures.push(...vs);
       else if (vs.length === 0) delete entries[file];
       else entries[file] = vs.length;
