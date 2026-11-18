@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -7,6 +8,7 @@ import { runBench } from "../../src/cli/bench.js";
 import { adapters } from "../../src/runner/run.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
+const version = (JSON.parse(readFileSync(join(wardenRoot, "package.json"), "utf8")) as { version: string }).version;
 
 let root: string;
 let home: string;
@@ -100,7 +102,7 @@ it("a time proportional to files is linear, one fixed time is constant, and both
   expect(out).not.toContain("Next action");
   const rows = await scaling();
   const lin = rows.find((e) => e.guardrail === "lin");
-  expect(lin).toMatchObject({ verdict: "linear", f: 3, warden: "0.1.0", points: [[25, 27], [50, 52], [100, 102], [200, 202]] });
+  expect(lin).toMatchObject({ verdict: "linear", f: 3, warden: version, points: [[25, 27], [50, 52], [100, 102], [200, 202]] });
   expect(rows.find((e) => e.guardrail === "flat")).toMatchObject({ verdict: "constant", f: 5, points: [[25, 5], [50, 5], [100, 5], [200, 5]] });
   expect(rows.find((e) => e.pack === "local")).toMatchObject({ verdict: "linear" });
 });
