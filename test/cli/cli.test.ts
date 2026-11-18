@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -7,6 +7,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
 const main = join(wardenRoot, "dist/src/cli/main.js");
+const bundled = readdirSync(join(wardenRoot, "packs")).sort((a, b) => a.localeCompare(b));
+const everyPack = [...bundled, "local"].join(",");
 
 let root: string;
 let home: string;
@@ -491,22 +493,22 @@ describe("warden CLI", () => {
       const r = warden("packs");
       expect(r.code, r.err).toBe(0);
       const lines = r.out.trim().split("\n");
-      expect(lines[0]).toMatch(/^core {2}bundled {2}\d+ practices {2}lint=\d+ {2}on {2}\*\*\/\*\.\{ts,tsx,js,mjs\}$/);
-      expect(lines[1]).toBe("local  local  1 practices  lint=1  off");
+      expect(lines).toHaveLength(bundled.length + 1);
+      expect(lines.find((l) => l.startsWith("core  "))).toMatch(/^core {2}bundled {2}\d+ practices {2}lint=\d+ {2}on {2}\*\*\/\*\.\{ts,tsx,js,mjs\}$/);
+      expect(lines.at(-1)).toBe("local  local  1 practices  lint=1  off");
     });
 
     it("packs --format json returns the same data", async () => {
       init();
       await localPack();
       const data = JSON.parse(warden("packs", "--format", "json").out) as { packs: { id: string; source: string; practices: number; on: boolean; paths: string[] }[] };
-      expect(data.packs.map((p) => [p.id, p.source, p.on])).toEqual([
-        ["core", "bundled", true],
-        ["local", "local", false],
-      ]);
-      expect(data.packs[1]?.practices).toBe(1);
-      expect(data.packs[1]).toMatchObject({ kinds: { lint: 1 } });
-      expect(Object.keys((data.packs[0] as unknown as { kinds: object }).kinds)).toEqual(["lint"]);
-      expect(data.packs[0]?.paths).toEqual(["**/*.{ts,tsx,js,mjs}"]);
+      expect(data.packs.map((p) => [p.id, p.source, p.on])).toEqual([...bundled.map((id) => [id, "bundled", id === "core"]), ["local", "local", false]]);
+      const core = data.packs.find((p) => p.id === "core");
+      const local = data.packs.find((p) => p.id === "local");
+      expect(local?.practices).toBe(1);
+      expect(local).toMatchObject({ kinds: { lint: 1 } });
+      expect(Object.keys((core as unknown as { kinds: object }).kinds)).toEqual(["lint"]);
+      expect(core?.paths).toEqual(["**/*.{ts,tsx,js,mjs}"]);
     });
 
     it("packs without a config shows everything off and ends with the init next action", async () => {
@@ -514,7 +516,7 @@ describe("warden CLI", () => {
       const r = warden("packs");
       expect(r.code, r.err).toBe(0);
       expect(r.out).not.toContain("  on");
-      expect(r.out.trim().split("\n").at(-1)).toBe("Next action: run warden init --packs core,local");
+      expect(r.out.trim().split("\n").at(-1)).toBe(`Next action: run warden init --packs ${everyPack}`);
     });
 
     it("init --packs core,local writes both, compiles, and locks both", async () => {
@@ -533,7 +535,7 @@ describe("warden CLI", () => {
       await localPack();
       const r = warden("init", "--packs", "core,nope");
       expect(r.code).toBe(2);
-      expect(r.err).toContain("Next action: run warden init --packs core,local.");
+      expect(r.err).toContain(`Next action: run warden init --packs ${everyPack}.`);
       expect(existsSync(join(root, ".warden/config.yaml"))).toBe(false);
       expect(warden("init", "--packs", "core,local").code).toBe(0);
     });
@@ -562,7 +564,7 @@ describe("warden CLI", () => {
       const r = warden("init", "--packs", "core,");
       expect(r.code).toBe(2);
       expect(r.err).toContain("empty pack id");
-      expect(r.err).toContain("Next action: run warden init --packs core,local.");
+      expect(r.err).toContain(`Next action: run warden init --packs ${everyPack}.`);
       expect(warden("init", "--packs", " core , local ").code).toBe(0);
     });
 
