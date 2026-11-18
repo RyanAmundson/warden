@@ -132,7 +132,7 @@ const check = async (opts: Partial<Parameters<typeof runCheck>[0]> = {}, stage =
     return true;
   });
   try {
-    const code = await runCheck({ root, wardenRoot, format: "text", ...opts });
+    const code = await runCheck({ root, wardenRoot, format: "text", base: "main", ...opts });
     return { code, out, err };
   } finally {
     o.mockRestore();
@@ -797,6 +797,28 @@ describe("residual fixes", () => {
     const { code, out } = await check({ format: "json" });
     expect(code).toBe(1);
     expect(failedFiles(out)).toEqual(["a.ts"]);
+  });
+
+  it("a base committed as the agent's own branch is loosening against the base the hook names", async () => {
+    await write(".warden/config.yaml", config(["core", "local"]).replace("base: main", "base: feature"));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    git("add", "-A");
+    git("commit", "-q", "-m", "own base");
+    expect((await check({ base: "main" })).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "loosened" }]);
+  });
+
+  it("check without --base exits 2 and names the command to run", async () => {
+    const { code, err } = await check({ base: undefined });
+    expect(code).toBe(2);
+    expect(err).toContain("Next action: run warden check --base main");
+  });
+
+  it("the emitted hook command names the base it was compiled with", async () => {
+    const settings = JSON.parse(await read(".claude/settings.json")) as { hooks: { PostToolUse: { hooks: { command: string }[] }[] } };
+    expect(settings.hooks.PostToolUse.flatMap((e) => e.hooks.map((h) => h.command))).toEqual([
+      "npx --no -- warden check --format agent --hook claude --base 'main'",
+    ]);
   });
 });
 

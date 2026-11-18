@@ -107,7 +107,7 @@ describe("compile", () => {
     expect(entries[0]).toEqual(other);
     expect(entries[1]).toEqual({
       matcher: "Edit|Write|MultiEdit",
-      hooks: [{ type: "command", command: "npx --no -- warden check --format agent --hook claude" }],
+      hooks: [{ type: "command", command: "npx --no -- warden check --format agent --hook claude --base 'main'" }],
     });
     expect(first.endsWith("}\n")).toBe(true);
   });

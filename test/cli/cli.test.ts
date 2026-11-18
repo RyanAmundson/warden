@@ -58,7 +58,7 @@ describe("warden CLI", () => {
     expect(baseline["warden-no-comments"]).toEqual({ "src/a.ts": 1 });
     git("add", "-A");
     git("commit", "-q", "-m", "adopt");
-    expect(warden("check").code).toBe(0);
+    expect(warden("check", "--base", "main").code).toBe(0);
   });
 
   it("init refuses when .warden exists", () => {
@@ -99,20 +99,20 @@ describe("warden CLI", () => {
       join(root, ".warden/config.yaml"),
       'warden: "0.1.0"\nproject: p\nbase: main\npacks:\n  - id: core\n    paths: ["**/*.ts"]\ntierBudgetMs: { edit: 1, commit: 1, boundary: 1 }\nloopBreakerRepeats: 3\n',
     );
-    const r = warden("check");
+    const r = warden("check", "--base", "main");
     expect(r.code).toBe(2);
     expect(r.err).toContain("warden compile");
   });
 
   it("check outside any project says to run warden init", () => {
-    const r = warden("check");
+    const r = warden("check", "--base", "main");
     expect(r.code).toBe(2);
     expect(r.err).toContain("warden init");
   });
 
   it("an invalid flag value is a usage error, exit 2", () => {
     init();
-    expect(warden("check", "--tier", "bogus").code).toBe(2);
+    expect(warden("check", "--base", "main", "--tier", "bogus").code).toBe(2);
     expect(warden("bogus").code).toBe(2);
   });
 
@@ -121,7 +121,7 @@ describe("warden CLI", () => {
     git("add", "-A");
     git("commit", "-q", "-m", "adopt");
     await writeFile(join(root, "src/b.ts"), "// new\nexport const b = 1;\n");
-    expect(warden("check").code).toBe(1);
+    expect(warden("check", "--base", "main").code).toBe(1);
   });
 
   it("a failed init leaves nothing behind, so the retry after the fix succeeds", async () => {
@@ -197,9 +197,9 @@ describe("warden CLI", () => {
     git("commit", "-q", "-m", "adopt");
     await writeFile(join(root, "src/b.ts"), "// new\nexport const b = 1;\n");
     const input = JSON.stringify({ tool_input: { file_path: join(root, "src/b.ts") } });
-    const reasons = [1, 2, 3].map(() => (JSON.parse(wardenIn(root, input, "check", "--format", "agent", "--hook", "claude").out) as { reason: string }).reason);
+    const reasons = [1, 2, 3].map(() => (JSON.parse(wardenIn(root, input, "check", "--base", "main", "--format", "agent", "--hook", "claude").out) as { reason: string }).reason);
     expect(reasons[2]).toContain("Next action: stop editing this file");
-    const bad = wardenIn(root, "not json", "check", "--format", "agent", "--hook", "claude");
+    const bad = wardenIn(root, "not json", "check", "--base", "main", "--format", "agent", "--hook", "claude");
     expect(bad.code).toBe(2);
     expect(bad.err).toContain("hook input");
   });
@@ -209,7 +209,7 @@ describe("warden CLI", () => {
     git("add", "-A");
     git("commit", "-q", "-m", "adopt");
     await writeFile(join(root, "src/b.ts"), "// new\nexport const b = 1;\n");
-    const r = wardenIn(join(root, "src"), "", "check", "b.ts", "--format", "json");
+    const r = wardenIn(join(root, "src"), "", "check", "b.ts", "--base", "main", "--format", "json");
     expect(r.code, r.err).toBe(1);
     expect((JSON.parse(r.out) as { failures: { file: string }[] }).failures.map((f) => f.file)).toEqual(["src/b.ts"]);
   });

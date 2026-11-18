@@ -54,12 +54,14 @@ program
   .option("--tier <tier>", "edit, commit, or boundary", "commit")
   .option("--format <format>", "text, agent, or json", "text")
   .option("--hook <hook>", "claude")
-  .action(async (paths: string[], o: { rule?: string; tier: string; format: string; hook?: string }) => {
+  .option("--base <ref>", "the branch this work merges into")
+  .action(async (paths: string[], o: { rule?: string; tier: string; format: string; hook?: string; base?: string }) => {
     process.exitCode = await runCheck({
       root: root(),
       wardenRoot: findWardenRoot(),
       paths: paths.length > 0 ? paths.map((p) => resolve(p)) : undefined,
       rule: o.rule,
+      base: o.base,
       tier: oneOf<Tier>("tier", o.tier, ["edit", "commit", "boundary"]),
       format: oneOf<Format>("format", o.format, ["text", "agent", "json"]),
       hook: o.hook === undefined ? undefined : oneOf("hook", o.hook, ["claude"] as const),

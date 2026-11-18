@@ -19,6 +19,7 @@ export interface CheckOptions {
   paths?: string[];
   rule?: string;
   tier?: Tier;
+  base?: string;
   format: Format;
   hook?: "claude";
   hookInput?: string;
@@ -32,13 +33,19 @@ const selectGuardrails = (set: RecordSet, rule: string | undefined): Guardrail[]
   return gs;
 };
 
-const removedWarden = (root: string): { set: RecordSet; tamper: Tamper } | undefined => {
+const requireBase = (base: string | undefined, configured: string): string => {
+  if (base !== undefined) return base;
+  throw new RecordError("", "/base", `--base is missing; Warden takes the base branch from the command, never from the editable config. Next action: run warden check --base ${configured}`);
+};
+
+const removedWarden = (root: string, given: string | undefined): { set: RecordSet; tamper: Tamper } | undefined => {
   if (existsSync(join(root, ".warden"))) return undefined;
   const text = lastCommittedText(root, ".warden/config.yaml");
   if (text === undefined) return undefined;
   const config = parseConfig(".warden/config.yaml", text);
-  verifyBase(root, config.base);
-  if (showAtMergeBase(root, config.base, LOCK_PATH) === undefined) return undefined;
+  const base = requireBase(given, config.base);
+  verifyBase(root, base);
+  if (showAtMergeBase(root, base, LOCK_PATH) === undefined) return undefined;
   return { set: { config, packs: [], root }, tamper: { file: ".warden", detail: "removed" } };
 };
 
@@ -120,7 +127,7 @@ const report = (failures: Violation[], set: RecordSet, opts: CheckOptions, notes
 const check = async (opts: CheckOptions): Promise<number> => {
   const root = resolve(opts.root);
   const at = new Date().toISOString();
-  const removed = removedWarden(root);
+  const removed = removedWarden(root, opts.base);
   if (removed !== undefined) {
     appendEvidence(removed.set.config.project, { at, kind: "tampered", file: removed.tamper.file, detail: removed.tamper.detail });
     return report([], removed.set, opts, { tampered: [removed.tamper] });
@@ -129,7 +136,8 @@ const check = async (opts: CheckOptions): Promise<number> => {
     throw new RecordError(".warden/config.yaml", "", "not found. Next action: run warden init.");
   }
   const set = await loadRecords(root, opts.wardenRoot);
-  const { project, base, loopBreakerRepeats } = set.config;
+  const { project, loopBreakerRepeats } = set.config;
+  const base = requireBase(opts.base, set.config.base);
   verifyBase(root, base);
   if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined) {
     throw new RecordError(LOCK_PATH, "", "not found; this project was never compiled. Next action: run warden compile.");
