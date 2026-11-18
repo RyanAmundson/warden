@@ -1,5 +1,5 @@
 id: collection-folders
-layer: 1
+layer: 3
 terms:
   - id: collection
     definition: A folder whose bracketed name, such as [services], marks it as an array of item folders of one kind.
