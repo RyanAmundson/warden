@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { compile } from "../../src/compiler/compile.js";
+import { runExamples } from "../../src/compiler/examples.js";
+import { loadRecords } from "../../src/records/load.js";
 import { readLock } from "../../src/compiler/lock.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
@@ -195,5 +197,32 @@ describe("compile", () => {
     expect(findings).toEqual([]);
     expect(written).toContain(".warden/generated/tsconfig.json");
     expect(JSON.parse(await read(".warden/generated/tsconfig.json"))["@generated"]).toMatch(HEADER);
+  });
+
+  it("a mustPass example that fails another guardrail is an example-conflict", async () => {
+    const guardrail = (id: string, rule: string, fail: string, pass: string): string =>
+      [
+        `      - id: ${id}`,
+        "        kind: lint",
+        "        runs: [edit]",
+        "        budgetMs: 5000",
+        "        version: 1",
+        `        implementation: "eslint:${rule}"`,
+        `        mustFail: ${JSON.stringify(fail)}`,
+        `        mustPass: ${JSON.stringify(pass)}`,
+      ].join("\n");
+    await usePack(
+      localPack(
+        [
+          "    guardrails:",
+          guardrail("local-no-var", "no-var", "var a = 1;\n", "let a = 1;\n"),
+          guardrail("local-prefer-const", "prefer-const", "let a = 1;\n", "const a = 1;\n"),
+        ].join("\n"),
+      ),
+    );
+    const set = await loadRecords(root, wardenRoot);
+    const findings = await runExamples(set, wardenRoot);
+    expect(findings.map((f) => `${f.code} ${f.record}`)).toEqual(["example-conflict local-no-var"]);
+    expect(findings[0]?.message).toContain("local-prefer-const");
   });
 });

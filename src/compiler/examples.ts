@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { adapters, runGuardrails } from "../runner/run.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
+import type { Adapter } from "../adapters/types.js";
 import type { Finding } from "./consistency.js";
 
 const TSCONFIG = JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", skipLibCheck: true }, include: ["**/*.ts"] });
@@ -16,6 +17,7 @@ export async function runExamples(set: RecordSet, wardenRoot: string): Promise<F
     await symlink(join(wardenRoot, "node_modules"), join(project, "node_modules"));
     await writeFile(join(project, "package.json"), "{}\n");
     await writeFile(join(project, "tsconfig.json"), TSCONFIG);
+    const checked: { g: Guardrail; file: string }[] = [];
     const ctx = { root: project, generatedDir: join(project, ".warden/generated") };
     for (const pack of set.packs) {
       for (const practice of pack.practices) {
@@ -25,6 +27,7 @@ export async function runExamples(set: RecordSet, wardenRoot: string): Promise<F
           if (g.kind === "legacy" || g.kind === "instruction") continue;
           const adapter = adapters.get(g.implementation.slice(0, g.implementation.indexOf(":")));
           if (adapter === undefined) continue;
+          checked.push({ g, file });
           for (const [label, want] of [["mustFail", "fail"], ["mustPass", "pass"]] as const) {
             const source = g[label];
             if (source === undefined) {
@@ -38,6 +41,17 @@ export async function runExamples(set: RecordSet, wardenRoot: string): Promise<F
               findings.push({ code: "example-failed", record: g.id, message: `Guardrail ${g.id} ${label} example did not ${want}.` });
             }
           }
+        }
+      }
+    }
+    for (const { g, file } of checked) {
+      if (g.mustPass === undefined) continue;
+      for (const other of checked) {
+        if (other.g === g || other.g.implementation.startsWith("cmd:")) continue;
+        const adapter = adapters.get(other.g.implementation.slice(0, other.g.implementation.indexOf(":"))) as Adapter;
+        const status = await runExample(other.g, adapter.emit([other.g], set), g.mustPass, file, ctx);
+        if (status === "fail") {
+          findings.push({ code: "example-conflict", record: g.id, message: `Guardrail ${g.id} mustPass example fails Guardrail ${other.g.id}.` });
         }
       }
     }
