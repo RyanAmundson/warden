@@ -222,8 +222,22 @@ describe("warden CLI", () => {
     git("branch", "-m", "trunk");
     const r = warden("init");
     expect(r.code).toBe(2);
-    expect(r.err).toContain("Next action: create a branch named main with git branch -M main, then run warden init again");
+    expect(r.err).toContain("Next action: run git checkout -B main, then git commit --allow-empty -m init if main has no commit, then run warden init again");
     expect(r.err).not.toContain("warden check");
+    git("checkout", "-B", "main");
+    expect(warden("init").code).toBe(0);
+  });
+
+  it("init when main has no commit yet names an action that ends with init succeeding", () => {
+    git("checkout", "-q", "--orphan", "fresh");
+    git("branch", "-D", "main");
+    git("symbolic-ref", "HEAD", "refs/heads/main");
+    const r = warden("init");
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("git commit --allow-empty -m init if main has no commit");
+    git("checkout", "-B", "main");
+    git("commit", "-q", "--allow-empty", "-m", "init");
+    expect(warden("init").code).toBe(0);
   });
 
   it("an invalid flag value is a usage error, exit 2", () => {

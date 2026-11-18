@@ -93,7 +93,30 @@ describe("self-check.sh", () => {
     git("add", "-A");
     const stale = sh("scripts/self-check.sh", "t1");
     expect(stale.code).toBe(1);
-    expect(stale.err).toContain("dist/src differs from a fresh compile of the source. Next action: run npm run build:dist, stage dist, then commit.");
+    expect(stale.err).toContain("staged dist/src differs from a fresh compile of the source. Next action: run npm run build:dist, stage dist, then commit.");
+  });
+
+  it("refuses a built dist file that is not staged, and a source that does not compile, each with one next action", async () => {
+    await symlink(resolve(scripts, "../node_modules"), join(repo, "node_modules"));
+    await writeFile(join(repo, ".gitignore"), "node_modules\n");
+    await writeFile(join(repo, "tsconfig.json"), JSON.stringify({ compilerOptions: { outDir: "dist", rootDir: ".", module: "NodeNext", moduleResolution: "NodeNext", types: [] }, include: ["src"] }));
+    await mkdir(join(repo, "src"));
+    await writeFile(join(repo, "src/x.ts"), "export const x = 1;\n");
+    execFileSync("node_modules/.bin/tsc", [], { cwd: repo });
+    git("add", "-A");
+    git("commit", "-q", "-m", "built");
+    git("tag", "t1");
+    await writeFile(join(repo, "src/y.ts"), "export const y = 1;\n");
+    git("add", "src/y.ts");
+    execFileSync("node_modules/.bin/tsc", [], { cwd: repo });
+    const unstaged = sh("scripts/self-check.sh", "t1");
+    expect(unstaged.code).toBe(1);
+    expect(unstaged.err).toContain("staged dist/src differs from a fresh compile of the source. Next action: run npm run build:dist, stage dist, then commit.");
+    await writeFile(join(repo, "src/y.ts"), "export const y: number = 'a';\n");
+    git("add", "src/y.ts");
+    const broken = sh("scripts/self-check.sh", "t1");
+    expect(broken.code).toBe(1);
+    expect(broken.err).toContain("Next action: run npm run typecheck and fix the errors it names, then commit.");
   });
 
   it("requires the pinned tag as an argument", () => {
