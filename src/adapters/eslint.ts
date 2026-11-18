@@ -2,7 +2,8 @@ import { readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { ESLint } from "eslint";
 import tseslint from "typescript-eslint";
-import type { Guardrail, RecordSet } from "../records/types.js";
+import { plugin } from "../../eslint-plugin/index.js";
+import type { Guardrail, Practice, RecordSet } from "../records/types.js";
 import type { Adapter, RunContext, RunResult, Violation } from "./types.js";
 
 const RULES_PATH = ".warden/generated/eslint.rules.json";
@@ -12,23 +13,30 @@ const ruleId = (g: Guardrail): string => g.implementation.slice(g.implementation
 const ruleValue = (options: unknown): unknown =>
   options === undefined ? "error" : Array.isArray(options) ? ["error", ...options] : ["error", options];
 
-const pathsFor = (g: Guardrail, set: RecordSet): string[] => {
+const owner = (g: Guardrail, set: RecordSet): { practice?: Practice; paths: string[] } => {
   for (const pack of set.packs) {
     for (const practice of pack.practices) {
       if (!practice.guardrails.some((x) => x.id === g.id)) continue;
-      if (practice.paths.length > 0) return practice.paths;
+      if (practice.paths.length > 0) return { practice, paths: practice.paths };
       const entry = set.config.packs.find((p) => p.id === pack.id);
-      return entry ? entry.paths : [];
+      return { practice, paths: entry ? entry.paths : [] };
     }
   }
-  return [];
+  return { paths: [] };
+};
+
+const wardenValue = (g: Guardrail, practice: Practice | undefined): unknown => {
+  if (practice === undefined) throw new Error(`guardrail ${g.id} uses a warden rule but belongs to no practice`);
+  const extra = typeof g.options === "object" && g.options !== null && !Array.isArray(g.options) ? g.options : {};
+  return ["error", { practice: practice.id, statement: practice.statement, ...extra }];
 };
 
 const emit = (gs: Guardrail[], set: RecordSet): Record<string, string> => {
-  const entries = gs.map((g) => ({
-    files: pathsFor(g, set),
-    rules: { [ruleId(g)]: ruleValue(g.options) },
-  }));
+  const entries = gs.map((g) => {
+    const { practice, paths } = owner(g, set);
+    const value = ruleId(g).startsWith("warden/") ? wardenValue(g, practice) : ruleValue(g.options);
+    return { files: paths, rules: { [ruleId(g)]: value } };
+  });
   return { [RULES_PATH]: `${JSON.stringify({ entries }, null, 2)}\n` };
 };
 
@@ -38,6 +46,7 @@ const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<R
     cwd: ctx.root,
     overrideConfigFile: true,
     overrideConfig: [
+      { plugins: { warden: plugin } },
       { files: ["**/*.{ts,tsx,mts,cts}"], languageOptions: { parser: tseslint.parser } },
       { linterOptions: { noInlineConfig: true } },
       ...entries,
