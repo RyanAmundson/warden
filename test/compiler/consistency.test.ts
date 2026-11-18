@@ -102,6 +102,13 @@ describe("checkConsistency", () => {
     expect(codes(set)).toEqual([]);
   });
 
+  it("flags undefined-conflict", () => {
+    const set = build([pack("a", 1, [practice("p", "a", { conflictsWith: ["ghost"] })])]);
+    const findings = checkConsistency(set);
+    expect(findings.map((f) => f.code)).toEqual(["undefined-conflict"]);
+    expect(findings[0]?.record).toBe("p");
+  });
+
   it("flags undefined-term", () => {
     const set = build([pack("a", 1, [practice("p", "a", { terms: ["missing"] })])]);
     expect(codes(set)).toEqual(["undefined-term"]);

@@ -12,6 +12,7 @@ const CODES = [
   "duplicate-guardrail",
   "prose-only",
   "conflict-overlap",
+  "undefined-conflict",
   "undefined-term",
   "banned-synonym",
   "layer-order",
@@ -59,7 +60,11 @@ export function checkConsistency(set: RecordSet): Finding[] {
     for (const otherId of p.conflictsWith) {
       const other = byId.get(otherId);
       const key = [p.id, otherId].sort().join("\0");
-      if (!other || seen.has(key)) continue;
+      if (!other) {
+        add("undefined-conflict", p.id, `Practice ${p.id} conflicts with ${otherId}, which is not defined.`);
+        continue;
+      }
+      if (seen.has(key)) continue;
       const left = effectiveGlobs(set, p);
       const right = effectiveGlobs(set, other);
       if (left.some((a) => right.some((b) => overlaps(a, b)))) {
