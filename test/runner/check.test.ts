@@ -495,7 +495,43 @@ describe("review fixes", () => {
     await recompile();
     await write("b.ts", "var b = 1;\n");
     expect((await check()).code).toBe(1);
-    expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "loosened" }]);
+    expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "weakened-kind" }]);
+  });
+
+  it("weakening lint to review is tampering and names the kind to restore", async () => {
+    const pack = localPack().replace("kind: lint", "kind: review");
+    await write(".warden/packs/local/pack.yaml", pack);
+    await recompile();
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    expect((await tampered()).map((t) => t.detail)).toContain("weakened-kind");
+    expect(out).toContain("Next action: restore kind lint on local-no-var and run warden compile.");
+  });
+
+  it("strengthening instruction to lint is not tampering", async () => {
+    const weak = localPack()
+      .replace("kind: lint\n", "kind: instruction\n")
+      .replace('        implementation: "eslint:no-var"', "        implementation: Declare with const.")
+      .replace("  - id: no-event-global", [
+        "      - id: local-no-debugger",
+        "        kind: lint",
+        "        runs: [edit, commit]",
+        "        budgetMs: 5000",
+        "        version: 1",
+        "        implementation: \"eslint:no-debugger\"",
+        "        mustFail: \"debugger;\\n\"",
+        "        mustPass: \"const a = 1;\\n\"",
+        "  - id: no-event-global",
+      ].join("\n"));
+    await write(".warden/packs/local/pack.yaml", weak);
+    await recompile();
+    git("add", "-A");
+    git("commit", "-q", "-m", "instruction kind");
+    git("branch", "-f", "main", "HEAD");
+    await write(".warden/packs/local/pack.yaml", weak.replace("kind: instruction", "kind: lint").replace("implementation: Declare with const.", 'implementation: "eslint:no-var"'));
+    await recompile();
+    expect((await check()).code).toBe(0);
+    expect(await tampered()).toEqual([]);
   });
 
   it("a Guardrail runs only where the pack paths and the Practice paths both match", async () => {

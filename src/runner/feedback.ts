@@ -44,6 +44,8 @@ const nextAction = (failures: Violation[], set: RecordSet, notes: Notes): string
   if (notes.tampered?.some((t) => t.detail === "base-moved") === true) {
     return "revert the base change in .warden/config.yaml and run warden compile.";
   }
+  const weakened = notes.tampered?.find((t) => t.detail === "weakened-kind");
+  if (weakened !== undefined) return `restore kind ${weakened.was} on ${weakened.guardrail} and run warden compile.`;
   if (notes.tampered !== undefined && notes.tampered.length > 0) {
     return `revert your change to ${[...new Set(notes.tampered.map((t) => t.file))].join(", ")}.`;
   }

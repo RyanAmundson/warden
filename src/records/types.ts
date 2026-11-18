@@ -1,4 +1,8 @@
 export type Kind = "lint" | "type" | "model" | "runtime" | "review" | "instruction" | "legacy";
+
+export const KIND_LADDER: readonly (readonly Kind[])[] = [["type", "lint"], ["runtime"], ["model"], ["review"], ["instruction"], ["legacy"]];
+
+export const kindRank = (kind: Kind): number => KIND_LADDER.findIndex((tier) => tier.includes(kind));
 export type Tier = "edit" | "commit" | "boundary";
 
 export interface Term {

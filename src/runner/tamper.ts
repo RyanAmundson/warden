@@ -4,14 +4,15 @@ import { expectedOutputs } from "../compiler/compile.js";
 import { isWardenEntry } from "../compiler/emit.js";
 import { LOCK_FORMAT, LOCK_PATH, type Lock, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError, readText } from "../records/load.js";
-import type { RecordSet } from "../records/types.js";
+import { type Kind, type RecordSet, kindRank } from "../records/types.js";
 import { BASELINE_PATH, type Baseline, carryRenames, projectWideEntries, readBaseline } from "./baseline.js";
 import { changesSinceMergeBase, containsHead, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
 
 export interface Tamper {
   file: string;
-  detail: "missing-lock" | "leftover-temp" | "hooks-disabled" | "generated-drift" | "source-drift" | "lock-drift" | "loosened" | "removed" | "base-moved";
+  detail: "missing-lock" | "leftover-temp" | "hooks-disabled" | "generated-drift" | "source-drift" | "lock-drift" | "loosened" | "removed" | "base-moved" | "weakened-kind";
   guardrail?: string;
+  was?: string;
 }
 
 const SETTINGS_FILES = [".claude/settings.json", ".claude/settings.local.json"];
@@ -101,14 +102,15 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
   const pathsCover = (now: string[], was: string[]): boolean => was.every((x) => now.some((y) => widens(y, x)));
   for (const [id, g] of Object.entries(before.guardrails)) {
     const now = lock.guardrails[id];
+    const known = now !== undefined && g.kind !== undefined;
+    const stronger = known && kindRank(now.kind as Kind) < kindRank(g.kind as Kind);
+    if (known && kindRank(now.kind as Kind) > kindRank(g.kind as Kind)) found.push({ file: LOCK_PATH, detail: "weakened-kind", guardrail: id, was: g.kind });
     const weaker =
       now === undefined ||
-      changed(g.kind, now.kind) ||
       now.budgetMs > g.budgetMs ||
       !covers(now.runs, g.runs) ||
       !pathsCover(now.paths, g.paths) ||
-      now.implementation !== g.implementation ||
-      canonicalJson(now.options) !== canonicalJson(g.options);
+      (!stronger && (now.implementation !== g.implementation || canonicalJson(now.options) !== canonicalJson(g.options)));
     if (weaker) found.push({ file: LOCK_PATH, detail: "loosened", guardrail: id });
   }
   const { renames } = changesSinceMergeBase(root, base);
