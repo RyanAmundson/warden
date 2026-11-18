@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Violation } from "../adapters/types.js";
+import type { Measurement } from "./evidence.js";
 import { canonicalJson, sha256 } from "../compiler/lock.js";
 import type { Guardrail } from "../records/types.js";
 import { wardenHome } from "./evidence.js";
@@ -22,4 +23,20 @@ export function readCache(project: string, key: string): Violation[] | undefined
 export function writeCache(project: string, key: string, violations: Violation[]): void {
   mkdirSync(cacheDir(project), { recursive: true });
   writeFileSync(join(cacheDir(project), `${key}.json`), JSON.stringify(violations));
+}
+
+const benchDir = (): string => join(wardenHome(), "bench");
+
+export function readBenchCache(key: string): Measurement | undefined {
+  try {
+    return JSON.parse(readFileSync(join(benchDir(), `${key}.json`), "utf8")) as Measurement;
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw cause;
+  }
+}
+
+export function writeBenchCache(key: string, m: Measurement): void {
+  mkdirSync(benchDir(), { recursive: true });
+  writeFileSync(join(benchDir(), `${key}.json`), JSON.stringify(m));
 }

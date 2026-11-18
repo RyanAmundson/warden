@@ -5,6 +5,7 @@ import type { Adapter } from "../adapters/types.js";
 import { RecordError, loadRecords, readText } from "../records/load.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
 import { adapters, refuseUnknownAdapters } from "../runner/run.js";
+import { admit } from "./bench.js";
 import { checkConsistency, type Finding } from "./consistency.js";
 import { mergeSettings, stamp } from "./emit.js";
 import { runExamples } from "./examples.js";
@@ -104,6 +105,8 @@ export async function compile(projectRoot: string, wardenRoot: string): Promise<
   const set = await loadRecords(projectRoot, wardenRoot);
   const findings = [...checkConsistency(set), ...(await runExamples(set))];
   if (findings.length > 0) return { findings, written: [] };
+  const slow = await admit(set, await wardenVersion(wardenRoot));
+  if (slow.length > 0) return { findings: slow, written: [] };
 
   const { lock, files, owned } = await expectedOutputs(set, projectRoot, wardenRoot);
   const outputs: Record<string, string> = { ...files };

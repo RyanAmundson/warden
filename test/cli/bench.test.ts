@@ -161,6 +161,6 @@ it("a copy that lands outside the Guardrail's paths exits 2 with one next action
   const { code, err } = await bench();
   expect(code).toBe(2);
   expect(err.match(/Next action:/g)).toHaveLength(1);
-  expect(err).toContain("Guardrail tree would not run on src/bench-0/src/a.ts, a copy of its mustPass example, because it is outside src/*.ts.");
+  expect(err).toContain("Guardrail tree would not run on src/bench-1/src/a.ts, a copy of its mustPass example, because it is outside src/*.ts.");
   expect(roots).toEqual([]);
 });

@@ -1,15 +1,16 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
 const main = join(wardenRoot, "dist/src/cli/main.js");
 
 let root: string;
 let home: string;
+let benched: string;
 
 const git = (...args: string[]): void => {
   execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
@@ -25,13 +26,25 @@ const wardenIn = (cwd: string, input: string, ...args: string[]): { code: number
   return { code: r.status, out: r.stdout, err: r.stderr };
 };
 
-beforeAll(() => {
+beforeAll(async () => {
   execFileSync("npx", ["tsc"], { cwd: wardenRoot, stdio: "ignore" });
+  benched = await mkdtemp(join(tmpdir(), "warden-home-"));
+  root = await mkdtemp(join(tmpdir(), "warden-cli-"));
+  home = benched;
+  await writeFile(join(root, "a.ts"), "export const a = 1;\n");
+  git("init", "-q", "-b", "main");
+  git("add", "-A");
+  git("commit", "-q", "-m", "seed");
+  expect(warden("init").code).toBe(0);
+  await rm(root, { recursive: true, force: true });
 });
+
+afterAll(() => rm(benched, { recursive: true, force: true }));
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "warden-cli-"));
   home = await mkdtemp(join(tmpdir(), "warden-home-"));
+  await cp(join(benched, "bench"), join(home, "bench"), { recursive: true });
   await mkdir(join(root, "src"));
   await writeFile(join(root, "src/a.ts"), "// old comment\nexport const a = 1;\n");
   git("init", "-q", "-b", "main");

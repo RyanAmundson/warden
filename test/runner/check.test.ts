@@ -13,6 +13,8 @@ import { compile } from "../../src/compiler/compile.js";
 import { readLock, sha256 } from "../../src/compiler/lock.js";
 import { applyBaseline } from "../../src/runner/baseline.js";
 
+vi.mock("../../src/compiler/bench.js", async (original) => ({ ...(await original<typeof import("../../src/compiler/bench.js")>()), admit: () => Promise.resolve([]) }));
+
 const wardenRoot = resolve(import.meta.dirname, "../..");
 
 const config = (packs: string[], repeats = 3): string =>
@@ -153,7 +155,11 @@ const addLegacy = async (runs: string, command: string, budgetMs: number): Promi
 const failedFiles = (out: string): string[] =>
   (JSON.parse(out) as { failures: { file: string }[] }).failures.map((f) => f.file);
 
+let templateHome: string;
+
 beforeAll(async () => {
+  templateHome = await mkdtemp(join(tmpdir(), "warden-home-"));
+  vi.stubEnv("WARDEN_HOME", templateHome);
   template = await realpath(await mkdtemp(join(tmpdir(), "warden-check-template-")));
   root = template;
   await write(".warden/config.yaml", config(["core", "local"]));
@@ -163,7 +169,11 @@ beforeAll(async () => {
   expect(findings).toEqual([]);
 });
 
-afterAll(() => rm(template, { recursive: true, force: true }));
+afterAll(async () => {
+  vi.unstubAllEnvs();
+  await rm(template, { recursive: true, force: true });
+  await rm(templateHome, { recursive: true, force: true });
+});
 
 beforeEach(async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "warden-check-")));
