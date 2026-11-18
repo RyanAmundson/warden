@@ -7,7 +7,7 @@ import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import type { Guardrail, RecordSet, Tier } from "../records/types.js";
 import { applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { changedFiles, changesSinceMergeBase, lastCommittedText, showAtMergeBase, verifyBase } from "../runner/changed.js";
+import { changedFiles, changesSinceMergeBase, lastCommittedText, showAtMergeBase, unstagedFiles, verifyBase } from "../runner/changed.js";
 import { type Evidence, appendEvidence, readEvidence } from "../runner/evidence.js";
 import { type Format, type Notes, type Repeated, formatFeedback } from "../runner/feedback.js";
 import { runGuardrails } from "../runner/run.js";
@@ -106,7 +106,7 @@ const runCached = async (
 };
 
 const report = (failures: Violation[], set: RecordSet, opts: CheckOptions, notes: Notes): number => {
-  const failed = failures.length > 0 || (notes.tampered ?? []).length > 0 || (notes.killed ?? []).length > 0;
+  const failed = failures.length > 0 || [notes.tampered, notes.killed, notes.unstaged].some((list) => (list ?? []).length > 0);
   if (opts.hook === "claude") {
     if (failed) process.stdout.write(`${JSON.stringify({ decision: "block", reason: formatFeedback(failures, set, "agent", notes) })}\n`);
     return 0;
@@ -148,6 +148,11 @@ const check = async (opts: CheckOptions): Promise<number> => {
   const lintChosen = chosen.some((g) => g.kind === "lint");
   const guardrails = selectGuardrails(set, undefined).filter((g) => (lintChosen && g.kind === "lint") || selected.has(g.id));
   const scanned = scannedFiles(root, base, opts.paths);
+  if (tier === "commit") {
+    const unstaged = new Set(unstagedFiles(root));
+    const differing = scanned.filter((f) => unstaged.has(f));
+    if (differing.length > 0) return report([], set, opts, { unstaged: differing });
+  }
   const shas = new Map(scanned.map((f) => [f, sha256(readFileSync(join(root, f)))]));
   const ctx = { root, generatedDir: join(root, ".warden/generated") };
   const lockSha = sha256(readFileSync(join(root, LOCK_PATH)));

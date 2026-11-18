@@ -40,6 +40,8 @@ export function changedFiles(root: string, base: string): string[] {
   return [...new Set(files)].sort();
 }
 
+export const unstagedFiles = (root: string): string[] => names(must(root, ["diff", "-z", "--name-only", "--relative"]));
+
 export function lastCommittedText(root: string, path: string): string | undefined {
   if (!git(root, ["rev-parse", "--is-inside-work-tree"]).ok) return undefined;
   const head = git(root, ["show", `HEAD:./${path}`]);

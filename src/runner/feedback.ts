@@ -24,6 +24,7 @@ export interface Notes {
   repeated?: Repeated;
   overBudget?: OverBudget[];
   killed?: Killed[];
+  unstaged?: string[];
 }
 
 const EXAMPLE_LINES = 15;
@@ -42,6 +43,7 @@ const nextAction = (failures: Violation[], set: RecordSet, notes: Notes): string
   if (notes.tampered !== undefined && notes.tampered.length > 0) {
     return `revert your change to ${[...new Set(notes.tampered.map((t) => t.file))].join(", ")}.`;
   }
+  if ((notes.unstaged ?? []).length > 0) return "stage or discard unstaged changes, then run warden check again.";
   const parse = failures.filter((v) => v.guardrail === PARSE_ERROR).sort(byLocation)[0];
   if (parse !== undefined) return `fix the syntax error at ${parse.file}:${parse.line}.`;
   if (notes.repeated !== undefined) {
@@ -100,10 +102,11 @@ export function formatFeedback(failures: Violation[], set: RecordSet, format: Fo
   const next = nextAction(failures, set, notes);
   const tampered = notes.tampered ?? [];
   if (format === "json") {
-    return JSON.stringify({ failures: items, tampered, repeated: notes.repeated, overBudget: notes.overBudget, killed: notes.killed, next });
+    return JSON.stringify({ failures: items, tampered, unstaged: notes.unstaged, repeated: notes.repeated, overBudget: notes.overBudget, killed: notes.killed, next });
   }
 
   const lines: string[] = tampered.map((t) => `TAMPERED ${t.file}  ${t.detail}`);
+  lines.push(...(notes.unstaged ?? []).map((f) => `UNSTAGED ${f}  the commit tier judges what you stage; this working copy differs from the index`));
   for (const item of items) {
     lines.push(`FAIL ${item.file === "" ? "project" : `${item.file}:${item.line}`}  ${item.practice}`);
     lines.push(`  Rule:     ${item.rule}`);

@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -118,7 +119,8 @@ const evidence = async (): Promise<Record<string, unknown>[]> => {
 const tampered = async (): Promise<{ file: unknown; detail: unknown }[]> =>
   (await evidence()).filter((e) => e.kind === "tampered").map((e) => ({ file: e.file, detail: e.detail }));
 
-const check = async (opts: Partial<Parameters<typeof runCheck>[0]> = {}): Promise<{ code: number; out: string; err: string }> => {
+const check = async (opts: Partial<Parameters<typeof runCheck>[0]> = {}, stage = true): Promise<{ code: number; out: string; err: string }> => {
+  if (stage && opts.hook === undefined && (opts.tier ?? "commit") === "commit" && existsSync(join(root, ".git"))) git("add", "-A");
   let out = "";
   let err = "";
   const o = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
@@ -765,6 +767,19 @@ describe("final review: loop breaker", () => {
     await write("b.ts", "// two\nconst b = 1;\n");
     const runs = [await hook("b.ts"), await hook("b.ts"), await hook("b.ts")];
     expect((JSON.parse(runs[2]?.out ?? "") as { reason: string }).reason).toContain("Next action: stop editing this file");
+  });
+});
+
+describe("final review: commit tier judges the index", () => {
+  it("unstaged changes to a scanned tracked file fail the commit tier with a stage-or-discard next action", async () => {
+    await write("a.ts", "// one\nconst a = 2;\n");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    expect(out).toContain("UNSTAGED a.ts");
+    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual(["Next action: stage or discard unstaged changes, then run warden check again."]);
+    expect((await check({ tier: "edit" }, false)).code).toBe(0);
+    git("add", "a.ts");
+    expect((await check({}, false)).code).toBe(0);
   });
 });
 
