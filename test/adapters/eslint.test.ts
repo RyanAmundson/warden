@@ -33,6 +33,7 @@ const setFor = (g: Guardrail): RecordSet => ({
   packs: [
     {
       id: "core",
+      file: "packs/core/pack.yaml",
       layer: 0,
       terms: [],
       practices: [

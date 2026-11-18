@@ -35,6 +35,7 @@ export interface Practice {
 
 export interface Pack {
   id: string;
+  file: string;
   layer: number;
   terms: Term[];
   practices: Practice[];

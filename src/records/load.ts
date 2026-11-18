@@ -75,6 +75,7 @@ export async function readPack(projectRoot: string, wardenRoot: string, id: stri
   if (pack.id !== id) {
     throw new RecordError(file, "/id", `pack id ${pack.id} does not match directory ${id}`);
   }
+  pack.file = file;
   for (const practice of pack.practices) practice.pack = pack.id;
   return { pack, source: inBundled !== undefined ? "bundled" : "local" };
 }

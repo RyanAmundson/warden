@@ -3,14 +3,31 @@ import { eslintAdapter } from "../adapters/eslint.js";
 import { tscAdapter } from "../adapters/tsc.js";
 import type { Adapter, RunContext, RunResult } from "../adapters/types.js";
 import { RecordError } from "../records/load.js";
-import type { Guardrail } from "../records/types.js";
+import type { Guardrail, RecordSet } from "../records/types.js";
+import type { Finding } from "../compiler/consistency.js";
 
 export const adapters = new Map<string, Adapter>([eslintAdapter, tscAdapter, cmdAdapter].map((a) => [a.id, a]));
+
+const prefixOf = (g: Guardrail): string => g.implementation.slice(0, g.implementation.indexOf(":"));
+
+export const unknownAdapters = (set: RecordSet): Finding[] => {
+  const known = [...adapters.keys()];
+  return set.packs.flatMap((pack) =>
+    pack.practices
+      .flatMap((x) => x.guardrails)
+      .filter((g) => g.kind !== "instruction" && !adapters.has(prefixOf(g)))
+      .map((g) => ({
+        code: "unknown-adapter",
+        record: g.id,
+        message: `Guardrail ${g.id} names adapter "${prefixOf(g)}", which is not registered; the known adapters are ${known.join(", ")}. Next action: set implementation to one of ${known.map((k) => `${k}:<...>`).join(", ")} in ${pack.file}.`,
+      })),
+  );
+};
 
 export async function runGuardrails(gs: Guardrail[], files: string[], ctx: RunContext): Promise<RunResult[]> {
   const groups = new Map<string, Guardrail[]>();
   for (const g of gs) {
-    const prefix = g.implementation.slice(0, g.implementation.indexOf(":"));
+    const prefix = prefixOf(g);
     if (!adapters.has(prefix)) {
       throw new RecordError("", `/guardrails/${g.id}/implementation`, `unknown adapter "${prefix}"`);
     }

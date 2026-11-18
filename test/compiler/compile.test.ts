@@ -305,6 +305,37 @@ describe("compile", () => {
     expect((await runExamples(await loadRecords(root, wardenRoot), wardenRoot)).map((f) => `${f.code} ${f.record}`)).toEqual(["example-conflict in-a-g"]);
   });
 
+  it("an unknown adapter fails compile, writes no lock, and its next action compiles", async () => {
+    await usePack(
+      localPack(
+        [
+          "    guardrails:",
+          "      - id: local-no-var",
+          "        kind: lint",
+          "        runs: [edit]",
+          "        budgetMs: 5000",
+          "        version: 1",
+          "        implementation: \"eslnt:no-var\"",
+          "        mustFail: \"var a = 1;\\n\"",
+          "        mustPass: \"const a = 1;\\n\"",
+        ].join("\n"),
+      ),
+    );
+    const file = join(root, ".warden/packs/local/pack.yaml");
+    const { findings, written } = await compile(root, wardenRoot);
+    expect(findings).toEqual([
+      {
+        code: "unknown-adapter",
+        record: "local-no-var",
+        message: `Guardrail local-no-var names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...> in ${file}.`,
+      },
+    ]);
+    expect(written).toEqual([]);
+    await expect(readFile(join(root, ".warden/lock.json"))).rejects.toThrow();
+    await writeFile(file, (await readFile(file, "utf8")).replace("eslnt:", "eslint:"));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+  });
+
   it("invalid settings JSON leaves no generated file, no settings change, and no lock", async () => {
     await mkdir(join(root, ".claude"), { recursive: true });
     await writeFile(join(root, ".claude/settings.json"), "{ not json");

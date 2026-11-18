@@ -695,6 +695,17 @@ describe("final review: budgets", () => {
   });
 });
 
+describe("unknown adapter at check time", () => {
+  it("check refuses an unknown adapter with exit 2 and the same next action as compile", async () => {
+    await write(".warden/packs/local/pack.yaml", localPack().replace("eslint:no-var", "eslnt:no-var"));
+    const { code, err } = await check();
+    expect(code).toBe(2);
+    expect(err).toContain(
+      `Guardrail local-no-var names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...> in ${join(root, ".warden/packs/local/pack.yaml")}.`,
+    );
+  });
+});
+
 describe("final review: legacy feedback", () => {
   it("a legacy failure shows the command output and says to run the command", async () => {
     await addLegacy("commit", "echo broken thing; exit 1", 5000);

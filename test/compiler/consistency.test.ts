@@ -24,6 +24,7 @@ const practice = (id: string, pack: string, over: Partial<Practice> = {}): Pract
 
 const pack = (id: string, layer: number, practices: Practice[] = [], terms: Term[] = []): Pack => ({
   id,
+  file: `packs/${id}/pack.yaml`,
   layer,
   terms,
   practices,

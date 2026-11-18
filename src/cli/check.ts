@@ -10,7 +10,7 @@ import { cacheKey, readCache, writeCache } from "../runner/cache.js";
 import { changedFiles, changesSinceMergeBase, containsHead, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
 import { type Evidence, appendEvidence, readEvidence } from "../runner/evidence.js";
 import { type Format, type Notes, type Repeated, formatFeedback } from "../runner/feedback.js";
-import { runGuardrails } from "../runner/run.js";
+import { runGuardrails, unknownAdapters } from "../runner/run.js";
 import { type Tamper, findTampering, recordedBases } from "../runner/tamper.js";
 
 export interface CheckOptions {
@@ -151,6 +151,8 @@ const check = async (opts: CheckOptions): Promise<number> => {
     throw new RecordError(".warden/config.yaml", "", "not found. Next action: run warden init.");
   }
   const set = await loadRecords(root, opts.wardenRoot);
+  const [unknown] = unknownAdapters(set);
+  if (unknown !== undefined) throw new RecordError("", `/guardrails/${unknown.record}/implementation`, unknown.message);
   const { project, loopBreakerRepeats } = set.config;
   const base = requireBase(opts.base, set.config.base);
   verifyBase(root, base);

@@ -220,6 +220,42 @@ describe("warden CLI", () => {
     expect(r.err).toContain("example-failed");
   });
 
+  it("compile exits 2 on an unknown adapter and writes no lock", async () => {
+    await mkdir(join(root, ".warden/packs/local"), { recursive: true });
+    await writeFile(
+      join(root, ".warden/config.yaml"),
+      'warden: "0.1.0"\nproject: p\nbase: main\npacks:\n  - id: local\n    paths: ["src/**"]\ntierBudgetMs: { edit: 1, commit: 1, boundary: 1 }\nloopBreakerRepeats: 3\n',
+    );
+    await writeFile(
+      join(root, ".warden/packs/local/pack.yaml"),
+      [
+        "id: local",
+        "layer: 1",
+        "terms: []",
+        "practices:",
+        "  - id: no-x",
+        "    statement: No x.",
+        "    terms: []",
+        "    paths: []",
+        "    conflictsWith: []",
+        "    guardrails:",
+        "      - id: local-no-x",
+        "        kind: lint",
+        "        runs: [edit]",
+        "        budgetMs: 5000",
+        "        version: 1",
+        '        implementation: "eslnt:no-x"',
+        '        mustFail: "var a = 1;\\n"',
+        '        mustPass: "const a = 1;\\n"',
+        "",
+      ].join("\n"),
+    );
+    const r = warden("compile");
+    expect(r.code).toBe(2);
+    expect(r.err).toMatch(/^unknown-adapter local-no-x: .*Next action: set implementation to one of eslint:<\.\.\.>, tsc:<\.\.\.>, cmd:<\.\.\.> in \S*\/\.warden\/packs\/local\/pack\.yaml\.$/m);
+    expect(existsSync(join(root, ".warden/lock.json"))).toBe(false);
+  });
+
   it("hook mode reads the edited file from the hook input on stdin", async () => {
     init();
     git("add", "-A");

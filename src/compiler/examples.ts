@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, matchesGlob } from "node:path";
-import { adapters, runGuardrails } from "../runner/run.js";
+import { adapters, runGuardrails, unknownAdapters } from "../runner/run.js";
 import { pathGroups } from "../records/paths.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
 import { type Adapter, PARSE_ERROR } from "../adapters/types.js";
@@ -17,7 +17,7 @@ const exampleFile = (group: string[] | undefined): string =>
 const enabledOn = (file: string, groups: string[][]): boolean => groups.length === 0 || groups.some((g) => g.every((glob) => matchesGlob(file, glob)));
 
 export async function runExamples(set: RecordSet, wardenRoot: string): Promise<Finding[]> {
-  const findings: Finding[] = [];
+  const findings: Finding[] = unknownAdapters(set);
   const project = await mkdtemp(join(tmpdir(), "warden-examples-"));
   try {
     await symlink(join(wardenRoot, "node_modules"), join(project, "node_modules"));
