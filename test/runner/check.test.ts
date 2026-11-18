@@ -473,6 +473,26 @@ describe("review fixes", () => {
     expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "loosened" }]);
   });
 
+  it("changing kind to instruction and recompiling is loosening", async () => {
+    const extra = [
+      "      - id: local-no-debugger",
+      "        kind: lint",
+      "        runs: [edit, commit]",
+      "        budgetMs: 5000",
+      "        version: 1",
+      "        implementation: \"eslint:no-debugger\"",
+      "        mustFail: \"debugger;\\n\"",
+      "        mustPass: \"const a = 1;\\n\"",
+      "  - id: no-event-global",
+    ].join("\n");
+    const pack = localPack().replace("kind: lint", "kind: instruction").replace("  - id: no-event-global", extra);
+    await write(".warden/packs/local/pack.yaml", pack);
+    await recompile();
+    await write("b.ts", "var b = 1;\n");
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "loosened" }]);
+  });
+
   it("adding a path and recompiling passes", async () => {
     await write(".warden/config.yaml", withLocalPaths('["**/*.ts", "lib/**/*.ts"]'));
     await recompile();

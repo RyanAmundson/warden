@@ -63,6 +63,7 @@ describe("compile", () => {
     ]);
     expect(Object.keys(lock.sources).sort()).toEqual([".warden/config.yaml", "packs/core/pack.yaml"]);
     expect(lock.guardrails["warden-no-comments"]).toEqual({
+      kind: "lint",
       budgetMs: 5000,
       version: 1,
       implementation: "eslint:warden/no-comments",

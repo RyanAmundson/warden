@@ -71,6 +71,7 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
     const now = lock.guardrails[id];
     const weaker =
       now === undefined ||
+      now.kind !== g.kind ||
       now.budgetMs > g.budgetMs ||
       !covers(now.runs, g.runs) ||
       !covers(now.paths, g.paths) ||

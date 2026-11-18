@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ProjectConfig, RecordSet, Tier } from "../records/types.js";
+import type { Kind, ProjectConfig, RecordSet, Tier } from "../records/types.js";
 
 export interface Lock {
   warden: string;
@@ -12,6 +12,7 @@ export interface Lock {
 }
 
 export interface LockedGuardrail {
+  kind: Kind;
   budgetMs: number;
   version: number;
   implementation: string;
@@ -53,6 +54,7 @@ export function computeLock(
         return practice.guardrails.map((g): [string, LockedGuardrail] => [
           g.id,
           {
+            kind: g.kind,
             budgetMs: g.budgetMs,
             version: g.version,
             implementation: g.implementation,
