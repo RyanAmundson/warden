@@ -84,7 +84,7 @@ describe("warden CLI", () => {
     await writeFile(join(root, "src/add.ts"), "// eslint-disable-next-line\nexport const add = (a: number, b: number) => a + b;\n");
     const r = warden("check", "--base", "main");
     expect(r.code, r.err).toBe(1);
-    expect(r.out).toContain("Do this:  export const add = (a: number, b: number) => a + b;\n            Put any meaning in a name.");
+    expect(r.out).not.toContain("FAIL src/add.ts:1  no-comments");
     expect(r.out).toContain("Do this:  export const add = (a: number, b: number) => a + b;\n            Fix the rule it hid.");
     expect(r.out).not.toContain("const a = 1");
   });

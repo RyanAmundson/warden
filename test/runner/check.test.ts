@@ -294,7 +294,7 @@ describe("runCheck", () => {
     expect(code).toBe(1);
     expect(out).toContain("FAIL b.ts:1  no-comments");
     expect(out).toContain("Rule:     Source files carry no comments.");
-    expect(out).toContain("Do this:  const b = 1;\n            Put any meaning in a name.");
+    expect(out).toContain("Do this:  Delete this line.\n            Put any meaning in a name.");
     expect(out).toContain("Why:      warden explain no-comments");
     expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([
       "Next action: change the code at the lines above to match \"Do this\". Do not edit .warden/ or generated config; that is recorded as tampering.",
@@ -892,9 +892,47 @@ describe("residual fixes: Do this fits the violation", () => {
     const { code, out } = await check({ format: "json" });
     expect(code).toBe(1);
     expect((JSON.parse(out) as { failures: { practice: string; doThis: string }[] }).failures.map((f) => [f.practice, f.doThis])).toEqual([
-      ["no-comments", "export const total = 1;\nPut any meaning in a name."],
       ["no-suppressions", "export const total = 1;\nFix the no-console, no-alert problem it hid."],
     ]);
+  });
+
+  const doThis = async (source: string): Promise<string[][]> => {
+    await write("b.ts", source);
+    const { out } = await check({ format: "json" });
+    return (JSON.parse(out) as { failures: { line: number; practice: string; doThis: string }[] }).failures.map((f) => [`${f.line}`, f.practice, f.doThis]);
+  };
+
+  it("a whole-line comment says to delete the line, never shows the next comment", async () => {
+    expect(await doThis("// first line\n// second line\nexport const a = 1;\n")).toEqual([
+      ["1", "no-comments", "Delete this line.\nPut any meaning in a name."],
+      ["2", "no-comments", "Delete this line.\nPut any meaning in a name."],
+    ]);
+  });
+
+  it("a whole multi-line block comment says which lines to delete", async () => {
+    expect(await doThis("/* first\n   second */\nexport const a = 1;\n")).toEqual([
+      ["1", "no-comments", "Delete lines 1 to 2.\nPut any meaning in a name."],
+    ]);
+  });
+
+  it("a directive's description is not read as a rule name", async () => {
+    expect(await doThis("// eslint-disable-next-line -- legacy reason\nexport const a = 1;\n")).toEqual([
+      ["1", "no-suppressions", "export const a = 1;\nFix the rule it hid."],
+    ]);
+    expect(await doThis("// eslint-disable-next-line no-console -- legacy reason\nexport const a = 1;\n")).toEqual([
+      ["1", "no-suppressions", "export const a = 1;\nFix the no-console problem it hid."],
+    ]);
+  });
+
+  it("a directive above another comment shows the code line it annotated", async () => {
+    expect(await doThis("// eslint-disable-next-line\n// note\nexport const a = 1;\n")).toEqual([
+      ["1", "no-suppressions", "export const a = 1;\nFix the rule it hid."],
+      ["2", "no-comments", "Delete this line.\nPut any meaning in a name."],
+    ]);
+  });
+
+  it("removing an inline comment leaves single spacing", async () => {
+    expect(await doThis("export const c = /* two */ 2;\n")).toEqual([["1", "no-comments", "export const c = 2;\nPut any meaning in a name."]]);
   });
 
   it("a skipped test keeps the record example, which looks like real code", async () => {
@@ -984,7 +1022,7 @@ describe("residual fixes: path widening", () => {
 });
 
 describe("applyBaseline", () => {
-  const result =(guardrail: string, files: string[], status: RunResult["status"] = "fail"): RunResult => ({
+  const result = (guardrail: string, files: string[], status: RunResult["status"] = "fail"): RunResult => ({
     guardrail,
     status,
     violations: files.map((file) => ({ guardrail, file, line: 1, message: "m" })),

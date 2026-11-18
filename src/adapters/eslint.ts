@@ -51,11 +51,21 @@ const emit = (gs: Guardrail[], set: RecordSet): Record<string, string> => {
   return { [RULES_PATH]: `${JSON.stringify({ entries }, null, 2)}\n` };
 };
 
+const NO_COMMENTS = "warden/no-comments";
+const NO_SUPPRESSIONS = "warden/no-suppressions";
+const COMMENT_LINE = /^\s*(\/\/|\/\*)/;
+
+const hiddenRules = (removed: string): string[] => {
+  const body = removed.replace(/^\/[/*]/, "").replace(/\*\/$/, "");
+  const rest = /^\s*eslint-(?:disable|enable)(?:-next-line|-line)?(?=\s|$)(.*)$/s.exec(body)?.[1] ?? "";
+  return (rest.split("--")[0] as string).split(",").map((r) => r.trim()).filter((r) => r !== "");
+};
+
 const HINTS: Record<string, (removed: string) => string> = {
-  "warden/no-comments": () => "Put any meaning in a name.",
-  "warden/no-suppressions": (removed) => {
-    const named = /eslint-(?:disable|enable)(?:-next-line|-line)?\s+([^\s*][^*]*?)\s*(?:--.*)?(?:\*\/)?$/.exec(removed)?.[1];
-    if (named !== undefined) return `Fix the ${named.split(/\s*,\s*/).join(", ")} problem it hid.`;
+  [NO_COMMENTS]: () => "Put any meaning in a name.",
+  [NO_SUPPRESSIONS]: (removed) => {
+    const named = hiddenRules(removed);
+    if (named.length > 0) return `Fix the ${named.join(", ")} problem it hid.`;
     if (/@ts-(?:ignore|expect-error|nocheck)/.test(removed)) return "Fix the type error it hid.";
     return "Fix the rule it hid.";
   },
@@ -71,9 +81,15 @@ const rewrite = (source: string, m: Linter.LintMessage, id: string): string | un
   const to = offset(endLine, m.endColumn ?? (lines[endLine - 1] as string).length + 1);
   const removed = source.slice(from, to);
   if (!/^(\/\/|\/\*)/.test(removed)) return undefined;
-  const kept = `${(lines[m.line - 1] as string).slice(0, m.column - 1)}${source.slice(to).split("\n")[0]}`.trimEnd();
-  const shown = kept.trim() !== "" ? kept : lines.slice(endLine).find((l) => l.trim() !== "");
-  return shown === undefined ? hint(removed) : `${shown}\n${hint(removed)}`;
+  const before = (lines[m.line - 1] as string).slice(0, m.column - 1);
+  const after = source.slice(to).split("\n")[0] as string;
+  if (before.trim() === "" && after.trim() === "") {
+    const annotated = id === NO_SUPPRESSIONS ? lines.slice(endLine).find((l) => l.trim() !== "" && !COMMENT_LINE.test(l)) : undefined;
+    if (annotated !== undefined) return `${annotated.trimEnd()}\n${hint(removed)}`;
+    return `${endLine === m.line ? "Delete this line." : `Delete lines ${m.line} to ${endLine}.`}\n${hint(removed)}`;
+  }
+  const seam = /\s$/.test(before) ? after.trimStart() : after;
+  return `${`${before}${seam}`.trimEnd()}\n${hint(removed)}`;
 };
 
 const doThisFor = (doThis: string | undefined): { doThis?: string } => (doThis === undefined ? {} : { doThis });
@@ -105,7 +121,9 @@ const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<R
   const parseErrors: Violation[] = [];
   for (const result of results) {
     const source = result.messages.length > 0 ? await readFile(result.filePath, "utf8") : "";
+    const suppressed = new Set(result.messages.filter((m) => m.ruleId === NO_SUPPRESSIONS).map((m) => `${m.line}:${m.column}`));
     for (const m of result.messages) {
+      if (m.ruleId === NO_COMMENTS && suppressed.has(`${m.line}:${m.column}`)) continue;
       if (m.ruleId === null && m.fatal === true) {
         parseErrors.push({ guardrail: PARSE_ERROR, file: relative(ctx.root, result.filePath), line: m.line, message: m.message });
         continue;
