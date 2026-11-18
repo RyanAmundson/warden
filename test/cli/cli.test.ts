@@ -282,6 +282,8 @@ describe("warden CLI", () => {
       );
       expect(warden("init", "--packs", "core,local").code).toBe(0);
       const json = JSON.parse(warden("report", "--format", "json").out) as { practices: { practice: string; strongestKind: string; promote: boolean }[] };
+      const packs = JSON.parse(warden("packs", "--format", "json").out) as { packs: { id: string; kinds: Record<string, number> }[] };
+      expect(packs.packs.find((p) => p.id === "local")?.kinds).toEqual({ review: 1 });
       expect(json.practices.at(-1)).toMatchObject({ practice: "no-var", strongestKind: "review", promote: true });
       expect(json.practices.slice(0, -1).every((p) => p.strongestKind === "lint" && !p.promote)).toBe(true);
       const lines = warden("report").out.split("\n");
@@ -294,8 +296,8 @@ describe("warden CLI", () => {
       const r = warden("packs");
       expect(r.code, r.err).toBe(0);
       const lines = r.out.trim().split("\n");
-      expect(lines[0]).toMatch(/^core {2}bundled {2}\d+ practices {2}on {2}\*\*\/\*\.\{ts,tsx,js,mjs\}$/);
-      expect(lines[1]).toBe("local  local  1 practices  off");
+      expect(lines[0]).toMatch(/^core {2}bundled {2}\d+ practices {2}lint=\d+ {2}on {2}\*\*\/\*\.\{ts,tsx,js,mjs\}$/);
+      expect(lines[1]).toBe("local  local  1 practices  lint=1  off");
     });
 
     it("packs --format json returns the same data", async () => {
@@ -307,6 +309,8 @@ describe("warden CLI", () => {
         ["local", "local", false],
       ]);
       expect(data.packs[1]?.practices).toBe(1);
+      expect(data.packs[1]).toMatchObject({ kinds: { lint: 1 } });
+      expect(Object.keys((data.packs[0] as unknown as { kinds: object }).kinds)).toEqual(["lint"]);
       expect(data.packs[0]?.paths).toEqual(["**/*.{ts,tsx,js,mjs}"]);
     });
 

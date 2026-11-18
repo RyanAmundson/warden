@@ -1,11 +1,13 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { KIND_LADDER, type Kind } from "../records/types.js";
 import { parseConfig, readPack, readText } from "../records/load.js";
 
 export interface PackRow {
   id: string;
   source: "bundled" | "local";
   practices: number;
+  kinds: Partial<Record<Kind, number>>;
   on: boolean;
   paths: string[];
 }
@@ -20,7 +22,9 @@ export async function listPacks(root: string, wardenRoot: string): Promise<PackR
   const rows: PackRow[] = [];
   for (const id of all) {
     const { pack, source } = await readPack(root, wardenRoot, id, configFile);
-    rows.push({ id, source, practices: pack.practices.length, on: configured.has(id), paths: configured.get(id) ?? [] });
+    const all = pack.practices.flatMap((x) => x.guardrails);
+    const kinds = Object.fromEntries(KIND_LADDER.flat().flatMap((k) => (all.some((g) => g.kind === k) ? [[k, all.filter((g) => g.kind === k).length]] : [])));
+    rows.push({ id, source, practices: pack.practices.length, kinds, on: configured.has(id), paths: configured.get(id) ?? [] });
   }
   return rows.sort((a, b) => (a.source === b.source ? a.id.localeCompare(b.id) : a.source === "bundled" ? -1 : 1));
 }
@@ -34,7 +38,7 @@ export async function runPacks(root: string, wardenRoot: string, json: boolean):
     return 0;
   }
   for (const r of rows) {
-    process.stdout.write(`${r.id}  ${r.source}  ${r.practices} practices  ${r.on ? `on  ${r.paths.join(", ")}` : "off"}\n`);
+    process.stdout.write(`${r.id}  ${r.source}  ${r.practices} practices  ${Object.entries(r.kinds).map(([k, n]) => `${k}=${n}`).join(" ")}  ${r.on ? `on  ${r.paths.join(", ")}` : "off"}\n`);
   }
   if (!existsSync(join(root, ".warden", "config.yaml"))) process.stdout.write(`Next action: ${initAction(rows)}\n`);
   return 0;
