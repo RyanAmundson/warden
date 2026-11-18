@@ -1,0 +1,53 @@
+id: architecture
+layer: 1
+terms:
+  - id: world
+    definition: Anything outside the process's own memory, which is the file system, child processes, the network, and the clock.
+    bans: []
+  - id: source
+    definition: Code in a sources folder that reads the world and produces data as an Observable.
+    bans: []
+  - id: sink
+    definition: Code in a sinks folder that consumes data and writes it to a store, a log, or a view.
+    bans: []
+  - id: port
+    definition: The one file through which code outside a group reaches it, declaring only the group's types and its factory type.
+    bans: []
+practices:
+  - id: architecture-world-only-in-sources
+    statement: Only a source reaches the world.
+    terms: [source, world]
+    paths: ["!**/{sources/**,*.test.*,*.spec.*}"]
+    conflictsWith: []
+    guardrails:
+      - id: architecture-world-modules
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:no-restricted-imports"
+        options:
+          patterns:
+            - regex: "^(node:)?(fs|fs/promises|child_process|net|http|https|http2|dgram|dns|dns/promises|tls|worker_threads)$"
+              message: "Only a source reaches the world. Move this read into the sources folder of its group, and return its data as an Observable."
+        mustFail:
+          src/git/format.ts: "import { readFileSync } from \"node:fs\";\nexport const readConfig = (path: string): string => readFileSync(path, \"utf8\");\n"
+        mustPass:
+          src/git/sources/config-file.ts: "import { readFileSync } from \"node:fs\";\nexport const readConfig = (path: string): string => readFileSync(path, \"utf8\");\n"
+      - id: architecture-world-timers
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:no-restricted-globals"
+        options:
+          - { name: setTimeout, message: "Only a source reaches the clock. Move this timer into the sources folder of its group." }
+          - { name: setInterval, message: "Only a source reaches the clock. Move this timer into the sources folder of its group." }
+          - { name: setImmediate, message: "Only a source reaches the clock. Move this timer into the sources folder of its group." }
+          - { name: fetch, message: "Only a source reaches the network. Move this call into the sources folder of its group." }
+          - { name: XMLHttpRequest, message: "Only a source reaches the network. Move this call into the sources folder of its group." }
+          - { name: WebSocket, message: "Only a source reaches the network. Move this call into the sources folder of its group." }
+        mustFail:
+          src/git/retry.ts: "export const later = (run: () => void): void => {\n  setTimeout(run, 1000);\n};\n"
+        mustPass:
+          src/git/sources/ticks.ts: "export const later = (run: () => void): void => {\n  setTimeout(run, 1000);\n};\n"
