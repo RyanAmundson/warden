@@ -729,20 +729,51 @@ describe("final review: lock records base and project", () => {
     expect(out).toContain("TAMPERED .warden/lock.json  loosened");
   });
 
-  it("a base lock with another format exits 2 and says to recompile on the base branch", async () => {
+  const commitBaseLock = async (edit: (lock: Record<string, unknown>) => void): Promise<void> => {
     git("checkout", "-q", "main");
     const lock = JSON.parse(await read(".warden/lock.json")) as Record<string, unknown>;
-    delete lock.format;
+    edit(lock);
     await write(".warden/lock.json", JSON.stringify(lock));
-    git("commit", "-q", "-am", "old lock");
+    git("commit", "-q", "-am", "base lock");
+  };
+
+  const unformatted = (lock: Record<string, unknown>): void => {
+    delete lock.format;
+    const config = lock.config as Record<string, unknown>;
+    delete config.base;
+    delete config.project;
+    for (const g of Object.values(lock.guardrails as Record<string, Record<string, unknown>>)) delete g.kind;
+  };
+
+  it("upgrading a pre-format base lock on the base branch passes", async () => {
+    await commitBaseLock(unformatted);
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    const { code, out, err } = await check();
+    expect(err).toBe("");
+    expect(code, out).toBe(0);
+    expect(await tampered()).toEqual([]);
+  });
+
+  it("a pre-format base lock still catches loosening in the fields it shares", async () => {
+    await commitBaseLock(unformatted);
     git("checkout", "-q", "feature");
     git("merge", "-q", "--no-edit", "main");
-    await write(".warden/lock.json", `${JSON.stringify(readLock(root))}\n`);
+    await write(".warden/packs/local/pack.yaml", localPack(1, 9000));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "loosened" }]);
+  });
+
+  it("a base lock from a newer Warden exits 2 and says to update Warden", async () => {
+    await commitBaseLock((lock) => {
+      lock.format = 2;
+    });
+    git("checkout", "-q", "feature");
+    git("merge", "-q", "--no-edit", "main");
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
     const { code, err } = await check();
     expect(code).toBe(2);
-    expect(err).toContain("format none");
-    expect(err).toContain("recompile on the base branch");
+    expect(err).toContain("Next action: update this project's Warden to the release that wrote the lock on main");
   });
 });
 

@@ -58,18 +58,19 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
   const text = showAtMergeBase(root, base, LOCK_PATH);
   if (text === undefined) return [];
   const before = JSON.parse(text) as Lock;
-  if (before.format !== LOCK_FORMAT) {
+  if ((before.format ?? 0) > LOCK_FORMAT) {
     throw new RecordError(
       LOCK_PATH,
       "/format",
-      `the lock at the merge base with ${base} has format ${before.format ?? "none"}; this Warden reads format ${LOCK_FORMAT}. Next action: recompile on the base branch (run warden compile on ${base} and commit the lock), then run warden check again.`,
+      `the lock at the merge base with ${base} has format ${before.format}; this Warden reads formats up to ${LOCK_FORMAT}. Next action: update this project's Warden to the release that wrote the lock on ${base}, then run warden check again.`,
     );
   }
+  const changed = (was: unknown, now: unknown): boolean => was !== undefined && was !== now;
   const found: Tamper[] = [];
   const tiers = Object.keys(lock.config.tierBudgetMs) as (keyof Lock["config"]["tierBudgetMs"])[];
   if (
-    lock.config.base !== before.config.base ||
-    lock.config.project !== before.config.project ||
+    changed(before.config.base, lock.config.base) ||
+    changed(before.config.project, lock.config.project) ||
     lock.config.loopBreakerRepeats > before.config.loopBreakerRepeats ||
     tiers.some((t) => lock.config.tierBudgetMs[t] > before.config.tierBudgetMs[t])
   ) {
@@ -80,7 +81,7 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
     const now = lock.guardrails[id];
     const weaker =
       now === undefined ||
-      now.kind !== g.kind ||
+      changed(g.kind, now.kind) ||
       now.budgetMs > g.budgetMs ||
       !covers(now.runs, g.runs) ||
       !covers(now.paths, g.paths) ||
