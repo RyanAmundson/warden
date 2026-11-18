@@ -702,13 +702,51 @@ describe("final review: budgets", () => {
 });
 
 describe("unknown adapter at check time", () => {
-  it("check refuses an unknown adapter with exit 2 and the same next action as compile", async () => {
+  it("a locked pack whose prefix breaks is tampering, and reverting it passes", async () => {
     await write(".warden/packs/local/pack.yaml", localPack().replace("eslint:no-var", "eslnt:no-var"));
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/packs/local/pack.yaml", detail: "source-drift" }]);
+    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual(["Next action: revert your change to .warden/packs/local/pack.yaml."]);
+    git("checkout", "HEAD", "--", ".warden/packs/local/pack.yaml");
+    expect((await check()).code).toBe(0);
+  });
+
+  it("an unlocked pack with an unknown prefix exits 2 naming its file, and following the next action passes", async () => {
+    const file = join(root, ".warden/packs/extra/pack.yaml");
+    await write(".warden/config.yaml", config(["core", "local", "extra"]));
+    await write(
+      ".warden/packs/extra/pack.yaml",
+      [
+        "id: extra",
+        "layer: 2",
+        "terms: []",
+        "practices:",
+        "  - id: no-debugger",
+        "    statement: No debugger statements.",
+        "    terms: []",
+        "    paths: []",
+        "    conflictsWith: []",
+        "    guardrails:",
+        "      - id: extra-no-debugger",
+        "        kind: lint",
+        "        runs: [edit, commit]",
+        "        budgetMs: 5000",
+        "        version: 1",
+        '        implementation: "eslnt:no-debugger"',
+        '        mustFail: "debugger;\\n"',
+        '        mustPass: "const a = 1;\\n"',
+        "",
+      ].join("\n"),
+    );
     const { code, err } = await check();
     expect(code).toBe(2);
-    expect(err).toContain(
-      `Guardrail local-no-var names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...> in ${join(root, ".warden/packs/local/pack.yaml")}.`,
+    expect(err).toBe(
+      `${file} /guardrails/extra-no-debugger/implementation: Guardrail extra-no-debugger names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...> in ${file}, then run warden compile.\n`,
     );
+    await write(".warden/packs/extra/pack.yaml", (await read(".warden/packs/extra/pack.yaml")).replace("eslnt:", "eslint:"));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect((await check()).code).toBe(0);
   });
 });
 

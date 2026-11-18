@@ -10,7 +10,7 @@ export const adapters = new Map<string, Adapter>([eslintAdapter, tscAdapter, cmd
 
 const prefixOf = (g: Guardrail): string => g.implementation.slice(0, g.implementation.indexOf(":"));
 
-export const unknownAdapters = (set: RecordSet): Finding[] => {
+export const unknownAdapters = (set: RecordSet): (Finding & { file: string })[] => {
   const known = [...adapters.keys()];
   return set.packs.flatMap((pack) =>
     pack.practices
@@ -19,7 +19,8 @@ export const unknownAdapters = (set: RecordSet): Finding[] => {
       .map((g) => ({
         code: "unknown-adapter",
         record: g.id,
-        message: `Guardrail ${g.id} names adapter "${prefixOf(g)}", which is not registered; the known adapters are ${known.join(", ")}. Next action: set implementation to one of ${known.map((k) => `${k}:<...>`).join(", ")} in ${pack.file}.`,
+        file: pack.file,
+        message: `Guardrail ${g.id} names adapter "${prefixOf(g)}", which is not registered; the known adapters are ${known.join(", ")}. Next action: set implementation to one of ${known.map((k) => `${k}:<...>`).join(", ")} in ${pack.file}, then run warden compile.`,
       })),
   );
 };

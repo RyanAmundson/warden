@@ -25,7 +25,7 @@ const ownedBy = (owned: Set<string>) => (key: string): boolean => {
 const enabledOn = (file: string, groups: string[][]): boolean => groups.length === 0 || groups.some((g) => g.every((glob) => matchesGlob(file, glob)));
 
 export async function runExamples(set: RecordSet, wardenRoot: string): Promise<Finding[]> {
-  const findings: Finding[] = unknownAdapters(set);
+  const findings: Finding[] = unknownAdapters(set).map(({ code, record, message }) => ({ code, record, message }));
   const project = await mkdtemp(join(tmpdir(), "warden-examples-"));
   try {
     await symlink(join(wardenRoot, "node_modules"), join(project, "node_modules"));

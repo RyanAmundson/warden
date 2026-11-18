@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { PARSE_ERROR, type RunContext, type RunResult, type Violation } from "../adapters/types.js";
 import { wardenVersion } from "../compiler/compile.js";
 import { LOCK_PATH, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
@@ -151,14 +151,28 @@ const check = async (opts: CheckOptions): Promise<number> => {
     throw new RecordError(".warden/config.yaml", "", "not found. Next action: run warden init.");
   }
   const set = await loadRecords(root, opts.wardenRoot);
-  const [unknown] = unknownAdapters(set);
-  if (unknown !== undefined) throw new RecordError("", `/guardrails/${unknown.record}/implementation`, unknown.message);
   const { project, loopBreakerRepeats } = set.config;
   const base = requireBase(opts.base, set.config.base);
   verifyBase(root, base);
   refuseOwnBranch(root, base);
   if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined) {
     throw new RecordError(LOCK_PATH, "", "not found; this project was never compiled. Next action: run warden compile.");
+  }
+  const unknown = unknownAdapters(set);
+  if (unknown.length > 0) {
+    const sources = existsSync(join(root, LOCK_PATH)) ? readLock(root).sources : {};
+    const sourceKey = (file: string): string => (file.startsWith(join(root, ".warden") + sep) ? relative(root, file) : relative(opts.wardenRoot, file));
+    const drifted = [...new Set(unknown.map((u) => u.file))].filter((file) => {
+      const locked = sources[sourceKey(file)];
+      return locked !== undefined && locked !== sha256(readFileSync(file, "utf8"));
+    });
+    if (drifted.length > 0) {
+      const tampered = drifted.map((file): Tamper => ({ file: sourceKey(file), detail: "source-drift" }));
+      for (const t of tampered) appendEvidence(project, { at, kind: "tampered", file: t.file, detail: t.detail });
+      return report([], set, opts, { tampered });
+    }
+    const [first] = unknown as [(typeof unknown)[number]];
+    throw new RecordError(first.file, `/guardrails/${first.record}/implementation`, first.message);
   }
 
   const tampered = await findTampering(set, opts.wardenRoot, base);

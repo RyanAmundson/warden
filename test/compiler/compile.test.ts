@@ -341,7 +341,7 @@ describe("compile", () => {
       {
         code: "unknown-adapter",
         record: "local-no-var",
-        message: `Guardrail local-no-var names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...> in ${file}.`,
+        message: `Guardrail local-no-var names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...> in ${file}, then run warden compile.`,
       },
     ]);
     expect(written).toEqual([]);
