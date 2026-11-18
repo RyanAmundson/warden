@@ -1586,3 +1586,17 @@ describe("engine review: the result cache", () => {
     expect(out).toContain("FAIL b.ts:1  no-comments");
   });
 });
+
+describe("engine review: whole-project Guardrails with no changed file", () => {
+  it("a cmd Guardrail runs at its tier when nothing changed against the base", async () => {
+    await addLegacy("commit, boundary", "test ! -e broken", 5000);
+    await write("broken", "x\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "legacy and broken");
+    git("branch", "-f", "main", "HEAD");
+    const { code, out } = await check({ tier: "boundary" });
+    expect(code).toBe(1);
+    expect(out).toContain("FAIL project  legacy-check");
+    expect((await check()).code).toBe(1);
+  });
+});

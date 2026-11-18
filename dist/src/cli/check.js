@@ -79,10 +79,8 @@ const hookTrigger = (root, input) => {
     return relative(root, existsSync(absolute) ? realpathSync(absolute) : absolute);
 };
 const runCached = async (set, gs, scanned, shas, ctx, project, run) => {
-    if (scanned.length === 0)
-        return { perFile: [], wholeProject: [], ran: [], cached: 0 };
-    const lint = gs.filter((g) => g.kind === "lint");
-    const rest = gs.filter((g) => g.kind !== "lint");
+    const lint = scanned.length === 0 ? [] : gs.filter((g) => g.kind === "lint");
+    const rest = gs.filter((g) => g.kind !== "lint" && (scanned.length > 0 || !g.implementation.startsWith("eslint:")));
     const keyOf = (f, g) => cacheKey(f, shas.get(f), g, run.lockSha, run.warden);
     const hits = new Map();
     const misses = new Set();
@@ -364,7 +362,7 @@ const check = async (opts, live) => {
     const notes = { repeated, overBudget, killed };
     closeStep(live, failedOf(failures, notes) ? "fail" : "done");
     const code = report(failures, set, opts, notes);
-    return finish(project, scanned.length === 0 ? "empty" : "ran", scanned, code, { set, failures, notes, extra: { guardrails: chosen.length, cached: ran.cached, rules: ruleTimes, passes: passTimes, cachedRules: chosen.filter((g) => ruleTimes[g.id] === undefined).map((g) => g.id), ratchet: [baselineTotal(baseline), baselineTotal(wide.next)] } });
+    return finish(project, scanned.length === 0 && ran.ran.length === 0 ? "empty" : "ran", scanned, code, { set, failures, notes, extra: { guardrails: chosen.length, cached: ran.cached, rules: ruleTimes, passes: passTimes, cachedRules: chosen.filter((g) => ruleTimes[g.id] === undefined).map((g) => g.id), ratchet: [baselineTotal(baseline), baselineTotal(wide.next)] } });
 };
 export async function runCheck(opts) {
     const live = {
