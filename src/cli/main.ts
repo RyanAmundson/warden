@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,7 +28,13 @@ const oneOf = <T extends string>(name: string, value: string, allowed: readonly 
 };
 
 const program = new Command("warden").exitOverride();
-const root = (): string => resolve(process.cwd());
+const root = (): string => {
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  } catch {
+    throw new Error(`${process.cwd()} is not a git repository; run warden inside the project's git checkout`);
+  }
+};
 
 program.command("init").description("create .warden, compile, and baseline current violations").action(async () => {
   process.exitCode = await runInit(root(), findWardenRoot());
@@ -51,7 +58,7 @@ program
     process.exitCode = await runCheck({
       root: root(),
       wardenRoot: findWardenRoot(),
-      paths: paths.length > 0 ? paths : undefined,
+      paths: paths.length > 0 ? paths.map((p) => resolve(p)) : undefined,
       rule: o.rule,
       tier: oneOf<Tier>("tier", o.tier, ["edit", "commit", "boundary"]),
       format: oneOf<Format>("format", o.format, ["text", "agent", "json"]),

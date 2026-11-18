@@ -203,4 +203,14 @@ describe("warden CLI", () => {
     expect(bad.code).toBe(2);
     expect(bad.err).toContain("hook input");
   });
+
+  it("check from a subdirectory uses the repository root and resolves paths from the current directory", async () => {
+    init();
+    git("add", "-A");
+    git("commit", "-q", "-m", "adopt");
+    await writeFile(join(root, "src/b.ts"), "// new\nexport const b = 1;\n");
+    const r = wardenIn(join(root, "src"), "", "check", "b.ts", "--format", "json");
+    expect(r.code, r.err).toBe(1);
+    expect((JSON.parse(r.out) as { failures: { file: string }[] }).failures.map((f) => f.file)).toEqual(["src/b.ts"]);
+  });
 });
