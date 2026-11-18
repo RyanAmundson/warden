@@ -51,3 +51,26 @@ practices:
           src/git/retry.ts: "export const later = (run: () => void): void => {\n  setTimeout(run, 1000);\n};\n"
         mustPass:
           src/git/sources/ticks.ts: "export const later = (run: () => void): void => {\n  setTimeout(run, 1000);\n};\n"
+  - id: architecture-sources-only-emit
+    statement: A source imports no sink, and every function a source exports returns an Observable.
+    terms: [source, sink]
+    paths: ["**/sources/**"]
+    conflictsWith: []
+    guardrails:
+      - id: architecture-source-shape
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:no-restricted-syntax"
+        options:
+          - selector: "ImportDeclaration[source.value=/(^|\\/)sinks(\\/|$)/]"
+            message: "A source imports no sink. Return an Observable, and let the composition root connect it to the sink."
+          - selector: "ExportAllDeclaration[source.value=/(^|\\/)sinks(\\/|$)/], ExportNamedDeclaration[source.value=/(^|\\/)sinks(\\/|$)/], ImportExpression[source.value=/(^|\\/)sinks(\\/|$)/]"
+            message: "A source re-exports or loads no sink. Return an Observable, and let the composition root connect it to the sink."
+          - selector: "ExportNamedDeclaration > FunctionDeclaration:not([returnType.typeAnnotation.typeName.name='Observable']), ExportDefaultDeclaration > FunctionDeclaration:not([returnType.typeAnnotation.typeName.name='Observable']), ExportNamedDeclaration > VariableDeclaration > VariableDeclarator > ArrowFunctionExpression:not([returnType.typeAnnotation.typeName.name='Observable']), ExportNamedDeclaration > VariableDeclaration > VariableDeclarator > FunctionExpression:not([returnType.typeAnnotation.typeName.name='Observable'])"
+            message: "Every function a source exports declares an Observable return type."
+        mustFail:
+          src/git/sources/status.ts: "import { writeStatus } from \"../sinks/status\";\nexport const readStatus = (): number => writeStatus(1);\n"
+        mustPass:
+          src/git/sources/status.ts: "import { Observable } from \"rxjs\";\nexport const watchStatus = (): Observable<number> => new Observable<number>((subscriber) => subscriber.next(1));\n"

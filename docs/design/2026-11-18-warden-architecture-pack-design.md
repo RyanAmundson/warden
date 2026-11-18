@@ -463,3 +463,29 @@ These are the author's calls, not Ryan's decisions:
   call to the suite with the implementation's `create`.
 - Messages, which follow Warden's one-formatter rule: the compliant example and
   one next action.
+
+## Built in version 1
+
+Version 1 ships two practices and three Guardrails.
+
+- `architecture-world-only-in-sources` has two Guardrails.
+  `architecture-world-modules` bans importing the world modules `fs`,
+  `child_process`, `net`, `http`, and similar outside a sources folder.
+  `architecture-world-timers` bans `setTimeout`, `setInterval`,
+  `setImmediate`, `fetch`, `XMLHttpRequest`, and `WebSocket` there.
+- `architecture-sources-only-emit` has one Guardrail,
+  `architecture-source-shape`. It bans a source from importing, re-exporting,
+  or dynamically loading a sink. It also requires every function a source
+  exports to declare an `Observable` return type.
+
+Limits of what version 1 covers:
+
+- The merged practice covers ARCH-7 in one direction only. A source can't
+  import a sink, but nothing yet checks that a sink doesn't import a source.
+- It covers ARCH-9 by the declared return type, not the inferred one. A
+  function with no return type fails, even when TypeScript would infer an
+  `Observable`.
+- `architecture-world-modules` doesn't see `require("fs")` or a dynamic
+  `import("fs")`. The clock check covers timers only, not `Date.now()` or
+  `new Date()`. Both gaps are recorded in `cm-wkqedr.25`.
+- Every other ARCH practice waits on `cm-wkqedr.25`.

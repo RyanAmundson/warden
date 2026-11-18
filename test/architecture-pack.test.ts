@@ -93,3 +93,55 @@ describe("architecture pack world boundary", () => {
     expect(await check(timers, "export const call = (fetch: () => void): void => fetch();\n", "src/g/a.ts")).toBe("pass");
   });
 });
+
+describe("architecture pack sources only emit", () => {
+  const shape = "architecture-source-shape";
+  const sinkMessage = "A source imports no sink.";
+  const reexportMessage = "A source re-exports or loads no sink.";
+  const returnMessage = "Every function a source exports declares an Observable return type.";
+  const bad = "src/g/sources/bad.ts";
+
+  const messages = async (source: string): Promise<string> => {
+    await check(shape, source, bad);
+    const gs = guardrails.filter((g) => g.id === shape);
+    const [result] = await runGuardrails(set, gs, [bad], { root, generatedDir: join(root, ".warden/generated") });
+    return JSON.stringify(result);
+  };
+
+  it.each([
+    ["an import from a sink", "import { write } from \"../sinks/status\";\nexport const used = write;\n", sinkMessage],
+    ["export * from a sink", "export * from \"../sinks/x\";\n", reexportMessage],
+    ["a re-export from a sink", "export { x } from \"../sinks/x\";\n", reexportMessage],
+    ["a dynamic import of a sink", "import { Observable } from \"rxjs\";\nexport const load = (): Observable<number> => { import(\"../sinks/y\"); return new Observable<number>(); };\n", reexportMessage],
+    ["an async function returning a Promise", "export async function load(): Promise<number> {\n  return 1;\n}\n", returnMessage],
+    ["an arrow function returning a number", "export const read = (): number => 1;\n", returnMessage],
+    ["an exported function with no return type", "export function read() {\n  return 1;\n}\n", returnMessage],
+    ["a default function returning a number", "export default function read(): number {\n  return 1;\n}\n", returnMessage],
+  ])("fails %s", async (_name, source, message) => {
+    expect(await check(shape, source, bad)).toBe("fail");
+    expect(await messages(source)).toContain(message);
+  });
+
+  it("passes observables, types, constants, and a plain import", async () => {
+    const source = [
+      "import { Observable } from \"rxjs\";",
+      "import { parse } from \"../parse\";",
+      "export type Reading = number;",
+      "export const label = \"status\";",
+      "export function watch(): Observable<number> {",
+      "  return new Observable<number>((subscriber) => subscriber.next(parse(label)));",
+      "}",
+      "export const watchAgain = (): Observable<number> => watch();",
+      "",
+    ].join("\n");
+    expect(await check(shape, source, "src/g/sources/good.ts")).toBe("pass");
+  });
+
+  it("allows a sink import outside sources", async () => {
+    expect(await check(shape, "import { write } from \"../sinks/status\";\nexport const used = write;\n", "src/g/format.ts")).toBe("pass");
+  });
+
+  it("allows an import from sinkhole in a source", async () => {
+    expect(await check(shape, "import { x } from \"../sinkhole/x\";\nexport const used = x;\n", "src/g/sources/a.ts")).toBe("pass");
+  });
+});
