@@ -19,7 +19,7 @@ const SCAFFOLD = ["package.json", "tsconfig.json"];
 const ownedBy = (owned: Set<string>) => (key: string): boolean => {
   const path = posix.normalize(key).toLowerCase();
   const first = path.split("/")[0];
-  return first === "node_modules" || first === ".warden" || owned.has(path);
+  return first === "node_modules" || first === ".warden" || [...owned].some((o) => path === o || path.startsWith(`${o}/`));
 };
 
 const enabledOn = (file: string, groups: string[][]): boolean => groups.length === 0 || groups.some((g) => g.every((glob) => matchesGlob(file, glob)));

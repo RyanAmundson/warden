@@ -433,6 +433,7 @@ describe("compile", () => {
       ["package.json"],
       ["tsconfig.json"],
       [".warden/generated/eslint.rules.json"],
+      ["package.json/x"],
     ])("%s", async (key) => {
       const before = await installed();
       await usePack(localPack(legacyGuardrail("test ! -e broken", ["        mustFail:", '          broken: "x\\n"', `          ${JSON.stringify(key)}: "x\\n"`, "        mustPass:", '          ok.txt: "x\\n"'])));
