@@ -77,6 +77,18 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
     found.push({ file: LOCK_PATH, detail: "loosened" });
   }
   const covers = (now: string[], was: string[]): boolean => was.every((x) => now.includes(x));
+  const widens = (now: string, was: string): boolean => {
+    const [a, b] = [now.split(/(\{[^{}]*\})/), was.split(/(\{[^{}]*\})/)];
+    if (a.length !== b.length) return false;
+    return a.every((part, i) => {
+      const old = b[i] as string;
+      if (part === old) return true;
+      if (i % 2 === 0) return false;
+      const members = new Set(part.slice(1, -1).split(","));
+      return old.slice(1, -1).split(",").every((m) => members.has(m));
+    });
+  };
+  const pathsCover = (now: string[], was: string[]): boolean => was.every((x) => now.some((y) => widens(y, x)));
   for (const [id, g] of Object.entries(before.guardrails)) {
     const now = lock.guardrails[id];
     const weaker =
@@ -84,7 +96,7 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
       changed(g.kind, now.kind) ||
       now.budgetMs > g.budgetMs ||
       !covers(now.runs, g.runs) ||
-      !covers(now.paths, g.paths) ||
+      !pathsCover(now.paths, g.paths) ||
       now.implementation !== g.implementation ||
       canonicalJson(now.options) !== canonicalJson(g.options);
     if (weaker) found.push({ file: LOCK_PATH, detail: "loosened", guardrail: id });

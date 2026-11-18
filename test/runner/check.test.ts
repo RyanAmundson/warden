@@ -887,6 +887,39 @@ describe("residual fixes: after a carried rename", () => {
   });
 });
 
+describe("residual fixes: path widening", () => {
+  const usePaths = async (paths: string): Promise<void> => {
+    await write(".warden/config.yaml", withLocalPaths(paths));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+  };
+
+  beforeEach(async () => {
+    await usePaths('["**/*.{ts,tsx}"]');
+    git("add", "-A");
+    git("commit", "-q", "-m", "brace paths");
+    git("branch", "-f", "main", "HEAD");
+  });
+
+  it("a same-prefix superset brace list counts as covered", async () => {
+    await usePaths('["**/*.{ts,tsx,js}"]');
+    const { code, out } = await check();
+    expect(await tampered()).toEqual([]);
+    expect(code, out).toBe(0);
+  });
+
+  it("a brace list that drops a member is loosening", async () => {
+    await usePaths('["**/*.{ts,js}"]');
+    expect((await check()).code).toBe(1);
+    expect((await tampered()).map((t) => t.detail)).toEqual(["loosened", "loosened"]);
+  });
+
+  it("a superset brace list under another prefix is loosening", async () => {
+    await usePaths('["src/**/*.{ts,tsx,js}"]');
+    expect((await check()).code).toBe(1);
+    expect((await tampered()).map((t) => t.detail)).toEqual(["loosened", "loosened"]);
+  });
+});
+
 describe("applyBaseline", () => {
   const result =(guardrail: string, files: string[], status: RunResult["status"] = "fail"): RunResult => ({
     guardrail,
