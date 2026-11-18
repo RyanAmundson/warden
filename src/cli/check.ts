@@ -176,7 +176,7 @@ const check = async (opts: CheckOptions): Promise<number> => {
   if (tier === "commit") {
     const unstaged = new Set(unstagedFiles(root));
     const differing = scanned.filter((f) => unstaged.has(f));
-    if (differing.length > 0) return report([], set, opts, { unstaged: differing });
+    if (differing.length > 0) return report([], set, opts, { unstaged: differing, base });
   }
   const shas = new Map(scanned.map((f) => [f, sha256(readFileSync(join(root, f)))]));
   const ctx = { root, generatedDir: join(root, ".warden/generated") };

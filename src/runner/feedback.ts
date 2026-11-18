@@ -25,6 +25,7 @@ export interface Notes {
   overBudget?: OverBudget[];
   killed?: Killed[];
   unstaged?: string[];
+  base?: string;
 }
 
 const EXAMPLE_LINES = 15;
@@ -46,7 +47,10 @@ const nextAction = (failures: Violation[], set: RecordSet, notes: Notes): string
   if (notes.tampered !== undefined && notes.tampered.length > 0) {
     return `revert your change to ${[...new Set(notes.tampered.map((t) => t.file))].join(", ")}.`;
   }
-  if ((notes.unstaged ?? []).length > 0) return "stage or discard unstaged changes, then run warden check again.";
+  if ((notes.unstaged ?? []).length > 0) {
+    if (notes.base === undefined) throw new Error("an unstaged note needs the base to name the next command");
+    return `stage or discard unstaged changes, then run warden check --base ${notes.base}.`;
+  }
   const parse = failures.filter((v) => v.guardrail === PARSE_ERROR).sort(byLocation)[0];
   if (parse !== undefined) return `fix the syntax error at ${parse.file}:${parse.line}.`;
   if (notes.repeated !== undefined) {

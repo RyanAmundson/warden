@@ -89,6 +89,23 @@ describe("warden CLI", () => {
     expect(r.out).not.toContain("const a = 1");
   });
 
+  it("the unstaged next action names a command that gets past the usage check", async () => {
+    init();
+    git("add", "-A");
+    git("commit", "-q", "-m", "adopt");
+    await writeFile(join(root, "src/b.ts"), "export const b = 1;\n");
+    git("add", "-A");
+    await writeFile(join(root, "src/b.ts"), "export const b = 2;\n");
+    const r = warden("check", "--base", "main");
+    expect(r.code).toBe(1);
+    const advised = /Next action: stage or discard unstaged changes, then run warden (check[^\n]*)\.$/m.exec(r.out)?.[1];
+    expect(advised).toBe("check --base main");
+    git("add", "-A");
+    const again = warden(...(advised as string).split(" "));
+    expect(again.err).toBe("");
+    expect(again.code).toBe(0);
+  });
+
   it("explain unknown exits 2", () => {
     init();
     const r = warden("explain", "nope");

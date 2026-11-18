@@ -776,6 +776,7 @@ describe("final review: lock records base and project", () => {
     const { code, err } = await check();
     expect(code).toBe(2);
     expect(err).toContain("Next action: update this project's Warden to the release that wrote the lock on main");
+    expect(err).toContain("then run warden check --base main again.");
   });
 });
 
@@ -809,7 +810,7 @@ describe("final review: commit tier judges the index", () => {
     const { code, out } = await check({}, false);
     expect(code).toBe(1);
     expect(out).toContain("UNSTAGED a.ts");
-    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual(["Next action: stage or discard unstaged changes, then run warden check again."]);
+    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual(["Next action: stage or discard unstaged changes, then run warden check --base main."]);
     expect((await check({ tier: "edit" }, false)).code).toBe(0);
     git("add", "a.ts");
     expect((await check({}, false)).code).toBe(0);
