@@ -63,6 +63,7 @@ describe("compile", () => {
     ]);
     expect(Object.keys(lock.sources).sort()).toEqual([".warden/config.yaml", "packs/core/pack.yaml"]);
     expect(lock.guardrails["warden-no-comments"]).toEqual({ budgetMs: 5000, version: 1 });
+    expect(lock.config).toEqual({ tierBudgetMs: { edit: 2000, commit: 30000, boundary: 120000 }, loopBreakerRepeats: 3 });
   });
 
   it("lock hashes the emitted bytes", async () => {
@@ -174,6 +175,29 @@ describe("compile", () => {
     );
     const { findings, written } = await compile(root, wardenRoot);
     expect(findings.map((f) => `${f.code} ${f.record}`)).toEqual(["example-failed local-no-var", "example-failed local-no-var"]);
+    expect(written).toEqual([]);
+  });
+
+  it("an example that does not parse is a finding", async () => {
+    await usePack(
+      localPack(
+        [
+          "    guardrails:",
+          "      - id: local-no-var",
+          "        kind: lint",
+          "        runs: [edit]",
+          "        budgetMs: 5000",
+          "        version: 1",
+          "        implementation: \"eslint:no-var\"",
+          "        mustFail: \"var a = 1;\\n\"",
+          "        mustPass: \"const = ;\\n\"",
+        ].join("\n"),
+      ),
+    );
+    const { findings, written } = await compile(root, wardenRoot);
+    expect(findings.map((f) => `${f.code} ${f.record} ${f.message}`)).toContain(
+      "example-failed local-no-var Guardrail local-no-var mustPass example does not parse.",
+    );
     expect(written).toEqual([]);
   });
 

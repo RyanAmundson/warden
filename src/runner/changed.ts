@@ -40,6 +40,16 @@ export function changedFiles(root: string, base: string): string[] {
   return [...new Set(files)].sort();
 }
 
+export function lastCommittedText(root: string, path: string): string | undefined {
+  if (!git(root, ["rev-parse", "--is-inside-work-tree"]).ok) return undefined;
+  const head = git(root, ["show", `HEAD:./${path}`]);
+  if (head.ok) return head.out;
+  const last = git(root, ["log", "-1", "--format=%H", "--", path]);
+  if (!last.ok || last.out.trim() === "") return undefined;
+  const before = git(root, ["show", `${last.out.trim()}^:./${path}`]);
+  return before.ok ? before.out : undefined;
+}
+
 export function showAtBase(root: string, base: string, path: string): string | undefined {
   const spec = `${base}:./${path}`;
   if (!git(root, ["cat-file", "-e", spec]).ok) return undefined;

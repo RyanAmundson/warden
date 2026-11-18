@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { tscAdapter } from "../../src/adapters/tsc.js";
+import { PARSE_ERROR } from "../../src/adapters/types.js";
 import { RecordError } from "../../src/records/load.js";
 import type { Guardrail, RecordSet } from "../../src/records/types.js";
 import { conformance } from "./conformance.js";
@@ -103,6 +104,19 @@ describe("tsc adapter", () => {
       const baseline = results.find((r) => r.guardrail === "tsc:baseline-errors");
       expect(baseline?.status).toBe("fail");
       expect(baseline?.violations.map((v) => `${v.file}:${v.line}`)).toEqual(["src/b.ts:1"]);
+    });
+  });
+
+  it("sends syntax errors to the parse-error guardrail", async () => {
+    await withProject(async (root) => {
+      await writeFile(join(root, "src/b.ts"), "export const n = 1;\nconst = ;\n");
+      const g = guardrail("strict-null", "tsc:strictNullChecks");
+      await emitInto(root, [g]);
+      const results = await tscAdapter.run([g], [], ctxFor(root));
+      const parse = results.find((r) => r.guardrail === PARSE_ERROR);
+      expect(parse?.status).toBe("fail");
+      expect(parse?.violations.map((v) => `${v.file}:${v.line}`)).toEqual(["src/b.ts:2"]);
+      expect(results.find((r) => r.guardrail === "tsc:baseline-errors")?.violations).toEqual([]);
     });
   });
 

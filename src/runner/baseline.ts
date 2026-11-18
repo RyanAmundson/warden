@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { RunResult, Violation } from "../adapters/types.js";
+import { PARSE_ERROR, type RunResult, type Violation } from "../adapters/types.js";
 
 export type Baseline = Record<string, Record<string, number>>;
 
@@ -30,12 +30,13 @@ export function applyBaseline(
     next[g] = Object.fromEntries(Object.entries(entries).filter(([f]) => f === "" || existing(f)));
   }
   const failures: Violation[] = [];
+  const parseErrors = results.filter((r) => r.guardrail === PARSE_ERROR).flatMap((r) => r.violations);
+  const unparsed = new Set(parseErrors.map((v) => v.file));
+  failures.push(...parseErrors.filter((v) => scanned.includes(v.file)));
+  delete next[PARSE_ERROR];
   for (const r of results) {
-    if (r.status === "over-budget") {
-      failures.push({ guardrail: r.guardrail, file: "", line: 0, message: "stopped at its time budget (over-budget)" });
-      continue;
-    }
-    const byFile = new Map<string, Violation[]>(["", ...scanned].map((f) => [f, []]));
+    if (r.status === "over-budget" || r.guardrail === PARSE_ERROR) continue;
+    const byFile = new Map<string, Violation[]>(["", ...scanned].filter((f) => !unparsed.has(f)).map((f) => [f, []]));
     for (const v of r.violations) byFile.get(v.file)?.push(v);
     const entries = next[r.guardrail] ?? {};
     for (const [file, vs] of byFile) {

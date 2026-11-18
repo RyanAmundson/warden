@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { adapters, runGuardrails } from "../runner/run.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
-import type { Adapter } from "../adapters/types.js";
+import { type Adapter, PARSE_ERROR } from "../adapters/types.js";
 import type { Finding } from "./consistency.js";
 
 const TSCONFIG = JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", skipLibCheck: true }, include: ["**/*.ts"] });
@@ -35,7 +35,9 @@ export async function runExamples(set: RecordSet, wardenRoot: string): Promise<F
               continue;
             }
             const status = await runExample(g, adapter.emit([g], set), source, file, ctx);
-            if (status === "over-budget") {
+            if (status === "parse-error") {
+              findings.push({ code: "example-failed", record: g.id, message: `Guardrail ${g.id} ${label} example does not parse.` });
+            } else if (status === "over-budget") {
               findings.push({ code: "over-budget", record: g.id, message: `Guardrail ${g.id} ran longer than its ${g.budgetMs} ms budget on its ${label} example.` });
             } else if (status !== want) {
               findings.push({ code: "example-failed", record: g.id, message: `Guardrail ${g.id} ${label} example did not ${want}.` });
@@ -77,6 +79,7 @@ async function runExample(
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, source);
     const results = await runGuardrails([g], [file], ctx);
+    if (results.some((r) => r.guardrail === PARSE_ERROR && r.status === "fail")) return "parse-error";
     const own = results.find((r) => r.guardrail === g.id);
     if (own === undefined) throw new Error(`no result for guardrail ${g.id}`);
     return own.status;

@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { RecordSet } from "../records/types.js";
+import type { ProjectConfig, RecordSet } from "../records/types.js";
 
 export interface Lock {
   warden: string;
   sources: Record<string, string>;
   generated: Record<string, string>;
   guardrails: Record<string, { budgetMs: number; version: number }>;
+  config: Pick<ProjectConfig, "tierBudgetMs" | "loopBreakerRepeats">;
 }
 
 export const LOCK_PATH = ".warden/lock.json";
@@ -40,7 +41,14 @@ export function computeLock(
     .flatMap((p) => p.practices.flatMap((x) => x.guardrails))
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
     .map((g) => [g.id, { budgetMs: g.budgetMs, version: g.version }] as const);
-  return { warden, sources: hashed(sources), generated: hashed(generated), guardrails: Object.fromEntries(guardrails) };
+  const { tierBudgetMs, loopBreakerRepeats } = set.config;
+  return {
+    warden,
+    sources: hashed(sources),
+    generated: hashed(generated),
+    guardrails: Object.fromEntries(guardrails),
+    config: { tierBudgetMs, loopBreakerRepeats },
+  };
 }
 
 export function readLock(root: string): Lock {

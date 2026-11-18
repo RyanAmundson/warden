@@ -51,17 +51,17 @@ function check(file: string, validate: typeof validateConfig, value: unknown): v
   throw new RecordError(file, pointerOf(error), error.message ?? "invalid");
 }
 
-async function readRecord(file: string, validate: typeof validateConfig): Promise<unknown> {
-  const text = await readText(file);
-  if (text === undefined) throw new RecordError(file, "", "file not found");
+export function parseConfig(file: string, text: string): ProjectConfig {
   const value = parseYaml(file, text);
-  check(file, validate, value);
-  return value;
+  check(file, validateConfig, value);
+  return value as ProjectConfig;
 }
 
 export async function loadRecords(projectRoot: string, wardenRoot: string): Promise<RecordSet> {
   const configFile = join(projectRoot, ".warden", "config.yaml");
-  const config = (await readRecord(configFile, validateConfig)) as ProjectConfig;
+  const configText = await readText(configFile);
+  if (configText === undefined) throw new RecordError(configFile, "", "file not found");
+  const config = parseConfig(configFile, configText);
   const packs: Pack[] = [];
   const seen = new Set<string>();
   for (const entry of config.packs) {

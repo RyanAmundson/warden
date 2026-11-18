@@ -4,7 +4,7 @@ import { ESLint } from "eslint";
 import tseslint from "typescript-eslint";
 import { plugin } from "../../eslint-plugin/index.js";
 import type { Guardrail, Practice, RecordSet } from "../records/types.js";
-import type { Adapter, RunContext, RunResult, Violation } from "./types.js";
+import { type Adapter, PARSE_ERROR, type RunContext, type RunResult, type Violation } from "./types.js";
 
 const RULES_PATH = ".warden/generated/eslint.rules.json";
 
@@ -60,8 +60,13 @@ const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<R
   const byRule = new Map<string, Violation[]>();
   for (const g of gs) byRule.set(ruleId(g), []);
   const owner = new Map(gs.map((g) => [ruleId(g), g.id]));
+  const parseErrors: Violation[] = [];
   for (const result of results) {
     for (const m of result.messages) {
+      if (m.ruleId === null && m.fatal === true) {
+        parseErrors.push({ guardrail: PARSE_ERROR, file: relative(ctx.root, result.filePath), line: m.line, message: m.message });
+        continue;
+      }
       const id = m.ruleId === null ? undefined : m.ruleId;
       const bucket = id === undefined ? undefined : byRule.get(id);
       if (bucket === undefined) {
@@ -75,10 +80,11 @@ const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<R
       });
     }
   }
-  return gs.map((g) => {
+  const out = gs.map((g): RunResult => {
     const violations = byRule.get(ruleId(g)) as Violation[];
     return { guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms };
   });
+  return parseErrors.length > 0 ? [...out, { guardrail: PARSE_ERROR, status: "fail", violations: parseErrors, ms }] : out;
 };
 
 export const eslintAdapter: Adapter = { id: "eslint", emit, run };

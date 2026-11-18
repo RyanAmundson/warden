@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { eslintAdapter } from "../../src/adapters/eslint.js";
+import { PARSE_ERROR } from "../../src/adapters/types.js";
 import type { Guardrail, RecordSet } from "../../src/records/types.js";
 import { conformance } from "./conformance.js";
 
@@ -41,6 +42,13 @@ const setFor = (g: Guardrail): RecordSet => ({
 const fixtures = resolve(import.meta.dirname, "../fixtures/adapters");
 
 describe("eslint adapter", () => {
+  it("returns a parse error as a violation", async () => {
+    const g = guardrail("no-debugger", "eslint:no-debugger");
+    await conformance(eslintAdapter, resolve(fixtures, "parse-error"), [g], setFor(g), ["src/a.ts"], [
+      { guardrail: PARSE_ERROR, file: "src/a.ts", line: 2, message: "Parsing error: Variable declaration expected." },
+    ]);
+  });
+
   it("eslint conformance: inline disables are ignored", async () => {
     const g = guardrail("no-debugger", "eslint:no-debugger");
     await conformance(eslintAdapter, resolve(fixtures, "debugger"), [g], setFor(g), ["src/a.ts"], [

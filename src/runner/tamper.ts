@@ -1,5 +1,5 @@
 import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { expectedOutputs } from "../compiler/compile.js";
 import { isWardenEntry } from "../compiler/emit.js";
 import { LOCK_PATH, type Lock, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
@@ -10,7 +10,7 @@ import { showAtBase } from "./changed.js";
 
 export interface Tamper {
   file: string;
-  detail: "missing-lock" | "leftover-temp" | "hooks-disabled" | "generated-drift" | "source-drift" | "lock-drift" | "loosened";
+  detail: "missing-lock" | "leftover-temp" | "hooks-disabled" | "generated-drift" | "source-drift" | "lock-drift" | "loosened" | "removed";
   guardrail?: string;
 }
 
@@ -19,12 +19,20 @@ const SETTINGS_FILES = [".claude/settings.json", ".claude/settings.local.json"];
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const leftoverTemps = (root: string, dir = ""): string[] =>
-  readdirSync(join(root, dir), { withFileTypes: true }).flatMap((entry) => {
-    const path = dir === "" ? entry.name : `${dir}/${entry.name}`;
-    if (entry.isDirectory()) return entry.name === "node_modules" || entry.name === ".git" ? [] : leftoverTemps(root, path);
+const tempsIn = (root: string, dir: string, recursive: boolean): string[] => {
+  if (!existsSync(join(root, dir))) return [];
+  return readdirSync(join(root, dir), { withFileTypes: true }).flatMap((entry) => {
+    const path = dir === "." ? entry.name : `${dir}/${entry.name}`;
+    if (entry.isDirectory()) return recursive ? tempsIn(root, path, true) : [];
     return entry.name.includes(".warden-tmp-") ? [path] : [];
   });
+};
+
+const leftoverTemps = (root: string, lock: Lock | undefined): string[] => {
+  const parents = Object.keys(lock?.generated ?? {}).map((key) => dirname(key.split("#")[0] as string));
+  const shallow = [...new Set([".claude", ...parents])].flatMap((dir) => tempsIn(root, dir, false));
+  return [...new Set([...tempsIn(root, ".warden", true), ...shallow])].sort();
+};
 
 const readJson = async (root: string, file: string): Promise<unknown> => {
   const text = await readText(join(root, file));
@@ -51,6 +59,13 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
   if (text === undefined) return [];
   const before = JSON.parse(text) as Lock;
   const found: Tamper[] = [];
+  const tiers = Object.keys(lock.config.tierBudgetMs) as (keyof Lock["config"]["tierBudgetMs"])[];
+  if (
+    lock.config.loopBreakerRepeats > before.config.loopBreakerRepeats ||
+    tiers.some((t) => lock.config.tierBudgetMs[t] > before.config.tierBudgetMs[t])
+  ) {
+    found.push({ file: LOCK_PATH, detail: "loosened" });
+  }
   for (const [id, g] of Object.entries(before.guardrails)) {
     const now = lock.guardrails[id];
     if (now === undefined || now.budgetMs > g.budgetMs) found.push({ file: LOCK_PATH, detail: "loosened", guardrail: id });
@@ -67,16 +82,16 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
 
 export async function findTampering(set: RecordSet, wardenRoot: string, base: string): Promise<Tamper[]> {
   const root = set.root;
-  const found: Tamper[] = leftoverTemps(root).map((file) => ({ file, detail: "leftover-temp" }));
+  const lock = existsSync(join(root, LOCK_PATH)) ? readLock(root) : undefined;
+  const found: Tamper[] = leftoverTemps(root, lock).map((file) => ({ file, detail: "leftover-temp" }));
   const settings = new Map<string, unknown>();
   for (const file of SETTINGS_FILES) {
     const value = await readJson(root, file);
     settings.set(file, value);
     if (isObject(value) && value.disableAllHooks === true) found.push({ file, detail: "hooks-disabled" });
   }
-  if (!existsSync(join(root, LOCK_PATH))) return [...found, { file: LOCK_PATH, detail: "missing-lock" }];
+  if (lock === undefined) return [...found, { file: LOCK_PATH, detail: "missing-lock" }];
 
-  const lock = readLock(root);
   const expected = await expectedOutputs(set, root, wardenRoot);
   const sources = [...new Set([...Object.keys(lock.sources), ...Object.keys(expected.lock.sources)])].sort();
   const sourceDrift = sources.filter((file) => lock.sources[file] !== expected.lock.sources[file]);

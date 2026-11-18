@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eslintAdapter } from "../../src/adapters/eslint.js";
-import type { RunResult } from "../../src/adapters/types.js";
+import { PARSE_ERROR, type RunResult } from "../../src/adapters/types.js";
 import { runCheck } from "../../src/cli/check.js";
 import { compile } from "../../src/compiler/compile.js";
 import { sha256 } from "../../src/compiler/lock.js";
@@ -38,12 +38,33 @@ const localPack = (version = 1, budgetMs = 5000): string =>
     "    guardrails:",
     "      - id: local-no-var",
     "        kind: lint",
-    "        runs: [edit]",
+    "        runs: [edit, commit]",
     `        budgetMs: ${budgetMs}`,
     `        version: ${version}`,
     "        implementation: \"eslint:no-var\"",
     "        mustFail: \"var a = 1;\\n\"",
     "        mustPass: \"const a = 1;\\n\"",
+    "",
+  ].join("\n");
+
+const legacyPack = (runs: string, command: string, budgetMs: number): string =>
+  [
+    "id: legacy",
+    "layer: 2",
+    "terms: []",
+    "practices:",
+    "  - id: legacy-check",
+    "    statement: The legacy script passes.",
+    "    terms: []",
+    "    paths: []",
+    "    conflictsWith: []",
+    "    guardrails:",
+    "      - id: legacy-script",
+    "        kind: legacy",
+    `        runs: [${runs}]`,
+    `        budgetMs: ${budgetMs}`,
+    "        version: 1",
+    `        implementation: ${JSON.stringify(`cmd:${command}`)}`,
     "",
   ].join("\n");
 
@@ -94,6 +115,12 @@ const check = async (opts: Partial<Parameters<typeof runCheck>[0]> = {}): Promis
     o.mockRestore();
     e.mockRestore();
   }
+};
+
+const addLegacy = async (runs: string, command: string, budgetMs: number): Promise<void> => {
+  await write(".warden/config.yaml", config(["core", "local", "legacy"]));
+  await write(".warden/packs/legacy/pack.yaml", legacyPack(runs, command, budgetMs));
+  expect((await compile(root, wardenRoot)).findings).toEqual([]);
 };
 
 const failedFiles = (out: string): string[] =>
@@ -268,7 +295,7 @@ describe("runCheck", () => {
   it("explicit paths are checked instead of changed files", async () => {
     const { code, out } = await check({ paths: ["a.ts"], format: "json" });
     expect(code).toBe(0);
-    expect(JSON.parse(out)).toEqual({ failures: [], tampered: [], next: null });
+    expect(JSON.parse(out)).toEqual({ failures: [], tampered: [], overBudget: [], next: null });
   });
 
   it("rule narrows the run to one practice", async () => {
@@ -285,8 +312,9 @@ describe("runCheck", () => {
     expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "missing-lock" }]);
   });
 
-  it("leftover temp file is tampering, outside node_modules", async () => {
-    await write("node_modules/x/y.json.warden-tmp-1", "{}");
+  it("leftover temp file is tampering only where Warden writes", async () => {
+    await write("notes/y.json.warden-tmp-1", "{}");
+    await write(".claude/worktrees/w/settings.json.warden-tmp-1", "{}");
     expect((await check()).code).toBe(0);
     await write(".warden/generated/eslint.rules.json.warden-tmp-99", "{}");
     expect((await check()).code).toBe(1);
@@ -332,6 +360,71 @@ describe("runCheck", () => {
   });
 });
 
+describe("ruling fixes", () => {
+  it("runs only Guardrails whose tiers include the requested tier", async () => {
+    await addLegacy("boundary", "exit 1", 5000);
+    await write("b.ts", "const b = 1;\n");
+    expect((await check({ tier: "edit" })).code).toBe(0);
+    expect((await check({ tier: "commit" })).code).toBe(0);
+    expect((await check()).code).toBe(0);
+    expect((await check({ hook: "claude", format: "agent", tier: "boundary" })).out).toBe("");
+    expect((await check({ tier: "boundary" })).code).toBe(1);
+  });
+
+  it("a removed .warden is tampering when base has a lock", async () => {
+    await rm(join(root, ".warden"), { recursive: true });
+    expect((await check()).code).toBe(1);
+    git("add", "-A");
+    git("commit", "-q", "-m", "drop warden");
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    expect(out).toContain("Next action: revert your change to .warden");
+    expect(await tampered()).toEqual([
+      { file: ".warden", detail: "removed" },
+      { file: ".warden", detail: "removed" },
+    ]);
+  });
+
+  it("raising loopBreakerRepeats against base is loosening", async () => {
+    await write(".warden/config.yaml", config(["core", "local"], 5));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "loosened" }]);
+  });
+
+  it("raising a tier budget against base is loosening", async () => {
+    await write(".warden/config.yaml", config(["core", "local"]).replace("edit: 2000", "edit: 3000"));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "loosened" }]);
+  });
+
+  it("a parse error is a failure with a syntax next action, never cached or baselined", async () => {
+    await write("a.ts", "// one\nconst = ;\n");
+    await write("b.ts", "const = ;\n");
+    const spy = vi.spyOn(eslintAdapter, "run");
+    const first = await check();
+    expect(first.code).toBe(1);
+    expect(first.out).toContain("FAIL b.ts:1  warden:parse-error");
+    expect(first.out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual(["Next action: fix the syntax error at a.ts:2."]);
+    expect((await check()).code).toBe(1);
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(await read(".warden/baseline.json"))).toEqual({ "warden-no-comments": { "a.ts": 1 } });
+  });
+
+  it("over budget names the budget and a re-run next action", async () => {
+    await addLegacy("commit", "sleep 2", 200);
+    await write("b.ts", "const b = 1;\n");
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    expect(out).toMatch(/^ {2}Reason: {3}over budget \(\d+ ms > 200 ms\)$/m);
+    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([
+      "Next action: legacy-script exceeded its time budget; this is recorded as a Warden defect, not a problem in your code. Re-run warden check once; if it repeats, continue your task and report it.",
+    ]);
+    expect(out).not.toMatch(/blocked|cannot proceed/i);
+  });
+});
+
 describe("applyBaseline", () => {
   const result = (guardrail: string, files: string[], status: RunResult["status"] = "fail"): RunResult => ({
     guardrail,
@@ -352,10 +445,15 @@ describe("applyBaseline", () => {
     expect(applyBaseline([result("legacy", ["", ""])], baseline, ["a.ts"], () => true).failures).toHaveLength(2);
   });
 
-  it("over budget fails and keeps the baseline", () => {
+  it("over budget keeps the baseline", () => {
     const baseline = { g: { "a.ts": 2 } };
-    const { failures, next } = applyBaseline([result("g", [], "over-budget")], baseline, ["a.ts"], () => true);
-    expect(failures.map((f) => f.guardrail)).toEqual(["g"]);
-    expect(next).toEqual(baseline);
+    expect(applyBaseline([result("g", [], "over-budget")], baseline, ["a.ts"], () => true)).toEqual({ failures: [], next: baseline });
+  });
+
+  it("never absorbs a parse error", () => {
+    const baseline = { [PARSE_ERROR]: { "a.ts": 1 }, g: { "a.ts": 1 } };
+    const { failures, next } = applyBaseline([result(PARSE_ERROR, ["a.ts", "other.ts"]), result("g", [], "pass")], baseline, ["a.ts"], () => true);
+    expect(failures.map((f) => f.file)).toEqual(["a.ts"]);
+    expect(next).toEqual({ g: { "a.ts": 1 } });
   });
 });

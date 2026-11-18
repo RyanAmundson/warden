@@ -24,3 +24,5 @@ export interface Adapter {
   emit(gs: Guardrail[], set: RecordSet): Record<string, string>;
   run(gs: Guardrail[], files: string[], ctx: RunContext): Promise<RunResult[]>;
 }
+
+export const PARSE_ERROR = "warden:parse-error";

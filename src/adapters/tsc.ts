@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { join, relative } from "node:path";
 import { RecordError } from "../records/load.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
-import type { Adapter, RunContext, RunResult, Violation } from "./types.js";
+import { type Adapter, PARSE_ERROR, type RunContext, type RunResult, type Violation } from "./types.js";
 
 const BASELINE = "baseline-errors";
 const BASELINE_ID = `tsc:${BASELINE}`;
@@ -90,7 +90,9 @@ const run = async (gs: Guardrail[], _files: string[], ctx: RunContext): Promise<
       if (line.trim() === "" || /^\s/.test(line)) continue;
       const m = DIAGNOSTIC.exec(line);
       if (m === null) throw new Error(`tsc printed an unparsable line: ${line}`);
-      const guardrail = owners.get(Number(m[3])) ?? baseline;
+      const code = Number(m[3]);
+      const guardrail = code >= 1000 && code < 2000 ? PARSE_ERROR : (owners.get(code) ?? baseline);
+      if (!byGuardrail.has(guardrail)) byGuardrail.set(guardrail, []);
       (byGuardrail.get(guardrail) as Violation[]).push({
         guardrail,
         file: m[1] as string,
