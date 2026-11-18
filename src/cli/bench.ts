@@ -175,7 +175,7 @@ export async function runBench(root: string, wardenRoot: string, opts: { rule?: 
       record({ pack: pack.id }, packM);
       rows.push({ indent: "  ", label: `pack ${pack.id}`, m: packM }, ...inner);
     }
-    const lint = subjects.find((s) => prefixOf(s.g) === "eslint");
+    const lint = opts.rule === undefined && opts.pack === undefined ? subjects.find((s) => prefixOf(s.g) === "eslint") : undefined;
     if (lint !== undefined) {
       const m = await benchSubject(set, { ...lint, id: ESLINT_PASS, time: (r) => r.ms - (r.ruleMs ?? 0) }, cfg);
       record({ guardrail: ESLINT_PASS }, m);

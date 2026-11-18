@@ -129,6 +129,7 @@ it("the self-test bench catches a rule whose time grows with every pair of files
     expect(code, out).toBe(1);
     expect(out).toMatch(/^ {4}stand-in-quadratic +superlinear +k=\d\.\d+ +DEFECT$/m);
     expect(out).toContain("Next action: make stand-in-quadratic linear in files; see the four points above.");
+    expect(out).not.toContain("eslint-pass");
   } finally {
     delete rules[STAND_IN];
     vi.restoreAllMocks();
