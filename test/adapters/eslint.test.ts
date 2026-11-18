@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { describe, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { eslintAdapter } from "../../src/adapters/eslint.js";
 import type { Guardrail, RecordSet } from "../../src/records/types.js";
 import { conformance } from "./conformance.js";
@@ -58,5 +58,13 @@ describe("eslint adapter", () => {
         message: "Blocks are nested too deeply (2). Maximum allowed is 1.",
       },
     ]);
+  });
+
+  it("emits byte-identical output from different roots", () => {
+    const g = guardrail("shallow", "eslint:max-depth", [{ max: 1 }]);
+    const a = eslintAdapter.emit([g], { ...setFor(g), root: "/tmp/one" });
+    const b = eslintAdapter.emit([g], { ...setFor(g), root: "/tmp/two" });
+    expect(Object.keys(a)).toEqual([".warden/generated/eslint.rules.json"]);
+    expect(a).toEqual(b);
   });
 });

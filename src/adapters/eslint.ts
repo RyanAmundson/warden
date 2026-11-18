@@ -1,9 +1,11 @@
-import { relative, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join, relative } from "node:path";
 import { ESLint } from "eslint";
+import tseslint from "typescript-eslint";
 import type { Guardrail, RecordSet } from "../records/types.js";
 import type { Adapter, RunContext, RunResult, Violation } from "./types.js";
 
-const CONFIG_PATH = ".warden/generated/eslint.config.mjs";
+const RULES_PATH = ".warden/generated/eslint.rules.json";
 
 const ruleId = (g: Guardrail): string => g.implementation.slice(g.implementation.indexOf(":") + 1);
 
@@ -27,22 +29,19 @@ const emit = (gs: Guardrail[], set: RecordSet): Record<string, string> => {
     files: pathsFor(g, set),
     rules: { [ruleId(g)]: ruleValue(g.options) },
   }));
-  const body = [
-    `import tseslint from ${JSON.stringify(import.meta.resolve("typescript-eslint"))};`,
-    "export default [",
-    '  { files: ["**/*.{ts,tsx,mts,cts}"], languageOptions: { parser: tseslint.parser } },',
-    '  { linterOptions: { noInlineConfig: true } },',
-    ...entries.map((e) => `  ${JSON.stringify(e)},`),
-    "];",
-    "",
-  ].join("\n");
-  return { [CONFIG_PATH]: body };
+  return { [RULES_PATH]: `${JSON.stringify(entries, null, 2)}\n` };
 };
 
 const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<RunResult[]> => {
+  const entries = JSON.parse(await readFile(join(ctx.generatedDir, "eslint.rules.json"), "utf8"));
   const eslint = new ESLint({
     cwd: ctx.root,
-    overrideConfigFile: resolve(ctx.root, CONFIG_PATH),
+    overrideConfigFile: true,
+    overrideConfig: [
+      { files: ["**/*.{ts,tsx,mts,cts}"], languageOptions: { parser: tseslint.parser } },
+      { linterOptions: { noInlineConfig: true } },
+      ...entries,
+    ],
     allowInlineConfig: false,
     warnIgnored: false,
   });
