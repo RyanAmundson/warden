@@ -128,7 +128,8 @@ const loosened = (root, base, lock) => {
                 found.push({ file: BASELINE_PATH, detail: "loosened", guardrail: id });
         }
     }
-    return found;
+    const sources = Object.keys({ ...before.sources, ...lock.sources }).filter((k) => k.startsWith(".warden/") && before.sources?.[k] !== lock.sources[k]);
+    return sources.length === 0 ? found : found.map((t) => (t.file === LOCK_PATH && t.detail === "loosened" ? { ...t, sources } : t));
 };
 export async function findTampering(set, wardenRoot, base) {
     const root = set.root;

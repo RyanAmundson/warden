@@ -1116,12 +1116,12 @@ describe("final review: loop breaker", () => {
 });
 
 describe("final review: commit tier judges the index", () => {
-  it("unstaged changes to a scanned tracked file fail the commit tier with a stage-or-discard next action", async () => {
+  it("unstaged changes to a scanned tracked file fail the commit tier with a next action that stages them", async () => {
     await write("a.ts", "// one\nconst a = 2;\n");
     const { code, out } = await check({}, false);
     expect(code).toBe(1);
     expect(out).toContain("UNSTAGED a.ts");
-    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual(["Next action: stage or discard unstaged changes, then run warden check --base main."]);
+    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual(["Next action: run git add -- 'a.ts', then run warden check --base main."]);
     expect((await check({ tier: "edit" }, false)).code).toBe(0);
     git("add", "a.ts");
     expect((await check({}, false)).code).toBe(0);
@@ -1673,5 +1673,48 @@ describe("engine review: an Evidence line that does not parse", () => {
     const { code, err } = await check({ paths: ["b.ts"] });
     expect(err).toBe("");
     expect(code).toBe(1);
+  });
+});
+
+describe("engine review: one next action", () => {
+  it("a loosened lock names the source to revert and warden compile, and following it passes", async () => {
+    await write(".warden/config.yaml", withLocalPaths('["src/**/*.ts"]'));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual(["Next action: revert your change to .warden/config.yaml, then run warden compile."]);
+    git("checkout", "main", "--", ".warden/config.yaml");
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect((await check()).code).toBe(0);
+  });
+
+  it("a base with no shared history names the cause and one action", async () => {
+    git("checkout", "-q", "--orphan", "other");
+    git("commit", "-q", "-m", "unrelated");
+    git("checkout", "-q", "feature");
+    const { code, err } = await check({ base: "other" });
+    expect(code).toBe(2);
+    expect(err).toContain("other and HEAD share no history. Next action: run warden check --base <the branch this work merges into>.");
+  });
+
+  it("a shallow clone without the merge base says to unshallow it", async () => {
+    await write("b.ts", "const b = 1;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "feature work");
+    git("checkout", "-q", "main");
+    await write("c.ts", "const c = 1;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "main work");
+    const origin = root;
+    root = await realpath(await mkdtemp(join(tmpdir(), "warden-shallow-")));
+    try {
+      git("clone", "-q", "--depth", "1", "--no-single-branch", "-b", "feature", `file://${origin}`, ".");
+      const { code, err } = await check({ base: "origin/main" });
+      expect(code).toBe(2);
+      expect(err).toContain("no merge base in this shallow clone. Next action: run git fetch --unshallow, then run warden check --base origin/main again.");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      root = origin;
+    }
   });
 });

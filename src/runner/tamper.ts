@@ -13,6 +13,7 @@ export interface Tamper {
   detail: "missing-lock" | "leftover-temp" | "hooks-disabled" | "generated-drift" | "source-drift" | "lock-drift" | "loosened" | "removed" | "base-moved" | "weakened-kind";
   guardrail?: string;
   was?: string;
+  sources?: string[];
 }
 
 const SETTINGS_FILES = [".claude/settings.json", ".claude/settings.local.json"];
@@ -143,7 +144,8 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
       if (n > (baseBaseline[id]?.[file] ?? 0)) found.push({ file: BASELINE_PATH, detail: "loosened", guardrail: id });
     }
   }
-  return found;
+  const sources = Object.keys({ ...before.sources, ...lock.sources }).filter((k) => k.startsWith(".warden/") && before.sources?.[k] !== lock.sources[k]);
+  return sources.length === 0 ? found : found.map((t) => (t.file === LOCK_PATH && t.detail === "loosened" ? { ...t, sources } : t));
 };
 
 export async function findTampering(set: RecordSet, wardenRoot: string, base: string): Promise<Tamper[]> {

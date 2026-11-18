@@ -113,9 +113,9 @@ describe("warden CLI", () => {
     await writeFile(join(root, "src/b.ts"), "export const b = 2;\n");
     const r = warden("check", "--base", "main");
     expect(r.code).toBe(1);
-    const advised = /Next action: stage or discard unstaged changes, then run warden (check[^\n]*)\.$/m.exec(r.out)?.[1];
+    const advised = /Next action: run git add -- 'src\/b\.ts', then run warden (check[^\n]*)\.$/m.exec(r.out)?.[1];
     expect(advised).toBe("check --base main");
-    git("add", "-A");
+    git("add", "--", "src/b.ts");
     const again = warden(...(advised as string).split(" "));
     expect(again.err).toBe("");
     expect(again.code).toBe(0);
@@ -203,6 +203,20 @@ describe("warden CLI", () => {
     const r = warden("check", "--base", "main");
     expect(r.code).toBe(2);
     expect(r.err).toContain("warden compile");
+  });
+
+  it("doctor, report, and explain outside any project say to run warden init", async () => {
+    const outside = await mkdtemp(join(tmpdir(), "warden-outside-"));
+    execFileSync("git", ["init", "-q"], { cwd: outside });
+    try {
+      for (const args of [["doctor"], ["report"], ["explain", "no-comments"]]) {
+        const r = wardenIn(outside, "", ...args);
+        expect(r.code, args.join(" ")).toBe(2);
+        expect(r.err, args.join(" ")).toContain("not found. Next action: run warden init.");
+      }
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 
   it("check outside any project says to run warden init", () => {

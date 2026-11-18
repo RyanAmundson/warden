@@ -95,7 +95,7 @@ export async function loadRecords(projectRoot, wardenRoot) {
     const configFile = join(projectRoot, ".warden", "config.yaml");
     const configText = await readText(configFile);
     if (configText === undefined)
-        throw new RecordError(configFile, "", "file not found");
+        throw new RecordError(configFile, "", "not found. Next action: run warden init.");
     const config = parseConfig(configFile, configText);
     const packs = [];
     const seen = new Set();

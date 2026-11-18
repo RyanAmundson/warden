@@ -17,12 +17,16 @@ const nextAction = (failures, set, notes) => {
     if (weakened !== undefined)
         return `restore kind ${weakened.was} on ${weakened.guardrail} and run warden compile.`;
     if (notes.tampered !== undefined && notes.tampered.length > 0) {
-        return `revert your change to ${[...new Set(notes.tampered.map((t) => t.file))].join(", ")}.`;
+        const sources = notes.tampered.flatMap((t) => t.sources ?? []);
+        if (sources.length === 0)
+            return `revert your change to ${[...new Set(notes.tampered.map((t) => t.file))].join(", ")}.`;
+        const files = [...new Set([...sources, ...notes.tampered.filter((t) => t.sources === undefined && t.file !== ".warden/lock.json").map((t) => t.file)])];
+        return `revert your change to ${files.join(", ")}, then run warden compile.`;
     }
     if ((notes.unstaged ?? []).length > 0) {
         if (notes.base === undefined)
             throw new Error("an unstaged note needs the base to name the next command");
-        return `stage or discard unstaged changes, then run warden check --base ${notes.base}.`;
+        return `run git add -- ${notes.unstaged?.map((f) => `'${f.replaceAll("'", "'\\''")}'`).join(" ")}, then run warden check --base ${notes.base}.`;
     }
     const parse = failures.filter((v) => v.guardrail === PARSE_ERROR).sort(byLocation)[0];
     if (parse !== undefined)

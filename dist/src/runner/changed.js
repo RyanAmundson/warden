@@ -78,7 +78,15 @@ export function lastCommittedText(root, path) {
     const before = git(root, ["show", `${last.out.trim()}^:./${path}`]);
     return before.ok ? before.out : undefined;
 }
-const mergeBase = (root, base) => must(root, ["merge-base", base, "HEAD"]).trim();
+const mergeBase = (root, base) => {
+    const r = git(root, ["merge-base", base, "HEAD"]);
+    if (r.ok)
+        return r.out.trim();
+    if (git(root, ["rev-parse", "--is-shallow-repository"]).out.trim() === "true") {
+        throw new RecordError("", "/base", `${base} and HEAD have no merge base in this shallow clone. Next action: run git fetch --unshallow, then run warden check --base ${base} again.`);
+    }
+    throw new RecordError("", "/base", `${base} and HEAD share no history. Next action: run warden check --base <the branch this work merges into>.`);
+};
 const HUNK = /^@@ -\S+ \+(\d+)(?:,(\d+))? @@/;
 export function changesSinceMergeBase(root, base) {
     const at = mergeBase(root, base);

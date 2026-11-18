@@ -97,7 +97,7 @@ export async function readPack(projectRoot: string, wardenRoot: string, id: stri
 export async function loadRecords(projectRoot: string, wardenRoot: string): Promise<RecordSet> {
   const configFile = join(projectRoot, ".warden", "config.yaml");
   const configText = await readText(configFile);
-  if (configText === undefined) throw new RecordError(configFile, "", "file not found");
+  if (configText === undefined) throw new RecordError(configFile, "", "not found. Next action: run warden init.");
   const config = parseConfig(configFile, configText);
   const packs: Pack[] = [];
   const seen = new Set<string>();
