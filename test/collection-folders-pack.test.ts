@@ -88,6 +88,14 @@ describe("collection-folders pack", () => {
     expect((await run("warden-collection-items-share-one-shape"))?.status).toBe("pass");
   });
 
+  it("replaces only a leading item name, so an item named a keeps data.ts as is", async () => {
+    await write("src/[widgets]/a/data.ts");
+    await write("src/[widgets]/b/data.ts");
+    await write("src/[widgets]/c/index.ts");
+    const failed = await run("warden-collection-items-share-one-shape");
+    expect(failed?.violations[0]?.message).toContain("src/[widgets]/c differs from the shape most items in src/[widgets] share: lacks [data.ts], has extra [index.ts]");
+  });
+
   it("skips a collection whose most common shapes tie", async () => {
     await write("src/[widgets]/button/index.ts");
     await write("src/[widgets]/card/card.ts");

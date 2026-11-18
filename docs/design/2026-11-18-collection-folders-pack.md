@@ -26,8 +26,8 @@ Each failure lists the offending paths, then a count and one next action.
   top-level entries as the most common item shape in its collection. The design
   asked for a declared item layout per collection; a pack cannot know a
   project's layouts, so Ryan chose the heuristic.
-- An entry name that repeats its item's folder name is compared with the item
-  name replaced by `<item>`, so `Button/Button.tsx` and `Card/Card.tsx` share
+- An entry named after its item's folder, exactly or followed by a dot, is
+  compared with that prefix replaced by `<item>`, so `Button/Button.tsx` and `Card/Card.tsx` share
   the shape `<item>.tsx` (Ryan, after review). Without this, every component
   folder had a unique shape.
 - A collection whose two most common shapes tie is skipped, because no shape
