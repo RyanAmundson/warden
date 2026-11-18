@@ -1,0 +1,101 @@
+id: principles
+layer: 1
+terms: []
+practices:
+  - id: small-functions
+    statement: Functions stay small. At most 10 branches, 3 levels of nesting, 50 lines, and 4 parameters.
+    terms: []
+    paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"]
+    conflictsWith: []
+    guardrails:
+      - id: principles-complexity
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:complexity"
+        options: [{ max: 10 }]
+        mustFail: "export const f = (a: number): number => {\n  if (a === 0) return 0;\n  if (a === 1) return 1;\n  if (a === 2) return 2;\n  if (a === 3) return 3;\n  if (a === 4) return 4;\n  if (a === 5) return 5;\n  if (a === 6) return 6;\n  if (a === 7) return 7;\n  if (a === 8) return 8;\n  if (a === 9) return 9;\n  return a;\n};\n"
+        mustPass: "export const f = (a: number): number => {\n  if (a === 0) return 0;\n  if (a === 1) return 1;\n  if (a === 2) return 2;\n  if (a === 3) return 3;\n  if (a === 4) return 4;\n  if (a === 5) return 5;\n  if (a === 6) return 6;\n  if (a === 7) return 7;\n  if (a === 8) return 8;\n  return a;\n};\n"
+      - id: principles-nesting-depth
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:max-depth"
+        options: [{ max: 3 }]
+        mustFail: "export const f = (a: number): void => {\n  if (a > 0) {\n    if (a > 1) {\n      if (a > 2) {\n        if (a > 3) {\n        }\n      }\n    }\n  }\n};\n"
+        mustPass: "export const f = (a: number): void => {\n  if (a > 0) {\n    if (a > 1) {\n      if (a > 2) {\n      }\n    }\n  }\n};\n"
+      - id: principles-function-length
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:max-lines-per-function"
+        options: [{ max: 50, skipBlankLines: true, skipComments: true }]
+        mustFail: "export const f = (): void => {\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n};\n"
+        mustPass: "export const f = (): void => {\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n};\n"
+      - id: principles-parameter-count
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:max-params"
+        options: [{ max: 4 }]
+        mustFail: "export const f = (a: number, b: number, c: number, d: number, e: number): number => a + b + c + d + e;\n"
+        mustPass: "export const f = (a: number, b: number, c: number, d: number): number => a + b + c + d;\n"
+  - id: one-responsibility-per-file
+    statement: A file holds one responsibility. At most 300 lines and one class.
+    terms: []
+    paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"]
+    conflictsWith: []
+    guardrails:
+      - id: principles-file-length
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:max-lines"
+        options: [{ max: 300, skipBlankLines: true, skipComments: true }]
+        mustFail: "export const x0 = 0;\nexport const x1 = 1;\nexport const x2 = 2;\nexport const x3 = 3;\nexport const x4 = 4;\nexport const x5 = 5;\nexport const x6 = 6;\nexport const x7 = 7;\nexport const x8 = 8;\nexport const x9 = 9;\nexport const x10 = 10;\nexport const x11 = 11;\nexport const x12 = 12;\nexport const x13 = 13;\nexport const x14 = 14;\nexport const x15 = 15;\nexport const x16 = 16;\nexport const x17 = 17;\nexport const x18 = 18;\nexport const x19 = 19;\nexport const x20 = 20;\nexport const x21 = 21;\nexport const x22 = 22;\nexport const x23 = 23;\nexport const x24 = 24;\nexport const x25 = 25;\nexport const x26 = 26;\nexport const x27 = 27;\nexport const x28 = 28;\nexport const x29 = 29;\nexport const x30 = 30;\nexport const x31 = 31;\nexport const x32 = 32;\nexport const x33 = 33;\nexport const x34 = 34;\nexport const x35 = 35;\nexport const x36 = 36;\nexport const x37 = 37;\nexport const x38 = 38;\nexport const x39 = 39;\nexport const x40 = 40;\nexport const x41 = 41;\nexport const x42 = 42;\nexport const x43 = 43;\nexport const x44 = 44;\nexport const x45 = 45;\nexport const x46 = 46;\nexport const x47 = 47;\nexport const x48 = 48;\nexport const x49 = 49;\nexport const x50 = 50;\nexport const x51 = 51;\nexport const x52 = 52;\nexport const x53 = 53;\nexport const x54 = 54;\nexport const x55 = 55;\nexport const x56 = 56;\nexport const x57 = 57;\nexport const x58 = 58;\nexport const x59 = 59;\nexport const x60 = 60;\nexport const x61 = 61;\nexport const x62 = 62;\nexport const x63 = 63;\nexport const x64 = 64;\nexport const x65 = 65;\nexport const x66 = 66;\nexport const x67 = 67;\nexport const x68 = 68;\nexport const x69 = 69;\nexport const x70 = 70;\nexport const x71 = 71;\nexport const x72 = 72;\nexport const x73 = 73;\nexport const x74 = 74;\nexport const x75 = 75;\nexport const x76 = 76;\nexport const x77 = 77;\nexport const x78 = 78;\nexport const x79 = 79;\nexport const x80 = 80;\nexport const x81 = 81;\nexport const x82 = 82;\nexport const x83 = 83;\nexport const x84 = 84;\nexport const x85 = 85;\nexport const x86 = 86;\nexport const x87 = 87;\nexport const x88 = 88;\nexport const x89 = 89;\nexport const x90 = 90;\nexport const x91 = 91;\nexport const x92 = 92;\nexport const x93 = 93;\nexport const x94 = 94;\nexport const x95 = 95;\nexport const x96 = 96;\nexport const x97 = 97;\nexport const x98 = 98;\nexport const x99 = 99;\nexport const x100 = 100;\nexport const x101 = 101;\nexport const x102 = 102;\nexport const x103 = 103;\nexport const x104 = 104;\nexport const x105 = 105;\nexport const x106 = 106;\nexport const x107 = 107;\nexport const x108 = 108;\nexport const x109 = 109;\nexport const x110 = 110;\nexport const x111 = 111;\nexport const x112 = 112;\nexport const x113 = 113;\nexport const x114 = 114;\nexport const x115 = 115;\nexport const x116 = 116;\nexport const x117 = 117;\nexport const x118 = 118;\nexport const x119 = 119;\nexport const x120 = 120;\nexport const x121 = 121;\nexport const x122 = 122;\nexport const x123 = 123;\nexport const x124 = 124;\nexport const x125 = 125;\nexport const x126 = 126;\nexport const x127 = 127;\nexport const x128 = 128;\nexport const x129 = 129;\nexport const x130 = 130;\nexport const x131 = 131;\nexport const x132 = 132;\nexport const x133 = 133;\nexport const x134 = 134;\nexport const x135 = 135;\nexport const x136 = 136;\nexport const x137 = 137;\nexport const x138 = 138;\nexport const x139 = 139;\nexport const x140 = 140;\nexport const x141 = 141;\nexport const x142 = 142;\nexport const x143 = 143;\nexport const x144 = 144;\nexport const x145 = 145;\nexport const x146 = 146;\nexport const x147 = 147;\nexport const x148 = 148;\nexport const x149 = 149;\nexport const x150 = 150;\nexport const x151 = 151;\nexport const x152 = 152;\nexport const x153 = 153;\nexport const x154 = 154;\nexport const x155 = 155;\nexport const x156 = 156;\nexport const x157 = 157;\nexport const x158 = 158;\nexport const x159 = 159;\nexport const x160 = 160;\nexport const x161 = 161;\nexport const x162 = 162;\nexport const x163 = 163;\nexport const x164 = 164;\nexport const x165 = 165;\nexport const x166 = 166;\nexport const x167 = 167;\nexport const x168 = 168;\nexport const x169 = 169;\nexport const x170 = 170;\nexport const x171 = 171;\nexport const x172 = 172;\nexport const x173 = 173;\nexport const x174 = 174;\nexport const x175 = 175;\nexport const x176 = 176;\nexport const x177 = 177;\nexport const x178 = 178;\nexport const x179 = 179;\nexport const x180 = 180;\nexport const x181 = 181;\nexport const x182 = 182;\nexport const x183 = 183;\nexport const x184 = 184;\nexport const x185 = 185;\nexport const x186 = 186;\nexport const x187 = 187;\nexport const x188 = 188;\nexport const x189 = 189;\nexport const x190 = 190;\nexport const x191 = 191;\nexport const x192 = 192;\nexport const x193 = 193;\nexport const x194 = 194;\nexport const x195 = 195;\nexport const x196 = 196;\nexport const x197 = 197;\nexport const x198 = 198;\nexport const x199 = 199;\nexport const x200 = 200;\nexport const x201 = 201;\nexport const x202 = 202;\nexport const x203 = 203;\nexport const x204 = 204;\nexport const x205 = 205;\nexport const x206 = 206;\nexport const x207 = 207;\nexport const x208 = 208;\nexport const x209 = 209;\nexport const x210 = 210;\nexport const x211 = 211;\nexport const x212 = 212;\nexport const x213 = 213;\nexport const x214 = 214;\nexport const x215 = 215;\nexport const x216 = 216;\nexport const x217 = 217;\nexport const x218 = 218;\nexport const x219 = 219;\nexport const x220 = 220;\nexport const x221 = 221;\nexport const x222 = 222;\nexport const x223 = 223;\nexport const x224 = 224;\nexport const x225 = 225;\nexport const x226 = 226;\nexport const x227 = 227;\nexport const x228 = 228;\nexport const x229 = 229;\nexport const x230 = 230;\nexport const x231 = 231;\nexport const x232 = 232;\nexport const x233 = 233;\nexport const x234 = 234;\nexport const x235 = 235;\nexport const x236 = 236;\nexport const x237 = 237;\nexport const x238 = 238;\nexport const x239 = 239;\nexport const x240 = 240;\nexport const x241 = 241;\nexport const x242 = 242;\nexport const x243 = 243;\nexport const x244 = 244;\nexport const x245 = 245;\nexport const x246 = 246;\nexport const x247 = 247;\nexport const x248 = 248;\nexport const x249 = 249;\nexport const x250 = 250;\nexport const x251 = 251;\nexport const x252 = 252;\nexport const x253 = 253;\nexport const x254 = 254;\nexport const x255 = 255;\nexport const x256 = 256;\nexport const x257 = 257;\nexport const x258 = 258;\nexport const x259 = 259;\nexport const x260 = 260;\nexport const x261 = 261;\nexport const x262 = 262;\nexport const x263 = 263;\nexport const x264 = 264;\nexport const x265 = 265;\nexport const x266 = 266;\nexport const x267 = 267;\nexport const x268 = 268;\nexport const x269 = 269;\nexport const x270 = 270;\nexport const x271 = 271;\nexport const x272 = 272;\nexport const x273 = 273;\nexport const x274 = 274;\nexport const x275 = 275;\nexport const x276 = 276;\nexport const x277 = 277;\nexport const x278 = 278;\nexport const x279 = 279;\nexport const x280 = 280;\nexport const x281 = 281;\nexport const x282 = 282;\nexport const x283 = 283;\nexport const x284 = 284;\nexport const x285 = 285;\nexport const x286 = 286;\nexport const x287 = 287;\nexport const x288 = 288;\nexport const x289 = 289;\nexport const x290 = 290;\nexport const x291 = 291;\nexport const x292 = 292;\nexport const x293 = 293;\nexport const x294 = 294;\nexport const x295 = 295;\nexport const x296 = 296;\nexport const x297 = 297;\nexport const x298 = 298;\nexport const x299 = 299;\nexport const x300 = 300;\n"
+        mustPass: "export const x = 1;\n"
+      - id: principles-one-class-per-file
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:max-classes-per-file"
+        options: [1]
+        mustFail: "export class A {}\nexport class B {}\n"
+        mustPass: "export class A {}\n"
+  - id: no-unused-code
+    statement: Code declares nothing it does not use. No unused local, no useless constructor, and no unused private member.
+    terms: []
+    paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"]
+    conflictsWith: []
+    guardrails:
+      - id: principles-unused-locals
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:no-unused-vars"
+        options: [{ args: "none", ignoreRestSiblings: true }]
+        mustFail: "const unused = 1;\n"
+        mustPass: "export const used = 1;\n"
+      - id: principles-useless-constructor
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:no-useless-constructor"
+        mustFail: "export class A {\n  constructor() {}\n}\n"
+        mustPass: "export class A {\n  readonly x: number;\n  constructor() {\n    this.x = 1;\n  }\n}\n"
+      - id: principles-unused-private-members
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:no-unused-private-class-members"
+        mustFail: "export class A {\n  #x = 1;\n}\n"
+        mustPass: "export class A {\n  #x = 1;\n  get x(): number {\n    return this.#x;\n  }\n}\n"
