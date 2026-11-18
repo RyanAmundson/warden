@@ -18,7 +18,7 @@ export interface GuardrailRow {
   guardrail: string;
   practice: string;
   kind: string;
-  strength: "proven" | "unproven";
+  strength: "proven" | "prose";
   baselineRemaining: number;
   fired: number;
   medianMs: number;
@@ -50,7 +50,7 @@ export async function buildReport(root: string, wardenRoot: string): Promise<{ p
       guardrail: g.id,
       practice: x.id,
       kind: g.kind,
-      strength: g.kind !== "instruction" && g.mustPass !== undefined ? "proven" : "unproven",
+      strength: g.kind === "instruction" ? "prose" : "proven",
       baselineRemaining: Object.values(baseline[g.id] ?? {}).reduce((a, b) => a + b, 0),
       fired: evidence.filter((e) => e.kind === "fired" && e.guardrail === g.id).length,
       medianMs: round(median(ms)),

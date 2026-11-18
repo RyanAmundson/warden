@@ -345,6 +345,23 @@ describe("warden CLI", () => {
       expect(warden("explain", "local-script").out).toContain("    Violating example (mustFail):\n      broken:\n        x\n");
     });
 
+    it("an instruction Guardrail beside a lint one reads prose, and no row reads unproven", async () => {
+      await mkdir(join(root, ".warden/packs/local"), { recursive: true });
+      await writeFile(
+        join(root, ".warden/packs/local/pack.yaml"),
+        ["id: local", "layer: 1", "terms: []", "practices:", "  - id: no-var", "    statement: Declare with const.", "    terms: []", "    paths: []", "    conflictsWith: []", "    guardrails:",
+          "      - id: local-no-var", "        kind: lint", "        runs: [edit]", "        budgetMs: 5000", "        version: 1", '        implementation: "eslint:no-var"',
+          '        mustFail: "var a = 1;\\n"', '        mustPass: "const a = 1;\\n"',
+          "      - id: local-no-var-prose", "        kind: instruction", "        runs: [edit]", "        budgetMs: 100", "        version: 1", '        implementation: "instruction:CLAUDE.md"',
+          '        mustFail: "var a = 1;\\n"', '        mustPass: "const a = 1;\\n"', ""].join("\n"),
+      );
+      expect(warden("init", "--packs", "core,local").code).toBe(0);
+      const json = JSON.parse(warden("report", "--format", "json").out) as { guardrails: { guardrail: string; strength: string }[] };
+      expect(json.guardrails.find((g) => g.guardrail === "local-no-var-prose")?.strength).toBe("prose");
+      expect(json.guardrails.filter((g) => g.strength === "unproven")).toEqual([]);
+      expect(warden("report").out).not.toContain("unproven");
+    });
+
     it("packs lists bundled then local with on and off states", async () => {
       init();
       await localPack();
