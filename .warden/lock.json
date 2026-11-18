@@ -3,11 +3,11 @@
   "warden": "0.1.0",
   "sources": {
     ".warden/config.yaml": "2280033b1777f6de504790f367247cbd9d99df3dc4f7605b396435ce60a48b77",
-    "packs/core/pack.yaml": "70928513725ddf9dc7324ca24adf88ce8c8c037644833f876e8352f4722d193a"
+    "packs/core/pack.yaml": "0549826a521623ac0bb0ac890e361048df6c7c8c5060ed9a21dcc3edaa3dae91"
   },
   "generated": {
-    ".claude/settings.json#warden": "25442c509b425992d4d264b54b5e5df9a3141d8f92a972248a704afaf737cc6b",
-    ".warden/generated/eslint.rules.json": "4e47f901a516ff01c8e9ac1c075667b01012519d067ba39bd8470158f401572d"
+    ".claude/settings.json#warden": "16734b6ceacbe4040882dff86f342b8a93bdb8af15e5f42aad74bc055f1a0084",
+    ".warden/generated/eslint.rules.json": "53a0d56a6c048cb86a4c05181bb29f20ed5420167f0ae5016ee6a4beba682e9f"
   },
   "guardrails": {
     "warden-no-comments": {

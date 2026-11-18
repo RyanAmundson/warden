@@ -14,7 +14,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx --no -- warden check --format agent --hook claude"
+            "command": "npx --no -- warden check --format agent --hook claude --base 'main'"
           }
         ]
       }
