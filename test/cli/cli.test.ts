@@ -218,26 +218,48 @@ describe("warden CLI", () => {
     expect(r.err).toContain('base ref "nope" does not exist. Next action: run warden check --base <an existing branch>');
   });
 
-  it("init in a repository with no main branch names an action that init can follow", () => {
+  const adoptedBase = async (base: string): Promise<void> => {
+    expect(await readFile(join(root, ".warden/config.yaml"), "utf8")).toContain(`base: ${JSON.stringify(base)}`);
+    git("add", "-A");
+    git("commit", "-q", "-m", "adopt");
+    expect(warden("check", "--base", base).code).toBe(0);
+  };
+
+  it("init without a main branch asks for an existing base and writes the one it is given", async () => {
     git("branch", "-m", "trunk");
     const r = warden("init");
     expect(r.code).toBe(2);
-    expect(r.err).toContain("Next action: run git checkout -B main, then git commit --allow-empty -m init if main has no commit, then run warden init again");
-    expect(r.err).not.toContain("warden check");
-    git("checkout", "-B", "main");
-    expect(warden("init").code).toBe(0);
+    expect(r.err).toContain("Next action: run warden init --base <an existing branch>");
+    expect(r.err).not.toContain("git checkout");
+    expect(warden("init", "--base", "trunk").code).toBe(0);
+    await adoptedBase("trunk");
   });
 
-  it("init when main has no commit yet names an action that ends with init succeeding", () => {
+  it("init when main has no commit yet asks for an existing base and writes the one it is given", async () => {
+    git("branch", "side");
     git("checkout", "-q", "--orphan", "fresh");
     git("branch", "-D", "main");
     git("symbolic-ref", "HEAD", "refs/heads/main");
     const r = warden("init");
     expect(r.code).toBe(2);
-    expect(r.err).toContain("git commit --allow-empty -m init if main has no commit");
-    git("checkout", "-B", "main");
-    git("commit", "-q", "--allow-empty", "-m", "init");
-    expect(warden("init").code).toBe(0);
+    expect(r.err).toContain("Next action: run warden init --base <an existing branch>");
+    expect(warden("init", "--base", "side").code).toBe(0);
+    expect(await readFile(join(root, ".warden/config.yaml"), "utf8")).toContain('base: "side"');
+  });
+
+  it("init when main exists only on the remote takes the remote ref as the base and leaves the branches alone", async () => {
+    const bare = join(home, "bare.git");
+    execFileSync("git", ["clone", "-q", "--bare", root, bare]);
+    git("remote", "add", "origin", bare);
+    git("fetch", "-q", "origin");
+    git("checkout", "-q", "-b", "feat");
+    git("branch", "-D", "main");
+    const r = warden("init");
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("Next action: run warden init --base <an existing branch>");
+    expect(warden("init", "--base", "origin/main").code).toBe(0);
+    await adoptedBase("origin/main");
+    expect(execFileSync("git", ["branch", "--list"], { cwd: root, encoding: "utf8" }).replace(/[* ]/g, "").split("\n").filter(Boolean)).toEqual(["feat"]);
   });
 
   it("an invalid flag value is a usage error, exit 2", () => {

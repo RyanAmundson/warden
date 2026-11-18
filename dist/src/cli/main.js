@@ -42,8 +42,9 @@ program
     .command("init")
     .description("create .warden, compile, and baseline current violations")
     .option("--packs <ids>", "comma-separated pack ids; must include core", "core")
+    .option("--base <ref>", "the branch or ref that changes are measured against; must resolve to a commit", "main")
     .action(async (o) => {
-    process.exitCode = await runInit(root(), findWardenRoot(), o.packs.split(",").map((id) => id.trim()));
+    process.exitCode = await runInit(root(), findWardenRoot(), o.packs.split(",").map((id) => id.trim()), o.base);
 });
 program.command("doctor").description("check that Warden's bundled tools load and every cmd Guardrail's command resolves").action(async () => {
     process.exitCode = await runDoctor(root(), findWardenRoot());

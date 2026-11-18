@@ -10,10 +10,10 @@ import { verifyBase } from "../runner/changed.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { runGuardrails } from "../runner/run.js";
 const CONFIG_PATH = ".warden/config.yaml";
-const configText = (project, version, packs) => [
+const configText = (project, version, packs, base) => [
     `warden: ${JSON.stringify(version)}`,
     `project: ${JSON.stringify(project)}`,
-    "base: main",
+    `base: ${JSON.stringify(base)}`,
     "packs:",
     ...packs.flatMap((id) => [`  - id: ${id}`, '    paths: ["**/*.{ts,tsx,js,mjs}"]']),
     "tierBudgetMs:",
@@ -46,10 +46,10 @@ const selectPacks = async (root, wardenRoot, requested) => {
         throw new Error(`core is required because it carries the rules that protect every other rule. Next action: run warden init --packs core,${requested.join(",")}.`);
     return requested;
 };
-export async function runInit(root, wardenRoot, requested = ["core"]) {
+export async function runInit(root, wardenRoot, requested = ["core"], base = "main") {
     if (existsSync(join(root, CONFIG_PATH)))
         throw new RecordError(join(root, ".warden"), "", "already exists; init refuses to overwrite it");
-    verifyBase(root, "main", "run git checkout -B main, then git commit --allow-empty -m init if main has no commit, then run warden init again");
+    verifyBase(root, base, "run warden init --base <an existing branch>");
     const packs = await selectPacks(root, wardenRoot, requested);
     const warden = join(root, ".warden");
     const wardenExisted = existsSync(warden);
@@ -59,7 +59,7 @@ export async function runInit(root, wardenRoot, requested = ["core"]) {
     const claudeExisted = existsSync(join(root, ".claude"));
     const settings = existsSync(join(root, SETTINGS)) ? readFileSync(join(root, SETTINGS), "utf8") : undefined;
     try {
-        await initialize(root, wardenRoot, packs);
+        await initialize(root, wardenRoot, packs, base);
     }
     catch (cause) {
         if (wardenExisted)
@@ -76,9 +76,9 @@ export async function runInit(root, wardenRoot, requested = ["core"]) {
     }
     return runDoctor(root, wardenRoot);
 }
-async function initialize(root, wardenRoot, packs) {
+async function initialize(root, wardenRoot, packs, base) {
     mkdirSync(join(root, ".warden"), { recursive: true });
-    writeFileSync(join(root, CONFIG_PATH), configText(basename(root), await wardenVersion(wardenRoot), packs));
+    writeFileSync(join(root, CONFIG_PATH), configText(basename(root), await wardenVersion(wardenRoot), packs, base));
     const compiled = await compile(root, wardenRoot);
     if (compiled.findings.length > 0) {
         throw new RecordError(CONFIG_PATH, "", compiled.findings.map((f) => f.message).join("; "));

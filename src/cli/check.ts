@@ -207,7 +207,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
       bytes,
       ...(commit === undefined ? {} : { commit }),
       ...(recorded.length === 0 ? {} : { failures: recorded }),
-      ...(feedback?.next == null ? {} : { next: nextOf(feedback.next) }),
+      ...(feedback?.next == null ? {} : { next: feedback.next.replace(/\.$/, "") }),
       ...judged?.extra,
     });
     return code;

@@ -271,7 +271,7 @@ Finding codes, exactly: `duplicate-term`, `duplicate-practice`, `duplicate-guard
 
 **Interfaces:**
 - Produces:
-  - `warden init`: writes `.warden/config.yaml` (packs `[{id: core, paths: ["**/*.{ts,tsx,js,mjs}"]}]`, `base: main`, `tierBudgetMs: {edit: 2000, commit: 10000, boundary: 120000}`, `loopBreakerRepeats: 3`; the budget values are starting settings for Ryan to tune), runs `compile`, then records every current violation of every Guardrail on all matching files as `.warden/baseline.json`. Refuses with exit 2 when `.warden/` exists.
+  - `warden init`: writes `.warden/config.yaml` (packs `[{id: core, paths: ["**/*.{ts,tsx,js,mjs}"]}]`, `base:` from `--base <ref>` (default `main`, must resolve to a commit), `tierBudgetMs: {edit: 2000, commit: 10000, boundary: 120000}`, `loopBreakerRepeats: 3`; the budget values are starting settings for Ryan to tune), runs `compile`, then records every current violation of every Guardrail on all matching files as `.warden/baseline.json`. Refuses with exit 2 when `.warden/` exists.
   - `warden compile`, `warden check [paths...] [--rule <id>]`: wrap Tasks 5 and 6.
   - `warden explain <id>`: for a Practice or Guardrail id prints statement, terms with definitions, Guardrails with kind, tiers, budget, and examples, and the last 20 Evidence lines for it. Unknown id exits 2.
   - `warden report`: one row per Guardrail: practice, kind, strength (`proven` when it has passing examples, `unproven` for `legacy`), baseline entries remaining, fired count, median and slowest `ms` from Evidence, and tier totals against `tierBudgetMs`. `--json` prints the same as JSON.
