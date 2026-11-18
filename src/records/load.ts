@@ -27,7 +27,7 @@ function pointerOf(error: ErrorObject): string {
   return leaf === undefined ? error.instancePath : `${error.instancePath}/${leaf}`;
 }
 
-async function readText(file: string): Promise<string | undefined> {
+export async function readText(file: string): Promise<string | undefined> {
   try {
     return await readFile(file, "utf8");
   } catch (cause) {

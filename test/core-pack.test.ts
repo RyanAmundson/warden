@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { runExamples } from "../src/compiler/examples.js";
 import { eslintAdapter } from "../src/adapters/eslint.js";
 import { loadRecords } from "../src/records/load.js";
 import type { Guardrail, RecordSet } from "../src/records/types.js";
@@ -47,14 +48,7 @@ afterEach(() => rm(root, { recursive: true, force: true }));
 describe("core pack", () => {
   it("core pack examples hold", async () => {
     expect(guardrails.map((g) => g.id)).toEqual(["warden-no-comments", "warden-no-suppressions"]);
-    for (const g of guardrails) {
-      const [failed] = await check([g], g.mustFail as string);
-      expect(failed?.status, `${g.id} mustFail`).toBe("fail");
-      for (const other of guardrails) {
-        const [passed] = await check([other], g.mustPass as string);
-        expect(passed?.status, `${other.id} on ${g.id} mustPass`).toBe("pass");
-      }
-    }
+    expect(await runExamples(set, wardenRoot)).toEqual([]);
   });
 
   it.each(["src/a.tsx", "src/a.mts", "src/a.cts"])("covers %s files", async (file) => {
