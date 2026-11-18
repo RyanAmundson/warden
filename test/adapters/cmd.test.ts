@@ -21,6 +21,11 @@ const fixtures = resolve(import.meta.dirname, "../fixtures/adapters");
 
 const emptySet: RecordSet = { root: "", packs: [], config: {} as never };
 
+const setOf = (g: Guardrail): RecordSet => ({
+  ...emptySet,
+  packs: [{ id: "p", file: "pack.yaml", layer: 0, terms: [], practices: [{ id: "x", pack: "p", statement: "s", terms: [], paths: [], conflictsWith: [], guardrails: [g] }] }],
+});
+
 describe("cmd adapter", () => {
   it("cmd pass", async () => {
     const [r] = await cmdAdapter.run([legacy("cmd:true")], [], ctx);
@@ -36,7 +41,8 @@ describe("cmd adapter", () => {
   });
 
   it("cmd killed at its budget names the command", async () => {
-    const [r] = await runGuardrails([legacy("cmd:sleep 4.731", 200)], [], ctx);
+    const killed = legacy("cmd:sleep 4.731", 200);
+    const [r] = await runGuardrails(setOf(killed), [killed], [], ctx);
     expect(r?.status).toBe("killed");
     expect(r?.command).toBe("sleep 4.731");
     expect(r?.ms).toBeLessThan(1000);
@@ -45,7 +51,8 @@ describe("cmd adapter", () => {
 
   it("a process group that is already gone at the budget is still reported as killed", async () => {
     const orphan = `node -e "require('child_process').spawn('sleep', ['1'], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] }).unref()"`;
-    const [r] = await runGuardrails([legacy(`cmd:${orphan}`, 300)], [], ctx);
+    const gone = legacy(`cmd:${orphan}`, 300);
+    const [r] = await runGuardrails(setOf(gone), [gone], [], ctx);
     expect(r?.status).toBe("killed");
   });
 

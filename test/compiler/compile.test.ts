@@ -3,7 +3,7 @@ import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { compile } from "../../src/compiler/compile.js";
+import { compile, expectedOutputs } from "../../src/compiler/compile.js";
 import { runExamples } from "../../src/compiler/examples.js";
 import { loadRecords } from "../../src/records/load.js";
 import { readLock } from "../../src/compiler/lock.js";
@@ -348,6 +348,16 @@ describe("compile", () => {
     await expect(readFile(join(root, ".warden/lock.json"))).rejects.toThrow();
     await writeFile(file, (await readFile(file, "utf8")).replace("eslnt:", "eslint:"));
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
+  });
+
+  it("emitting outputs for an unknown adapter refuses with the shared finding's message", async () => {
+    await usePack(localPack(legacyGuardrail("true", PROVEN_TREES).replace('"cmd:true"', '"cmdd:true"')));
+    const file = join(root, ".warden/packs/local/pack.yaml");
+    await expect(expectedOutputs(await loadRecords(root, wardenRoot), root, wardenRoot)).rejects.toMatchObject({
+      file,
+      pointer: "/guardrails/local-script/implementation",
+      message: `Guardrail local-script names adapter "cmdd", which is not registered; the known adapters are eslint, tsc, cmd. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...> in ${file}, then run warden compile.`,
+    });
   });
 
   it("a legacy Guardrail with no examples fails compile with a next action and writes no lock", async () => {

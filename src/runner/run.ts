@@ -25,15 +25,18 @@ export const unknownAdapters = (set: RecordSet): (Finding & { file: string })[] 
   );
 };
 
-export async function runGuardrails(gs: Guardrail[], files: string[], ctx: RunContext): Promise<RunResult[]> {
+export const refuseUnknownAdapters = (set: RecordSet): void => {
+  const [unknown] = unknownAdapters(set);
+  if (unknown !== undefined) throw new RecordError(unknown.file, `/guardrails/${unknown.record}/implementation`, unknown.message);
+};
+
+export async function runGuardrails(set: RecordSet, gs: Guardrail[], files: string[], ctx: RunContext): Promise<RunResult[]> {
+  const known = new Set(set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails)));
+  const stray = gs.find((g) => !known.has(g));
+  if (stray !== undefined) throw new Error(`runGuardrails got Guardrail ${stray.id}, which is not in the record set`);
+  refuseUnknownAdapters(set);
   const groups = new Map<string, Guardrail[]>();
-  for (const g of gs) {
-    const prefix = prefixOf(g);
-    if (!adapters.has(prefix)) {
-      throw new RecordError("", `/guardrails/${g.id}/implementation`, `unknown adapter "${prefix}"`);
-    }
-    groups.set(prefix, [...(groups.get(prefix) ?? []), g]);
-  }
+  for (const g of gs) groups.set(prefixOf(g), [...(groups.get(prefixOf(g)) ?? []), g]);
   const out: RunResult[] = [];
   for (const [prefix, group] of groups) {
     const results = await (adapters.get(prefix) as Adapter).run(group, files, ctx);

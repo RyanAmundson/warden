@@ -89,6 +89,7 @@ const hookTrigger = (root: string, input: string): string => {
 };
 
 const runCached = async (
+  set: RecordSet,
   gs: Guardrail[],
   scanned: string[],
   shas: Map<string, string>,
@@ -109,7 +110,7 @@ const runCached = async (
       else hits.set(keyOf(f, g), cached);
     }
   }
-  const fresh = misses.size > 0 ? await runGuardrails(lint, [...misses], ctx) : [];
+  const fresh = misses.size > 0 ? await runGuardrails(set, lint, [...misses], ctx) : [];
   const parse = fresh.filter((r) => r.guardrail === PARSE_ERROR);
   const unparsed = new Set(parse.flatMap((r) => r.violations.map((v) => v.file)));
   const results = lint.map((g): RunResult => {
@@ -123,7 +124,7 @@ const runCached = async (
     });
     return { guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms: r?.ms ?? 0, overBudget: r?.overBudget === true };
   });
-  const others = rest.length > 0 ? await runGuardrails(rest, scanned, ctx) : [];
+  const others = rest.length > 0 ? await runGuardrails(set, rest, scanned, ctx) : [];
   return { perFile: [...results, ...parse], wholeProject: others, ran: [...fresh, ...others] };
 };
 
@@ -196,7 +197,7 @@ const check = async (opts: CheckOptions): Promise<number> => {
   const shas = new Map(scanned.map((f) => [f, sha256(readFileSync(join(root, f)))]));
   const ctx = { root, generatedDir: join(root, ".warden/generated") };
   const lockSha = sha256(readFileSync(join(root, LOCK_PATH)));
-  const run = await runCached(guardrails, scanned, shas, ctx, project, { lockSha, warden: await wardenVersion(opts.wardenRoot) });
+  const run = await runCached(set, guardrails, scanned, shas, ctx, project, { lockSha, warden: await wardenVersion(opts.wardenRoot) });
   const wanted = (r: RunResult): boolean => selected.has(r.guardrail) || !known.has(r.guardrail);
   const perFile = run.perFile.filter(wanted);
   const wholeProject = run.wholeProject.filter(wanted);

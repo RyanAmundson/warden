@@ -4,7 +4,7 @@ import { claudeSettingsAdapter } from "../adapters/claude.js";
 import type { Adapter } from "../adapters/types.js";
 import { RecordError, loadRecords, readText } from "../records/load.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
-import { adapters } from "../runner/run.js";
+import { adapters, refuseUnknownAdapters } from "../runner/run.js";
 import { checkConsistency, type Finding } from "./consistency.js";
 import { mergeSettings, stamp } from "./emit.js";
 import { runExamples } from "./examples.js";
@@ -27,11 +27,11 @@ const sourceFiles = async (set: RecordSet, projectRoot: string, wardenRoot: stri
 };
 
 const emitAll = (set: RecordSet): Record<string, string> => {
+  refuseUnknownAdapters(set);
   const groups = new Map<string, Guardrail[]>();
   for (const g of set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails))) {
     if (g.kind === "instruction") continue;
     const prefix = g.implementation.slice(0, g.implementation.indexOf(":"));
-    if (!adapters.has(prefix)) throw new RecordError("", `/guardrails/${g.id}/implementation`, `unknown adapter "${prefix}"`);
     groups.set(prefix, [...(groups.get(prefix) ?? []), g]);
   }
   const emitted: Record<string, string> = {};

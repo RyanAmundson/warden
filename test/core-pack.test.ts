@@ -33,7 +33,7 @@ const write = async (file: string, content: string): Promise<void> => {
 const check = async (gs: Guardrail[], source: string, file = "src/a.ts") => {
   await write(file, source);
   for (const [file, content] of Object.entries(eslintAdapter.emit(gs, set))) await write(file, content);
-  return runGuardrails(gs, [file], { root, generatedDir: join(root, ".warden/generated") });
+  return runGuardrails(set, gs, [file], { root, generatedDir: join(root, ".warden/generated") });
 };
 
 beforeEach(async () => {

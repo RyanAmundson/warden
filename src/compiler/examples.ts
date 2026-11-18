@@ -25,7 +25,9 @@ const ownedBy = (owned: Set<string>) => (key: string): boolean => {
 const enabledOn = (file: string, groups: string[][]): boolean => groups.length === 0 || groups.some((g) => g.every((glob) => matchesGlob(file, glob)));
 
 export async function runExamples(set: RecordSet, wardenRoot: string): Promise<Finding[]> {
-  const findings: Finding[] = unknownAdapters(set).map(({ code, record, message }) => ({ code, record, message }));
+  const unknown = unknownAdapters(set).map(({ code, record, message }) => ({ code, record, message }));
+  if (unknown.length > 0) return unknown;
+  const findings: Finding[] = [];
   const project = await mkdtemp(join(tmpdir(), "warden-examples-"));
   try {
     await symlink(join(wardenRoot, "node_modules"), join(project, "node_modules"));
@@ -46,8 +48,7 @@ export async function runExamples(set: RecordSet, wardenRoot: string): Promise<F
         const file = exampleFile(groups[0]);
         for (const g of practice.guardrails) {
           if (g.kind === "instruction") continue;
-          const adapter = adapters.get(g.implementation.slice(0, g.implementation.indexOf(":")));
-          if (adapter === undefined) continue;
+          const adapter = adapters.get(g.implementation.slice(0, g.implementation.indexOf(":"))) as Adapter;
           checked.push({ g, file, groups, packFile: pack.file });
           const then = `in ${pack.file}, then run warden compile.`;
           for (const [label, want] of [["mustFail", "fail"], ["mustPass", "pass"]] as const) {
@@ -61,7 +62,7 @@ export async function runExamples(set: RecordSet, wardenRoot: string): Promise<F
               findings.push({ code: "example-unsafe", record: g.id, message: `Guardrail ${g.id} ${label} example writes ${unsafe}, which Warden's example project owns (node_modules, .warden, package.json, tsconfig.json, and emitted configs). Next action: move ${unsafe} to another path in the ${label} example of Guardrail ${g.id} ${then}` });
               continue;
             }
-            const status = await runExample(g, adapter.emit([g], set), source, file, ctx);
+            const status = await runExample(set, g, adapter.emit([g], set), source, file, ctx);
             if (status === "parse-error") {
               findings.push({ code: "example-failed", record: g.id, message: `Guardrail ${g.id} ${label} example does not parse. Next action: fix the syntax of the ${label} example of Guardrail ${g.id} ${then}` });
             } else if (status === "over-budget") {
@@ -78,7 +79,7 @@ export async function runExamples(set: RecordSet, wardenRoot: string): Promise<F
       for (const other of checked) {
         if (other.g === g || other.g.implementation.startsWith("cmd:") || !enabledOn(file, other.groups)) continue;
         const adapter = adapters.get(other.g.implementation.slice(0, other.g.implementation.indexOf(":"))) as Adapter;
-        const status = await runExample(other.g, adapter.emit([other.g], set), g.mustPass, file, ctx);
+        const status = await runExample(set, other.g, adapter.emit([other.g], set), g.mustPass, file, ctx);
         if (status === "fail") {
           findings.push({ code: "example-conflict", record: g.id, message: `Guardrail ${g.id} mustPass example fails Guardrail ${other.g.id}. Next action: change the mustPass example of Guardrail ${g.id} in ${packFile} so it also passes ${other.g.id}, then run warden compile.` });
         }
@@ -91,6 +92,7 @@ export async function runExamples(set: RecordSet, wardenRoot: string): Promise<F
 }
 
 async function runExample(
+  set: RecordSet,
   g: Guardrail,
   emitted: Record<string, string>,
   source: Example,
@@ -107,7 +109,7 @@ async function runExample(
       await mkdir(dirname(join(ctx.root, path)), { recursive: true });
       await writeFile(join(ctx.root, path), content);
     }
-    const results = await runGuardrails([g], Object.keys(tree), ctx);
+    const results = await runGuardrails(set, [g], Object.keys(tree), ctx);
     if (results.some((r) => r.guardrail === PARSE_ERROR && r.status === "fail")) return "parse-error";
     const own = results.find((r) => r.guardrail === g.id);
     if (own === undefined) throw new Error(`no result for guardrail ${g.id}`);

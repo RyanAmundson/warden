@@ -81,7 +81,7 @@ async function initialize(root: string, wardenRoot: string, packs: string[]): Pr
   const set = await loadRecords(root, wardenRoot);
   const guardrails = set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.filter((g) => g.kind !== "instruction")));
   const files = projectFiles(root, set.config.packs.flatMap((p) => p.paths));
-  const results = files.length === 0 ? [] : await runGuardrails(guardrails, files, { root, generatedDir: join(root, ".warden/generated"), unbudgeted: true });
+  const results = files.length === 0 ? [] : await runGuardrails(set, guardrails, files, { root, generatedDir: join(root, ".warden/generated"), unbudgeted: true });
   const unparsed = results.filter((r) => r.guardrail === PARSE_ERROR).flatMap((r) => r.violations.map((v) => `${v.file}:${v.line}`));
   if (unparsed.length > 0) throw new RecordError("", "", `cannot baseline files that do not parse: ${unparsed.join(", ")}. Next action: fix the syntax error, then run warden init again.`);
 

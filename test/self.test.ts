@@ -45,7 +45,7 @@ it("Warden source passes its own core pack", async () => {
     }
     const files = await sourceFiles();
     expect(files.length).toBeGreaterThan(10);
-    const results = await runGuardrails(guardrails, files, {
+    const results = await runGuardrails(set, guardrails, files, {
       root: repo,
       generatedDir: join(project, ".warden/generated"),
     });
