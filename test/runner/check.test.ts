@@ -534,6 +534,22 @@ describe("review fixes", () => {
     expect(await tampered()).toEqual([]);
   });
 
+  it("strengthening review to lint with a different rule is still loosening", async () => {
+    const base = localPack().replace("kind: lint\n", "kind: review\n");
+    await write(".warden/packs/local/pack.yaml", base);
+    await recompile();
+    git("add", "-A");
+    git("commit", "-q", "-m", "review kind");
+    git("branch", "-f", "main", "HEAD");
+    await write(
+      ".warden/packs/local/pack.yaml",
+      base.replace("kind: review", "kind: lint").replace('"eslint:no-var"', '"eslint:prefer-const"').replace('"var a = 1;\\n"', '"let a = 1;\\n"'),
+    );
+    await recompile();
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "loosened" }]);
+  });
+
   it("a Guardrail runs only where the pack paths and the Practice paths both match", async () => {
     await write(".warden/config.yaml", config(["core", "local"]).replace('paths: ["**/*.ts"]', 'paths: ["src/**/*.ts"]'));
     await recompile();

@@ -103,7 +103,7 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
   for (const [id, g] of Object.entries(before.guardrails)) {
     const now = lock.guardrails[id];
     const known = now !== undefined && g.kind !== undefined;
-    const stronger = known && kindRank(now.kind as Kind) < kindRank(g.kind as Kind);
+    const stronger = known && g.kind === "instruction" && kindRank(now.kind as Kind) < kindRank(g.kind as Kind);
     if (known && kindRank(now.kind as Kind) > kindRank(g.kind as Kind)) found.push({ file: LOCK_PATH, detail: "weakened-kind", guardrail: id, was: g.kind });
     const weaker =
       now === undefined ||
