@@ -62,7 +62,14 @@ describe("compile", () => {
       ".warden/generated/eslint.rules.json",
     ]);
     expect(Object.keys(lock.sources).sort()).toEqual([".warden/config.yaml", "packs/core/pack.yaml"]);
-    expect(lock.guardrails["warden-no-comments"]).toEqual({ budgetMs: 5000, version: 1 });
+    expect(lock.guardrails["warden-no-comments"]).toEqual({
+      budgetMs: 5000,
+      version: 1,
+      implementation: "eslint:warden/no-comments",
+      options: null,
+      runs: ["commit", "edit"],
+      paths: ["**/*.{ts,tsx,mts,cts}"],
+    });
     expect(lock.config).toEqual({ tierBudgetMs: { edit: 2000, commit: 30000, boundary: 120000 }, loopBreakerRepeats: 3 });
   });
 

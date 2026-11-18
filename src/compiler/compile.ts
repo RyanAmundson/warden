@@ -68,8 +68,11 @@ export interface Expected {
   owned: Record<string, Record<string, unknown[]>>;
 }
 
+export const wardenVersion = async (wardenRoot: string): Promise<string> =>
+  (JSON.parse(await readFile(join(wardenRoot, "package.json"), "utf8")) as { version: string }).version;
+
 export async function expectedOutputs(set: RecordSet, projectRoot: string, wardenRoot: string): Promise<Expected> {
-  const version = (JSON.parse(await readFile(join(wardenRoot, "package.json"), "utf8")) as { version: string }).version;
+  const version = await wardenVersion(wardenRoot);
   const sources = await sourceFiles(set, projectRoot, wardenRoot);
   const sourceHash = sha256(
     Object.entries(sources)

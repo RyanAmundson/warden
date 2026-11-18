@@ -50,8 +50,8 @@ export function lastCommittedText(root: string, path: string): string | undefine
   return before.ok ? before.out : undefined;
 }
 
-export function showAtBase(root: string, base: string, path: string): string | undefined {
-  const spec = `${base}:./${path}`;
+export function showAtMergeBase(root: string, base: string, path: string): string | undefined {
+  const spec = `${must(root, ["merge-base", base, "HEAD"]).trim()}:./${path}`;
   if (!git(root, ["cat-file", "-e", spec]).ok) return undefined;
   return must(root, ["show", spec]);
 }

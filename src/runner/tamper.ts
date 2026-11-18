@@ -6,7 +6,7 @@ import { LOCK_PATH, type Lock, canonicalJson, readLock, sha256 } from "../compil
 import { RecordError, readText } from "../records/load.js";
 import type { RecordSet } from "../records/types.js";
 import { BASELINE_PATH, type Baseline, readBaseline } from "./baseline.js";
-import { showAtBase } from "./changed.js";
+import { showAtMergeBase } from "./changed.js";
 
 export interface Tamper {
   file: string;
@@ -55,7 +55,7 @@ const extractOwned = (settings: unknown, owned: Record<string, unknown[]>): Reco
   );
 
 const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
-  const text = showAtBase(root, base, LOCK_PATH);
+  const text = showAtMergeBase(root, base, LOCK_PATH);
   if (text === undefined) return [];
   const before = JSON.parse(text) as Lock;
   const found: Tamper[] = [];
@@ -66,11 +66,19 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
   ) {
     found.push({ file: LOCK_PATH, detail: "loosened" });
   }
+  const covers = (now: string[], was: string[]): boolean => was.every((x) => now.includes(x));
   for (const [id, g] of Object.entries(before.guardrails)) {
     const now = lock.guardrails[id];
-    if (now === undefined || now.budgetMs > g.budgetMs) found.push({ file: LOCK_PATH, detail: "loosened", guardrail: id });
+    const weaker =
+      now === undefined ||
+      now.budgetMs > g.budgetMs ||
+      !covers(now.runs, g.runs) ||
+      !covers(now.paths, g.paths) ||
+      now.implementation !== g.implementation ||
+      canonicalJson(now.options) !== canonicalJson(g.options);
+    if (weaker) found.push({ file: LOCK_PATH, detail: "loosened", guardrail: id });
   }
-  const baseBaseline = JSON.parse(showAtBase(root, base, BASELINE_PATH) ?? "{}") as Baseline;
+  const baseBaseline = JSON.parse(showAtMergeBase(root, base, BASELINE_PATH) ?? "{}") as Baseline;
   for (const [id, entries] of Object.entries(readBaseline(root))) {
     if (id in lock.guardrails && !(id in before.guardrails)) continue;
     for (const [file, n] of Object.entries(entries)) {

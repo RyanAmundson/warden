@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -44,8 +44,27 @@ const localPack = (version = 1, budgetMs = 5000): string =>
     "        implementation: \"eslint:no-var\"",
     "        mustFail: \"var a = 1;\\n\"",
     "        mustPass: \"const a = 1;\\n\"",
+    "  - id: no-event-global",
+    "    statement: Never read the event global.",
+    "    terms: []",
+    "    paths: []",
+    "    conflictsWith: []",
+    "    guardrails:",
+    "      - id: local-no-event",
+    "        kind: lint",
+    "        runs: [edit, commit]",
+    "        budgetMs: 5000",
+    "        version: 1",
+    "        implementation: \"eslint:no-restricted-globals\"",
+    "        options: [\"event\"]",
+    "        mustFail: \"export const a = event;\\n\"",
+    "        mustPass: \"const a = 1;\\n\"",
     "",
   ].join("\n");
+
+const LOCAL_PATHS = '  - id: local\n    paths: ["**/*.ts"]';
+
+const withLocalPaths = (paths: string): string => config(["core", "local"]).replace(LOCAL_PATHS, `  - id: local\n    paths: ${paths}`);
 
 const legacyPack = (runs: string, command: string, budgetMs: number): string =>
   [
@@ -195,7 +214,10 @@ describe("runCheck", () => {
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
     const { code } = await check();
     expect(code).toBe(1);
-    expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "loosened" }]);
+    expect(await tampered()).toEqual([
+      { file: ".warden/lock.json", detail: "loosened" },
+      { file: ".warden/lock.json", detail: "loosened" },
+    ]);
   });
 
   it("raising a budget against base is loosening", async () => {
@@ -422,6 +444,111 @@ describe("ruling fixes", () => {
       "Next action: legacy-script exceeded its time budget; this is recorded as a Warden defect, not a problem in your code. Re-run warden check once; if it repeats, continue your task and report it.",
     ]);
     expect(out).not.toMatch(/blocked|cannot proceed/i);
+  });
+});
+
+describe("review fixes", () => {
+  const recompile = async (): Promise<void> => {
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+  };
+
+  it("dropping a tier and recompiling is loosening", async () => {
+    await write(".warden/packs/local/pack.yaml", localPack().replace("runs: [edit, commit]", "runs: [edit]"));
+    await recompile();
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "loosened" }]);
+  });
+
+  it("narrowing paths and recompiling is loosening", async () => {
+    await write(".warden/config.yaml", withLocalPaths('["src/**/*.ts"]'));
+    await recompile();
+    expect((await check()).code).toBe(1);
+    expect((await tampered()).map((t) => t.detail)).toEqual(["loosened", "loosened"]);
+  });
+
+  it("changing options and recompiling is loosening", async () => {
+    await write(".warden/packs/local/pack.yaml", localPack().replace('options: ["event"]', 'options: ["event", "name"]'));
+    await recompile();
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "loosened" }]);
+  });
+
+  it("adding a path and recompiling passes", async () => {
+    await write(".warden/config.yaml", withLocalPaths('["**/*.ts", "lib/**/*.ts"]'));
+    await recompile();
+    expect((await check()).code).toBe(0);
+    expect(await tampered()).toEqual([]);
+  });
+
+  it("a cached result from an earlier lock is not reused", async () => {
+    await write(".warden/config.yaml", withLocalPaths('["src/**/*.ts"]'));
+    await recompile();
+    git("add", "-A");
+    git("commit", "-q", "-m", "narrow");
+    git("branch", "-f", "main", "HEAD");
+    await write("b.ts", "var b = 1;\n");
+    expect((await check()).code).toBe(0);
+    await write(".warden/config.yaml", withLocalPaths('["src/**/*.ts", "**/*.ts"]'));
+    await recompile();
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    expect(out).toContain("FAIL b.ts:1  no-var");
+  });
+
+  it("base comparisons use the merge base, not the base tip", async () => {
+    git("checkout", "-q", "main");
+    await write("a.ts", "const a = 1;\n");
+    await write(".warden/baseline.json", "{}\n");
+    git("commit", "-q", "-am", "main burns down");
+    git("checkout", "-q", "feature");
+    const { code, out } = await check();
+    expect(out).toBe("");
+    expect(code).toBe(0);
+  });
+
+  it("type errors a change causes in other files fail at commit tier only", async () => {
+    await symlink(join(wardenRoot, "node_modules"), join(root, "node_modules"));
+    await write("package.json", "{}\n");
+    await write(
+      "tsconfig.json",
+      JSON.stringify({ compilerOptions: { strict: true, module: "NodeNext", moduleResolution: "NodeNext", skipLibCheck: true }, include: ["c.ts", "d.ts"] }),
+    );
+    await write("c.ts", "export type T = { n: number };\n");
+    await write("d.ts", 'import type { T } from "./c.js";\nexport const x: T = { n: 1 };\n');
+    await write(".warden/config.yaml", config(["core", "local", "types"]));
+    await write(
+      ".warden/packs/types/pack.yaml",
+      [
+        "id: types",
+        "layer: 2",
+        "terms: []",
+        "practices:",
+        "  - id: strict-null",
+        "    statement: Values are never possibly undefined.",
+        "    terms: []",
+        "    paths: []",
+        "    conflictsWith: []",
+        "    guardrails:",
+        "      - id: types-strict-null",
+        "        kind: type",
+        "        runs: [edit, commit]",
+        "        budgetMs: 60000",
+        "        version: 1",
+        "        implementation: \"tsc:strictNullChecks\"",
+        "        mustFail: \"export function f(a?: string) { return a.length; }\\n\"",
+        "        mustPass: \"const a = 1;\\n\"",
+        "",
+      ].join("\n"),
+    );
+    await recompile();
+    git("add", "-A");
+    git("commit", "-q", "-m", "types");
+    git("branch", "-f", "main", "HEAD");
+    await write("c.ts", "export type T = { n: string };\n");
+    expect((await check({ tier: "edit" })).code).toBe(0);
+    const { code, out } = await check({ format: "json" });
+    expect(code).toBe(1);
+    expect(failedFiles(out)).toEqual(["d.ts"]);
   });
 });
 

@@ -5,8 +5,8 @@ import { canonicalJson, sha256 } from "../compiler/lock.js";
 import type { Guardrail } from "../records/types.js";
 import { wardenHome } from "./evidence.js";
 
-export const cacheKey = (file: string, contentSha: string, g: Guardrail): string =>
-  sha256(canonicalJson([g.id, g.version, g.implementation, g.options ?? null, file, contentSha]));
+export const cacheKey = (file: string, contentSha: string, g: Guardrail, lockSha: string, warden: string): string =>
+  sha256(canonicalJson([g.id, g.version, g.implementation, g.options ?? null, file, contentSha, lockSha, warden]));
 
 const cacheDir = (project: string): string => join(wardenHome(), "cache", project);
 

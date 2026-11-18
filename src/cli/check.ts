@@ -1,12 +1,13 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { PARSE_ERROR, type RunContext, type RunResult, type Violation } from "../adapters/types.js";
+import { wardenVersion } from "../compiler/compile.js";
 import { LOCK_PATH, canonicalJson, sha256 } from "../compiler/lock.js";
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import type { Guardrail, RecordSet, Tier } from "../records/types.js";
 import { applyBaseline, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { changedFiles, lastCommittedText, showAtBase, verifyBase } from "../runner/changed.js";
+import { changedFiles, lastCommittedText, showAtMergeBase, verifyBase } from "../runner/changed.js";
 import { appendEvidence, readEvidence } from "../runner/evidence.js";
 import { type Format, type Notes, type Repeated, formatFeedback } from "../runner/feedback.js";
 import { runGuardrails } from "../runner/run.js";
@@ -36,7 +37,7 @@ const removedWarden = (root: string): { set: RecordSet; tamper: Tamper } | undef
   if (text === undefined) return undefined;
   const config = parseConfig(".warden/config.yaml", text);
   verifyBase(root, config.base);
-  if (showAtBase(root, config.base, LOCK_PATH) === undefined) return undefined;
+  if (showAtMergeBase(root, config.base, LOCK_PATH) === undefined) return undefined;
   return { set: { config, packs: [], root }, tamper: { file: ".warden", detail: "removed" } };
 };
 
@@ -57,11 +58,12 @@ const runCached = async (
   shas: Map<string, string>,
   ctx: RunContext,
   project: string,
-): Promise<{ results: RunResult[]; ran: RunResult[] }> => {
-  if (scanned.length === 0) return { results: [], ran: [] };
+  run: { lockSha: string; warden: string },
+): Promise<{ perFile: RunResult[]; wholeProject: RunResult[]; ran: RunResult[] }> => {
+  if (scanned.length === 0) return { perFile: [], wholeProject: [], ran: [] };
   const lint = gs.filter((g) => g.kind === "lint");
   const rest = gs.filter((g) => g.kind !== "lint");
-  const keyOf = (f: string, g: Guardrail): string => cacheKey(f, shas.get(f) as string, g);
+  const keyOf = (f: string, g: Guardrail): string => cacheKey(f, shas.get(f) as string, g, run.lockSha, run.warden);
   const hits = new Map<string, Violation[]>();
   const misses = new Set<string>();
   for (const g of lint) {
@@ -86,7 +88,7 @@ const runCached = async (
     return { guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms: r?.ms ?? 0 };
   });
   const others = rest.length > 0 ? await runGuardrails(rest, scanned, ctx) : [];
-  return { results: [...results, ...parse, ...others], ran: [...fresh, ...others] };
+  return { perFile: [...results, ...parse], wholeProject: others, ran: [...fresh, ...others] };
 };
 
 const report = (failures: Violation[], set: RecordSet, opts: CheckOptions, notes: Notes): number => {
@@ -126,20 +128,36 @@ const check = async (opts: CheckOptions): Promise<number> => {
   const scanned = scannedFiles(root, base, opts.paths);
   const shas = new Map(scanned.map((f) => [f, sha256(readFileSync(join(root, f)))]));
   const ctx = { root, generatedDir: join(root, ".warden/generated") };
-  const run = await runCached(guardrails, scanned, shas, ctx, project);
-  const results = run.results.filter((r) => selected.has(r.guardrail) || !known.has(r.guardrail));
-  const overBudget = results.filter((r) => r.status === "over-budget").map((r) => ({ guardrail: r.guardrail, ms: r.ms }));
+  const lockSha = sha256(readFileSync(join(root, LOCK_PATH)));
+  const run = await runCached(guardrails, scanned, shas, ctx, project, { lockSha, warden: await wardenVersion(opts.wardenRoot) });
+  const wanted = (r: RunResult): boolean => selected.has(r.guardrail) || !known.has(r.guardrail);
+  const perFile = run.perFile.filter(wanted);
+  const wholeProject = run.wholeProject.filter(wanted);
+  const overBudget = [...perFile, ...wholeProject].filter((r) => r.status === "over-budget").map((r) => ({ guardrail: r.guardrail, ms: r.ms }));
 
+  const exists = (f: string): boolean => existsSync(join(root, f));
   const baseline = readBaseline(root);
-  const { failures, next } = applyBaseline(results, baseline, scanned, (f) => existsSync(join(root, f)));
-  if (canonicalJson(next) !== canonicalJson(baseline)) writeBaseline(root, next);
+  const narrow = applyBaseline(perFile, baseline, scanned, exists);
+  const judged =
+    tier === "edit"
+      ? scanned
+      : [
+          ...new Set([
+            ...scanned,
+            ...wholeProject.flatMap((r) => r.violations.map((v) => v.file)),
+            ...wholeProject.flatMap((r) => Object.keys(narrow.next[r.guardrail] ?? {})),
+          ]),
+        ].filter((f) => f !== "");
+  const wide = applyBaseline(wholeProject, narrow.next, judged, exists);
+  const failures = [...narrow.failures, ...wide.failures];
+  if (canonicalJson(wide.next) !== canonicalJson(baseline)) writeBaseline(root, wide.next);
 
   for (const r of run.ran) appendEvidence(project, { at, kind: "cost", guardrail: r.guardrail, status: r.status, ms: r.ms });
   const prior = readEvidence(project);
   let repeated: Repeated | undefined;
   for (const key of new Set(failures.map((v) => `${v.guardrail}\0${v.file}`))) {
     const [guardrail, file] = key.split("\0") as [string, string];
-    const detail = shas.get(file) ?? "";
+    const detail = shas.get(file) ?? (file !== "" && exists(file) ? sha256(readFileSync(join(root, file))) : "");
     const n =
       prior.filter((e) => e.kind === "fired" && e.status === "fail" && e.guardrail === guardrail && e.file === file && e.detail === detail).length + 1;
     appendEvidence(project, { at, kind: "fired", guardrail, file, status: "fail", detail });
