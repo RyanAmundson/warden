@@ -967,6 +967,56 @@ describe("final review: lock records base and project", () => {
   });
 });
 
+describe("bundled tool versions in the lock", () => {
+  const editLock = async (edit: (lock: Record<string, unknown>) => void): Promise<void> => {
+    const lock = JSON.parse(await read(".warden/lock.json")) as Record<string, unknown>;
+    edit(lock);
+    await write(".warden/lock.json", `${JSON.stringify(lock, null, 2)}\n`);
+  };
+
+  it("a lock whose tools differ from the loaded versions exits 2 with one next action, and following it passes", async () => {
+    await editLock((lock) => {
+      (lock.tools as Record<string, string>).typescript = "0.0.0";
+    });
+    const { code, out, err } = await check();
+    expect(code).toBe(2);
+    expect(out).toBe("");
+    expect(err.match(/Next action:/g)).toHaveLength(1);
+    expect(err).toContain("Next action: run warden compile.");
+    expect(await tampered()).toEqual([]);
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect((await check()).code).toBe(0);
+  });
+
+  it("a lock written before tools were recorded exits 2 and says to run warden compile", async () => {
+    await editLock((lock) => {
+      delete lock.tools;
+    });
+    const { code, err } = await check();
+    expect(code).toBe(2);
+    expect(err).toContain("Next action: run warden compile.");
+  });
+
+  it("a newer-format base lock without sources gets the format next action when a pack names an unknown adapter", async () => {
+    const working = await read(".warden/lock.json");
+    git("checkout", "-q", "main");
+    await editLock((lock) => {
+      lock.format = 2;
+      delete lock.sources;
+    });
+    git("commit", "-q", "-am", "newer base lock");
+    git("checkout", "-q", "feature");
+    git("merge", "-q", "--no-edit", "main");
+    await write(".warden/lock.json", working);
+    git("commit", "-q", "-am", "keep the working lock");
+    await write(".warden/config.yaml", config(["core", "local", "extra"]));
+    await write(".warden/packs/extra/pack.yaml", (await read(".warden/packs/local/pack.yaml")).replace("id: local", "id: extra").replace(/local-/g, "extra-").replace("eslint:no-restricted-globals", "eslnt:no-restricted-globals"));
+    const { code, err } = await check();
+    expect(code).toBe(2);
+    expect(err).toContain("Next action: update this project's Warden to the release that wrote the lock on main");
+  });
+});
+
 describe("final review: loop breaker", () => {
   const hook = (file: string) => check({ format: "agent", hook: "claude", hookInput: JSON.stringify({ tool_input: { file_path: join(root, file) } }) });
 

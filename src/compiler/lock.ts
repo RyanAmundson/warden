@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import { pathGroups } from "../records/paths.js";
 import type { Kind, ProjectConfig, RecordSet, Tier } from "../records/types.js";
@@ -10,6 +11,7 @@ export interface Lock {
   format: number;
   warden: string;
   sources: Record<string, string>;
+  tools: Record<string, string>;
   generated: Record<string, string>;
   guardrails: Record<string, LockedGuardrail>;
   config: Pick<ProjectConfig, "project" | "base" | "tierBudgetMs" | "loopBreakerRepeats">;
@@ -24,6 +26,13 @@ export interface LockedGuardrail {
   runs: Tier[];
   paths: string[];
 }
+
+export const TOOLS = ["eslint", "typescript-eslint", "typescript"] as const;
+
+const wardenRequire = createRequire(import.meta.url);
+
+export const bundledTools = (): Record<string, string> =>
+  Object.fromEntries(TOOLS.map((name) => [name, (wardenRequire(`${name}/package.json`) as { version: string }).version]));
 
 export const LOCK_PATH = ".warden/lock.json";
 
@@ -75,6 +84,7 @@ export function computeLock(
     format: LOCK_FORMAT,
     warden,
     sources: hashed(sources),
+    tools: bundledTools(),
     generated: hashed(generated),
     guardrails: Object.fromEntries(guardrails),
     config: { project, base, tierBudgetMs, loopBreakerRepeats },

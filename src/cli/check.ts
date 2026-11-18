@@ -2,7 +2,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { PARSE_ERROR, type RunContext, type RunResult, type Violation } from "../adapters/types.js";
 import { wardenVersion } from "../compiler/compile.js";
-import { LOCK_PATH, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
+import { LOCK_PATH, bundledTools, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import type { Guardrail, RecordSet, Tier } from "../records/types.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
@@ -11,7 +11,7 @@ import { changedFiles, changesSinceMergeBase, containsHead, lastCommittedText, s
 import { type Evidence, appendEvidence, readEvidence } from "../runner/evidence.js";
 import { type Format, type Notes, type Repeated, formatFeedback } from "../runner/feedback.js";
 import { runGuardrails, unknownAdapters } from "../runner/run.js";
-import { type Tamper, findTampering, recordedBases } from "../runner/tamper.js";
+import { type Tamper, findTampering, readBaseLock, recordedBases } from "../runner/tamper.js";
 
 export interface CheckOptions {
   root: string;
@@ -162,8 +162,8 @@ const check = async (opts: CheckOptions): Promise<number> => {
   const unknown = unknownAdapters(set);
   if (unknown.length > 0) {
     const working = existsSync(join(root, LOCK_PATH)) ? readLock(root).sources : undefined;
-    const baseLock = showAtMergeBase(root, base, LOCK_PATH);
-    const based = baseLock === undefined ? {} : (JSON.parse(baseLock) as { sources: Record<string, string> }).sources;
+    const baseLock = readBaseLock(root, base);
+    const based = baseLock === undefined ? {} : baseLock.sources;
     const sourceKey = (file: string): string => (file.startsWith(join(root, ".warden") + sep) ? relative(root, file) : relative(opts.wardenRoot, file));
     const tampered: Tamper[] = working === undefined && baseLock !== undefined ? [{ file: LOCK_PATH, detail: "missing-lock" }] : [];
     for (const file of new Set(unknown.map((u) => u.file))) {
@@ -180,6 +180,12 @@ const check = async (opts: CheckOptions): Promise<number> => {
     }
     const [first] = unknown as [(typeof unknown)[number]];
     throw new RecordError(first.file, `/guardrails/${first.record}/implementation`, first.message);
+  }
+
+  const locked = existsSync(join(root, LOCK_PATH)) ? readLock(root).tools : bundledTools();
+  const loaded = bundledTools();
+  if (canonicalJson(locked) !== canonicalJson(loaded)) {
+    throw new RecordError(LOCK_PATH, "/tools", `records bundled tools ${JSON.stringify(locked ?? {})}, but this Warden loads ${JSON.stringify(loaded)}. Next action: run warden compile.`);
   }
 
   const tampered = await findTampering(set, opts.wardenRoot, base);

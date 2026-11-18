@@ -62,9 +62,9 @@ export function recordedBases(root: string): string[] {
   });
 }
 
-const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
+export function readBaseLock(root: string, base: string): Lock | undefined {
   const text = showAtMergeBase(root, base, LOCK_PATH);
-  if (text === undefined) return [];
+  if (text === undefined) return undefined;
   const before = JSON.parse(text) as Lock;
   if ((before.format ?? 0) > LOCK_FORMAT) {
     throw new RecordError(
@@ -73,6 +73,12 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
       `the lock at the merge base with ${base} has format ${before.format}; this Warden reads formats up to ${LOCK_FORMAT}. Next action: update this project's Warden to the release that wrote the lock on ${base}, then run warden check --base ${base} again.`,
     );
   }
+  return before;
+}
+
+const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
+  const before = readBaseLock(root, base);
+  if (before === undefined) return [];
   const changed = (was: unknown, now: unknown): boolean => was !== undefined && was !== now;
   const found: Tamper[] = [];
   const tiers = Object.keys(lock.config.tierBudgetMs) as (keyof Lock["config"]["tierBudgetMs"])[];

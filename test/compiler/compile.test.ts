@@ -89,6 +89,12 @@ describe("compile", () => {
     expect(lock.config).toEqual({ project: "fixture", base: "main", tierBudgetMs: { edit: 2000, commit: 30000, boundary: 120000 }, loopBreakerRepeats: 3 });
   });
 
+  it("lock records the versions of the tools Warden loads, read from each tool's own package.json", async () => {
+    await compile(root, wardenRoot);
+    const version = async (name: string): Promise<string> => (JSON.parse(await readFile(join(wardenRoot, "node_modules", name, "package.json"), "utf8")) as { version: string }).version;
+    expect(readLock(root).tools).toEqual({ eslint: await version("eslint"), "typescript-eslint": await version("typescript-eslint"), typescript: await version("typescript") });
+  });
+
   it("lock hashes the emitted bytes", async () => {
     await compile(root, wardenRoot);
     const lock = readLock(root);
