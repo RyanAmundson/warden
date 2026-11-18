@@ -55,11 +55,21 @@ const extractOwned = (settings: unknown, owned: Record<string, unknown[]>): Reco
     }),
   );
 
+const parsedOrSkipped = (text: string): unknown[] => {
+  try {
+    return [JSON.parse(text)];
+  } catch {
+    return [];
+  }
+};
+
 export function recordedBases(root: string): string[] {
-  return historyOf(root, LOCK_PATH).flatMap((text) => {
-    const value = (JSON.parse(text) as { config?: { base?: unknown } }).config?.base;
-    return typeof value === "string" ? [value] : [];
-  });
+  return historyOf(root, LOCK_PATH).flatMap((text) =>
+    parsedOrSkipped(text).flatMap((lock) => {
+      const value = (lock as { config?: { base?: unknown } } | null)?.config?.base;
+      return typeof value === "string" ? [value] : [];
+    }),
+  );
 }
 
 export function readBaseLock(root: string, base: string): Lock | undefined {
@@ -87,7 +97,7 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
   const found: Tamper[] = [];
   const tiers = Object.keys(lock.config.tierBudgetMs) as (keyof Lock["config"]["tierBudgetMs"])[];
   const committed = lastCommittedText(root, LOCK_PATH);
-  const heads = [lock, ...(committed === undefined ? [] : [JSON.parse(committed) as Lock])];
+  const heads = [lock, ...((committed === undefined ? [] : parsedOrSkipped(committed)) as Lock[])];
   const restoring = base === recordedBases(root).at(-1) && containsHead(root, base);
   if (heads.some((l) => changed(before.config.base, l.config?.base) && !(restoring && l.config?.base === base))) found.push({ file: LOCK_PATH, detail: "base-moved" });
   if (

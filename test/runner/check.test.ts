@@ -1600,3 +1600,16 @@ describe("engine review: whole-project Guardrails with no changed file", () => {
     expect((await check()).code).toBe(1);
   });
 });
+
+describe("engine review: a corrupt lock in history", () => {
+  it("a committed lock that does not parse is skipped once a later commit restores the lock", async () => {
+    const good = await read(".warden/lock.json");
+    await write(".warden/lock.json", `<<<<<<< HEAD\n${good}=======\n${good}>>>>>>> other\n`);
+    git("commit", "-q", "-am", "conflicted lock");
+    await write(".warden/lock.json", good);
+    git("commit", "-q", "-am", "restored lock");
+    const { code, err } = await check();
+    expect(err).toBe("");
+    expect(code).toBe(0);
+  });
+});

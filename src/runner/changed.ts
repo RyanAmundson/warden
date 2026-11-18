@@ -51,10 +51,19 @@ export const containsHead = (root: string, ref: string): boolean => git(root, ["
 
 export function historyOf(root: string, path: string): string[] {
   const commits = names(must(root, ["log", "-z", "--format=%H", "HEAD", "--", path]));
-  return commits.flatMap((sha) => {
-    const r = git(root, ["show", `${sha}:./${path}`]);
-    return r.ok ? [r.out] : [];
-  });
+  if (commits.length === 0) return [];
+  const out = execFileSync("git", ["cat-file", "--batch"], { cwd: root, input: commits.map((sha) => `${sha}:./${path}\n`).join(""), maxBuffer: 1 << 30, stdio: ["pipe", "pipe", "pipe"] });
+  const texts: string[] = [];
+  for (let at = 0; at < out.length; ) {
+    const end = out.indexOf(10, at);
+    const header = out.subarray(at, end).toString("utf8");
+    at = end + 1;
+    if (header.endsWith(" missing")) continue;
+    const size = Number(header.slice(header.lastIndexOf(" ") + 1));
+    texts.push(out.subarray(at, at + size).toString("utf8"));
+    at += size + 1;
+  }
+  return texts;
 }
 
 export const stageFile = (root: string, path: string): void => {

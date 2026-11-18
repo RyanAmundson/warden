@@ -42,11 +42,19 @@ const extractOwned = (settings, owned) => Object.fromEntries(Object.entries(owne
         node = isObject(node) ? node[key] : undefined;
     return [path, Array.isArray(node) ? node.filter((e) => isWardenEntry(e, ours)) : []];
 }));
+const parsedOrSkipped = (text) => {
+    try {
+        return [JSON.parse(text)];
+    }
+    catch {
+        return [];
+    }
+};
 export function recordedBases(root) {
-    return historyOf(root, LOCK_PATH).flatMap((text) => {
-        const value = JSON.parse(text).config?.base;
+    return historyOf(root, LOCK_PATH).flatMap((text) => parsedOrSkipped(text).flatMap((lock) => {
+        const value = lock?.config?.base;
         return typeof value === "string" ? [value] : [];
-    });
+    }));
 }
 export function readBaseLock(root, base) {
     const text = showAtMergeBase(root, base, LOCK_PATH);
@@ -68,7 +76,7 @@ const loosened = (root, base, lock) => {
     const found = [];
     const tiers = Object.keys(lock.config.tierBudgetMs);
     const committed = lastCommittedText(root, LOCK_PATH);
-    const heads = [lock, ...(committed === undefined ? [] : [JSON.parse(committed)])];
+    const heads = [lock, ...(committed === undefined ? [] : parsedOrSkipped(committed))];
     const restoring = base === recordedBases(root).at(-1) && containsHead(root, base);
     if (heads.some((l) => changed(before.config.base, l.config?.base) && !(restoring && l.config?.base === base)))
         found.push({ file: LOCK_PATH, detail: "base-moved" });
