@@ -278,14 +278,18 @@ describe("warden CLI", () => {
         join(root, ".warden/packs/local/pack.yaml"),
         ["id: local", "layer: 1", "terms: []", "practices:", "  - id: no-var", "    statement: Declare with const.", "    terms: []", "    paths: []", "    conflictsWith: []", "    guardrails:",
           "      - id: local-no-var", "        kind: review", "        runs: [edit]", "        budgetMs: 5000", "        version: 1", '        implementation: "eslint:no-var"',
-          '        mustFail: "var a = 1;\\n"', '        mustPass: "const a = 1;\\n"', ""].join("\n"),
+          '        mustFail: "var a = 1;\\n"', '        mustPass: "const a = 1;\\n"',
+          "  - id: no-debugger", "    statement: No debugger statements.", "    terms: []", "    paths: []", "    conflictsWith: []", "    guardrails:",
+          "      - id: local-no-debugger", "        kind: lint", "        runs: [edit]", "        budgetMs: 5000", "        version: 1", '        implementation: "eslint:no-debugger"',
+          '        mustFail: "debugger;\\n"', '        mustPass: "const a = 1;\\n"', ""].join("\n"),
       );
       expect(warden("init", "--packs", "core,local").code).toBe(0);
       const json = JSON.parse(warden("report", "--format", "json").out) as { practices: { practice: string; strongestKind: string; promote: boolean }[] };
       const packs = JSON.parse(warden("packs", "--format", "json").out) as { packs: { id: string; kinds: Record<string, number> }[] };
-      expect(packs.packs.find((p) => p.id === "local")?.kinds).toEqual({ review: 1 });
+      expect(packs.packs.find((p) => p.id === "local")?.kinds).toEqual({ lint: 1, review: 1 });
       expect(json.practices.at(-1)).toMatchObject({ practice: "no-var", strongestKind: "review", promote: true });
       expect(json.practices.slice(0, -1).every((p) => p.strongestKind === "lint" && !p.promote)).toBe(true);
+      expect(json.practices.map((p) => p.practice).indexOf("no-debugger")).toBeLessThan(json.practices.map((p) => p.practice).indexOf("no-var"));
       const lines = warden("report").out.split("\n");
       expect(lines.filter((l) => l.startsWith("practice ")).at(-1)).toBe("practice no-var  strongest=review  promote");
     });
