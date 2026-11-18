@@ -14,7 +14,7 @@ import { runDoctor, runInit } from "./init.js";
 import { runPacks } from "./packs.js";
 import { runReport } from "./report.js";
 import { runRuns } from "./runs.js";
-import { liveView, loadView, plainView } from "./view.js";
+import { liveView, loadView, plainLayers, plainView } from "./view.js";
 import { wardenHome } from "../runner/evidence.js";
 
 const findWardenRoot = (): string => {
@@ -124,13 +124,13 @@ program
     });
   });
 
-program.action(async (_options: unknown, command: Command) => {
+program.option("--layers", "show the layers screen: every rule by strength, and the packs").action(async (options: { layers?: boolean }, command: Command) => {
   if (command.args.length > 0) throw new Error(`unknown command ${command.args[0] as string}. Next action: run warden --help`);
   const project = root();
   const wardenRoot = findWardenRoot();
   const model = await loadView(project, wardenRoot);
   if (process.stdout.isTTY !== true || process.stdin.isTTY !== true) {
-    process.stdout.write(plainView(model));
+    process.stdout.write(options.layers === true ? plainLayers(model) : plainView(model));
     return;
   }
   const watchDir = join(wardenHome(), "evidence");
@@ -141,7 +141,7 @@ program.action(async (_options: unknown, command: Command) => {
     child = spawn(process.execPath, [fileURLToPath(import.meta.url), "check", "--base", model.base, "--trigger", "manual"], { cwd: project, stdio: "ignore" });
   };
   try {
-    process.exitCode = await liveView({ input: process.stdin, output: process.stdout, watchDir, file: `${model.project}.jsonl`, rerun, load: () => loadView(project, wardenRoot) });
+    process.exitCode = await liveView({ input: process.stdin, output: process.stdout, watchDir, file: `${model.project}.jsonl`, layers: options.layers === true, rerun, load: () => loadView(project, wardenRoot) });
   } finally {
     if (child !== undefined && child.exitCode === null) child.kill();
   }

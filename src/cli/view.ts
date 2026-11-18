@@ -3,8 +3,9 @@ import { basename, join } from "node:path";
 import { wardenVersion } from "../compiler/compile.js";
 import { bundledTools } from "../compiler/lock.js";
 import { RecordError, loadRecords } from "../records/load.js";
-import type { Tier } from "../records/types.js";
+import { type Kind, type Tier, kindRank } from "../records/types.js";
 import { type Evidence, type Step, readEvidence } from "../runner/evidence.js";
+import { listPacks } from "./packs.js";
 import { buildReport } from "./report.js";
 import { NOT_RECORDED, clock, firstFailure, ruleParts, runRecords, target, visible } from "./runs.js";
 
@@ -26,6 +27,19 @@ export interface ViewModel {
   evidence: Evidence[];
   now: number;
   budgets: Record<Tier, number>;
+  layers: LayerRule[];
+  practices: { practice: string; strongestKind: Kind; promote: boolean }[];
+  packList: { id: string; source: "bundled" | "local"; on: boolean; rules: number }[];
+}
+
+export interface LayerRule {
+  pack: string;
+  guardrail: string;
+  practice: string;
+  kind: Kind;
+  adapter: string;
+  runs: Tier[];
+  median: string;
 }
 
 export async function loadView(root: string, wardenRoot: string): Promise<ViewModel> {
@@ -33,6 +47,10 @@ export async function loadView(root: string, wardenRoot: string): Promise<ViewMo
   const set = await loadRecords(root, wardenRoot);
   const report = await buildReport(root, wardenRoot);
   const budget = new Map(set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.map((g) => [g.id, g.budgetMs] as const))));
+  const median = (id: string): string => {
+    const row = report.guardrails.find((g) => g.guardrail === id);
+    return row?.costShared !== undefined ? "shared" : `${row?.medianMs ?? 0} ms`;
+  };
   return {
     project: set.config.project,
     base: set.config.base,
@@ -43,6 +61,13 @@ export async function loadView(root: string, wardenRoot: string): Promise<ViewMo
     evidence: readEvidence(set.config.project),
     now: Date.now(),
     budgets: set.config.tierBudgetMs,
+    layers: set.packs.flatMap((p) =>
+      p.practices.flatMap((x) =>
+        x.guardrails.map((g) => ({ pack: p.id, guardrail: g.id, practice: x.id, kind: g.kind, adapter: g.implementation.slice(0, g.implementation.indexOf(":")), runs: g.runs, median: median(g.id) })),
+      ),
+    ),
+    practices: report.practices.map(({ practice, strongestKind, promote }) => ({ practice, strongestKind, promote })),
+    packList: (await listPacks(root, wardenRoot)).map((r) => ({ id: r.id, source: r.source, on: r.on, rules: Object.values(r.kinds).reduce((a, b) => a + b, 0) })),
   };
 }
 
@@ -209,7 +234,7 @@ export function render(model: ViewModel, size: Size, selected: number): string[]
     const where = shown.record === undefined ? shown.steps.find((e) => e.files !== undefined) : shown.record;
     return [` NOW  ${tier === "" ? "" : `${tier} `}check`, ...(where === undefined ? [] : [target(where)]), ...(trigger === undefined ? [] : [`triggered by ${TRIGGER[trigger] ?? trigger}`]), ...(shown.interrupted === true ? ["interrupted"] : []), ...(shown.record?.ms === undefined ? [] : [`${Math.round(shown.record.ms)} ms`])].join(" · ");
   })();
-  const top = [spread(` WARDEN  ${model.project} · base ${model.base} · v${model.version}`, "q quit  r rerun  ↑↓ runs", width), rule, clip(head, width), ...stepLines(shown, model.tools, width), ""];
+  const top = [spread(` WARDEN  ${model.project} · base ${model.base} · v${model.version}`, "q quit  r rerun  l layers", width), rule, clip(head, width), ...stepLines(shown, model.tools, width), ""];
   const bottom = [rule, ...wrap(footer(shown, live), width, 3)];
   const room = Math.max(0, size.rows - top.length - bottom.length - 3);
   const ruleRows = Math.min(model.rules.length, Math.ceil(room / 2));
@@ -243,6 +268,61 @@ export function render(model: ViewModel, size: Size, selected: number): string[]
   return [...top, ...middle, ...bottom].slice(0, Math.max(size.rows, 2)).map((l) => l.trimEnd());
 }
 
+const BANDS: { name: string; kinds: Kind[] }[] = [
+  { name: "DETERMINISTIC", kinds: ["type", "lint", "runtime"] },
+  { name: "JUDGMENT", kinds: ["model", "review"] },
+  { name: "PROSE", kinds: ["instruction", "legacy"] },
+];
+
+const LAYER_TEXT: Record<Kind, string> = {
+  type: "compiler proves it",
+  lint: "static analysis on every edit",
+  runtime: "a command or test must pass",
+  model: "a model decides",
+  review: "a reviewer decides",
+  instruction: "told, not checked",
+  legacy: "wrapped old check",
+};
+
+const DETERMINISTIC = new Set<Kind>(BANDS[0]?.kinds);
+
+export function renderLayers(model: ViewModel, size: Size): string[] {
+  const width = Math.max(40, size.cols);
+  const rule = "─".repeat(width);
+  const inner = width - 5;
+  const boxed = (left: string, right = ""): string => ` │ ${spread(left, right, inner).padEnd(inner)} │`;
+  const promoted = new Set(model.practices.filter((p) => p.promote).map((p) => p.practice));
+  const body = BANDS.flatMap(({ name, kinds }) => [
+    ` ┌ ${name} ${"─".repeat(Math.max(0, width - 5 - name.length))}┐`,
+    ...kinds.flatMap((kind) => {
+      const rules = model.layers.filter((r) => r.kind === kind);
+      const proven = kind === "instruction" ? "prose" : rules.length === 0 ? "" : `${rules.length}/${rules.length}`;
+      const label = `${kindRank(kind)} ${kind.padEnd(12)}${LAYER_TEXT[kind].padEnd(30)}${rules.length === 0 ? "(none yet)" : ""}`;
+      return [
+        boxed(label, `${String(rules.length).padStart(5)} ${proven.padStart(6)}`),
+        ...rules.map((r) => boxed(`${" ".repeat(4)}${r.pack.padEnd(6)} ${r.guardrail.padEnd(23)} ${r.adapter.padEnd(7)} ${r.runs.join(",").padEnd(12)} ${r.median.padEnd(7)}${promoted.has(r.practice) ? "  ▲ promote" : ""}`)),
+      ];
+    }),
+    ` └${"─".repeat(width - 3)}┘`,
+  ]);
+  const packs = [
+    ...model.packList.filter((p) => p.on).map((p) => `● ${p.id} (${p.source}, ${p.rules} rule${p.rules === 1 ? "" : "s"})`),
+    ...model.packList.filter((p) => !p.on).map((p) => `○ ${p.id} (${p.source}, off)`),
+    "+ local",
+  ].join("   ");
+  const weakest = [...model.practices].sort((a, b) => kindRank(b.strongestKind) - kindRank(a.strongestKind))[0];
+  const verdict =
+    weakest === undefined || DETERMINISTIC.has(weakest.strongestKind)
+      ? " Weakest practice: none. Every practice is held by a deterministic rule."
+      : ` Weakest practice: ${weakest.practice}, held only by ${weakest.strongestKind}. Next action: add a type, lint, or runtime Guardrail to ${weakest.practice}`;
+  const top = [spread(` WARDEN  ${model.project} · base ${model.base} · v${model.version}`, "q quit  l layers  ↑↓ runs", width), rule, spread(" LAYERS  strongest first · a rule can only move up", "rules  proven", width - 1)];
+  const bottom = [clip(` PACKS   ${packs}`, width), rule, ...wrap(verdict, width, 3)];
+  const room = Math.max(0, size.rows - top.length - bottom.length);
+  return [...top, ...body.slice(0, room), ...bottom].map((l) => l.trimEnd());
+}
+
+export const plainLayers = (model: ViewModel): string => `${renderLayers(model, { cols: 80, rows: 60 }).join("\n")}\n`;
+
 export const plainView = (model: ViewModel): string => `${render(model, { cols: 80, rows: 40 }, 0).join("\n")}\n`;
 
 export const ENTER = "\x1b[?1049h\x1b[?25l";
@@ -272,6 +352,7 @@ export interface ViewIo {
   output: ViewOutput;
   watchDir: string;
   file: string;
+  layers?: boolean;
   load: () => Promise<ViewModel>;
   rerun: () => void;
 }
@@ -280,6 +361,7 @@ export function liveView(io: ViewIo): Promise<number> {
   return new Promise((resolve, reject) => {
     let model: ViewModel | undefined;
     let selected = 0;
+    let layers = io.layers === true;
     let closed = false;
     let watcher: FSWatcher | undefined;
     let timer: NodeJS.Timeout | undefined;
@@ -308,7 +390,8 @@ export function liveView(io: ViewIo): Promise<number> {
     function draw(): void {
       if (closed || model === undefined) return;
       try {
-        const lines = render(model, { cols: io.output.columns || 80, rows: io.output.rows || 24 }, selected);
+        const size = { cols: io.output.columns || 80, rows: io.output.rows || 24 };
+        const lines = layers ? renderLayers(model, size) : render(model, size, selected);
         io.output.write(`${HOME}${lines.join("\n")}`);
       } catch (cause) {
         fail(cause);
@@ -346,6 +429,10 @@ export function liveView(io: ViewIo): Promise<number> {
       const k = chunk.toString("utf8");
       if (k === "q" || k === "\x03") return quit();
       if (k === "r") return io.rerun();
+      if (k === "l") {
+        layers = !layers;
+        return draw();
+      }
       const runs = model === undefined ? 0 : runRecords(model.evidence).length;
       if (k === "\x1b[A") selected = Math.max(0, selected - 1);
       else if (k === "\x1b[B") selected = Math.min(Math.max(0, runs - 1), selected + 1);

@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { LEAVE, type ViewModel, liveView, plainView, render } from "../../src/cli/view.js";
+import { LEAVE, type ViewModel, liveView, plainLayers, plainView, render, renderLayers } from "../../src/cli/view.js";
 import type { Evidence } from "../../src/runner/evidence.js";
 
 const at = (time: string): string => `2026-11-18T${time}.000Z`;
@@ -39,6 +39,9 @@ const model = (evidence: Evidence[]): ViewModel => ({
   evidence,
   now: Date.parse(at("14:03:00")) + 500,
   budgets: { edit: 2000, commit: 10000, boundary: 120000 },
+  layers: [],
+  practices: [],
+  packList: [{ id: "core", source: "bundled", on: true, rules: 2 }],
 });
 
 const size = { cols: 80, rows: 30 };
@@ -58,7 +61,7 @@ const fits = (lines: string[]): void => {
 it("renders a passing run at 80 columns", () => {
   const lines = render(model([...steps("r1", "14:01:40"), passRun]), size, 0);
   fits(lines);
-  expect(lines[0]).toMatch(/^ WARDEN {2}context-manager · base origin\/main · v9\.8\.7 +q quit {2}r rerun {2}↑↓ runs$/);
+  expect(lines[0]).toMatch(/^ WARDEN {2}context-manager · base origin\/main · v9\.8\.7 +q quit {2}r rerun {2}l layers$/);
   expect(lines[1]).toBe("─".repeat(80));
   expect(lines[2]).toBe(" NOW  commit check · 3 files · triggered by git commit · 13 ms");
   expect(lines[3]).toMatch(/^ {3}✓ 1 rules intact {6}lock matches, 0 tampered files +2 ms$/);
@@ -295,4 +298,84 @@ it("redraws when the terminal is resized", async () => {
   expect(output.text).toContain(`${"─".repeat(60)}\n`);
   input.emit("data", Buffer.from("q"));
   await done;
+});
+
+const layered = (extra: Partial<ViewModel> = {}): ViewModel => ({
+  ...model([]),
+  version: "0.1.5",
+  project: "warden",
+  base: "main",
+  layers: [
+    { pack: "core", guardrail: "warden-no-comments", practice: "no-comments", kind: "lint", adapter: "eslint", runs: ["edit", "commit"], median: "4 ms" },
+    { pack: "core", guardrail: "warden-no-suppressions", practice: "no-suppressions", kind: "lint", adapter: "eslint", runs: ["edit", "commit"], median: "4 ms" },
+  ],
+  practices: [
+    { practice: "no-comments", strongestKind: "lint", promote: false },
+    { practice: "no-suppressions", strongestKind: "lint", promote: false },
+  ],
+  packList: [
+    { id: "core", source: "bundled", on: true, rules: 2 },
+    { id: "architecture", source: "bundled", on: false, rules: 3 },
+  ],
+  ...extra,
+});
+
+it("renders the layers screen at 80 columns, strongest first, with every layer and the packs", () => {
+  const lines = renderLayers(layered(), size);
+  fits(lines);
+  expect(lines[0]).toMatch(/^ WARDEN {2}warden · base main · v0\.1\.5 +q quit {2}l layers {2}↑↓ runs$/);
+  expect(lines[2]).toMatch(/^ LAYERS {2}strongest first · a rule can only move up +rules {2}proven$/);
+  expect(lines[3]).toMatch(/^ ┌ DETERMINISTIC ─+┐$/);
+  expect(lines[4]).toMatch(/^ │ 0 type +compiler proves it +\(none yet\) +0 +│$/);
+  expect(lines[5]).toMatch(/^ │ 0 lint +static analysis on every edit +2 +2\/2 │$/);
+  expect(lines[6]).toMatch(/^ │ +core +warden-no-comments +eslint +edit,commit +4 ms +│$/);
+  expect(lines[7]).toMatch(/^ │ +core +warden-no-suppressions +eslint +edit,commit +4 ms +│$/);
+  expect(lines[8]).toMatch(/^ │ 1 runtime +a command or test must pass +\(none yet\) +0 +│$/);
+  expect(lines[9]).toMatch(/^ └─+┘$/);
+  expect(lines[10]).toMatch(/^ ┌ JUDGMENT ─+┐$/);
+  expect(lines[11]).toMatch(/^ │ 2 model +a model decides +\(none yet\) +0 +│$/);
+  expect(lines[12]).toMatch(/^ │ 3 review +a reviewer decides +\(none yet\) +0 +│$/);
+  expect(lines[14]).toMatch(/^ ┌ PROSE ─+┐$/);
+  expect(lines[15]).toMatch(/^ │ 4 instruction +told, not checked +\(none yet\) +0 +prose │$/);
+  expect(lines[16]).toMatch(/^ │ 5 legacy +wrapped old check +\(none yet\) +0 +│$/);
+  expect(lines[18]).toBe(" PACKS   ● core (bundled, 2 rules)   ○ architecture (bundled, off)   + local");
+  expect(lines.at(-2)).toBe("─".repeat(80));
+  expect(lines.at(-1)).toBe(" Weakest practice: none. Every practice is held by a deterministic rule.");
+  expect(lines.every((l) => l.length === 0 || l.length <= 80)).toBe(true);
+  expect(lines.filter((l) => l.startsWith(" │") || l.startsWith(" ┌") || l.startsWith(" └")).every((l) => l.length === 80)).toBe(true);
+});
+
+it("a practice held only by review shows promote, and the footer names it with one next action", () => {
+  const lines = renderLayers(
+    layered({
+      layers: [{ pack: "local", guardrail: "local-review", practice: "small-files", kind: "review", adapter: "eslint", runs: ["commit"], median: "shared" }],
+      practices: [{ practice: "small-files", strongestKind: "review", promote: true }],
+      packList: [{ id: "local", source: "local", on: true, rules: 1 }],
+    }),
+    size,
+  );
+  fits(lines);
+  expect(lines).toContainEqual(expect.stringMatching(/^ │ 3 review +a reviewer decides +1 +1\/1 │$/));
+  expect(lines).toContainEqual(expect.stringMatching(/^ │ +local +local-review +eslint +commit +shared +▲ promote +│$/));
+  expect(lines).toContainEqual(" PACKS   ● local (local, 1 rule)   + local");
+  expect(lines.slice(lines.lastIndexOf("─".repeat(80)) + 1).join("")).toBe(" Weakest practice: small-files, held only by review. Next action: add a type, lint, or runtime Guardrail to small-files");
+});
+
+it("plain layers carry no escape codes", () => {
+  const text = plainLayers(layered());
+  expect(text).not.toContain("\x1b");
+  expect(text).toContain(" LAYERS  ");
+});
+
+it("l toggles between the runs screen and the layers screen", async () => {
+  const input = new FakeInput();
+  const output = new FakeOutput();
+  const done = liveView({ input, output, watchDir: dir, file: "p.jsonl", rerun: vi.fn(), load: () => Promise.resolve(layered()) });
+  await vi.waitFor(() => expect(output.text).toContain("NOW  idle"));
+  input.emit("data", Buffer.from("l"));
+  expect(output.text.slice(output.text.lastIndexOf("\x1b[H"))).toContain(" LAYERS  ");
+  input.emit("data", Buffer.from("l"));
+  expect(output.text.slice(output.text.lastIndexOf("\x1b[H"))).toContain(" NOW  idle");
+  input.emit("data", Buffer.from("q"));
+  expect(await done).toBe(0);
 });

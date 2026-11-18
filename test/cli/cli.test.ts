@@ -580,4 +580,14 @@ describe("warden CLI", () => {
     expect(r.code).toBe(2);
     expect(r.err).toBe("--format must be one of text, json. Next action: run warden runs --help\n");
   });
+
+  it("warden --layers outside a terminal prints the layers screen once as plain text and lists only packs that exist", () => {
+    init();
+    const r = warden("--layers");
+    expect(r.code, r.err).toBe(0);
+    expect(r.out).toContain(" LAYERS  strongest first");
+    expect(r.out).toMatch(/ PACKS {3}● core \(bundled, \d+ rules?\)/);
+    expect(r.out).not.toContain("architecture");
+    expect(r.out).not.toContain("\x1b");
+  });
 });
