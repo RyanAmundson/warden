@@ -195,7 +195,7 @@ const check = async (opts: CheckOptions): Promise<number> => {
         ].filter((f) => f !== "");
   const wide = applyBaseline(wholeProject, narrow.next, judged, exists, touched);
   const failures = [...narrow.failures, ...wide.failures];
-  if (canonicalJson(wide.next) !== canonicalJson(baseline)) writeBaseline(root, wide.next);
+  if (tier !== "edit" && canonicalJson(wide.next) !== canonicalJson(baseline)) writeBaseline(root, wide.next);
 
   for (const r of run.ran) {
     appendEvidence(project, { at, kind: "cost", guardrail: r.guardrail, status: r.overBudget === true ? "over-budget" : r.status, ms: r.ms });

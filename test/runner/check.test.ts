@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -819,6 +819,18 @@ describe("residual fixes", () => {
     expect(settings.hooks.PostToolUse.flatMap((e) => e.hooks.map((h) => h.command))).toEqual([
       "npx --no -- warden check --format agent --hook claude --base 'main'",
     ]);
+  });
+});
+
+describe("residual fixes: baseline writes", () => {
+  it("a plain mv followed by an edit-tier check keeps the moved file's baseline entries", async () => {
+    const before = await read(".warden/baseline.json");
+    await rename(join(root, "a.ts"), join(root, "moved.ts"));
+    await check({ tier: "edit", paths: ["moved.ts"] });
+    expect(await read(".warden/baseline.json")).toBe(before);
+    git("add", "-A");
+    expect((await check()).code).toBe(0);
+    expect(JSON.parse(await read(".warden/baseline.json"))).toEqual({ "warden-no-comments": { "moved.ts": 1 } });
   });
 });
 
