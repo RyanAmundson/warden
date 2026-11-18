@@ -37,9 +37,13 @@ const root = (): string => {
   }
 };
 
-program.command("init").description("create .warden, compile, and baseline current violations").action(async () => {
-  process.exitCode = await runInit(root(), findWardenRoot());
-});
+program
+  .command("init")
+  .description("create .warden, compile, and baseline current violations")
+  .option("--packs <ids>", "comma-separated pack ids; must include core", "core")
+  .action(async (o: { packs: string }) => {
+    process.exitCode = await runInit(root(), findWardenRoot(), o.packs.split(","));
+  });
 
 program.command("packs").description("list available packs and which are on").option("--format <format>", "text or json", "text").action(async (o: { format: string }) => {
   process.exitCode = await runPacks(root(), findWardenRoot(), oneOf("format", o.format, ["text", "json"] as const) === "json");

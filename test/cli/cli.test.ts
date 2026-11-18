@@ -301,5 +301,40 @@ describe("warden CLI", () => {
       expect(r.out).not.toContain("  on");
       expect(r.out.trim().split("\n").at(-1)).toBe("Next action: run warden init --packs core,local");
     });
+
+    it("init --packs core,local writes both, compiles, and locks both", async () => {
+      await localPack();
+      const r = warden("init", "--packs", "core,local");
+      expect(r.code, r.err).toBe(0);
+      const config = await readFile(join(root, ".warden/config.yaml"), "utf8");
+      expect(config).toContain("  - id: core");
+      expect(config).toContain("  - id: local");
+      const lock = await readFile(join(root, ".warden/lock.json"), "utf8");
+      expect(lock).toContain("local-no-var");
+      expect(lock).toContain("warden-no-comments");
+    });
+
+    it("init --packs nope exits 2 and its next action works", async () => {
+      await localPack();
+      const r = warden("init", "--packs", "core,nope");
+      expect(r.code).toBe(2);
+      expect(r.err).toContain("Next action: run warden init --packs core,local.");
+      expect(existsSync(join(root, ".warden/config.yaml"))).toBe(false);
+      expect(warden("init", "--packs", "core,local").code).toBe(0);
+    });
+
+    it("init --packs without core exits 2 with the next action to add it", async () => {
+      await localPack();
+      const r = warden("init", "--packs", "local");
+      expect(r.code).toBe(2);
+      expect(r.err).toContain("Next action: run warden init --packs core,local.");
+      expect(warden("init", "--packs", "core,local").code).toBe(0);
+    });
+
+    it("init --packs with a duplicate id exits 2", async () => {
+      const r = warden("init", "--packs", "core,core");
+      expect(r.code).toBe(2);
+      expect(r.err).toContain("listed more than once");
+    });
   });
 });
