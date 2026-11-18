@@ -56,15 +56,16 @@ const refuseOwnBranch = (root: string, base: string): void => {
 };
 
 const removedWarden = (root: string, given: string | undefined): { set: RecordSet; tamper: Tamper } | undefined => {
-  if (existsSync(join(root, ".warden"))) return undefined;
+  if (existsSync(join(root, ".warden/config.yaml"))) return undefined;
   const text = lastCommittedText(root, ".warden/config.yaml");
   if (text === undefined) return undefined;
   const config = parseConfig(".warden/config.yaml", text);
   const base = requireBase(given, config.base);
   verifyBase(root, base, CHECK_BASE_ACTION);
   refuseOwnBranch(root, base);
-  if (showAtMergeBase(root, base, LOCK_PATH) === undefined) return undefined;
-  return { set: { config, packs: [], root }, tamper: { file: ".warden", detail: "removed" } };
+  if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined) return undefined;
+  const file = existsSync(join(root, ".warden")) ? ".warden/config.yaml" : ".warden";
+  return { set: { config, packs: [], root }, tamper: { file, detail: "removed" } };
 };
 
 const scannedFiles = (root: string, base: string, paths: string[] | undefined): string[] => {

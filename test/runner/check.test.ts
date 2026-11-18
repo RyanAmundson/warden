@@ -1613,3 +1613,14 @@ describe("engine review: a corrupt lock in history", () => {
     expect(code).toBe(0);
   });
 });
+
+describe("engine review: deleting only config.yaml", () => {
+  it("is tampering with the revert action while a lock exists", async () => {
+    await rm(join(root, ".warden/config.yaml"));
+    const { code, out, err } = await check();
+    expect(err).toBe("");
+    expect(code).toBe(1);
+    expect(out).toContain("Next action: revert your change to .warden/config.yaml.");
+    expect(await tampered()).toEqual([{ file: ".warden/config.yaml", detail: "removed" }]);
+  });
+});

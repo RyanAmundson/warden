@@ -40,7 +40,7 @@ const refuseOwnBranch = (root, base) => {
     throw new RecordError("", "/base", `--base ${base} already contains this work, so the merge-base lock would compare with itself; ${next}`);
 };
 const removedWarden = (root, given) => {
-    if (existsSync(join(root, ".warden")))
+    if (existsSync(join(root, ".warden/config.yaml")))
         return undefined;
     const text = lastCommittedText(root, ".warden/config.yaml");
     if (text === undefined)
@@ -49,9 +49,10 @@ const removedWarden = (root, given) => {
     const base = requireBase(given, config.base);
     verifyBase(root, base, CHECK_BASE_ACTION);
     refuseOwnBranch(root, base);
-    if (showAtMergeBase(root, base, LOCK_PATH) === undefined)
+    if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined)
         return undefined;
-    return { set: { config, packs: [], root }, tamper: { file: ".warden", detail: "removed" } };
+    const file = existsSync(join(root, ".warden")) ? ".warden/config.yaml" : ".warden";
+    return { set: { config, packs: [], root }, tamper: { file, detail: "removed" } };
 };
 const scannedFiles = (root, base, paths) => {
     if (paths === undefined)
