@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "test": "vitest run --maxWorkers=2",
+    "test": "tsc && vitest run --maxWorkers=2",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -19,5 +19,14 @@
     "@types/node": "25.9.9",
     "typescript": "5.9.3",
     "vitest": "4.1.12"
-  }
+  },
+  "bin": {
+    "warden": "dist/src/cli/main.js"
+  },
+  "files": [
+    "dist/src",
+    "dist/eslint-plugin",
+    "dist/schema",
+    "packs"
+  ]
 }

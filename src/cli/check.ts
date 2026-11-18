@@ -109,9 +109,15 @@ const check = async (opts: CheckOptions): Promise<number> => {
     appendEvidence(removed.set.config.project, { at, kind: "tampered", file: removed.tamper.file, detail: removed.tamper.detail });
     return report([], removed.set, opts, { tampered: [removed.tamper] });
   }
+  if (!existsSync(join(root, ".warden/config.yaml"))) {
+    throw new RecordError(".warden/config.yaml", "", "not found. Next action: run warden init.");
+  }
   const set = await loadRecords(root, opts.wardenRoot);
   const { project, base, loopBreakerRepeats } = set.config;
   verifyBase(root, base);
+  if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined) {
+    throw new RecordError(LOCK_PATH, "", "not found; this project was never compiled. Next action: run warden compile.");
+  }
 
   const tampered = await findTampering(set, opts.wardenRoot, base);
   if (tampered.length > 0) {
