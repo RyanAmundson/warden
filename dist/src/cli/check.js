@@ -7,7 +7,7 @@ import { LOCK_PATH, bundledTools, canonicalJson, readLock, sha256 } from "../com
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { changedFiles, changesSinceMergeBase, containsHead, headCommit, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
+import { CHECK_BASE_ACTION, changedFiles, changesSinceMergeBase, containsHead, headCommit, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { RUN_TOTAL, appendEvidence, readEvidence } from "../runner/evidence.js";
 import { formatFeedback } from "../runner/feedback.js";
@@ -47,7 +47,7 @@ const removedWarden = (root, given) => {
         return undefined;
     const config = parseConfig(".warden/config.yaml", text);
     const base = requireBase(given, config.base);
-    verifyBase(root, base);
+    verifyBase(root, base, CHECK_BASE_ACTION);
     refuseOwnBranch(root, base);
     if (showAtMergeBase(root, base, LOCK_PATH) === undefined)
         return undefined;
@@ -196,7 +196,7 @@ const check = async (opts, live) => {
     const { project, loopBreakerRepeats } = set.config;
     live.project = project;
     const base = requireBase(opts.base, set.config.base);
-    verifyBase(root, base);
+    verifyBase(root, base, CHECK_BASE_ACTION);
     refuseOwnBranch(root, base);
     openStep(live, "rules-intact");
     if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined) {

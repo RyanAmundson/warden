@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "compile": "tsc",
+    "build:dist": "tsc",
     "test": "tsc && vitest run --maxWorkers=2",
     "typecheck": "tsc --noEmit"
   },

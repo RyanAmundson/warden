@@ -8,7 +8,7 @@ import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import type { Guardrail, RecordSet, Tier } from "../records/types.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { changedFiles, changesSinceMergeBase, containsHead, headCommit, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
+import { CHECK_BASE_ACTION, changedFiles, changesSinceMergeBase, containsHead, headCommit, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { type Evidence, type Outcome, RUN_TOTAL, type RunFailure, type Step, type Trigger, appendEvidence, readEvidence } from "../runner/evidence.js";
 import { type Format, type Notes, type Repeated, formatFeedback } from "../runner/feedback.js";
@@ -61,7 +61,7 @@ const removedWarden = (root: string, given: string | undefined): { set: RecordSe
   if (text === undefined) return undefined;
   const config = parseConfig(".warden/config.yaml", text);
   const base = requireBase(given, config.base);
-  verifyBase(root, base);
+  verifyBase(root, base, CHECK_BASE_ACTION);
   refuseOwnBranch(root, base);
   if (showAtMergeBase(root, base, LOCK_PATH) === undefined) return undefined;
   return { set: { config, packs: [], root }, tamper: { file: ".warden", detail: "removed" } };
@@ -228,7 +228,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const { project, loopBreakerRepeats } = set.config;
   live.project = project;
   const base = requireBase(opts.base, set.config.base);
-  verifyBase(root, base);
+  verifyBase(root, base, CHECK_BASE_ACTION);
   refuseOwnBranch(root, base);
   openStep(live, "rules-intact");
   if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined) {

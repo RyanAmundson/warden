@@ -19,17 +19,19 @@ const must = (root: string, args: string[]): string => {
   return r.out;
 };
 
-export function verifyBase(root: string, base: string): void {
+export const CHECK_BASE_ACTION = "run warden check --base <an existing branch>";
+
+export function verifyBase(root: string, base: string, action: string): void {
   if (!git(root, ["rev-parse", "--is-inside-work-tree"]).ok) {
     throw new RecordError(root, "", "not a git repository");
   }
   if (!git(root, ["rev-parse", "--verify", "--quiet", `${base}^{commit}`]).ok) {
-    throw new RecordError(".warden/config.yaml", "/base", `base ref "${base}" does not exist. Next action: run warden check --base <an existing branch>`);
+    throw new RecordError("", "/base", `base ref "${base}" does not exist. Next action: ${action}`);
   }
 }
 
 export function changedFiles(root: string, base: string): string[] {
-  verifyBase(root, base);
+  verifyBase(root, base, CHECK_BASE_ACTION);
   const diff = ["diff", "-z", "--name-only", "--relative", "--diff-filter=ACMR"];
   const files = [
     ...names(must(root, [...diff, `${base}...HEAD`])),

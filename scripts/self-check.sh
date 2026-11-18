@@ -22,6 +22,15 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
+if [ -f "$root/tsconfig.json" ]; then
+  (cd "$root" && node_modules/.bin/tsc --outDir "$work/fresh")
+  for dir in $(git -C "$root" ls-files dist | cut -d/ -f2 | sort -u); do
+    if ! diff -r "$root/dist/$dir" "$work/fresh/$dir" >/dev/null 2>&1; then
+      echo "self-check: dist/$dir differs from a fresh compile of the source. Next action: run npm run build:dist, stage dist, then commit." >&2
+      exit 1
+    fi
+  done
+fi
 env -u GIT_INDEX_FILE git -C "$root" worktree add -q --detach "$work/prev" "$tag" >/dev/null
 ln -s "$root/node_modules" "$work/prev/node_modules"
 (cd "$work/prev" && npm pack --silent --pack-destination "$work" >/dev/null)

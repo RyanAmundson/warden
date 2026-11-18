@@ -18,16 +18,17 @@ const must = (root, args) => {
         throw new Error(`git ${args.join(" ")} failed: ${r.err.trim()}`);
     return r.out;
 };
-export function verifyBase(root, base) {
+export const CHECK_BASE_ACTION = "run warden check --base <an existing branch>";
+export function verifyBase(root, base, action) {
     if (!git(root, ["rev-parse", "--is-inside-work-tree"]).ok) {
         throw new RecordError(root, "", "not a git repository");
     }
     if (!git(root, ["rev-parse", "--verify", "--quiet", `${base}^{commit}`]).ok) {
-        throw new RecordError(".warden/config.yaml", "/base", `base ref "${base}" does not exist. Next action: run warden check --base <an existing branch>`);
+        throw new RecordError("", "/base", `base ref "${base}" does not exist. Next action: ${action}`);
     }
 }
 export function changedFiles(root, base) {
-    verifyBase(root, base);
+    verifyBase(root, base, CHECK_BASE_ACTION);
     const diff = ["diff", "-z", "--name-only", "--relative", "--diff-filter=ACMR"];
     const files = [
         ...names(must(root, [...diff, `${base}...HEAD`])),

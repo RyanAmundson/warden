@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmod, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -75,6 +75,25 @@ describe("self-check.sh", () => {
     const r = sh("scripts/self-check.sh", "t1");
     expect(r.code, r.err).toBe(0);
     expect(r.out).toBe("release old\npack new\nargs check --base main --trigger git-commit\n");
+  });
+
+  it("refuses a dist that differs from a fresh compile, stale files included, with one next action", async () => {
+    await symlink(resolve(scripts, "../node_modules"), join(repo, "node_modules"));
+    await writeFile(join(repo, ".gitignore"), "node_modules\n");
+    await writeFile(join(repo, "tsconfig.json"), JSON.stringify({ compilerOptions: { outDir: "dist", rootDir: ".", module: "NodeNext", moduleResolution: "NodeNext", types: [] }, include: ["src"] }));
+    await mkdir(join(repo, "src"));
+    await writeFile(join(repo, "src/x.ts"), "export const x = 1;\n");
+    execFileSync("node_modules/.bin/tsc", [], { cwd: repo });
+    git("add", "-A");
+    git("commit", "-q", "-m", "built");
+    git("tag", "t1");
+    const clean = sh("scripts/self-check.sh", "t1");
+    expect(clean.err).not.toContain("differs from a fresh compile");
+    await writeFile(join(repo, "dist/src/old.js"), "export const old = 1;\n");
+    git("add", "-A");
+    const stale = sh("scripts/self-check.sh", "t1");
+    expect(stale.code).toBe(1);
+    expect(stale.err).toContain("dist/src differs from a fresh compile of the source. Next action: run npm run build:dist, stage dist, then commit.");
   });
 
   it("requires the pinned tag as an argument", () => {

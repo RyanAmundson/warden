@@ -103,7 +103,7 @@ interface RecordSet { config: ProjectConfig; packs: Pack[]; root: string }
 **Interfaces:**
 - Produces: the types above; `loadRecords(projectRoot: string, wardenRoot: string): Promise<RecordSet>`, which reads `<projectRoot>/.warden/config.yaml`, the listed packs from `<wardenRoot>/packs/<id>/` or `<projectRoot>/.warden/packs/<id>/`, and throws `RecordError { file: string; pointer: string; message: string }`.
 
-- [ ] **Step 1:** Create the repository at `~/Code/warden` with `git init`, the dependencies from Tech Stack, and scripts `build` (`tsc`), `test` (`vitest run --maxWorkers=2`), `typecheck` (`tsc --noEmit`).
+- [ ] **Step 1:** Create the repository at `~/Code/warden` with `git init`, the dependencies from Tech Stack, and scripts `build:dist` (`tsc`), `test` (`vitest run --maxWorkers=2`), `typecheck` (`tsc --noEmit`).
 - [ ] **Step 2: Write failing tests** in `test/records/load.test.ts`:
   - `loads a valid project`: `loadRecords("test/fixtures/project-valid", ".")` returns one pack `core` with `layer` 0.
   - `rejects YAML syntax errors`: rejects with `RecordError` whose `file` ends in the bad file.
@@ -267,7 +267,7 @@ Finding codes, exactly: `duplicate-term`, `duplicate-practice`, `duplicate-guard
 
 **Files:**
 - Create: `src/cli/main.ts`, `src/cli/init.ts`, `src/cli/explain.ts`, `src/cli/report.ts`
-- Test: `test/cli/cli.test.ts` (runs `node dist/cli/main.js` after `npm run build`)
+- Test: `test/cli/cli.test.ts` (runs `node dist/cli/main.js` after `npm run build:dist`)
 
 **Interfaces:**
 - Produces:
@@ -276,7 +276,7 @@ Finding codes, exactly: `duplicate-term`, `duplicate-practice`, `duplicate-guard
   - `warden explain <id>`: for a Practice or Guardrail id prints statement, terms with definitions, Guardrails with kind, tiers, budget, and examples, and the last 20 Evidence lines for it. Unknown id exits 2.
   - `warden report`: one row per Guardrail: practice, kind, strength (`proven` when it has passing examples, `unproven` for `legacy`), baseline entries remaining, fired count, median and slowest `ms` from Evidence, and tier totals against `tierBudgetMs`. `--json` prints the same as JSON.
 - [ ] **Step 1: Write failing tests:** `init creates config, lock, and baseline in a repo with existing comments and exits 0`; `init refuses when .warden exists`; `explain no-comments prints its compliant example path`; `explain unknown exits 2`; `report --json lists warden-no-comments as proven`.
-- [ ] **Step 2:** Run `npm run build && npx vitest run test/cli --maxWorkers=2`. Expected: FAIL.
+- [ ] **Step 2:** Run `npm run build:dist && npx vitest run test/cli --maxWorkers=2`. Expected: FAIL.
 - [ ] **Step 3:** Implement with `commander`.
 - [ ] **Step 4:** Run the tests. Expected: PASS.
 - [ ] **Step 5:** Run `npm run typecheck && npm test` once for the whole slice. Expected: both exit 0.

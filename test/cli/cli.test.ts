@@ -218,6 +218,14 @@ describe("warden CLI", () => {
     expect(r.err).toContain('base ref "nope" does not exist. Next action: run warden check --base <an existing branch>');
   });
 
+  it("init in a repository with no main branch names an action that init can follow", () => {
+    git("branch", "-m", "trunk");
+    const r = warden("init");
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("Next action: create a branch named main with git branch -M main, then run warden init again");
+    expect(r.err).not.toContain("warden check");
+  });
+
   it("an invalid flag value is a usage error, exit 2", () => {
     init();
     expect(warden("check", "--base", "main", "--tier", "bogus").code).toBe(2);

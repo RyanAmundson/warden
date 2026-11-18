@@ -49,7 +49,7 @@ const selectPacks = async (root, wardenRoot, requested) => {
 export async function runInit(root, wardenRoot, requested = ["core"]) {
     if (existsSync(join(root, CONFIG_PATH)))
         throw new RecordError(join(root, ".warden"), "", "already exists; init refuses to overwrite it");
-    verifyBase(root, "main");
+    verifyBase(root, "main", "create a branch named main with git branch -M main, then run warden init again");
     const packs = await selectPacks(root, wardenRoot, requested);
     const warden = join(root, ".warden");
     const wardenExisted = existsSync(warden);
