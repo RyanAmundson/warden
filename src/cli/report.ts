@@ -57,7 +57,11 @@ export async function buildReport(root: string, wardenRoot: string): Promise<{ p
   const keyOf = (members: string[]): string => [...members].sort().join("\0");
   const passes = evidence.filter((e) => e.kind === "cost" && e.shared !== undefined && e.members !== undefined && e.members.length > 1 && e.members.every((m) => known.has(m)));
   const latest = new Map<string, string>();
-  for (const e of passes) for (const m of e.members as string[]) latest.set(m, keyOf(e.members as string[]));
+  const passRows = new Set(passes);
+  for (const e of evidence) {
+    if (passRows.has(e)) for (const m of e.members as string[]) latest.set(m, keyOf(e.members as string[]));
+    else if (e.kind === "cost" && e.shared === undefined && e.guardrail !== undefined) latest.delete(e.guardrail);
+  }
   const current = new Set(latest.values());
   const shared = [...current].map((key): SharedRow => {
     const rows = passes.filter((e) => keyOf(e.members as string[]) === key);
