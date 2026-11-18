@@ -355,6 +355,17 @@ describe("warden CLI", () => {
       expect(warden("init", "--packs", "core,local").code).toBe(0);
     });
 
+    it("init refuses a .warden holding anything but packs and leaves it untouched", async () => {
+      await mkdir(join(root, ".warden"), { recursive: true });
+      await writeFile(join(root, ".warden/notes.txt"), "mine\n");
+      const r = warden("init");
+      expect(r.code).toBe(2);
+      expect(r.err).toContain("Next action: move or delete .warden/notes.txt, then run warden init again.");
+      expect(await readFile(join(root, ".warden/notes.txt"), "utf8")).toBe("mine\n");
+      await rm(join(root, ".warden/notes.txt"));
+      expect(warden("init").code).toBe(0);
+    });
+
     it("init --packs with a duplicate id exits 2", async () => {
       const r = warden("init", "--packs", "core,core");
       expect(r.code).toBe(2);

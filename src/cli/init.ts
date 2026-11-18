@@ -53,6 +53,8 @@ export async function runInit(root: string, wardenRoot: string, requested: strin
   const packs = await selectPacks(root, wardenRoot, requested);
   const warden = join(root, ".warden");
   const wardenExisted = existsSync(warden);
+  const extra = wardenExisted ? readdirSync(warden).filter((e) => e !== "packs").map((e) => `.warden/${e}`) : [];
+  if (extra.length > 0) throw new Error(`.warden already holds ${extra.join(", ")}, and init must not delete files it did not create. Next action: move or delete ${extra.join(", ")}, then run warden init again.`);
   const claudeExisted = existsSync(join(root, ".claude"));
   const settings = existsSync(join(root, SETTINGS)) ? readFileSync(join(root, SETTINGS), "utf8") : undefined;
   try {
