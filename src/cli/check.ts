@@ -169,7 +169,9 @@ const check = async (opts: CheckOptions): Promise<number> => {
   const changes = changesSinceMergeBase(root, base);
   const touched = (v: Violation): boolean => {
     const lines = changes.lines.get(v.file);
-    return lines === "all" || lines?.has(v.line) === true;
+    if (lines === "all") return true;
+    for (let n = v.line; n <= (v.endLine ?? v.line); n++) if (lines?.has(n) === true) return true;
+    return false;
   };
   const baseline = readBaseline(root);
   const narrow = applyBaseline(perFile, carryRenames(baseline, changes.renames), scanned, exists, touched);

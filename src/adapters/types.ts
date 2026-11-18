@@ -4,6 +4,7 @@ export interface Violation {
   guardrail: string;
   file: string;
   line: number;
+  endLine?: number;
   message: string;
 }
 

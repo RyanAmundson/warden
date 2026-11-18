@@ -783,8 +783,25 @@ describe("final review: commit tier judges the index", () => {
   });
 });
 
+describe("residual fixes", () => {
+  const rebase = (): void => {
+    git("add", "-A");
+    git("commit", "-q", "-m", "rebase");
+    git("branch", "-f", "main", "HEAD");
+  };
+
+  it("a rewrite inside a baselined multi-line comment fails", async () => {
+    await write("a.ts", "/* one\n   two */\nconst a = 1;\n");
+    rebase();
+    await write("a.ts", "/* one\n   rewritten */\nconst a = 1;\n");
+    const { code, out } = await check({ format: "json" });
+    expect(code).toBe(1);
+    expect(failedFiles(out)).toEqual(["a.ts"]);
+  });
+});
+
 describe("applyBaseline", () => {
-  const result = (guardrail: string, files: string[], status: RunResult["status"] = "fail"): RunResult => ({
+  const result =(guardrail: string, files: string[], status: RunResult["status"] = "fail"): RunResult => ({
     guardrail,
     status,
     violations: files.map((file) => ({ guardrail, file, line: 1, message: "m" })),

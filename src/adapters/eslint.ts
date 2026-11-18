@@ -91,6 +91,7 @@ const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<R
         guardrail: owner.get(id as string) as string,
         file: relative(ctx.root, result.filePath),
         line: m.line,
+        endLine: m.endLine ?? m.line,
         message: m.message,
       });
     }

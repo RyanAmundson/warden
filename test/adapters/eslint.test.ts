@@ -55,7 +55,7 @@ describe("eslint adapter", () => {
   it("eslint conformance: inline disables are ignored", async () => {
     const g = guardrail("no-debugger", "eslint:no-debugger");
     await conformance(eslintAdapter, resolve(fixtures, "debugger"), [g], setFor(g), ["src/a.ts"], [
-      { guardrail: "no-debugger", file: "src/a.ts", line: 2, message: "Unexpected 'debugger' statement." },
+      { guardrail: "no-debugger", file: "src/a.ts", line: 2, endLine: 2, message: "Unexpected 'debugger' statement." },
     ]);
   });
 
@@ -66,6 +66,7 @@ describe("eslint adapter", () => {
         guardrail: "shallow",
         file: "src/a.ts",
         line: 3,
+        endLine: 5,
         message: "Blocks are nested too deeply (2). Maximum allowed is 1.",
       },
     ]);
