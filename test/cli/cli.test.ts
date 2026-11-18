@@ -73,8 +73,20 @@ describe("warden CLI", () => {
     const r = warden("explain", "no-comments");
     expect(r.code, r.err).toBe(0);
     expect(r.out).toContain("Compliant example (mustPass)");
-    expect(r.out).toContain("const a = 1;");
+    expect(r.out).toContain("export const sumOfPrices");
     expect(r.out).toContain("warden-no-comments");
+  });
+
+  it("Do this shows the agent's own line rewritten, never the record example", async () => {
+    init();
+    git("add", "-A");
+    git("commit", "-q", "-m", "adopt");
+    await writeFile(join(root, "src/add.ts"), "// eslint-disable-next-line\nexport const add = (a: number, b: number) => a + b;\n");
+    const r = warden("check", "--base", "main");
+    expect(r.code, r.err).toBe(1);
+    expect(r.out).toContain("Do this:  export const add = (a: number, b: number) => a + b;\n            Put any meaning in a name.");
+    expect(r.out).toContain("Do this:  export const add = (a: number, b: number) => a + b;\n            Fix the rule it hid.");
+    expect(r.out).not.toContain("const a = 1");
   });
 
   it("explain unknown exits 2", () => {

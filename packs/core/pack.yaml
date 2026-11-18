@@ -17,8 +17,8 @@ practices:
         budgetMs: 5000
         version: 1
         implementation: "eslint:warden/no-comments"
-        mustFail: "// a comment\nconst a = 1;\n"
-        mustPass: "const a = 1;\n"
+        mustFail: "// sum of every price\nexport const total = (prices: number[]): number => prices.reduce((sum, price) => sum + price, 0);\n"
+        mustPass: "export const sumOfPrices = (prices: number[]): number => prices.reduce((sum, price) => sum + price, 0);\n"
   - id: no-suppressions
     statement: Source files carry no inline suppressions and no skipped tests.
     terms: [guardrail]
@@ -31,5 +31,5 @@ practices:
         budgetMs: 5000
         version: 1
         implementation: "eslint:warden/no-suppressions"
-        mustFail: "it.skip(\"x\", () => {});\n"
-        mustPass: "it(\"x\", () => {});\n"
+        mustFail: "it.skip(\"adds two prices\", () => {\n  expect(sumOfPrices([1, 2])).toBe(3);\n});\n"
+        mustPass: "it(\"adds two prices\", () => {\n  expect(sumOfPrices([1, 2])).toBe(3);\n});\n"

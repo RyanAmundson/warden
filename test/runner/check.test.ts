@@ -294,7 +294,7 @@ describe("runCheck", () => {
     expect(code).toBe(1);
     expect(out).toContain("FAIL b.ts:1  no-comments");
     expect(out).toContain("Rule:     Source files carry no comments.");
-    expect(out).toContain("Do this:  const a = 1;");
+    expect(out).toContain("Do this:  const b = 1;\n            Put any meaning in a name.");
     expect(out).toContain("Why:      warden explain no-comments");
     expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([
       "Next action: change the code at the lines above to match \"Do this\". Do not edit .warden/ or generated config; that is recorded as tampering.",
@@ -850,6 +850,26 @@ describe("residual fixes", () => {
     expect(settings.hooks.PostToolUse.flatMap((e) => e.hooks.map((h) => h.command))).toEqual([
       "npx --no -- warden check --format agent --hook claude --base 'main'",
     ]);
+  });
+});
+
+describe("residual fixes: Do this fits the violation", () => {
+  it("a trailing directive is removed from its own line and the hidden rule is named", async () => {
+    await write("b.ts", "export const total = 1; // eslint-disable-line no-console, no-alert\n");
+    const { code, out } = await check({ format: "json" });
+    expect(code).toBe(1);
+    expect((JSON.parse(out) as { failures: { practice: string; doThis: string }[] }).failures.map((f) => [f.practice, f.doThis])).toEqual([
+      ["no-comments", "export const total = 1;\nPut any meaning in a name."],
+      ["no-suppressions", "export const total = 1;\nFix the no-console, no-alert problem it hid."],
+    ]);
+  });
+
+  it("a skipped test keeps the record example, which looks like real code", async () => {
+    await write("b.test.ts", 'it.skip("adds", () => {});\n');
+    const { out } = await check({ format: "json" });
+    const doThis = (JSON.parse(out) as { failures: { doThis: string }[] }).failures.map((f) => f.doThis);
+    expect(doThis).toHaveLength(1);
+    expect(doThis[0]).not.toContain('it("x"');
   });
 });
 

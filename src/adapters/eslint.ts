@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
-import { ESLint } from "eslint";
+import { ESLint, type Linter } from "eslint";
 import tseslint from "typescript-eslint";
 import { plugin } from "../../eslint-plugin/index.js";
 import { RecordError } from "../records/load.js";
@@ -51,6 +51,33 @@ const emit = (gs: Guardrail[], set: RecordSet): Record<string, string> => {
   return { [RULES_PATH]: `${JSON.stringify({ entries }, null, 2)}\n` };
 };
 
+const HINTS: Record<string, (removed: string) => string> = {
+  "warden/no-comments": () => "Put any meaning in a name.",
+  "warden/no-suppressions": (removed) => {
+    const named = /eslint-(?:disable|enable)(?:-next-line|-line)?\s+([^\s*][^*]*?)\s*(?:--.*)?(?:\*\/)?$/.exec(removed)?.[1];
+    if (named !== undefined) return `Fix the ${named.split(/\s*,\s*/).join(", ")} problem it hid.`;
+    if (/@ts-(?:ignore|expect-error|nocheck)/.test(removed)) return "Fix the type error it hid.";
+    return "Fix the rule it hid.";
+  },
+};
+
+const rewrite = (source: string, m: Linter.LintMessage, id: string): string | undefined => {
+  const hint = HINTS[id];
+  if (hint === undefined) return undefined;
+  const lines = source.split("\n");
+  const endLine = m.endLine ?? m.line;
+  const offset = (line: number, column: number): number => lines.slice(0, line - 1).reduce((n, l) => n + l.length + 1, 0) + column - 1;
+  const from = offset(m.line, m.column);
+  const to = offset(endLine, m.endColumn ?? (lines[endLine - 1] as string).length + 1);
+  const removed = source.slice(from, to);
+  if (!/^(\/\/|\/\*)/.test(removed)) return undefined;
+  const kept = `${(lines[m.line - 1] as string).slice(0, m.column - 1)}${source.slice(to).split("\n")[0]}`.trimEnd();
+  const shown = kept.trim() !== "" ? kept : lines.slice(endLine).find((l) => l.trim() !== "");
+  return shown === undefined ? hint(removed) : `${shown}\n${hint(removed)}`;
+};
+
+const doThisFor = (doThis: string | undefined): { doThis?: string } => (doThis === undefined ? {} : { doThis });
+
 const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<RunResult[]> => {
   const { entries } = JSON.parse(await readFile(join(ctx.generatedDir, "eslint.rules.json"), "utf8"));
   const eslint = new ESLint({
@@ -77,6 +104,7 @@ const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<R
   const owner = new Map(gs.map((g) => [ruleId(g), g.id]));
   const parseErrors: Violation[] = [];
   for (const result of results) {
+    const source = result.messages.length > 0 ? await readFile(result.filePath, "utf8") : "";
     for (const m of result.messages) {
       if (m.ruleId === null && m.fatal === true) {
         parseErrors.push({ guardrail: PARSE_ERROR, file: relative(ctx.root, result.filePath), line: m.line, message: m.message });
@@ -93,6 +121,7 @@ const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<R
         line: m.line,
         endLine: m.endLine ?? m.line,
         message: m.message,
+        ...doThisFor(rewrite(source, m, id as string)),
       });
     }
   }

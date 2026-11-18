@@ -79,7 +79,7 @@ export function formatFeedback(failures: Violation[], set: RecordSet, format: Fo
         practice: owner?.practice.id ?? v.guardrail,
         rule: owner?.practice.statement ?? v.message,
         message: v.message,
-        doThis: example,
+        doThis: v.doThis ?? example,
         why: owner === undefined ? undefined : `warden explain ${owner.practice.id}`,
       };
     });

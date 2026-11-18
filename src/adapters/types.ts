@@ -6,6 +6,7 @@ export interface Violation {
   line: number;
   endLine?: number;
   message: string;
+  doThis?: string;
 }
 
 export interface RunResult {
