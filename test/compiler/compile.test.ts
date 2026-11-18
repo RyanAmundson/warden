@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -430,6 +430,37 @@ describe("compile", () => {
       ].join("\n")}\n`,
     );
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
+  });
+
+  describe("a fixture tree key that Warden's example project owns is refused before anything is written", () => {
+    const installed = async (): Promise<string> =>
+      createHash("sha256")
+        .update((await readdir(join(wardenRoot, "node_modules"))).join("\n"))
+        .update(await readFile(join(wardenRoot, "node_modules/eslint/package.json")))
+        .digest("hex");
+
+    it.each([
+      ["node_modules/warden-proof-sentinel.txt"],
+      [".warden/proof.txt"],
+      ["package.json"],
+      ["tsconfig.json"],
+      [".warden/generated/eslint.rules.json"],
+    ])("%s", async (key) => {
+      const before = await installed();
+      await usePack(localPack(legacyGuardrail("test ! -e broken", ["        mustFail:", '          broken: "x\\n"', `          ${JSON.stringify(key)}: "x\\n"`, "        mustPass:", '          ok.txt: "x\\n"'])));
+      const file = join(root, ".warden/packs/local/pack.yaml");
+      const { findings, written } = await compile(root, wardenRoot);
+      expect(findings).toEqual([
+        {
+          code: "example-unsafe",
+          record: "local-script",
+          message: `Guardrail local-script mustFail example writes ${key}, which Warden's example project owns (node_modules, .warden, package.json, tsconfig.json, and emitted configs). Next action: move ${key} to another path in the mustFail example of Guardrail local-script in ${file}, then run warden compile.`,
+        },
+      ]);
+      expect(written).toEqual([]);
+      expect(await installed()).toBe(before);
+      await expect(readFile(join(wardenRoot, "node_modules/warden-proof-sentinel.txt"))).rejects.toThrow();
+    });
   });
 
   it("invalid settings JSON leaves no generated file, no settings change, and no lock", async () => {

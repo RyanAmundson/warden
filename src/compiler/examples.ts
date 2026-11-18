@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, matchesGlob } from "node:path";
+import { dirname, join, matchesGlob, posix } from "node:path";
 import { adapters, runGuardrails, unknownAdapters } from "../runner/run.js";
 import { pathGroups } from "../records/paths.js";
 import type { Example, Guardrail, RecordSet } from "../records/types.js";
@@ -14,6 +14,14 @@ const literal = (glob: string): string => glob.split("*", 1)[0] ?? "";
 const exampleFile = (group: string[] | undefined): string =>
   `${(group ?? []).map(literal).reduce((a, b) => (b.length > a.length ? b : a), "")}warden-example.ts`;
 
+const SCAFFOLD = ["package.json", "tsconfig.json"];
+
+const ownedBy = (owned: Set<string>) => (key: string): boolean => {
+  const path = posix.normalize(key).toLowerCase();
+  const first = path.split("/")[0];
+  return first === "node_modules" || first === ".warden" || owned.has(path);
+};
+
 const enabledOn = (file: string, groups: string[][]): boolean => groups.length === 0 || groups.some((g) => g.every((glob) => matchesGlob(file, glob)));
 
 export async function runExamples(set: RecordSet, wardenRoot: string): Promise<Finding[]> {
@@ -25,6 +33,13 @@ export async function runExamples(set: RecordSet, wardenRoot: string): Promise<F
     await writeFile(join(project, "tsconfig.json"), TSCONFIG);
     const checked: { g: Guardrail; file: string; groups: string[][]; packFile: string }[] = [];
     const ctx = { root: project, generatedDir: join(project, ".warden/generated") };
+    const emittedPaths = set.packs
+      .flatMap((p) => p.practices.flatMap((x) => x.guardrails))
+      .flatMap((g) => {
+        const adapter = g.kind === "instruction" ? undefined : adapters.get(g.implementation.slice(0, g.implementation.indexOf(":")));
+        return adapter === undefined ? [] : Object.keys(adapter.emit([g], set));
+      });
+    const owned = ownedBy(new Set([...SCAFFOLD, ...emittedPaths].map((p) => p.toLowerCase())));
     for (const pack of set.packs) {
       for (const practice of pack.practices) {
         const groups = pathGroups(practice.paths, set.config.packs.find((p) => p.id === pack.id)?.paths ?? []);
@@ -39,6 +54,11 @@ export async function runExamples(set: RecordSet, wardenRoot: string): Promise<F
             const source = g[label];
             if (source === undefined) {
               findings.push({ code: "example-failed", record: g.id, message: `Guardrail ${g.id} has no ${label} example. Next action: add ${label} to Guardrail ${g.id} ${then}` });
+              continue;
+            }
+            const unsafe = typeof source === "string" ? undefined : Object.keys(source).find(owned);
+            if (unsafe !== undefined) {
+              findings.push({ code: "example-unsafe", record: g.id, message: `Guardrail ${g.id} ${label} example writes ${unsafe}, which Warden's example project owns (node_modules, .warden, package.json, tsconfig.json, and emitted configs). Next action: move ${unsafe} to another path in the ${label} example of Guardrail ${g.id} ${then}` });
               continue;
             }
             const status = await runExample(g, adapter.emit([g], set), source, file, ctx);
