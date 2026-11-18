@@ -32,17 +32,17 @@ const fake: Adapter = {
   },
 };
 
-const guardrail = (id: string, model: string): string[] => [
+const guardrail = (id: string, model: string, mustPass = ['        mustPass: "const a = 1;\\n"']): string[] => [
   `      - id: ${id}`, "        kind: runtime", "        runs: [boundary]", "        budgetMs: 5000", "        version: 1", `        implementation: "fake:${model}"`,
-  '        mustFail: "bad\\n"', '        mustPass: "const a = 1;\\n"',
+  '        mustFail: "bad\\n"', ...mustPass,
 ];
 
 const pack = (id: string, guardrails: string[][]): string =>
   [`id: ${id}`, "layer: 1", "terms: []", "practices:", `  - id: ${id}-practice`, "    statement: Scales.", "    terms: []", "    paths: []", "    conflictsWith: []", "    guardrails:", ...guardrails.flat(), ""].join("\n");
 
-const setup = async (packs: Record<string, string[][]>, extra: string[] = []): Promise<void> => {
+const setup = async (packs: Record<string, string[][]>, extra: string[] = [], paths = '["src/**/*.ts"]'): Promise<void> => {
   await mkdir(join(root, ".warden"), { recursive: true });
-  const entries = Object.keys(packs).flatMap((id) => [`  - id: ${id}`, '    paths: ["src/**/*.ts"]']);
+  const entries = Object.keys(packs).flatMap((id) => [`  - id: ${id}`, `    paths: ${paths}`]);
   await writeFile(join(root, ".warden/config.yaml"), ['warden: "0.1.0"', "project: p", "base: main", "packs:", ...entries, "tierBudgetMs: { edit: 1000, commit: 2000, boundary: 5000 }", "loopBreakerRepeats: 3", ...extra, ""].join("\n"));
   for (const [id, gs] of Object.entries(packs)) {
     await mkdir(join(root, ".warden/packs", id), { recursive: true });
@@ -101,7 +101,7 @@ it("a time proportional to files is linear, one fixed time is constant, and both
   const rows = await scaling();
   const lin = rows.find((e) => e.guardrail === "lin");
   expect(lin).toMatchObject({ verdict: "linear", f: 3, warden: "0.1.0", points: [[25, 27], [50, 52], [100, 102], [200, 202]] });
-  expect(rows.find((e) => e.guardrail === "flat")).toMatchObject({ verdict: "constant" });
+  expect(rows.find((e) => e.guardrail === "flat")).toMatchObject({ verdict: "constant", f: 5, points: [[400, 5], [800, 5], [1600, 5], [3200, 5]] });
   expect(rows.find((e) => e.pack === "local")).toMatchObject({ verdict: "linear" });
 });
 
@@ -154,4 +154,13 @@ it("bench settings in config.yaml replace the defaults, and an unknown setting e
   const r = await bench();
   expect(r.code).toBe(2);
   expect(r.err).toContain("/bench");
+});
+
+it("a copy that lands outside the Guardrail's paths exits 2 with one next action, since the rule would never run on it", async () => {
+  await setup({ local: [guardrail("tree", "linear", ["        mustPass:", '          src/a.ts: "const a = 1;\\n"'])] }, [], '["src/*.ts"]');
+  const { code, err } = await bench();
+  expect(code).toBe(2);
+  expect(err.match(/Next action:/g)).toHaveLength(1);
+  expect(err).toContain("Guardrail tree would not run on src/bench-0/src/a.ts, a copy of its mustPass example, because it is outside src/*.ts.");
+  expect(roots).toEqual([]);
 });

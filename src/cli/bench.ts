@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Adapter, RunResult } from "../adapters/types.js";
 import { wardenVersion } from "../compiler/compile.js";
-import { examplePrefix, withExampleProject } from "../compiler/examples.js";
+import { enabledOn, examplePrefix, withExampleProject } from "../compiler/examples.js";
 import { RecordError, loadRecords } from "../records/load.js";
 import { pathGroups } from "../records/paths.js";
 import type { BenchSettings, Guardrail, Pack, RecordSet } from "../records/types.js";
@@ -35,16 +35,29 @@ interface Subject {
   id: string;
   g: Guardrail;
   pack: Pack;
+  practice: string;
   prefix: string;
+  groups: string[][];
   time: (r: RunResult) => number;
 }
 
 const prefixOf = (g: Guardrail): string => g.implementation.slice(0, g.implementation.indexOf(":"));
 
-const copyOf = (g: Guardrail, prefix: string, i: number): Record<string, string> =>
+const copyOf = (g: Guardrail, prefix: string, i: number): { path: string; original: string; content: string }[] =>
   typeof g.mustPass === "string"
-    ? { [`${prefix}warden-example-${i}.ts`]: g.mustPass }
-    : Object.fromEntries(Object.entries(g.mustPass ?? {}).map(([path, content]) => [`${prefix}bench-${i}/${path}`, content]));
+    ? [{ path: `${prefix}warden-example-${i}.ts`, original: `${prefix}warden-example.ts`, content: g.mustPass }]
+    : Object.entries(g.mustPass ?? {}).map(([path, content]) => ({ path: `${prefix}bench-${i}/${path}`, original: path, content }));
+
+const refuseUnmatched = (s: Subject): void => {
+  if (prefixOf(s.g) === "cmd") return;
+  const lost = copyOf(s.g, s.prefix, 0).find((c) => enabledOn(c.original, s.groups) && !enabledOn(c.path, s.groups));
+  if (lost === undefined) return;
+  throw new RecordError(
+    s.pack.file,
+    `/guardrails/${s.g.id}/mustPass`,
+    `Guardrail ${s.g.id} would not run on ${lost.path}, a copy of its mustPass example, because it is outside ${s.groups.map((g) => g.join(" & ")).join(", ")}. Next action: change the paths of Practice ${s.practice} in ${s.pack.file} so they also match files in a subfolder, or make the mustPass example of Guardrail ${s.g.id} a single file, then run warden bench.`,
+  );
+};
 
 const writeTree = async (root: string, tree: Record<string, string>): Promise<void> => {
   for (const [path, content] of Object.entries(tree)) {
@@ -62,8 +75,8 @@ const measure = (set: RecordSet, s: Subject, cfg: BenchSettings): Promise<Measur
     const sample = async (n: number): Promise<number> => {
       for (; copies < n; copies++) {
         const copy = copyOf(s.g, s.prefix, copies);
-        await writeTree(project, copy);
-        files.push(...Object.keys(copy));
+        await writeTree(project, Object.fromEntries(copy.map((c) => [c.path, c.content])));
+        files.push(...copy.map((c) => c.path));
       }
       const times: number[] = [];
       for (let i = 0; i < RUNS; i++) {
@@ -85,19 +98,20 @@ const measure = (set: RecordSet, s: Subject, cfg: BenchSettings): Promise<Measur
     const f = await sample(1);
     let base = cfg.baseFiles;
     let first = await sample(base);
-    while (first - f < cfg.minMarginalMs) {
-      if (base * 16 > cfg.maxFiles) return { verdict: "constant", points: [[base, first]], f };
+    while (first - f < cfg.minMarginalMs && base * 16 <= cfg.maxFiles) {
       base *= 2;
       first = await sample(base);
     }
+    const measurable = first - f >= cfg.minMarginalMs;
     const points: [number, number][] = [[base, first]];
     for (const m of [2, 4, 8]) points.push([base * m, await sample(base * m)]);
-    if ((points[3] as [number, number])[1] - f < cfg.constantMs) return { verdict: "constant", points, f };
+    if (!measurable || (points[3] as [number, number])[1] - f < cfg.constantMs) return { verdict: "constant", points, f };
     const k = slope(points, f);
     return { verdict: k > cfg.linearMax ? "superlinear" : k < cfg.sublinearMax ? "sublinear" : "linear", k, points, f };
   });
 
 export const benchSubject = async (set: RecordSet, s: Subject, cfg: BenchSettings): Promise<Measurement & { previous?: Measurement }> => {
+  refuseUnmatched(s);
   const first = await measure(set, s, cfg);
   if (first.verdict !== "superlinear") return first;
   return { ...(await measure(set, s, cfg)), previous: first };
@@ -109,8 +123,9 @@ const worst = (ms: Measurement[]): Measurement =>
 export const subjectsOf = (set: RecordSet, gs: Guardrail[]): Subject[] =>
   set.packs.flatMap((pack) =>
     pack.practices.flatMap((x) => {
-      const prefix = examplePrefix(pathGroups(x.paths, set.config.packs.find((p) => p.id === pack.id)?.paths ?? [])[0]);
-      return x.guardrails.filter((g) => gs.includes(g)).map((g): Subject => ({ id: g.id, g, pack, prefix, time: (r) => r.ruleMs ?? r.ms }));
+      const groups = pathGroups(x.paths, set.config.packs.find((p) => p.id === pack.id)?.paths ?? []);
+      const prefix = examplePrefix(groups[0]);
+      return x.guardrails.filter((g) => gs.includes(g)).map((g): Subject => ({ id: g.id, g, pack, practice: x.id, prefix, groups, time: (r) => r.ruleMs ?? r.ms }));
     }),
   );
 

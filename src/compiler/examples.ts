@@ -23,7 +23,7 @@ const ownedBy = (owned: Set<string>) => (key: string): boolean => {
   return first === "node_modules" || first === ".warden" || [...owned].some((o) => path === o || path.startsWith(`${o}/`));
 };
 
-const enabledOn = (file: string, groups: string[][]): boolean => groups.length === 0 || groups.some((g) => g.every((glob) => matchesGlob(file, glob)));
+export const enabledOn = (file: string, groups: string[][]): boolean => groups.length === 0 || groups.some((g) => g.every((glob) => matchesGlob(file, glob)));
 
 export async function withExampleProject<T>(fn: (project: string) => Promise<T>): Promise<T> {
   const project = await mkdtemp(join(tmpdir(), "warden-examples-"));
