@@ -11,6 +11,7 @@ export interface Evidence {
   ms?: number;
   shared?: string;
   guardrails?: number;
+  members?: string[];
   detail?: string;
   triggered?: boolean;
 }

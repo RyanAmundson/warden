@@ -1,5 +1,5 @@
 import { loadRecords } from "../records/load.js";
-import { type Guardrail, type Kind, type Tier, kindRank } from "../records/types.js";
+import { type Kind, type Tier, kindRank } from "../records/types.js";
 import { readBaseline } from "../runner/baseline.js";
 import { type Evidence, readEvidence } from "../runner/evidence.js";
 
@@ -29,6 +29,7 @@ export interface GuardrailRow {
 export interface SharedRow {
   shared: string;
   guardrails: number;
+  members: string[];
   medianMs: number;
   slowestMs: number;
 }
@@ -52,9 +53,20 @@ export async function buildReport(root: string, wardenRoot: string): Promise<{ p
   const evidence: Evidence[] = readEvidence(set.config.project);
   const baseline = readBaseline(root);
   const pairs = set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.map((g) => ({ g, x }))));
-  const sharedOf = (g: Guardrail): string | undefined => (g.kind === "lint" && g.implementation.startsWith("eslint:") ? "eslint" : undefined);
+  const known = new Set(pairs.map(({ g }) => g.id));
+  const keyOf = (members: string[]): string => [...members].sort().join("\0");
+  const passes = evidence.filter((e) => e.kind === "cost" && e.shared !== undefined && e.members !== undefined && e.members.length > 1 && e.members.every((m) => known.has(m)));
+  const latest = new Map<string, string>();
+  for (const e of passes) for (const m of e.members as string[]) latest.set(m, keyOf(e.members as string[]));
+  const current = new Set(latest.values());
+  const shared = [...current].map((key): SharedRow => {
+    const rows = passes.filter((e) => keyOf(e.members as string[]) === key);
+    const ms = rows.filter((e) => e.ms !== undefined).map((e) => e.ms as number);
+    return { shared: rows[0]?.shared as string, guardrails: (rows[0]?.members as string[]).length, members: rows[0]?.members as string[], medianMs: round(median(ms)), slowestMs: round(Math.max(0, ...ms)) };
+  });
+  const sharedFor = (id: string): SharedRow | undefined => shared.find((s) => s.members.includes(id) && keyOf(s.members) === latest.get(id));
   const guardrails = pairs.map(({ g, x }): GuardrailRow => {
-    const costShared = sharedOf(g);
+    const costShared = sharedFor(g.id)?.shared;
     const ms = evidence.filter((e) => e.kind === "cost" && e.guardrail === g.id && e.ms !== undefined).map((e) => e.ms as number);
     const own = costShared === undefined ? { medianMs: round(median(ms)), slowestMs: round(Math.max(0, ...ms)) } : { costShared };
     return {
@@ -67,16 +79,10 @@ export async function buildReport(root: string, wardenRoot: string): Promise<{ p
       ...own,
     };
   });
-  const shared = [...new Set(pairs.map(({ g }) => sharedOf(g)))]
-    .filter((id): id is string => id !== undefined)
-    .map((id): SharedRow => {
-      const ms = evidence.filter((e) => e.kind === "cost" && e.shared === id && e.ms !== undefined).map((e) => e.ms as number);
-      return { shared: id, guardrails: pairs.filter(({ g }) => sharedOf(g) === id).length, medianMs: round(median(ms)), slowestMs: round(Math.max(0, ...ms)) };
-    });
   const tiers = TIERS.map((tier): TierRow => {
     const inTier = pairs.filter(({ g }) => g.runs.includes(tier));
     const own = inTier.reduce((n, { g }) => n + ((guardrails.find((r) => r.guardrail === g.id) as GuardrailRow).medianMs ?? 0), 0);
-    const total = shared.filter((s) => inTier.some(({ g }) => sharedOf(g) === s.shared)).reduce((n, s) => n + s.medianMs, own);
+    const total = shared.filter((s) => inTier.some(({ g }) => s.members.includes(g.id))).reduce((n, s) => n + s.medianMs, own);
     const budgetMs = set.config.tierBudgetMs[tier];
     return { tier, medianTotalMs: total, budgetMs, withinBudget: total <= budgetMs };
   });

@@ -143,7 +143,7 @@ const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<R
       });
     }
   }
-  const shared = { id: "eslint", guardrails: gs.length };
+  const shared = { id: "eslint", guardrails: gs.length, members: gs.map((g) => g.id) };
   const out = gs.map((g): RunResult => {
     const violations = byRule.get(ruleId(g)) as Violation[];
     return { guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms, shared };

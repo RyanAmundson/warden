@@ -680,6 +680,26 @@ describe("final review: budgets", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  it("a review ESLint Guardrail runs its own pass: its cost is its own and the lint pass names its members", async () => {
+    await write(".warden/config.yaml", config(["core", "local", "rev"]));
+    await write(
+      ".warden/packs/rev/pack.yaml",
+      ["id: rev", "layer: 2", "terms: []", "practices:", "  - id: no-debugger", "    statement: No debugger.", "    terms: []", "    paths: []", "    conflictsWith: []", "    guardrails:",
+        "      - id: rev-no-debugger", "        kind: review", "        runs: [edit, commit]", "        budgetMs: 5000", "        version: 1", '        implementation: "eslint:no-debugger"',
+        '        mustFail: "debugger;\\n"', '        mustPass: "const a = 1;\\n"', ""].join("\n"),
+    );
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    await write("b.ts", "const b = 1;\n");
+    expect((await check()).code).toBe(0);
+    const costs = (await evidence()).filter((e) => e.kind === "cost");
+    const shared = costs.filter((e) => e.shared === "eslint");
+    expect(shared).toHaveLength(1);
+    expect(shared[0]?.members).toEqual(expect.arrayContaining(["warden-no-comments", "local-no-var"]));
+    expect(shared[0]?.members).not.toContain("rev-no-debugger");
+    expect(shared[0]?.guardrails).toBe((shared[0]?.members as string[]).length);
+    expect(costs.filter((e) => e.guardrail === "rev-no-debugger" && e.shared === undefined)).toHaveLength(1);
+  });
+
   it("a lint Guardrail over budget with no violations passes", async () => {
     await write("b.ts", "const b = 1;\n");
     slowLint(60000);

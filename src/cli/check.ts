@@ -241,12 +241,12 @@ const check = async (opts: CheckOptions): Promise<number> => {
 
   const sharedPasses = new Set<unknown>();
   for (const r of run.ran) {
-    if (r.shared === undefined) {
+    if (r.shared === undefined || r.shared.guardrails === 1) {
       appendEvidence(project, { at, kind: "cost", guardrail: r.guardrail, status: r.overBudget === true ? "over-budget" : r.status, ms: r.ms });
     } else if (!sharedPasses.has(r.shared)) {
       sharedPasses.add(r.shared);
       const over = run.ran.some((x) => x.shared === r.shared && x.overBudget === true);
-      appendEvidence(project, { at, kind: "cost", shared: r.shared.id, guardrails: r.shared.guardrails, status: over ? "over-budget" : "pass", ms: r.ms });
+      appendEvidence(project, { at, kind: "cost", shared: r.shared.id, guardrails: r.shared.guardrails, members: r.shared.members, status: over ? "over-budget" : "pass", ms: r.ms });
     }
   }
   const prior = readEvidence(project);

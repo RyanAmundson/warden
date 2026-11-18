@@ -122,36 +122,53 @@ describe("warden CLI", () => {
     expect(report.tiers).toHaveLength(3);
   });
 
-  it("report charges a shared ESLint pass once and shows lint Guardrails as shared", async () => {
-    init();
+  it("report charges each shared ESLint pass once and keeps a review ESLint Guardrail's own cost", async () => {
+    await mkdir(join(root, ".warden/packs/local"), { recursive: true });
+    const guardrailYaml = (id: string, kind: string, rule: string, bad: string): string[] => [
+      `      - id: ${id}`, `        kind: ${kind}`, "        runs: [edit]", "        budgetMs: 5000", "        version: 1", `        implementation: "eslint:${rule}"`,
+      `        mustFail: "${bad}\\n"`, '        mustPass: "const y = 1;\\n"',
+    ];
+    await writeFile(
+      join(root, ".warden/packs/local/pack.yaml"),
+      ["id: local", "layer: 1", "terms: []", "practices:", "  - id: many", "    statement: Many rules.", "    terms: []", "    paths: []", "    conflictsWith: []", "    guardrails:",
+        ...guardrailYaml("local-a", "lint", "no-var", "var a = 1;"), ...guardrailYaml("local-b", "lint", "no-debugger", "debugger;"), ...guardrailYaml("local-c", "lint", "no-eval", "eval(1);"), ...guardrailYaml("local-rev", "review", "no-empty", "if (a) {}"), ""].join("\n"),
+    );
+    const initRun = warden("init", "--packs", "core,local");
+    expect(initRun.err).toBe("");
+    expect(initRun.code).toBe(0);
     const project = JSON.parse(/^project: (.+)$/m.exec(await readFile(join(root, ".warden/config.yaml"), "utf8"))?.[1] as string) as string;
     const before = JSON.parse(warden("report", "--json").out) as { guardrails: { guardrail: string; kind: string }[] };
     const lint = before.guardrails.filter((g) => g.kind === "lint").map((g) => g.guardrail);
-    expect(lint.length).toBeGreaterThanOrEqual(2);
+    expect(lint).toEqual(expect.arrayContaining(["local-a", "local-b", "local-c"]));
     const at = "2026-11-18T00:00:00.000Z";
     const rows = [
-      ...[100, 200, 300].map((ms) => ({ at, kind: "cost", shared: "eslint", guardrails: lint.length, status: "pass", ms })),
+      { at, kind: "cost", shared: "eslint", guardrails: 1, members: ["local-old"], status: "pass", ms: 9999 },
       ...lint.map((guardrail) => ({ at, kind: "cost", guardrail, status: "pass", ms: 1000 })),
+      ...[100, 200, 300].map((ms) => ({ at, kind: "cost", shared: "eslint", guardrails: lint.length, members: lint, status: "pass", ms })),
+      ...[50, 70].map((ms) => ({ at, kind: "cost", guardrail: "local-rev", status: "pass", ms })),
     ];
     await mkdir(join(home, "evidence"), { recursive: true });
     await writeFile(join(home, "evidence", `${project}.jsonl`), `${rows.map((r) => JSON.stringify(r)).join("\n")}\n`);
     const report = JSON.parse(warden("report", "--json").out) as {
-      guardrails: { guardrail: string; kind: string; medianMs?: number; slowestMs?: number; costShared?: string }[];
+      guardrails: { guardrail: string; medianMs?: number; slowestMs?: number; costShared?: string }[];
       shared: { shared: string; guardrails: number; medianMs: number; slowestMs: number }[];
       tiers: { tier: string; medianTotalMs: number }[];
     };
-    expect(report.shared).toEqual([{ shared: "eslint", guardrails: lint.length, medianMs: 200, slowestMs: 300 }]);
+    expect(report.shared).toMatchObject([{ shared: "eslint", guardrails: lint.length, medianMs: 200, slowestMs: 300 }]);
     for (const g of report.guardrails.filter((x) => lint.includes(x.guardrail))) {
-      expect(g.costShared).toBe("eslint");
+      expect(g).toMatchObject({ costShared: "eslint" });
       expect(g.medianMs).toBeUndefined();
       expect(g.slowestMs).toBeUndefined();
     }
-    expect(report.tiers.find((t) => t.tier === "edit")?.medianTotalMs).toBe(200);
+    const review = report.guardrails.find((x) => x.guardrail === "local-rev");
+    expect(review).toMatchObject({ medianMs: 60, slowestMs: 70 });
+    expect(review?.costShared).toBeUndefined();
+    expect(report.tiers.find((t) => t.tier === "edit")?.medianTotalMs).toBe(260);
     const text = warden("report").out;
     expect(text).toContain(`eslint (shared, ${lint.length} guardrails)  median=200ms  slowest=300ms`);
-    expect(text).toContain(`${lint[0]}  kind=lint`);
-    expect(text).toMatch(new RegExp(`${lint[0]}  kind=lint.*median=shared  slowest=shared`));
-    expect(text).toContain("tier edit: 200ms of");
+    expect(text).toMatch(/local-a  kind=lint.*median=shared  slowest=shared/);
+    expect(text).toMatch(/local-rev  kind=review.*median=60ms  slowest=70ms/);
+    expect(text).toContain("tier edit: 260ms of");
   });
 
   it("check in a never-compiled project says to run warden compile", async () => {

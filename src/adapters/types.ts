@@ -12,6 +12,7 @@ export interface Violation {
 export interface SharedPass {
   id: string;
   guardrails: number;
+  members: string[];
   budgetMs?: number;
 }
 

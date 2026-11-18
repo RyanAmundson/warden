@@ -119,8 +119,8 @@ describe("eslint adapter", () => {
       vi.spyOn(performance, "now").mockImplementation(() => clock.shift() as number);
       const results = await eslintAdapter.run([a, b], files, { root, generatedDir: join(root, ".warden/generated") });
       expect(results.map((r) => [r.guardrail, r.ms, r.shared])).toEqual([
-        ["a", 350, { id: "eslint", guardrails: 2 }],
-        ["b", 350, { id: "eslint", guardrails: 2 }],
+        ["a", 350, { id: "eslint", guardrails: 2, members: ["a", "b"] }],
+        ["b", 350, { id: "eslint", guardrails: 2, members: ["a", "b"] }],
       ]);
     } finally {
       vi.restoreAllMocks();
