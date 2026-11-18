@@ -1,0 +1,13 @@
+warden: "0.1.0"
+project: fixture
+base: main
+packs:
+  - id: core
+    paths: ["src/**"]
+  - id: core
+    paths: ["test/**"]
+tierBudgetMs:
+  edit: 2000
+  commit: 30000
+  boundary: 120000
+loopBreakerRepeats: 3

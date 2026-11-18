@@ -41,4 +41,16 @@ describe("loadRecords", () => {
     const error = await failure("project-duplicate-pack");
     expect(error.pointer).toBe("/packs");
   });
+
+  it("rejects a pack whose id differs from its config entry", async () => {
+    const error = await failure("project-pack-id-mismatch");
+    expect(error.pointer).toBe("/id");
+    expect(error.file.endsWith("packs/mismatch/pack.yaml")).toBe(true);
+  });
+
+  it("rejects a pack listed twice in config", async () => {
+    const error = await failure("project-duplicate-config-pack");
+    expect(error.pointer).toBe("/packs");
+    expect(error.file.endsWith(".warden/config.yaml")).toBe(true);
+  });
 });

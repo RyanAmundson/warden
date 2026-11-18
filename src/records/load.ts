@@ -63,7 +63,12 @@ export async function loadRecords(projectRoot: string, wardenRoot: string): Prom
   const configFile = join(projectRoot, ".warden", "config.yaml");
   const config = (await readRecord(configFile, validateConfig)) as ProjectConfig;
   const packs: Pack[] = [];
+  const seen = new Set<string>();
   for (const entry of config.packs) {
+    if (seen.has(entry.id)) {
+      throw new RecordError(configFile, "/packs", `pack ${entry.id} is listed more than once`);
+    }
+    seen.add(entry.id);
     const bundled = join(wardenRoot, "packs", entry.id, "pack.yaml");
     const local = join(projectRoot, ".warden", "packs", entry.id, "pack.yaml");
     const [inBundled, inLocal] = await Promise.all([readText(bundled), readText(local)]);
@@ -78,6 +83,9 @@ export async function loadRecords(projectRoot: string, wardenRoot: string): Prom
     const value = parseYaml(file, text);
     check(file, validatePack, value);
     const pack = value as Pack;
+    if (pack.id !== entry.id) {
+      throw new RecordError(file, "/id", `pack id ${pack.id} does not match directory ${entry.id}`);
+    }
     for (const practice of pack.practices) practice.pack = pack.id;
     packs.push(pack);
   }
