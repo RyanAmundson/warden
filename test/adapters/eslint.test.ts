@@ -23,7 +23,6 @@ const guardrail = (id: string, implementation: string, options?: unknown): Guard
 const setFor = (g: Guardrail): RecordSet => ({
   root: "",
   config: {
-    warden: "0.1.0",
     project: "p",
     base: "main",
     packs: [{ id: "core", paths: ["src/**/*.ts"] }],

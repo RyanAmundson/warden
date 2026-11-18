@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
+import { RecordError } from "../records/load.js";
 import { pathGroups } from "../records/paths.js";
 import { benchSettings } from "../records/types.js";
 export const LOCK_FORMAT = 2;
@@ -52,5 +53,9 @@ export function computeLock(set, generated, sources, warden) {
     };
 }
 export function readLock(root) {
-    return JSON.parse(readFileSync(join(root, LOCK_PATH), "utf8"));
+    const lock = JSON.parse(readFileSync(join(root, LOCK_PATH), "utf8"));
+    if ((lock.format ?? 0) > LOCK_FORMAT) {
+        throw new RecordError(LOCK_PATH, "/format", `has format ${lock.format}; this Warden reads formats up to ${LOCK_FORMAT}. Next action: install Warden ${lock.warden}, the release that wrote the lock.`);
+    }
+    return lock;
 }

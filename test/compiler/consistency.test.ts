@@ -34,7 +34,6 @@ const build = (packs: Pack[], paths: Record<string, string[]> = {}): RecordSet =
   root: "/w",
   packs,
   config: {
-    warden: "1",
     project: "p",
     base: "main",
     packs: packs.map((p) => ({ id: p.id, paths: paths[p.id] ?? ["src/**"] })),

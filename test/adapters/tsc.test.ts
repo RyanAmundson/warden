@@ -32,7 +32,6 @@ const guardrail = (id: string, implementation: string): Guardrail => ({
 const set: RecordSet = {
   root: "",
   config: {
-    warden: "0.1.0",
     project: "p",
     base: "main",
     packs: [],

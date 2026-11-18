@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, matchesGlob } from "node:path";
-import { compile, wardenVersion } from "../compiler/compile.js";
+import { compile } from "../compiler/compile.js";
 import { RecordError, loadRecords } from "../records/load.js";
 import { initAction, listPacks } from "./packs.js";
 import { PARSE_ERROR } from "../adapters/types.js";
@@ -10,8 +10,7 @@ import { verifyBase } from "../runner/changed.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { runGuardrails } from "../runner/run.js";
 const CONFIG_PATH = ".warden/config.yaml";
-const configText = (project, version, packs, base) => [
-    `warden: ${JSON.stringify(version)}`,
+const configText = (project, packs, base) => [
     `project: ${JSON.stringify(project)}`,
     `base: ${JSON.stringify(base)}`,
     "packs:",
@@ -78,7 +77,7 @@ export async function runInit(root, wardenRoot, requested = ["core"], base = "ma
 }
 async function initialize(root, wardenRoot, packs, base) {
     mkdirSync(join(root, ".warden"), { recursive: true });
-    writeFileSync(join(root, CONFIG_PATH), configText(basename(root), await wardenVersion(wardenRoot), packs, base));
+    writeFileSync(join(root, CONFIG_PATH), configText(basename(root), packs, base));
     const compiled = await compile(root, wardenRoot);
     if (compiled.findings.length > 0) {
         throw new RecordError(CONFIG_PATH, "", compiled.findings.map((f) => f.message).join("; "));

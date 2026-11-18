@@ -27,7 +27,7 @@ let root: string;
 
 const setWith = (...commands: string[]): RecordSet => ({
   root,
-  config: { warden: "0.1.0", project: "p", base: "main", packs: [], tierBudgetMs: { edit: 1000, commit: 1000, boundary: 1000 }, loopBreakerRepeats: 3 },
+  config: { project: "p", base: "main", packs: [], tierBudgetMs: { edit: 1000, commit: 1000, boundary: 1000 }, loopBreakerRepeats: 3 },
   packs: [
     {
       id: "local",

@@ -202,6 +202,11 @@ const check = async (opts, live) => {
     if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined) {
         throw new RecordError(LOCK_PATH, "", "not found; this project was never compiled. Next action: run warden compile.");
     }
+    const running = await wardenVersion(opts.wardenRoot);
+    const lockedBy = existsSync(join(root, LOCK_PATH)) ? readLock(root).warden : running;
+    if (lockedBy !== running) {
+        throw new RecordError(LOCK_PATH, "/warden", `was written by Warden ${lockedBy}; this is Warden ${running}. Next action: install Warden ${lockedBy}, the release that wrote the lock, then run warden check --base ${base} again.`);
+    }
     const unknown = unknownAdapters(set);
     if (unknown.length > 0) {
         const working = existsSync(join(root, LOCK_PATH)) ? readLock(root).sources : undefined;
@@ -277,7 +282,7 @@ const check = async (opts, live) => {
     };
     const ctx = { root, generatedDir: join(root, ".warden/generated"), onGroup };
     const lockSha = sha256(readFileSync(join(root, LOCK_PATH)));
-    const ran = await runCached(set, guardrails, scanned, shas, ctx, project, { lockSha, warden: await wardenVersion(opts.wardenRoot) });
+    const ran = await runCached(set, guardrails, scanned, shas, ctx, project, { lockSha, warden: running });
     if (groups === 0) {
         openStep(live, "rules", { members: chosen.map((g) => g.id), ...where });
         closeStep(live, "done", { status: scanned.length === 0 ? "empty" : "cached" });

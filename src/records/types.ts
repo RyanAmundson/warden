@@ -44,7 +44,6 @@ export interface Pack {
 }
 
 export interface ProjectConfig {
-  warden: string;
   project: string;
   base: string;
   packs: { id: string; paths: string[] }[];

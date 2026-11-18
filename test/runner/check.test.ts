@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { chmod, cp, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -1527,5 +1527,38 @@ describe("performance: run records and input size", () => {
     expect((await check()).code).toBe(1);
     const steps = (await evidence()).filter((e) => e.kind === "step");
     expect(steps.map((e) => [e.step, e.state])).toEqual([["rules-intact", "start"], ["rules-intact", "fail"]]);
+  });
+});
+
+describe("engine review: the Warden that wrote the lock", () => {
+  const running = (JSON.parse(readFileSync(join(wardenRoot, "package.json"), "utf8")) as { version: string }).version;
+
+  const editLock = async (edit: (lock: Record<string, unknown>) => void): Promise<void> => {
+    const lock = JSON.parse(await read(".warden/lock.json")) as Record<string, unknown>;
+    edit(lock);
+    await write(".warden/lock.json", JSON.stringify(lock));
+  };
+
+  it("a lock written by another Warden exits 2, names both versions, and says to install the lock's release", async () => {
+    await editLock((lock) => {
+      lock.warden = "0.0.9";
+    });
+    const { code, out, err } = await check();
+    expect(code).toBe(2);
+    expect(out).toBe("");
+    expect(err).toContain(`was written by Warden 0.0.9; this is Warden ${running}.`);
+    expect(err).toContain("Next action: install Warden 0.0.9, the release that wrote the lock, then run warden check --base main again.");
+    expect(await tampered()).toEqual([]);
+  });
+
+  it("a working lock in a newer format exits 2 and says to install the lock's release", async () => {
+    await editLock((lock) => {
+      lock.format = 3;
+      lock.warden = "9.0.0";
+    });
+    const { code, err } = await check();
+    expect(code).toBe(2);
+    expect(err).toContain("has format 3; this Warden reads formats up to 2. Next action: install Warden 9.0.0, the release that wrote the lock.");
+    expect(await tampered()).toEqual([]);
   });
 });
