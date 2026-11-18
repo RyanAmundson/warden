@@ -1,0 +1,11 @@
+id: local
+layer: 1
+terms: []
+practices:
+  - id: p
+    statement: s
+    terms: []
+    paths: []
+    conflictsWith: []
+    guardrails: []
+    disable: [core/no-comments]

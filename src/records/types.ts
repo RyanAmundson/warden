@@ -1,0 +1,52 @@
+export type Kind = "lint" | "type" | "model" | "runtime" | "review" | "instruction" | "legacy";
+export type Tier = "edit" | "commit" | "boundary";
+
+export interface Term {
+  id: string;
+  definition: string;
+  bans: string[];
+}
+
+export interface Guardrail {
+  id: string;
+  kind: Kind;
+  runs: Tier[];
+  budgetMs: number;
+  version: number;
+  implementation: string;
+  options?: unknown;
+  mustFail?: string;
+  mustPass?: string;
+}
+
+export interface Practice {
+  id: string;
+  pack: string;
+  statement: string;
+  terms: string[];
+  paths: string[];
+  conflictsWith: string[];
+  guardrails: Guardrail[];
+}
+
+export interface Pack {
+  id: string;
+  layer: number;
+  terms: Term[];
+  practices: Practice[];
+}
+
+export interface ProjectConfig {
+  warden: string;
+  project: string;
+  base: string;
+  packs: { id: string; paths: string[] }[];
+  tierBudgetMs: Record<Tier, number>;
+  loopBreakerRepeats: number;
+}
+
+export interface RecordSet {
+  config: ProjectConfig;
+  packs: Pack[];
+  root: string;
+}

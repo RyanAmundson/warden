@@ -1,0 +1,21 @@
+id: core
+layer: 0
+terms:
+  - id: record
+    definition: A normalized rule document.
+    bans: [rule-doc]
+practices:
+  - id: no-comments
+    statement: Source files carry no comments.
+    terms: [record]
+    paths: ["src/**"]
+    conflictsWith: []
+    guardrails:
+      - id: no-comments-lint
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 1000
+        version: 1
+        implementation: "eslint:no-warning-comments"
+        mustFail: "// a comment\n"
+        mustPass: "const a = 1;\n"
