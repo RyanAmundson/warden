@@ -161,14 +161,20 @@ const check = async (opts: CheckOptions): Promise<number> => {
   }
   const unknown = unknownAdapters(set);
   if (unknown.length > 0) {
-    const sources = existsSync(join(root, LOCK_PATH)) ? readLock(root).sources : {};
+    const working = existsSync(join(root, LOCK_PATH)) ? readLock(root).sources : undefined;
+    const baseLock = showAtMergeBase(root, base, LOCK_PATH);
+    const based = baseLock === undefined ? {} : (JSON.parse(baseLock) as { sources: Record<string, string> }).sources;
     const sourceKey = (file: string): string => (file.startsWith(join(root, ".warden") + sep) ? relative(root, file) : relative(opts.wardenRoot, file));
-    const drifted = [...new Set(unknown.map((u) => u.file))].filter((file) => {
-      const locked = sources[sourceKey(file)];
-      return locked !== undefined && locked !== sha256(readFileSync(file, "utf8"));
-    });
-    if (drifted.length > 0) {
-      const tampered = drifted.map((file): Tamper => ({ file: sourceKey(file), detail: "source-drift" }));
+    const tampered: Tamper[] = working === undefined && baseLock !== undefined ? [{ file: LOCK_PATH, detail: "missing-lock" }] : [];
+    for (const file of new Set(unknown.map((u) => u.file))) {
+      const key = sourceKey(file);
+      if (working?.[key] === undefined && based[key] === undefined) continue;
+      const forged = working?.[key] === sha256(readFileSync(file, "utf8"));
+      const dropped = working !== undefined && working[key] === undefined;
+      if ((forged || dropped) && !tampered.some((t) => t.file === LOCK_PATH)) tampered.unshift({ file: LOCK_PATH, detail: "lock-drift" });
+      tampered.push({ file: key, detail: "source-drift" });
+    }
+    if (tampered.length > 0) {
       for (const t of tampered) appendEvidence(project, { at, kind: "tampered", file: t.file, detail: t.detail });
       return report([], set, opts, { tampered });
     }

@@ -712,6 +712,59 @@ describe("unknown adapter at check time", () => {
     expect((await check()).code).toBe(0);
   });
 
+  describe("a lock edit cannot turn a locked pack's broken prefix into a compile action", () => {
+    const PACK = ".warden/packs/local/pack.yaml";
+    const breakPrefix = async (): Promise<void> => {
+      await write(PACK, localPack().replace("eslint:no-var", "eslnt:no-var"));
+    };
+    const editLock = async (edit: (sources: Record<string, string>) => void): Promise<void> => {
+      const lock = JSON.parse(await read(".warden/lock.json")) as { sources: Record<string, string> };
+      edit(lock.sources);
+      await write(".warden/lock.json", JSON.stringify(lock, null, 2));
+    };
+    const expectTamperThenRevert = async (expected: { file: string; detail: string }[]): Promise<void> => {
+      const { code, out } = await check();
+      expect(code).toBe(1);
+      expect(await tampered()).toEqual(expected);
+      const next = out.split("\n").filter((l) => l.startsWith("Next action:"));
+      expect(next).toEqual([`Next action: revert your change to ${[...new Set(expected.map((t) => t.file))].join(", ")}.`]);
+      git("checkout", "HEAD", "--", ...new Set(expected.map((t) => t.file)));
+      expect((await check()).code).toBe(0);
+    };
+
+    it("B: the lock's source hash forged to match the broken pack", async () => {
+      await breakPrefix();
+      const text = await read(PACK);
+      await editLock((sources) => {
+        sources[PACK] = sha256(text);
+      });
+      await expectTamperThenRevert([
+        { file: ".warden/lock.json", detail: "lock-drift" },
+        { file: PACK, detail: "source-drift" },
+      ]);
+    });
+
+    it("C: the pack's entry deleted from the lock", async () => {
+      await breakPrefix();
+      await editLock((sources) => {
+        delete sources[PACK];
+      });
+      await expectTamperThenRevert([
+        { file: ".warden/lock.json", detail: "lock-drift" },
+        { file: PACK, detail: "source-drift" },
+      ]);
+    });
+
+    it("D: the lock file deleted", async () => {
+      await breakPrefix();
+      await rm(join(root, ".warden/lock.json"));
+      await expectTamperThenRevert([
+        { file: ".warden/lock.json", detail: "missing-lock" },
+        { file: PACK, detail: "source-drift" },
+      ]);
+    });
+  });
+
   it("an unlocked pack with an unknown prefix exits 2 naming its file, and following the next action passes", async () => {
     const file = join(root, ".warden/packs/extra/pack.yaml");
     await write(".warden/config.yaml", config(["core", "local", "extra"]));
