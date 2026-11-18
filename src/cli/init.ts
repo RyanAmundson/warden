@@ -39,6 +39,7 @@ const selectPacks = async (root: string, wardenRoot: string, requested: string[]
   const available = await listPacks(root, wardenRoot);
   const known = available.map((r) => r.id);
   const action = `Next action: ${initAction(available)}.`;
+  if (requested.includes("")) throw new Error(`empty pack id in the --packs list. ${action}`);
   const unknown = requested.filter((id) => !known.includes(id));
   if (unknown.length > 0) throw new Error(`unknown pack ${unknown.join(", ")}; available packs are ${known.join(", ")}. ${action}`);
   const dup = requested.find((id, i) => requested.indexOf(id) !== i);

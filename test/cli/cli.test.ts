@@ -366,6 +366,15 @@ describe("warden CLI", () => {
       expect(warden("init").code).toBe(0);
     });
 
+    it("init --packs trims ids and rejects an empty one with a working next action", async () => {
+      await localPack();
+      const r = warden("init", "--packs", "core,");
+      expect(r.code).toBe(2);
+      expect(r.err).toContain("empty pack id");
+      expect(r.err).toContain("Next action: run warden init --packs core,local.");
+      expect(warden("init", "--packs", " core , local ").code).toBe(0);
+    });
+
     it("init --packs with a duplicate id exits 2", async () => {
       const r = warden("init", "--packs", "core,core");
       expect(r.code).toBe(2);

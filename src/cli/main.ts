@@ -42,7 +42,7 @@ program
   .description("create .warden, compile, and baseline current violations")
   .option("--packs <ids>", "comma-separated pack ids; must include core", "core")
   .action(async (o: { packs: string }) => {
-    process.exitCode = await runInit(root(), findWardenRoot(), o.packs.split(","));
+    process.exitCode = await runInit(root(), findWardenRoot(), o.packs.split(",").map((id) => id.trim()));
   });
 
 program.command("packs").description("list available packs and which are on").option("--format <format>", "text or json", "text").action(async (o: { format: string }) => {
