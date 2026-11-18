@@ -4,8 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc",
-    "prepare": "tsc",
+    "compile": "tsc",
     "test": "tsc && vitest run --maxWorkers=2",
     "typecheck": "tsc --noEmit"
   },
