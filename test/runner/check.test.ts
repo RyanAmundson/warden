@@ -834,6 +834,28 @@ describe("residual fixes: baseline writes", () => {
   });
 });
 
+describe("residual fixes: after a carried rename", () => {
+  beforeEach(async () => {
+    git("mv", "a.ts", "renamed.ts");
+    expect((await check()).code).toBe(0);
+    expect(JSON.parse(await read(".warden/baseline.json"))).toEqual({ "warden-no-comments": { "renamed.ts": 1 } });
+  });
+
+  it("deleting the renamed file is not loosening", async () => {
+    git("rm", "-q", "-f", "renamed.ts");
+    const { code, out } = await check();
+    expect(await tampered()).toEqual([]);
+    expect(code, out).toBe(0);
+  });
+
+  it("renaming the file back is not loosening", async () => {
+    git("mv", "renamed.ts", "a.ts");
+    const { code, out } = await check();
+    expect(await tampered()).toEqual([]);
+    expect(code, out).toBe(0);
+  });
+});
+
 describe("applyBaseline", () => {
   const result =(guardrail: string, files: string[], status: RunResult["status"] = "fail"): RunResult => ({
     guardrail,

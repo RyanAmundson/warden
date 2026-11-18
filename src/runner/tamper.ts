@@ -93,6 +93,7 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
   for (const [id, entries] of Object.entries(carryRenames(readBaseline(root), renames))) {
     if (id in lock.guardrails && !(id in before.guardrails)) continue;
     for (const [file, n] of Object.entries(entries)) {
+      if (!existsSync(join(root, file))) continue;
       if (n > (baseBaseline[id]?.[file] ?? 0)) found.push({ file: BASELINE_PATH, detail: "loosened", guardrail: id });
     }
   }
