@@ -478,8 +478,17 @@ Version 1 ships two practices and three Guardrails.
   `architecture-source-shape`. It bans a source from importing, re-exporting,
   requiring, or dynamically loading a sink. A type-only import or re-export
   from a sink passes. It also bans a source from re-exporting a world module,
-  exporting an alias of another value, exporting a list of local values, or
-  exporting a class. Every function a source exports must declare an
+  exporting a constant whose value is a bare identifier
+  (`export const read = readFileSync`), default-exporting an identifier,
+  exporting a list of local values, or exporting a class. A source can still
+  export a world value through a member access
+  (`export const read = fs.readFile`) or an object literal
+  (`export const api = { readFile }`, `export default { readFile }`). A
+  `require()` of a sink written as a template literal also passes. Both gaps
+  are recorded in `cm-wkqedr.25`. The local-list ban also fails
+  `export { type X }`, and `export { watch }` for a function that returns an
+  Observable. Write `export type { X }` and `export function watch` instead.
+  Every function a source exports must declare an
   `Observable` return type, either `Observable` or a qualified name such as
   `rx.Observable`.
 
