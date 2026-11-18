@@ -46,10 +46,21 @@
         "bans": { "type": "array", "items": { "type": "string" } }
       }
     },
+    "example": {
+      "anyOf": [
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$))" },
+          "additionalProperties": { "type": "string" }
+        }
+      ]
+    },
     "guardrail": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "kind", "runs", "budgetMs", "version", "implementation"],
+      "required": ["id", "kind", "runs", "budgetMs", "version", "implementation", "mustFail", "mustPass"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "kind": { "enum": ["lint", "type", "model", "runtime", "review", "instruction", "legacy"] },
@@ -62,11 +73,9 @@
         "version": { "type": "integer", "minimum": 1 },
         "implementation": { "type": "string", "minLength": 1 },
         "options": {},
-        "mustFail": { "type": "string", "minLength": 1 },
-        "mustPass": { "type": "string", "minLength": 1 }
-      },
-      "if": { "properties": { "kind": { "not": { "const": "legacy" } } } },
-      "then": { "required": ["mustFail", "mustPass"] }
+        "mustFail": { "$ref": "#/$defs/example" },
+        "mustPass": { "$ref": "#/$defs/example" }
+      }
     },
     "practice": {
       "type": "object",

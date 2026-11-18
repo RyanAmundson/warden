@@ -38,6 +38,20 @@ const usePack = async (pack: string): Promise<void> => {
 
 const read = (file: string): Promise<string> => readFile(join(root, file), "utf8");
 
+const legacyGuardrail = (command: string, examples: string[], budgetMs = 5000): string =>
+  [
+    "    guardrails:",
+    "      - id: local-script",
+    "        kind: legacy",
+    "        runs: [commit]",
+    `        budgetMs: ${budgetMs}`,
+    "        version: 1",
+    `        implementation: ${JSON.stringify(`cmd:${command}`)}`,
+    ...examples,
+  ].join("\n");
+
+const PROVEN_TREES = ["        mustFail:", '          ok.txt: "x\\n"', '          broken: "x\\n"', "        mustPass:", '          ok.txt: "x\\n"'];
+
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "warden-compile-"));
   await cp(fixture, root, { recursive: true });
@@ -205,7 +219,7 @@ describe("compile", () => {
     );
     const { findings, written } = await compile(root, wardenRoot);
     expect(findings.map((f) => `${f.code} ${f.record} ${f.message}`)).toContain(
-      "example-failed local-no-var Guardrail local-no-var mustPass example does not parse.",
+      `example-failed local-no-var Guardrail local-no-var mustPass example does not parse. Next action: fix the syntax of the mustPass example of Guardrail local-no-var in ${join(root, ".warden/packs/local/pack.yaml")}, then run warden compile.`,
     );
     expect(written).toEqual([]);
   });
@@ -333,6 +347,88 @@ describe("compile", () => {
     expect(written).toEqual([]);
     await expect(readFile(join(root, ".warden/lock.json"))).rejects.toThrow();
     await writeFile(file, (await readFile(file, "utf8")).replace("eslnt:", "eslint:"));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+  });
+
+  it("a legacy Guardrail with no examples fails compile with a next action and writes no lock", async () => {
+    await usePack(localPack(legacyGuardrail("test ! -e broken", [])));
+    const file = join(root, ".warden/packs/local/pack.yaml");
+    await expect(compile(root, wardenRoot)).rejects.toMatchObject({
+      file,
+      pointer: "/practices/0/guardrails/0/mustFail",
+      message: `must have required property 'mustFail'. Next action: add mustFail at /practices/0/guardrails/0 in ${file}, then run warden compile.`,
+    });
+    await expect(readFile(join(root, ".warden/lock.json"))).rejects.toThrow();
+  });
+
+  it("a legacy Guardrail proven on its fixture trees compiles", async () => {
+    await usePack(localPack(legacyGuardrail("test -e ok.txt && test ! -e broken", PROVEN_TREES)));
+    const { findings, written } = await compile(root, wardenRoot);
+    expect(findings).toEqual([]);
+    expect(written).toContain(".warden/lock.json");
+  });
+
+  it("a legacy Guardrail whose mustFail tree passes fails compile", async () => {
+    await usePack(localPack(legacyGuardrail("test ! -e broken", ["        mustFail:", '          ok.txt: "x\\n"', "        mustPass:", '          ok.txt: "x\\n"'])));
+    const file = join(root, ".warden/packs/local/pack.yaml");
+    const { findings, written } = await compile(root, wardenRoot);
+    expect(findings).toEqual([
+      {
+        code: "example-failed",
+        record: "local-script",
+        message: `Guardrail local-script mustFail example did not fail. Next action: change the mustFail example of Guardrail local-script in ${file} so cmd:test ! -e broken fails on it, then run warden compile.`,
+      },
+    ]);
+    expect(written).toEqual([]);
+    await expect(readFile(join(root, ".warden/lock.json"))).rejects.toThrow();
+  });
+
+  it("a legacy Guardrail that runs past its budget on a fixture tree fails compile", async () => {
+    await usePack(localPack(legacyGuardrail("test ! -e broken || sleep 3.217", PROVEN_TREES, 300)));
+    const { findings, written } = await compile(root, wardenRoot);
+    expect(findings.map((f) => `${f.code} ${f.record}`)).toEqual(["over-budget local-script"]);
+    expect(findings[0]?.message).toContain("Next action: make the mustFail example of Guardrail local-script");
+    expect(written).toEqual([]);
+  });
+
+  it("the prose-only refusal ends in a next action that compiles once followed", async () => {
+    await usePack(
+      localPack(
+        [
+          "    guardrails:",
+          "      - id: local-prose",
+          "        kind: instruction",
+          "        runs: [edit]",
+          "        budgetMs: 100",
+          "        version: 1",
+          "        implementation: \"instruction:CLAUDE.md\"",
+          "        mustFail: \"x\"",
+          "        mustPass: \"y\"",
+        ].join("\n"),
+      ),
+    );
+    const file = join(root, ".warden/packs/local/pack.yaml");
+    const { findings } = await compile(root, wardenRoot);
+    expect(findings).toEqual([
+      {
+        code: "prose-only",
+        record: "local-practice",
+        message: `Practice local-practice has no Guardrail that a tool enforces. Next action: add a Guardrail whose kind is not instruction, with mustFail and mustPass examples, to Practice local-practice in ${file}, then run warden compile.`,
+      },
+    ]);
+    await writeFile(
+      file,
+      `${await readFile(file, "utf8")}\n${[
+        "      - id: local-no-var",
+        "        kind: lint",
+        "        runs: [edit]",
+        "        budgetMs: 5000",
+        "        version: 1",
+        "        implementation: \"eslint:no-var\"",
+        "        mustFail: \"var a = 1;\\n\"",
+        "        mustPass: \"const a = 1;\\n\"",
+      ].join("\n")}\n`,
+    );
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
   });
 

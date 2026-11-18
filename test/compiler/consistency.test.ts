@@ -74,7 +74,13 @@ describe("checkConsistency", () => {
 
   it("flags prose-only", () => {
     const set = build([pack("a", 1, [practice("p", "a", { guardrails: [guardrail("g", "instruction")] })])]);
-    expect(codes(set)).toEqual(["prose-only"]);
+    expect(checkConsistency(set)).toEqual([
+      {
+        code: "prose-only",
+        record: "p",
+        message: "Practice p has no Guardrail that a tool enforces. Next action: add a Guardrail whose kind is not instruction, with mustFail and mustPass examples, to Practice p in packs/a/pack.yaml, then run warden compile.",
+      },
+    ]);
   });
 
   it("flags conflict-overlap once per pair", () => {

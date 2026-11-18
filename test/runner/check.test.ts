@@ -87,6 +87,10 @@ const legacyPack = (runs: string, command: string, budgetMs: number): string =>
     `        budgetMs: ${budgetMs}`,
     "        version: 1",
     `        implementation: ${JSON.stringify(`cmd:${command}`)}`,
+    "        mustFail:",
+    '          broken: "x\\n"',
+    "        mustPass:",
+    '          ok.txt: "x\\n"',
     "",
   ].join("\n");
 
@@ -389,7 +393,8 @@ describe("runCheck", () => {
 
 describe("ruling fixes", () => {
   it("runs only Guardrails whose tiers include the requested tier", async () => {
-    await addLegacy("boundary", "exit 1", 5000);
+    await addLegacy("boundary", "test ! -e broken", 5000);
+    await write("broken", "x\n");
     await write("b.ts", "const b = 1;\n");
     expect((await check({ tier: "edit" })).code).toBe(0);
     expect((await check({ tier: "commit" })).code).toBe(0);
@@ -440,13 +445,14 @@ describe("ruling fixes", () => {
   });
 
   it("a Guardrail killed at its budget fails and says to run its command directly", async () => {
-    await addLegacy("commit", "sleep 2", 200);
+    await addLegacy("commit", "test ! -e slow || sleep 2.413; test ! -e broken", 200);
+    await write("slow", "x\n");
     await write("b.ts", "const b = 1;\n");
     const { code, out } = await check();
     expect(code).toBe(1);
     expect(out).toMatch(/^ {2}Reason: {3}stopped at \d+ ms: did not finish within its 200 ms budget$/m);
     expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([
-      "Next action: run `sleep 2` directly to see why it does not finish.",
+      "Next action: run `test ! -e slow || sleep 2.413; test ! -e broken` directly to see why it does not finish.",
     ]);
     expect(out).not.toMatch(/blocked|cannot proceed/i);
   });
@@ -708,20 +714,22 @@ describe("unknown adapter at check time", () => {
 
 describe("final review: legacy feedback", () => {
   it("a legacy failure shows the command output and says to run the command", async () => {
-    await addLegacy("commit", "echo broken thing; exit 1", 5000);
+    await addLegacy("commit", "test ! -e broken || { echo broken thing; exit 1; }", 5000);
+    await write("broken", "x\n");
     await write("b.ts", "const b = 1;\n");
     const { code, out } = await check();
     expect(code).toBe(1);
-    expect(out).toContain("  Output:   echo broken thing; exit 1 exited with 1\n            broken thing");
+    expect(out).toContain("  Output:   test ! -e broken || { echo broken thing; exit 1; } exited with 1\n            broken thing");
     expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([
-      "Next action: run `echo broken thing; exit 1` and fix what it reports.",
+      "Next action: run `test ! -e broken || { echo broken thing; exit 1; }` and fix what it reports.",
     ]);
   });
 });
 
 describe("final review: project-wide baseline", () => {
   it("a baseline entry for the whole project is tampering, so it cannot silence a legacy Guardrail", async () => {
-    await addLegacy("commit", "exit 1", 5000);
+    await addLegacy("commit", "test ! -e broken", 5000);
+    await write("broken", "x\n");
     await write(".warden/baseline.json", JSON.stringify({ "warden-no-comments": { "a.ts": 1 }, "legacy-script": { "": 1 } }));
     const { code } = await check();
     expect(code).toBe(1);

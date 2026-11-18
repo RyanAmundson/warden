@@ -48,7 +48,9 @@ function check(file: string, validate: typeof validateConfig, value: unknown): v
   if (validate(value)) return;
   const error = (validate.errors ?? []).find((e) => e.keyword !== "if");
   if (error === undefined) throw new RecordError(file, "", "record failed validation");
-  throw new RecordError(file, pointerOf(error), error.message ?? "invalid");
+  const { missingProperty } = error.params as { missingProperty?: string };
+  const next = missingProperty === undefined ? "" : `. Next action: add ${missingProperty} at ${error.instancePath} in ${file}, then run warden compile.`;
+  throw new RecordError(file, pointerOf(error), `${error.message ?? "invalid"}${next}`);
 }
 
 export function parseConfig(file: string, text: string): ProjectConfig {

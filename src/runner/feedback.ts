@@ -80,7 +80,8 @@ export function formatFeedback(failures: Violation[], set: RecordSet, format: Fo
     .sort(byLocation)
     .map((v) => {
       const owner = ownerOf(set, v.guardrail);
-      const example = owner?.guardrail.mustPass?.replace(/\n+$/, "").split("\n").slice(0, EXAMPLE_LINES).join("\n");
+      const mustPass = owner?.guardrail.mustPass;
+      const example = typeof mustPass === "string" ? mustPass.replace(/\n+$/, "").split("\n").slice(0, EXAMPLE_LINES).join("\n") : undefined;
       return {
         file: v.file,
         line: v.line,

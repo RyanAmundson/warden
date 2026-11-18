@@ -11,6 +11,8 @@ export interface Term {
   bans: string[];
 }
 
+export type Example = string | Record<string, string>;
+
 export interface Guardrail {
   id: string;
   kind: Kind;
@@ -19,8 +21,8 @@ export interface Guardrail {
   version: number;
   implementation: string;
   options?: unknown;
-  mustFail?: string;
-  mustPass?: string;
+  mustFail?: Example;
+  mustPass?: Example;
 }
 
 export interface Practice {

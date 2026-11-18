@@ -1,11 +1,16 @@
 import { RecordError, loadRecords } from "../records/load.js";
-import type { Guardrail, Practice } from "../records/types.js";
+import type { Example, Guardrail, Practice } from "../records/types.js";
 import { readEvidence } from "../runner/evidence.js";
 
 const EVIDENCE_LINES = 20;
 
-const fenced = (label: string, source: string | undefined): string[] =>
-  source === undefined ? [] : [`    ${label}:`, ...source.replace(/\n+$/, "").split("\n").map((l) => `      ${l}`)];
+const lines = (text: string, indent: string): string[] => text.replace(/\n+$/, "").split("\n").map((l) => `${indent}${l}`);
+
+const fenced = (label: string, source: Example | undefined): string[] => {
+  if (source === undefined) return [];
+  const body = typeof source === "string" ? lines(source, "      ") : Object.entries(source).flatMap(([path, text]) => [`      ${path}:`, ...lines(text, "        ")]);
+  return [`    ${label}:`, ...body];
+};
 
 const describeGuardrail = (g: Guardrail): string[] => [
   `  Guardrail ${g.id}  kind: ${g.kind}  tiers: ${g.runs.join(", ")}  budget: ${g.budgetMs} ms`,

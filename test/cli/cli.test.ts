@@ -330,6 +330,21 @@ describe("warden CLI", () => {
       expect(lines.filter((l) => l.startsWith("practice ")).at(-1)).toBe("practice no-var  strongest=review  promote");
     });
 
+    it("report shows every Guardrail proven when a legacy one carries fixture trees, and explain prints the trees", async () => {
+      await mkdir(join(root, ".warden/packs/local"), { recursive: true });
+      await writeFile(
+        join(root, ".warden/packs/local/pack.yaml"),
+        ["id: local", "layer: 1", "terms: []", "practices:", "  - id: script-passes", "    statement: The script passes.", "    terms: []", "    paths: []", "    conflictsWith: []", "    guardrails:",
+          "      - id: local-script", "        kind: legacy", "        runs: [commit]", "        budgetMs: 5000", "        version: 1", '        implementation: "cmd:test ! -e broken"',
+          "        mustFail:", '          broken: "x\\n"', "        mustPass:", '          ok.txt: "x\\n"', ""].join("\n"),
+      );
+      expect(warden("init", "--packs", "core,local").code).toBe(0);
+      const json = JSON.parse(warden("report", "--format", "json").out) as { guardrails: { guardrail: string; strength: string }[] };
+      expect(json.guardrails.map((g) => g.guardrail)).toContain("local-script");
+      expect(json.guardrails.filter((g) => g.strength !== "proven")).toEqual([]);
+      expect(warden("explain", "local-script").out).toContain("    Violating example (mustFail):\n      broken:\n        x\n");
+    });
+
     it("packs lists bundled then local with on and off states", async () => {
       init();
       await localPack();

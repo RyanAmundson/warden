@@ -50,7 +50,7 @@ export async function buildReport(root: string, wardenRoot: string): Promise<{ p
       guardrail: g.id,
       practice: x.id,
       kind: g.kind,
-      strength: g.kind !== "legacy" && g.kind !== "instruction" && g.mustPass !== undefined ? "proven" : "unproven",
+      strength: g.kind !== "instruction" && g.mustPass !== undefined ? "proven" : "unproven",
       baselineRemaining: Object.values(baseline[g.id] ?? {}).reduce((a, b) => a + b, 0),
       fired: evidence.filter((e) => e.kind === "fired" && e.guardrail === g.id).length,
       medianMs: round(median(ms)),
