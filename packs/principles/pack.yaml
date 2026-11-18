@@ -3,7 +3,7 @@ layer: 2
 terms: []
 practices:
   - id: small-functions
-    statement: Functions stay small. At most 10 branches, 3 levels of nesting, 50 lines, and 4 parameters.
+    statement: Functions stay small. Complexity at most 10, so at most 9 decisions such as if, loop, case, ?:, &&, ||, and ??; at most 3 levels of nesting, 50 lines, and 4 parameters.
     terms: []
     paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"]
     conflictsWith: []
@@ -34,7 +34,7 @@ practices:
         implementation: "eslint:max-lines-per-function"
         options: [{ max: 50, skipBlankLines: true, skipComments: true }]
         mustFail: "export const f = (): void => {\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n};\n"
-        mustPass: "export const f = (): void => {\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n  Math.abs(1);\n};\n"
+        mustPass: "const wait = (): void => {\n  Math.abs(1);\n};\nexport const f = (): void => {\n  wait();\n  wait();\n};\n"
       - id: principles-parameter-count
         kind: lint
         runs: [edit, commit]

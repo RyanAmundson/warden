@@ -82,8 +82,8 @@ That is three Practices and nine Guardrails in this release.
 
 ## Measured on Context Manager
 
-All ten candidate rules ran in one ESLint pass over 483 tracked TypeScript files (every
-eleventh file), November 18, 2026. The rules added about 80 ms of rule time
+All ten candidate rules ran in one ESLint pass over a sample of 483 files, every
+eleventh tracked TypeScript file, November 18, 2026. The rules added about 80 ms of rule time
 in total; the 1.9 s wall time was mostly parsing, which Warden's single pass
 already pays.
 

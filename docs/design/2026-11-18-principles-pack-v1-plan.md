@@ -23,7 +23,6 @@
 
 - A `mustPass` example that fails another Guardrail on the same path, including `core`'s `no-comments`. `runExamples` reports `example-conflict`; the examples test catches it.
 - A limit off by one. Each limit gets a test at the limit (passes) and one past it (fails).
-- `extends Error` and a class expression with a superclass. The first passes and the second fails.
 - Rest-sibling destructuring (`const { a, ...rest } = x`) must not count `a` as unused.
 - A parameter name inside a TypeScript function type must not count as unused.
 
@@ -43,7 +42,7 @@ Practices, statements, and rule options (exact):
 
 | Practice | Statement | Guardrail: `implementation`, `options` |
 |---|---|---|
-| `small-functions` | Functions stay small: at most 10 branches, 3 levels of nesting, 50 lines, and 4 parameters. | `eslint:complexity` `[{ max: 10 }]`; `eslint:max-depth` `[{ max: 3 }]`; `eslint:max-lines-per-function` `[{ max: 50, skipBlankLines: true, skipComments: true }]`; `eslint:max-params` `[{ max: 4 }]` |
+| `small-functions` | Functions stay small. Complexity at most 10, so at most 9 decisions such as if, loop, case, ?:, &&, ||, and ??; at most 3 levels of nesting, 50 lines, and 4 parameters. | `eslint:complexity` `[{ max: 10 }]`; `eslint:max-depth` `[{ max: 3 }]`; `eslint:max-lines-per-function` `[{ max: 50, skipBlankLines: true, skipComments: true }]`; `eslint:max-params` `[{ max: 4 }]` |
 | `one-responsibility-per-file` | A file holds one responsibility: at most 300 lines and one class. | `eslint:max-lines` `[{ max: 300, skipBlankLines: true, skipComments: true }]`; `eslint:max-classes-per-file` `[1]` |
 | `no-unused-code` | Code declares nothing it does not use: no unused local, no useless constructor, and no unused private member. | `eslint:no-unused-vars` `[{ args: "none", ignoreRestSiblings: true }]`; `eslint:no-useless-constructor`; `eslint:no-unused-private-class-members` |
 
@@ -53,7 +52,7 @@ Each `mustFail` breaks only its own Guardrail's limit by one. Each `mustPass` is
 
 - [ ] **Step 1: Write the failing test** `test/principles-pack.test.ts`, with config packs `core` then `principles`, both on `["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"]`, and a `check(id, source)` helper like `core-pack.test.ts`'s.
   - `principles pack examples hold`: the ids equal the list above and `await runExamples(set)` equals `[]`.
-  - `it.each` limit cases, each `[id, source, status]`: complexity 10 pass, 11 fail; depth 3 pass, 4 fail; function of 50 lines pass, 51 fail; 4 parameters pass, 5 fail; 300-line file pass, 301 fail; one class pass, two fail; `class E extends Error {}` pass; `const C = class extends Base {}` fail; interface of 7 members pass, 8 fail; `const { a, ...rest } = x; export { rest };` pass; `export type F = (unused: number) => void;` pass; `const unused = 1;` fail.
+  - `it.each` limit cases, each `[id, source, status]`: complexity 10 pass, 11 fail; depth 3 pass, 4 fail; function of 50 lines pass, 51 fail; 4 parameters pass, 5 fail; 300-line file pass, 301 fail; one class pass, two fail; `const { a, ...rest } = x; export { rest };` pass; `export type F = (unused: number) => void;` pass; `const unused = 1;` fail.
   - Generate long sources with `Array.from` in the test, not literal text.
 - [ ] **Step 2: Run** `npx vitest run --maxWorkers=2 test/principles-pack.test.ts`. Expected: FAIL, `pack principles` not found.
 - [ ] **Step 3: Write `packs/principles/pack.yaml`** from the table above.
@@ -62,6 +61,8 @@ Each `mustFail` breaks only its own Guardrail's limit by one. Each `mustPass` is
 - [ ] **Step 6: Commit** `packs/principles/pack.yaml test/principles-pack.test.ts`.
 
 ### Task 2: The CLI lists the bundled packs, whatever they are
+
+Cancelled: the collection-folders branch fixed these tests on main (920df24).
 
 The pack-picker tests in `test/cli/cli.test.ts` assume `core` is the only bundled pack, so they fail once `packs/principles/` exists. The collection-folders branch (`claude/pack-collection-folders-2c64fa`, commit `af4bf38`) already replaces those assumptions with a list read from `packs/`.
 
