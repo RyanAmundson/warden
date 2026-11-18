@@ -99,4 +99,12 @@ describe("eslint adapter", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("emit refuses two Guardrails that share an ESLint rule", () => {
+    const a = guardrail("a", "eslint:no-debugger");
+    const b = guardrail("b", "eslint:no-debugger");
+    const set = setFor(a);
+    (set.packs[0]?.practices[0]?.guardrails as Guardrail[]).push(b);
+    expect(() => eslintAdapter.emit([a, b], set)).toThrow("ESLint rule no-debugger is already the implementation of Guardrail a");
+  });
 });

@@ -3,6 +3,7 @@ import { join, relative } from "node:path";
 import { ESLint } from "eslint";
 import tseslint from "typescript-eslint";
 import { plugin } from "../../eslint-plugin/index.js";
+import { RecordError } from "../records/load.js";
 import { pathGroups } from "../records/paths.js";
 import type { Guardrail, Practice, RecordSet } from "../records/types.js";
 import { type Adapter, PARSE_ERROR, type RunContext, type RunResult, type Violation } from "./types.js";
@@ -34,6 +35,14 @@ const wardenValue = (g: Guardrail, practice: Practice | undefined): unknown => {
 };
 
 const emit = (gs: Guardrail[], set: RecordSet): Record<string, string> => {
+  const users = new Map<string, string>();
+  for (const g of gs) {
+    const other = users.get(ruleId(g));
+    if (other !== undefined) {
+      throw new RecordError("", `/guardrails/${g.id}/implementation`, `ESLint rule ${ruleId(g)} is already the implementation of Guardrail ${other}`);
+    }
+    users.set(ruleId(g), g.id);
+  }
   const entries = gs.map((g) => {
     const { practice, paths } = owner(g, set);
     const value = ruleId(g).startsWith("warden/") ? wardenValue(g, practice) : ruleValue(g.options);
