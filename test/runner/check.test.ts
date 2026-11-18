@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1014,6 +1014,38 @@ describe("bundled tool versions in the lock", () => {
     const { code, err } = await check();
     expect(code).toBe(2);
     expect(err).toContain("Next action: update this project's Warden to the release that wrote the lock on main");
+  });
+});
+
+describe("doctor at check", () => {
+  const withTool = async (): Promise<string> => {
+    const bin = await mkdtemp(join(tmpdir(), "warden-bin-"));
+    await writeFile(join(bin, "mytool"), "#!/bin/sh\ntest ! -e broken\n");
+    await chmod(join(bin, "mytool"), 0o755);
+    vi.stubEnv("PATH", `${bin}:${process.env.PATH ?? ""}`);
+    return bin;
+  };
+
+  it("a cmd Guardrail whose command does not resolve exits 2 with the doctor's one next action", async () => {
+    const bin = await withTool();
+    await addLegacy("boundary", "mytool", 5000);
+    await rm(bin, { recursive: true, force: true });
+    const { code, out, err } = await check();
+    expect(code).toBe(2);
+    expect(out).toBe("");
+    expect(err).toContain("FAIL  cmd legacy-script: mytool  mytool is not on PATH");
+    expect(err.match(/Next action:/g)).toHaveLength(1);
+    expect(err).toContain("Next action: install mytool so it is on PATH, then run warden doctor");
+  });
+
+  it("a repeat check with the same lock and package.json skips the doctor, and a package.json change runs it again", async () => {
+    const bin = await withTool();
+    await addLegacy("boundary", "mytool", 5000);
+    expect((await check()).code).toBe(0);
+    await rm(bin, { recursive: true, force: true });
+    expect((await check()).code).toBe(0);
+    await write("package.json", "{}\n");
+    expect((await check()).code).toBe(2);
   });
 });
 

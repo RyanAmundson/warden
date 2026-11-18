@@ -498,4 +498,32 @@ describe("warden CLI", () => {
       expect(r.err).toContain("listed more than once");
     });
   });
+
+  it("doctor prints one ok line per check and exits 0, and init runs it after writing its files", () => {
+    const initialized = warden("init");
+    expect(initialized.code, initialized.err).toBe(0);
+    expect(initialized.out).toContain("ok    tool typescript\n");
+    const r = warden("doctor");
+    expect(r.code, r.err).toBe(0);
+    expect(r.out).toBe("ok    tool eslint\nok    tool typescript-eslint\nok    tool typescript\nok    tool warden eslint plugin\n");
+  });
+
+  it("doctor exits 2 with the failing item and one next action", async () => {
+    init();
+    await mkdir(join(root, ".warden/packs/local"), { recursive: true });
+    await writeFile(
+      join(root, ".warden/packs/local/pack.yaml"),
+      ["id: local", "layer: 1", "terms: []", "practices:", "  - id: script-passes", "    statement: The script passes.", "    terms: []", "    paths: []", "    conflictsWith: []", "    guardrails:",
+        "      - id: local-script", "        kind: legacy", "        runs: [boundary]", "        budgetMs: 5000", "        version: 1", '        implementation: "cmd:npm run test:changed"',
+        "        mustFail:", '          broken: "x\\n"', "        mustPass:", '          ok.txt: "x\\n"', ""].join("\n"),
+    );
+    await writeFile(join(root, ".warden/config.yaml"), (await readFile(join(root, ".warden/config.yaml"), "utf8")).replace("tierBudgetMs:", '  - id: local\n    paths: ["src/**"]\ntierBudgetMs:'));
+    const r = warden("doctor");
+    expect(r.code, r.err).toBe(2);
+    expect(r.out).toContain('FAIL  cmd local-script: npm run test:changed  package.json has no "test:changed" script\n');
+    expect(r.out.match(/Next action:/g)).toHaveLength(1);
+    expect(r.out).toContain('Next action: add a "test:changed" script to package.json, then run warden doctor\n');
+    await writeFile(join(root, "package.json"), JSON.stringify({ scripts: { "test:changed": "true" } }));
+    expect(warden("doctor").code).toBe(0);
+  });
 });

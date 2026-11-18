@@ -9,7 +9,7 @@ import type { Tier } from "../records/types.js";
 import type { Format } from "../runner/feedback.js";
 import { runCheck } from "./check.js";
 import { runExplain } from "./explain.js";
-import { runInit } from "./init.js";
+import { runDoctor, runInit } from "./init.js";
 import { runPacks } from "./packs.js";
 import { runReport } from "./report.js";
 
@@ -44,6 +44,10 @@ program
   .action(async (o: { packs: string }) => {
     process.exitCode = await runInit(root(), findWardenRoot(), o.packs.split(",").map((id) => id.trim()));
   });
+
+program.command("doctor").description("check that Warden's bundled tools load and every cmd Guardrail's command resolves").action(async () => {
+  process.exitCode = await runDoctor(root(), findWardenRoot());
+});
 
 program.command("packs").description("list available packs and which are on").option("--format <format>", "text or json", "text").action(async (o: { format: string }) => {
   process.exitCode = await runPacks(root(), findWardenRoot(), oneOf("format", o.format, ["text", "json"] as const) === "json");

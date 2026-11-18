@@ -7,6 +7,7 @@ import { initAction, listPacks } from "./packs.js";
 import { PARSE_ERROR } from "../adapters/types.js";
 import { type Baseline, writeBaseline } from "../runner/baseline.js";
 import { verifyBase } from "../runner/changed.js";
+import { doctor, formatDoctor } from "../runner/doctor.js";
 import { runGuardrails } from "../runner/run.js";
 
 const CONFIG_PATH = ".warden/config.yaml";
@@ -59,7 +60,7 @@ export async function runInit(root: string, wardenRoot: string, requested: strin
   const claudeExisted = existsSync(join(root, ".claude"));
   const settings = existsSync(join(root, SETTINGS)) ? readFileSync(join(root, SETTINGS), "utf8") : undefined;
   try {
-    return await initialize(root, wardenRoot, packs);
+    await initialize(root, wardenRoot, packs);
   } catch (cause) {
     if (wardenExisted) for (const entry of readdirSync(warden)) if (entry !== "packs") rmSync(join(warden, entry), { recursive: true, force: true });
     if (!wardenExisted) rmSync(warden, { recursive: true, force: true });
@@ -67,9 +68,10 @@ export async function runInit(root: string, wardenRoot: string, requested: strin
     else rmSync(join(root, claudeExisted ? SETTINGS : ".claude"), { recursive: true, force: true });
     throw cause;
   }
+  return runDoctor(root, wardenRoot);
 }
 
-async function initialize(root: string, wardenRoot: string, packs: string[]): Promise<number> {
+async function initialize(root: string, wardenRoot: string, packs: string[]): Promise<void> {
   mkdirSync(join(root, ".warden"), { recursive: true });
   writeFileSync(join(root, CONFIG_PATH), configText(basename(root), await wardenVersion(wardenRoot), packs));
 
@@ -95,5 +97,10 @@ async function initialize(root: string, wardenRoot: string, packs: string[]): Pr
   writeBaseline(root, baseline);
   const total = Object.values(baseline).reduce((n, e) => n + Object.values(e).reduce((a, b) => a + b, 0), 0);
   process.stdout.write(`Initialized .warden in ${root}: ${guardrails.length} Guardrails, ${total} existing violations baselined across ${files.length} files.\n`);
-  return 0;
+}
+
+export async function runDoctor(root: string, wardenRoot: string): Promise<number> {
+  const health = await doctor(await loadRecords(root, wardenRoot));
+  process.stdout.write(`${formatDoctor(health)}\n`);
+  return health.next === undefined ? 0 : 2;
 }

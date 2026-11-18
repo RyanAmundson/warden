@@ -8,6 +8,7 @@ import type { Guardrail, RecordSet, Tier } from "../records/types.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
 import { changedFiles, changesSinceMergeBase, containsHead, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
+import { doctor, formatDoctor } from "../runner/doctor.js";
 import { type Evidence, appendEvidence, readEvidence } from "../runner/evidence.js";
 import { type Format, type Notes, type Repeated, formatFeedback } from "../runner/feedback.js";
 import { runGuardrails, unknownAdapters } from "../runner/run.js";
@@ -158,6 +159,16 @@ const check = async (opts: CheckOptions): Promise<number> => {
   refuseOwnBranch(root, base);
   if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined) {
     throw new RecordError(LOCK_PATH, "", "not found; this project was never compiled. Next action: run warden compile.");
+  }
+  const fileSha = (file: string): string => (existsSync(join(root, file)) ? sha256(readFileSync(join(root, file))) : "");
+  const doctorKey = sha256(canonicalJson(["doctor", fileSha(LOCK_PATH), fileSha("package.json")]));
+  if (readCache(project, doctorKey) === undefined) {
+    const health = await doctor(set);
+    if (health.next !== undefined) {
+      process.stderr.write(`${formatDoctor({ lines: health.lines.filter((l) => l.startsWith("FAIL")), next: health.next })}\n`);
+      return 2;
+    }
+    writeCache(project, doctorKey, []);
   }
   const unknown = unknownAdapters(set);
   if (unknown.length > 0) {
