@@ -392,13 +392,15 @@ export async function runCheck(opts: CheckOptions): Promise<number> {
   try {
     return await check(opts, live);
   } catch (cause) {
-    if (!(cause instanceof RecordError)) throw cause;
-    process.stderr.write(`${cause.file} ${cause.pointer}: ${cause.message}\n`);
+    const known = cause instanceof RecordError;
+    if (known) process.stderr.write(`${cause.file} ${cause.pointer}: ${cause.message}\n`);
     closeStep(live, "fail");
     if (live.project !== undefined) {
       const commit = headCommit(resolve(opts.root));
-      appendEvidence(live.project, { at: live.at, kind: "cost", guardrail: RUN_TOTAL, run: live.run, tier: live.tier, trigger: live.trigger, outcome: "error", exit: 2, ms: performance.now() - live.started, files: 0, bytes: 0, next: nextOf(cause.message), ...(commit === undefined ? {} : { commit }) });
+      const next = known ? nextOf(cause.message) : `run warden check again; it stopped with: ${(cause as Error).message}`;
+      appendEvidence(live.project, { at: live.at, kind: "cost", guardrail: RUN_TOTAL, run: live.run, tier: live.tier, trigger: live.trigger, outcome: "error", exit: 2, ms: performance.now() - live.started, files: 0, bytes: 0, next, ...(commit === undefined ? {} : { commit }) });
     }
+    if (!known) throw cause;
     return 2;
   }
 }

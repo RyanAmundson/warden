@@ -1471,6 +1471,16 @@ describe("performance: run records and input size", () => {
     expect(runs[0]?.result).toBeUndefined();
   });
 
+  it("a check that crashes writes an error record and fails its open step, then rethrows", async () => {
+    vi.spyOn(eslintAdapter, "run").mockRejectedValue(new Error("eslint exploded"));
+    await write("b.ts", "const b = 1;\n");
+    await expect(check({ paths: ["b.ts"] })).rejects.toThrow("eslint exploded");
+    const runs = (await costs()).filter((e) => e.guardrail === "run");
+    expect(runs).toEqual([expect.objectContaining({ outcome: "error", exit: 2, next: "run warden check again; it stopped with: eslint exploded" })]);
+    const steps = (await evidence()).filter((e) => e.kind === "step");
+    expect(steps.at(-1)).toMatchObject({ step: "rules", state: "fail" });
+  });
+
   it("a check appends its steps in order as it runs", async () => {
     await write("b.ts", "// two\nconst b = 1;\n");
     expect((await check({ paths: ["b.ts"] })).code).toBe(1);

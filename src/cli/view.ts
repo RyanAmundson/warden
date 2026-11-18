@@ -1,13 +1,12 @@
-import { type FSWatcher, watch } from "node:fs";
-import { basename } from "node:path";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { type FSWatcher, existsSync, watch } from "node:fs";
+import { basename, join } from "node:path";
 import { wardenVersion } from "../compiler/compile.js";
 import { bundledTools } from "../compiler/lock.js";
 import { RecordError, loadRecords } from "../records/load.js";
+import type { Tier } from "../records/types.js";
 import { type Evidence, type Step, readEvidence } from "../runner/evidence.js";
 import { buildReport } from "./report.js";
-import { clock, firstFailure, runRecords, target } from "./runs.js";
+import { clock, firstFailure, runRecords, target, visible } from "./runs.js";
 
 export interface RuleRow {
   guardrail: string;
@@ -25,6 +24,8 @@ export interface ViewModel {
   tools: Record<string, string>;
   rules: RuleRow[];
   evidence: Evidence[];
+  now: number;
+  budgets: Record<Tier, number>;
 }
 
 export async function loadView(root: string, wardenRoot: string): Promise<ViewModel> {
@@ -40,6 +41,8 @@ export async function loadView(root: string, wardenRoot: string): Promise<ViewMo
     tools: bundledTools(),
     rules: report.guardrails.map((g) => ({ guardrail: g.guardrail, strength: g.strength, fired: g.fired, median: g.costShared === undefined ? `${g.medianMs ?? 0} ms` : "shared", budgetMs: budget.get(g.guardrail) ?? 0 })),
     evidence: readEvidence(set.config.project),
+    now: Date.now(),
+    budgets: set.config.tierBudgetMs,
   };
 }
 
@@ -51,6 +54,7 @@ export interface Size {
 interface Shown {
   record?: Evidence;
   steps: Evidence[];
+  interrupted?: boolean;
 }
 
 const STEPS: { step: Step; done: string; running: string }[] = [
@@ -66,7 +70,10 @@ const SHORT: Record<string, string> = { "agent-edit": "edit", "git-commit": "com
 
 const BAR = 16;
 
-const clip = (line: string, width: number): string => (line.length > width ? `${line.slice(0, width - 1)}…` : line);
+const clip = (raw: string, width: number): string => {
+  const line = visible(raw);
+  return line.length > width ? `${line.slice(0, width - 1)}…` : line;
+};
 
 const spread = (left: string, right: string, width: number): string => {
   if (right === "") return clip(left, width);
@@ -101,6 +108,9 @@ const stepLines = (shown: Shown | undefined, tools: Record<string, string>, widt
     const n = i + 1;
     if (last === undefined) return `   ○ ${n} ${done}`;
     const members = [...new Set(events.flatMap((e) => e.members ?? []))].join(" · ");
+    if (last.state === "start" && shown?.interrupted === true) {
+      return spread(`   ✗ ${n} ${done.padEnd(18)}${members}`, "interrupted", width);
+    }
     if (last.state === "start") {
       const bar = "█".repeat(Math.round((finished / STEPS.length) * BAR)).padEnd(BAR, "░");
       return spread(`   ● ${n} ${running.padEnd(18)}${step === "rules" ? `${bar}  ${members}` : ""}`, "...", width);
@@ -133,6 +143,7 @@ const verdictCell = (e: Evidence): string => {
 };
 
 const footer = (shown: Shown | undefined, live: boolean): string => {
+  if (shown?.interrupted === true) return " Next action: press r to run warden check";
   if (live) return " Running warden check…";
   const record = shown?.record;
   if (record === undefined) return " Next action: press r to run warden check";
@@ -142,6 +153,14 @@ const footer = (shown: Shown | undefined, live: boolean): string => {
   return " This run was recorded without a result.";
 };
 
+export const liveDeadline = (model: ViewModel): number | undefined => {
+  const lastStep = model.evidence.filter((e) => e.kind === "step").at(-1);
+  if (lastStep === undefined || runRecords(model.evidence).some((r) => r.run === lastStep.run)) return undefined;
+  const tier = model.evidence.find((e) => e.kind === "step" && e.run === lastStep.run && e.tier !== undefined)?.tier ?? "commit";
+  const at = Date.parse(lastStep.at) + model.budgets[tier];
+  return at >= model.now ? at : undefined;
+};
+
 export function render(model: ViewModel, size: Size, selected: number): string[] {
   const width = Math.max(20, size.cols);
   const rule = "─".repeat(width);
@@ -149,17 +168,19 @@ export function render(model: ViewModel, size: Size, selected: number): string[]
   const stepsOf = (run: string | undefined): Evidence[] => model.evidence.filter((e) => e.kind === "step" && e.run === run);
   const lastStep = model.evidence.filter((e) => e.kind === "step").at(-1);
   const liveRun = lastStep !== undefined && !runs.some((r) => r.run === lastStep.run) ? lastStep.run : undefined;
+  const liveSteps = stepsOf(liveRun);
+  const interrupted = liveRun !== undefined && liveDeadline(model) === undefined;
   const pick = Math.min(Math.max(0, selected), Math.max(0, runs.length - 1));
   const live = liveRun !== undefined && selected === 0;
   const record = live ? undefined : runs[pick];
-  const shown: Shown | undefined = live ? { steps: stepsOf(liveRun) } : record === undefined ? undefined : { record, steps: stepsOf(record.run) };
+  const shown: Shown | undefined = live ? { steps: liveSteps, interrupted } : record === undefined ? undefined : { record, steps: stepsOf(record.run) };
   const head = (() => {
     if (shown === undefined) return " NOW  idle · no check has run in this project yet";
     const first = shown.steps[0];
     const tier = shown.record?.tier ?? first?.tier ?? "";
     const trigger = shown.record?.trigger ?? first?.trigger;
     const where = shown.record === undefined ? shown.steps.find((e) => e.files !== undefined) : shown.record;
-    return [` NOW  ${tier === "" ? "" : `${tier} `}check`, ...(where === undefined ? [] : [target(where)]), ...(trigger === undefined ? [] : [`triggered by ${TRIGGER[trigger] ?? trigger}`])].join(" · ");
+    return [` NOW  ${tier === "" ? "" : `${tier} `}check`, ...(where === undefined ? [] : [target(where)]), ...(trigger === undefined ? [] : [`triggered by ${TRIGGER[trigger] ?? trigger}`]), ...(shown.interrupted === true ? ["interrupted"] : [])].join(" · ");
   })();
   const top = [spread(` WARDEN  ${model.project} · base ${model.base} · v${model.version}`, "q quit  r rerun  ↑↓ runs", width), rule, clip(head, width), ...stepLines(shown, model.tools, width), ""];
   const bottom = [rule, ...wrap(footer(shown, live), width, 3)];
@@ -213,6 +234,7 @@ export interface ViewIo {
   input: ViewInput;
   output: ViewOutput;
   watchDir: string;
+  file: string;
   load: () => Promise<ViewModel>;
   rerun: () => void;
 }
@@ -223,10 +245,12 @@ export function liveView(io: ViewIo): Promise<number> {
     let selected = 0;
     let closed = false;
     let watcher: FSWatcher | undefined;
+    let timer: NodeJS.Timeout | undefined;
     const restore = (): void => {
       if (closed) return;
       closed = true;
       watcher?.close();
+      clearTimeout(timer);
       io.output.off("resize", draw);
       io.input.off("data", key);
       process.off("exit", restore);
@@ -253,14 +277,33 @@ export function liveView(io: ViewIo): Promise<number> {
         fail(cause);
       }
     }
+    let loading = false;
+    let again = false;
     const refresh = (): void => {
+      if (loading) {
+        again = true;
+        return;
+      }
+      loading = true;
       io.load().then(
         (next) => {
+          loading = false;
+          if (again) {
+            again = false;
+            refresh();
+            return;
+          }
           model = next;
           draw();
+          schedule();
         },
         fail,
       );
+    };
+    const schedule = (): void => {
+      clearTimeout(timer);
+      const at = model === undefined ? undefined : liveDeadline(model);
+      if (at !== undefined) timer = setTimeout(refresh, Math.max(0, at - Date.now()) + 1);
     };
     function key(chunk: Buffer): void {
       const k = chunk.toString("utf8");
@@ -281,7 +324,9 @@ export function liveView(io: ViewIo): Promise<number> {
     io.input.on("data", key);
     io.output.on("resize", draw);
     try {
-      watcher = watch(io.watchDir, refresh);
+      watcher = watch(io.watchDir, (_event, filename) => {
+        if (filename === null || filename === io.file) refresh();
+      });
     } catch (cause) {
       fail(cause);
       return;

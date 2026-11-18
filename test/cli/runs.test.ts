@@ -1,8 +1,14 @@
+import { appendFileSync, watch } from "node:fs";
 import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { runRuns } from "../../src/cli/runs.js";
+
+vi.mock("node:fs", async (original) => {
+  const real = await original<typeof import("node:fs")>();
+  return { ...real, watch: vi.fn(real.watch) };
+});
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
 
@@ -72,6 +78,26 @@ it("--follow prints a run that lands after it starts, until interrupted", async 
   stop.abort();
   expect(await following).toBe(0);
   expect(out.match(/14:02:11/g)).toHaveLength(1);
+});
+
+it("--follow prints a run that lands while the watcher is being armed", async () => {
+  const real = (await vi.importActual<typeof import("node:fs")>("node:fs")).watch;
+  vi.mocked(watch).mockImplementationOnce(((...args: Parameters<typeof real>) => {
+    appendFileSync(join(home, "evidence/p.jsonl"), lines([{ ...passed, run: "r4", at: "2026-11-18T14:06:00.000Z", trigger: "manual" }]));
+    return real(...args);
+  }) as typeof real);
+  const stop = new AbortController();
+  const following = runRuns(root, wardenRoot, { limit: 20, format: "text", follow: true, signal: stop.signal });
+  await vi.waitFor(() => expect(out).toMatch(/14:06:00\s+manual/), { timeout: 1000, interval: 20 });
+  stop.abort();
+  expect(await following).toBe(0);
+});
+
+it("shows control characters in a file name as visible escapes", async () => {
+  await appendFile(join(home, "evidence/p.jsonl"), lines([{ ...blocked, run: "r5", file: "q\x1b]0;PWNED\x07<b>.ts" }]));
+  await runRuns(root, wardenRoot, { limit: 20, format: "text" });
+  expect(out).not.toMatch(/[\x00-\x09\x0b-\x1f\x7f-\x9f]/);
+  expect(out).toContain("q\\u001b]0;PWNED\\u0007<b>.ts");
 });
 
 it("--html writes one self-contained page with the latest run's commit and result, each Practice's strength, and failures with Do this", async () => {

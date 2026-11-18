@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command, CommanderError } from "commander";
-import { compile } from "../compiler/compile.js";
+import { compile, wardenVersion } from "../compiler/compile.js";
 import type { Tier } from "../records/types.js";
 import type { Format } from "../runner/feedback.js";
 import { runBench } from "./bench.js";
@@ -27,14 +27,12 @@ const findWardenRoot = (): string => {
   return dir;
 };
 
-const oneOf = <T extends string>(name: string, value: string, allowed: readonly T[]): T => {
-  if (!(allowed as readonly string[]).includes(value)) throw new Error(`--${name} must be one of ${allowed.join(", ")}`);
+const oneOf = <T extends string>(command: string, name: string, value: string, allowed: readonly T[]): T => {
+  if (!(allowed as readonly string[]).includes(value)) throw new Error(`--${name} must be one of ${allowed.join(", ")}. Next action: run warden ${command} --help`);
   return value as T;
 };
 
-const program = new Command("warden")
-  .version((JSON.parse(readFileSync(join(findWardenRoot(), "package.json"), "utf8")) as { version: string }).version)
-  .exitOverride();
+const program = new Command("warden").exitOverride();
 const root = (): string => {
   try {
     return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -56,7 +54,7 @@ program.command("doctor").description("check that Warden's bundled tools load an
 });
 
 program.command("packs").description("list available packs and which are on").option("--format <format>", "text or json", "text").action(async (o: { format: string }) => {
-  process.exitCode = await runPacks(root(), findWardenRoot(), oneOf("format", o.format, ["text", "json"] as const) === "json");
+  process.exitCode = await runPacks(root(), findWardenRoot(), oneOf("packs", "format", o.format, ["text", "json"] as const) === "json");
 });
 
 program.command("compile").description("compile records into tool configs and the lock").action(async () => {
@@ -82,11 +80,11 @@ program
       paths: paths.length > 0 ? paths.map((p) => resolve(p)) : undefined,
       rule: o.rule,
       base: o.base,
-      tier: oneOf<Tier>("tier", o.tier, ["edit", "commit", "boundary"]),
-      format: oneOf<Format>("format", o.format, ["text", "agent", "json"]),
-      hook: o.hook === undefined ? undefined : oneOf("hook", o.hook, ["claude"] as const),
+      tier: oneOf<Tier>("check", "tier", o.tier, ["edit", "commit", "boundary"]),
+      format: oneOf<Format>("check", "format", o.format, ["text", "agent", "json"]),
+      hook: o.hook === undefined ? undefined : oneOf("check", "hook", o.hook, ["claude"] as const),
       hookInput: o.hook === undefined ? undefined : readFileSync(0, "utf8"),
-      trigger: oneOf("trigger", o.trigger, ["git-commit", "manual"] as const),
+      trigger: oneOf("check", "trigger", o.trigger, ["git-commit", "manual"] as const),
     });
   });
 
@@ -104,7 +102,7 @@ program.command("explain <id>").description("explain a Practice or Guardrail").a
 });
 
 program.command("report").description("Guardrails grouped by Practice, strongest kind first").option("--json", "print JSON").option("--format <format>", "text or json", "text").action(async (o: { json?: boolean; format: string }) => {
-  process.exitCode = await runReport(root(), findWardenRoot(), o.json === true || oneOf("format", o.format, ["text", "json"] as const) === "json");
+  process.exitCode = await runReport(root(), findWardenRoot(), o.json === true || oneOf("report", "format", o.format, ["text", "json"] as const) === "json");
 });
 
 program
@@ -116,10 +114,10 @@ program
   .option("--html <file>", "write one self-contained page of the runs, Practices, and failures")
   .action(async (o: { limit: string; format: string; follow?: boolean; html?: string }) => {
     const stop = new AbortController();
-    process.once("SIGINT", () => stop.abort());
+    if (o.follow === true) process.once("SIGINT", () => stop.abort());
     process.exitCode = await runRuns(root(), findWardenRoot(), {
       limit: Number(o.limit),
-      format: oneOf("format", o.format, ["text", "json"] as const),
+      format: oneOf("runs", "format", o.format, ["text", "json"] as const),
       follow: o.follow === true,
       signal: stop.signal,
       ...(o.html === undefined ? {} : { html: o.html }),
@@ -143,13 +141,14 @@ program.action(async (_options: unknown, command: Command) => {
     child = spawn(process.execPath, [fileURLToPath(import.meta.url), "check", "--base", model.base, "--trigger", "manual"], { cwd: project, stdio: "ignore" });
   };
   try {
-    process.exitCode = await liveView({ input: process.stdin, output: process.stdout, watchDir, rerun, load: () => loadView(project, wardenRoot) });
+    process.exitCode = await liveView({ input: process.stdin, output: process.stdout, watchDir, file: `${model.project}.jsonl`, rerun, load: () => loadView(project, wardenRoot) });
   } finally {
     if (child !== undefined && child.exitCode === null) child.kill();
   }
 });
 
 try {
+  program.version(await wardenVersion(findWardenRoot()));
   await program.parseAsync(process.argv);
 } catch (cause) {
   if (cause instanceof CommanderError) {

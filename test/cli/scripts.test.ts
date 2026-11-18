@@ -59,7 +59,7 @@ describe("self-check.sh", () => {
       "process.stdout.write(`args ${process.argv.slice(2).join(\" \")}\\n`);",
       "",
     ].join("\n");
-    const manifest = { name: "warden", version: "0.0.0", bin: { warden: "bin.js" }, scripts: { build: "true" }, files: ["bin.js", "release.txt", "packs"] };
+    const manifest = { name: "warden", version: "0.0.0", bin: { warden: "bin.js" }, scripts: { build: "exit 1", prepare: "true" }, files: ["bin.js", "release.txt", "packs"] };
     await writeFile(join(repo, "package.json"), JSON.stringify(manifest));
     await writeFile(join(repo, "bin.js"), bin);
     await chmod(join(repo, "bin.js"), 0o755);

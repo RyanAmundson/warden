@@ -573,4 +573,11 @@ describe("warden CLI", () => {
     expect(r.code).toBe(0);
     expect(r.out).toBe(`${(JSON.parse(await readFile(join(wardenRoot, "package.json"), "utf8")) as { version: string }).version}\n`);
   });
+
+  it("a bad option value exits 2 with one next action naming the command", () => {
+    init();
+    const r = warden("runs", "--format", "xml");
+    expect(r.code).toBe(2);
+    expect(r.err).toBe("--format must be one of text, json. Next action: run warden runs --help\n");
+  });
 });

@@ -1,5 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { watch } from "node:fs/promises";
+import { existsSync, mkdirSync, watch, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { RecordError, loadRecords } from "../records/load.js";
 import { type Evidence, RUN_TOTAL, readEvidence, wardenHome } from "../runner/evidence.js";
@@ -12,6 +11,8 @@ export interface RunsOptions {
   follow?: boolean;
   signal?: AbortSignal;
 }
+
+export const visible = (text: string): string => text.replace(/[\x00-\x1f\x7f-\x9f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
 
 export const runRecords = (evidence: Evidence[]): Evidence[] => evidence.filter((e) => e.kind === "cost" && e.guardrail === RUN_TOTAL && e.outcome !== undefined);
 
@@ -42,7 +43,7 @@ const cells = (e: Evidence): string[] => [
 
 const WIDTHS = [8, 10, 8, 24, 5, 6, 8, 6, 0];
 
-const row = (values: string[]): string => values.map((v, i) => (WIDTHS[i] === 0 ? v : v.padEnd(WIDTHS[i] as number))).join("  ").trimEnd();
+const row = (values: string[]): string => values.map(visible).map((v, i) => (WIDTHS[i] === 0 ? v : v.padEnd(WIDTHS[i] as number))).join("  ").trimEnd();
 
 const escape = (text: string): string => text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 
@@ -112,17 +113,22 @@ export async function runRuns(root: string, wardenRoot: string, opts: RunsOption
   const seen = new Set(all.map((e) => e.run));
   const dir = join(wardenHome(), "evidence");
   mkdirSync(dir, { recursive: true });
-  try {
-    for await (const change of watch(dir, { signal: opts.signal })) {
-      if (change.filename !== `${project}.jsonl`) continue;
-      for (const e of runRecords(readEvidence(project))) {
-        if (seen.has(e.run)) continue;
-        seen.add(e.run);
-        process.stdout.write(`${row(cells(e))}\n`);
-      }
+  const scan = (): void => {
+    for (const e of runRecords(readEvidence(project))) {
+      if (seen.has(e.run)) continue;
+      seen.add(e.run);
+      process.stdout.write(`${row(cells(e))}\n`);
     }
-  } catch (cause) {
-    if ((cause as Error).name !== "AbortError") throw cause;
+  };
+  if (opts.signal?.aborted === true) return 0;
+  const watcher = watch(dir, (_event, filename) => {
+    if (filename === null || filename === `${project}.jsonl`) scan();
+  });
+  try {
+    scan();
+    await new Promise<void>((done) => opts.signal?.addEventListener("abort", () => done(), { once: true }));
+  } finally {
+    watcher.close();
   }
   return 0;
 }

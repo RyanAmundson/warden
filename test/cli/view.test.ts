@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -37,6 +37,8 @@ const model = (evidence: Evidence[]): ViewModel => ({
     { guardrail: "warden-no-suppressions", strength: "proven", fired: 1, median: "4 ms", budgetMs: 2000 },
   ],
   evidence,
+  now: Date.parse(at("14:03:00")) + 500,
+  budgets: { edit: 2000, commit: 10000, boundary: 120000 },
 });
 
 const size = { cols: 80, rows: 30 };
@@ -124,6 +126,30 @@ it("a run recorded without a result claims neither pass nor fail", () => {
   expect(render(model([old]), size, 0).at(-1)).toBe(" This run was recorded without a result.");
 });
 
+const CONTROL = /[\x00-\x09\x0b-\x1f\x7f-\x9f]/;
+
+it("shows control characters in a file name as visible escapes, and keeps other text raw", () => {
+  const file = "q\x1b]0;PWNED\x07<b>\r.ts";
+  const lines = render(model([{ ...blockRun, file, failures: [{ file, line: 2, guardrail: "warden-no-comments", practice: "no-comments" }] }]), size, 0);
+  const text = lines.join("\n");
+  expect(text).not.toMatch(CONTROL);
+  expect(text).toContain("q\\u001b]0;PWNED\\u0007<b>\\u000d.ts");
+  expect(text).not.toContain("&lt;");
+});
+
+it("the selected-run marker reads > in a plain render", () => {
+  expect(plainView(model([...steps("r1", "14:01:40"), passRun]))).toContain("\n > 14:01:40  commit");
+});
+
+it("a run whose steps stopped without a record is interrupted, with one next action", () => {
+  const stopped = steps("r3", "14:03:00").slice(0, 5);
+  const lines = render({ ...model([...steps("r1", "14:01:40"), passRun, ...stopped]), now: Date.parse(at("14:03:00")) + 60_000 }, size, 0);
+  expect(lines[2]).toBe(" NOW  edit check · src/hooks/useRx.ts · triggered by agent edit · interrupted");
+  expect(lines[5]).toMatch(/^ {3}✗ 3 rules {13}warden-no-comments · warden-no-suppressions +interrupted$/);
+  expect(lines[6]).toBe("   ○ 4 verdict");
+  expect(lines.at(-1)).toBe(" Next action: press r to run warden check");
+});
+
 it("plain text carries no escape codes", () => {
   const text = plainView(model([...steps("r1", "14:01:40"), passRun]));
   expect(text).not.toContain("\x1b");
@@ -168,7 +194,7 @@ it("q quits and restores the terminal; arrows select and r reruns", async () => 
   const input = new FakeInput();
   const output = new FakeOutput();
   const rerun = vi.fn();
-  const done = liveView({ input, output, watchDir: dir, rerun, load: () => Promise.resolve(model([...steps("r1", "14:01:40"), passRun, blockRun])) });
+  const done = liveView({ input, output, watchDir: dir, file: "p.jsonl", rerun, load: () => Promise.resolve(model([...steps("r1", "14:01:40"), passRun, blockRun])) });
   await vi.waitFor(() => expect(output.text).toContain("NOW  edit check"));
   input.emit("data", Buffer.from("\x1b[B"));
   await vi.waitFor(() => expect(output.text.slice(output.text.lastIndexOf("NOW"))).toMatch(/^NOW {2}commit check/));
@@ -185,7 +211,7 @@ it("q quits and restores the terminal; arrows select and r reruns", async () => 
 it("Ctrl-C quits and restores the terminal", async () => {
   const input = new FakeInput();
   const output = new FakeOutput();
-  const done = liveView({ input, output, watchDir: dir, rerun: vi.fn(), load: () => Promise.resolve(model([])) });
+  const done = liveView({ input, output, watchDir: dir, file: "p.jsonl", rerun: vi.fn(), load: () => Promise.resolve(model([])) });
   await vi.waitFor(() => expect(output.text).toContain("NOW  idle"));
   input.emit("data", Buffer.from("\x03"));
   expect(await done).toBe(0);
@@ -195,16 +221,39 @@ it("Ctrl-C quits and restores the terminal", async () => {
 it("an error restores the terminal and rejects", async () => {
   const input = new FakeInput();
   const output = new FakeOutput();
-  const done = liveView({ input, output, watchDir: dir, rerun: vi.fn(), load: () => Promise.reject(new Error("records broke")) });
+  const done = liveView({ input, output, watchDir: dir, file: "p.jsonl", rerun: vi.fn(), load: () => Promise.reject(new Error("records broke")) });
   await expect(done).rejects.toThrow("records broke");
   expect(output.text.endsWith(LEAVE)).toBe(true);
   expect(input.raw).toEqual([true, false]);
 });
 
+it("drops a stale load and refreshes only for the project's Evidence file", async () => {
+  const input = new FakeInput();
+  const output = new FakeOutput();
+  let release: (m: ViewModel) => void = () => undefined;
+  const stale = new Promise<ViewModel>((r) => {
+    release = r;
+  });
+  const load = vi.fn<() => Promise<ViewModel>>().mockReturnValueOnce(stale).mockResolvedValue(model([blockRun]));
+  const done = liveView({ input, output, watchDir: dir, file: "p.jsonl", rerun: vi.fn(), load });
+  await writeFile(join(dir, "other.jsonl"), "x\n");
+  await new Promise((r) => setTimeout(r, 50));
+  expect(load).toHaveBeenCalledTimes(1);
+  await writeFile(join(dir, "p.jsonl"), "x\n");
+  await new Promise((r) => setTimeout(r, 50));
+  expect(load).toHaveBeenCalledTimes(1);
+  release(model([passRun]));
+  await vi.waitFor(() => expect(output.text).toContain("NOW  edit check"));
+  expect(output.text).not.toContain("NOW  commit check");
+  expect(load).toHaveBeenCalledTimes(2);
+  input.emit("data", Buffer.from("q"));
+  await done;
+});
+
 it("redraws when the terminal is resized", async () => {
   const input = new FakeInput();
   const output = new FakeOutput();
-  const done = liveView({ input, output, watchDir: dir, rerun: vi.fn(), load: () => Promise.resolve(model([])) });
+  const done = liveView({ input, output, watchDir: dir, file: "p.jsonl", rerun: vi.fn(), load: () => Promise.resolve(model([])) });
   await vi.waitFor(() => expect(output.text).toContain("NOW  idle"));
   output.columns = 60;
   output.emit("resize");
