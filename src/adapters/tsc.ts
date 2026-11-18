@@ -36,6 +36,9 @@ const resolveTsc = (root: string): string => {
 
 interface Spawned {
   stdout: string;
+  stderr: string;
+  code: number | null;
+  signal: NodeJS.Signals | null;
   killed: boolean;
   ms: number;
 }
@@ -49,9 +52,13 @@ const spawnTsc = (tsc: string, ctx: RunContext, budgetMs: number): Promise<Spawn
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
+    let stderr = "";
     let killed = false;
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
     });
     const timer = setTimeout(() => {
       killed = true;
@@ -61,16 +68,19 @@ const spawnTsc = (tsc: string, ctx: RunContext, budgetMs: number): Promise<Spawn
       clearTimeout(timer);
       reject(err);
     });
-    child.on("close", () => {
+    child.on("close", (code, signal) => {
       clearTimeout(timer);
-      resolve({ stdout, killed, ms: performance.now() - start });
+      resolve({ stdout, stderr, code, signal, killed, ms: performance.now() - start });
     });
   });
 
 const run = async (gs: Guardrail[], _files: string[], ctx: RunContext): Promise<RunResult[]> => {
   const tsc = resolveTsc(ctx.root);
   const budgetMs = Math.min(...gs.map((g) => g.budgetMs));
-  const { stdout, killed, ms } = await spawnTsc(tsc, ctx, budgetMs);
+  const { stdout, stderr, code, signal, killed, ms } = await spawnTsc(tsc, ctx, budgetMs);
+  if (!killed && (signal !== null || (code !== 0 && code !== 1 && code !== 2))) {
+    throw new Error(`tsc ended with ${signal ?? `exit code ${code}`}: ${stderr.trim()}`);
+  }
   const owners = new Map<number, string>();
   for (const g of gs) for (const code of FLAG_CODES[flagOf(g)] ?? []) owners.set(code, g.id);
   const baseline = gs.find((g) => flagOf(g) === BASELINE)?.id ?? BASELINE_ID;
@@ -88,6 +98,10 @@ const run = async (gs: Guardrail[], _files: string[], ctx: RunContext): Promise<
         message: `TS${m[3]}: ${m[4]}`,
       });
     }
+  }
+  const parsed = [...byGuardrail.values()].some((v) => v.length > 0);
+  if (!killed && code !== 0 && !parsed) {
+    throw new Error(`tsc exited with ${code} and printed no diagnostics: ${stderr.trim()}`);
   }
   return [...byGuardrail].map(([guardrail, violations]) => ({
     guardrail,

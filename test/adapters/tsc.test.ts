@@ -129,4 +129,43 @@ describe("tsc adapter", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  const withStubTsc = async (script: string, fn: (root: string) => Promise<void>): Promise<void> => {
+    const root = await mkdtemp(join(tmpdir(), "warden-tsc-stub-"));
+    try {
+      await mkdir(join(root, "node_modules/typescript/bin"), { recursive: true });
+      await writeFile(join(root, "package.json"), "{}");
+      await writeFile(join(root, "node_modules/typescript/package.json"), '{"name":"typescript","version":"0.0.0"}');
+      await writeFile(join(root, "node_modules/typescript/bin/tsc"), script);
+      await fn(root);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  };
+
+  const g = guardrail("strict-null", "tsc:strictNullChecks");
+
+  it("throws with stderr when tsc crashes with an unexpected exit code", async () => {
+    await withStubTsc('process.stderr.write("boom reason\\n"); process.exit(3);', async (root) => {
+      await expect(tscAdapter.run([g], [], ctxFor(root))).rejects.toThrow(/boom reason/);
+    });
+  });
+
+  it("throws when tsc exits nonzero without any diagnostic", async () => {
+    await withStubTsc("process.exit(2);", async (root) => {
+      await expect(tscAdapter.run([g], [], ctxFor(root))).rejects.toThrow(/exited with 2/);
+    });
+  });
+
+  it("throws when a signal ends tsc outside the budget kill", async () => {
+    await withStubTsc('process.kill(process.pid, "SIGKILL");', async (root) => {
+      await expect(tscAdapter.run([g], [], ctxFor(root))).rejects.toThrow(/SIGKILL/);
+    });
+  });
+
+  it("does not stall on large stderr output", async () => {
+    await withStubTsc('process.stderr.write("x".repeat(500000)); process.exit(3);', async (root) => {
+      await expect(tscAdapter.run([g], [], ctxFor(root))).rejects.toThrow(/exit code 3/);
+    });
+  });
 });
