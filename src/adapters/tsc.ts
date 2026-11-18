@@ -1,6 +1,5 @@
 import { createRequire } from "node:module";
 import { join, relative } from "node:path";
-import { RecordError } from "../records/load.js";
 import { spawnBudgeted } from "./cmd.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
 import { type Adapter, PARSE_ERROR, type RunContext, type RunResult, type Violation } from "./types.js";
@@ -26,19 +25,12 @@ const emit = (gs: Guardrail[], _set: RecordSet): Record<string, string> => {
   return { [CONFIG_PATH]: `${JSON.stringify(config, null, 2)}\n` };
 };
 
-const resolveTsc = (root: string): string => {
-  try {
-    return createRequire(join(root, "package.json")).resolve("typescript/bin/tsc");
-  } catch {
-    throw new RecordError("", "/guardrails", `cannot resolve typescript from project root ${root}`);
-  }
-};
+const TSC = createRequire(import.meta.url).resolve("typescript/bin/tsc");
 
 const run = async (gs: Guardrail[], _files: string[], ctx: RunContext): Promise<RunResult[]> => {
-  const tsc = resolveTsc(ctx.root);
   const budgetMs = ctx.unbudgeted === true ? undefined : Math.min(...gs.map((g) => g.budgetMs));
   const project = join(relative(ctx.root, ctx.generatedDir), "tsconfig.json");
-  const { stdout, stderr, code, signal, killed, ms } = await spawnBudgeted(process.execPath, [tsc, "-p", project, "--pretty", "false"], ctx.root, budgetMs);
+  const { stdout, stderr, code, signal, killed, ms } = await spawnBudgeted(process.execPath, [TSC, "-p", project, "--pretty", "false"], ctx.root, budgetMs);
   if (!killed && (signal !== null || (code !== 0 && code !== 1 && code !== 2))) {
     throw new Error(`tsc ended with ${signal ?? `exit code ${code}`}: ${stderr.trim()}`);
   }

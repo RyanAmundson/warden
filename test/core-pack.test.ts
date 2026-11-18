@@ -48,7 +48,7 @@ afterEach(() => rm(root, { recursive: true, force: true }));
 describe("core pack", () => {
   it("core pack examples hold", async () => {
     expect(guardrails.map((g) => g.id)).toEqual(["warden-no-comments", "warden-no-suppressions"]);
-    expect(await runExamples(set, wardenRoot)).toEqual([]);
+    expect(await runExamples(set)).toEqual([]);
   });
 
   it.each(["src/a.tsx", "src/a.mts", "src/a.cts", "src/a.js", "src/a.mjs", "src/a.cjs"])("covers %s files", async (file) => {

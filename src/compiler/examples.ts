@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, matchesGlob, posix } from "node:path";
 import { adapters, runGuardrails, unknownAdapters } from "../runner/run.js";
@@ -24,13 +24,12 @@ const ownedBy = (owned: Set<string>) => (key: string): boolean => {
 
 const enabledOn = (file: string, groups: string[][]): boolean => groups.length === 0 || groups.some((g) => g.every((glob) => matchesGlob(file, glob)));
 
-export async function runExamples(set: RecordSet, wardenRoot: string): Promise<Finding[]> {
+export async function runExamples(set: RecordSet): Promise<Finding[]> {
   const unknown = unknownAdapters(set).map(({ code, record, message }) => ({ code, record, message }));
   if (unknown.length > 0) return unknown;
   const findings: Finding[] = [];
   const project = await mkdtemp(join(tmpdir(), "warden-examples-"));
   try {
-    await symlink(join(wardenRoot, "node_modules"), join(project, "node_modules"));
     await writeFile(join(project, "package.json"), "{}\n");
     await writeFile(join(project, "tsconfig.json"), TSCONFIG);
     const checked: { g: Guardrail; file: string; groups: string[][]; packFile: string }[] = [];

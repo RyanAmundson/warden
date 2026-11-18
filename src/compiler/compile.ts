@@ -102,7 +102,7 @@ export async function expectedOutputs(set: RecordSet, projectRoot: string, warde
 
 export async function compile(projectRoot: string, wardenRoot: string): Promise<{ findings: Finding[]; written: string[] }> {
   const set = await loadRecords(projectRoot, wardenRoot);
-  const findings = [...checkConsistency(set), ...(await runExamples(set, wardenRoot))];
+  const findings = [...checkConsistency(set), ...(await runExamples(set))];
   if (findings.length > 0) return { findings, written: [] };
 
   const { lock, files, owned } = await expectedOutputs(set, projectRoot, wardenRoot);

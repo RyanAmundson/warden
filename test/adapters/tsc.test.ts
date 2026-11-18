@@ -1,12 +1,22 @@
 import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { tscAdapter } from "../../src/adapters/tsc.js";
 import { PARSE_ERROR } from "../../src/adapters/types.js";
-import { RecordError } from "../../src/records/load.js";
 import type { Guardrail, RecordSet } from "../../src/records/types.js";
 import { conformance } from "./conformance.js";
+
+const stub = vi.hoisted((): { path: string | undefined } => ({ path: undefined }));
+
+vi.mock("../../src/adapters/cmd.js", async (original) => {
+  const actual = await original<typeof import("../../src/adapters/cmd.js")>();
+  return {
+    ...actual,
+    spawnBudgeted: (file: string, args: string[], ...rest: [string, number | undefined]) =>
+      actual.spawnBudgeted(file, stub.path === undefined ? args : [stub.path, ...args.slice(1)], ...rest),
+  };
+});
 
 const guardrail = (id: string, implementation: string): Guardrail => ({
   id,
@@ -132,13 +142,14 @@ describe("tsc adapter", () => {
     });
   });
 
-  it("throws a RecordError naming the root when typescript cannot be resolved", async () => {
+  it("a project with no typescript of its own runs tsc Guardrails with Warden's bundled typescript", async () => {
     const root = await mkdtemp(join(tmpdir(), "warden-tsc-none-"));
     try {
-      await writeFile(join(root, "package.json"), "{}");
+      await cp(source, root, { recursive: true });
       const g = guardrail("strict-null", "tsc:strictNullChecks");
-      await expect(tscAdapter.run([g], [], ctxFor(root))).rejects.toThrow(RecordError);
-      await expect(tscAdapter.run([g], [], ctxFor(root))).rejects.toThrow(root);
+      await emitInto(root, [g]);
+      const results = await tscAdapter.run([g], [], ctxFor(root));
+      expect(results.flatMap((r) => r.violations.map((v) => `${v.file}:${v.line}`))).toEqual(["src/a.ts:3"]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -147,12 +158,12 @@ describe("tsc adapter", () => {
   const withStubTsc = async (script: string, fn: (root: string) => Promise<void>): Promise<void> => {
     const root = await mkdtemp(join(tmpdir(), "warden-tsc-stub-"));
     try {
-      await mkdir(join(root, "node_modules/typescript/bin"), { recursive: true });
       await writeFile(join(root, "package.json"), "{}");
-      await writeFile(join(root, "node_modules/typescript/package.json"), '{"name":"typescript","version":"0.0.0"}');
-      await writeFile(join(root, "node_modules/typescript/bin/tsc"), script);
+      await writeFile(join(root, "stub-tsc.js"), script);
+      stub.path = join(root, "stub-tsc.js");
       await fn(root);
     } finally {
+      stub.path = undefined;
       await rm(root, { recursive: true, force: true });
     }
   };

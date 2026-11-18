@@ -263,6 +263,33 @@ describe("compile", () => {
     expect(JSON.parse(await read(".warden/generated/tsconfig.json"))["@generated"]).toMatch(HEADER);
   });
 
+  it("proves tsc examples with Warden's bundled typescript when no node_modules sits beside Warden's packs", async () => {
+    const installed = await mkdtemp(join(tmpdir(), "warden-installed-"));
+    try {
+      await cp(join(wardenRoot, "packs"), join(installed, "packs"), { recursive: true });
+      await cp(join(wardenRoot, "package.json"), join(installed, "package.json"));
+      await usePack(
+        localPack(
+          [
+            "    guardrails:",
+            "      - id: local-no-implicit-any",
+            "        kind: type",
+            "        runs: [commit]",
+            "        budgetMs: 60000",
+            "        version: 1",
+            "        implementation: \"tsc:noImplicitAny\"",
+            "        mustFail: \"export function f(a) { return a; }\\n\"",
+            "        mustPass: \"export const a: number = 1;\\n\"",
+          ].join("\n"),
+        ),
+      );
+      const { findings } = await compile(root, installed);
+      expect(findings).toEqual([]);
+    } finally {
+      await rm(installed, { recursive: true, force: true });
+    }
+  });
+
   it("a mustPass example that fails another guardrail is an example-conflict", async () => {
     const guardrail = (id: string, rule: string, fail: string, pass: string): string =>
       [
@@ -285,7 +312,7 @@ describe("compile", () => {
       ),
     );
     const set = await loadRecords(root, wardenRoot);
-    const findings = await runExamples(set, wardenRoot);
+    const findings = await runExamples(set);
     expect(findings.map((f) => `${f.code} ${f.record}`)).toEqual(["example-conflict local-no-var"]);
     expect(findings[0]?.message).toContain("local-prefer-const");
   });
@@ -320,7 +347,7 @@ describe("compile", () => {
         "",
       ].join("\n"),
     );
-    expect(await runExamples(await loadRecords(root, wardenRoot), wardenRoot)).toEqual([]);
+    expect(await runExamples(await loadRecords(root, wardenRoot))).toEqual([]);
     await writeFile(
       join(root, ".warden/packs/local/pack.yaml"),
       [
@@ -333,7 +360,7 @@ describe("compile", () => {
         "",
       ].join("\n"),
     );
-    expect((await runExamples(await loadRecords(root, wardenRoot), wardenRoot)).map((f) => `${f.code} ${f.record}`)).toEqual(["example-conflict in-a-g"]);
+    expect((await runExamples(await loadRecords(root, wardenRoot))).map((f) => `${f.code} ${f.record}`)).toEqual(["example-conflict in-a-g"]);
   });
 
   it("emitting outputs for an unknown adapter refuses with the shared finding's message", async () => {
