@@ -48,7 +48,6 @@ const nested = (n: number): string =>
 const longFunction = (total: number): string =>
   `export const f = (): void => {\n${lines(total - 2, () => "  Math.abs(1);")}\n};\n`;
 
-
 let root: string;
 let set: RecordSet;
 let guardrails: Guardrail[];
@@ -95,7 +94,9 @@ describe("principles pack", () => {
     ["principles-file-length", `${lines(301, (i) => `export const x${i} = ${i};`)}\n`, "fail"],
     ["principles-one-class-per-file", "export class A {}\n", "pass"],
     ["principles-one-class-per-file", "export class A {}\nexport class B {}\n", "fail"],
-    ["principles-unused-locals", "const x = { a: 1, b: 2 };\nconst { a, ...rest } = x;\nexport { a, rest };\n", "pass"],
+    ["principles-unused-locals", "const x = { a: 1, b: 2 };\nconst { a, ...rest } = x;\nexport { rest };\n", "pass"],
+    ["principles-unused-locals", "const x = { a: 1, b: 2 };\nconst { a, ...rest } = x;\nexport { a };\n", "fail"],
+    ["principles-unused-locals", "export type F = (unused: number) => void;\nconst unused = 1;\n", "fail"],
     ["principles-unused-locals", "export type F = (unused: number) => void;\n", "pass"],
     ["principles-unused-locals", "const unused = 1;\n", "fail"],
   ])("%s: %#", async (id, source, status) => {
