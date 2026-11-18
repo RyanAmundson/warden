@@ -1,14 +1,11 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, join, matchesGlob } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { compile } from "../compiler/compile.js";
 import { RecordError, loadRecords } from "../records/load.js";
 import { initAction, listPacks } from "./packs.js";
-import { PARSE_ERROR } from "../adapters/types.js";
-import { type Baseline, writeBaseline } from "../runner/baseline.js";
+import { measureBaseline, writeBaseline } from "../runner/baseline.js";
 import { verifyBase } from "../runner/changed.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
-import { runGuardrails } from "../runner/run.js";
 
 const CONFIG_PATH = ".warden/config.yaml";
 
@@ -25,13 +22,6 @@ const configText = (project: string, packs: string[], base: string): string =>
     "loopBreakerRepeats: 3",
     "",
   ].join("\n");
-
-const projectFiles = (root: string, globs: string[]): string[] => {
-  const out = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" });
-  return out
-    .split("\0")
-    .filter((f) => f !== "" && existsSync(join(root, f)) && statSync(join(root, f)).isFile() && globs.some((g) => matchesGlob(f, g)));
-};
 
 const SETTINGS = ".claude/settings.json";
 
@@ -81,21 +71,11 @@ async function initialize(root: string, wardenRoot: string, packs: string[], bas
 
   const set = await loadRecords(root, wardenRoot);
   const guardrails = set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.filter((g) => g.kind !== "instruction")));
-  const files = projectFiles(root, set.config.packs.flatMap((p) => p.paths));
-  const results = files.length === 0 ? [] : await runGuardrails(set, guardrails, files, { root, generatedDir: join(root, ".warden/generated"), unbudgeted: true });
-  const unparsed = results.filter((r) => r.guardrail === PARSE_ERROR).flatMap((r) => r.violations.map((v) => `${v.file}:${v.line}`));
+  const { baseline, files, unparsed } = await measureBaseline(set, guardrails);
   if (unparsed.length > 0) throw new RecordError("", "", `cannot baseline files that do not parse: ${unparsed.join(", ")}. Next action: fix the syntax error, then run warden init again.`);
-
-  const baseline: Baseline = {};
-  for (const r of results) {
-    for (const v of r.violations) {
-      const entries = (baseline[r.guardrail] ??= {});
-      entries[v.file] = (entries[v.file] ?? 0) + 1;
-    }
-  }
   writeBaseline(root, baseline);
   const total = Object.values(baseline).reduce((n, e) => n + Object.values(e).reduce((a, b) => a + b, 0), 0);
-  process.stdout.write(`Initialized .warden in ${root}: ${guardrails.length} Guardrails, ${total} existing violations baselined across ${files.length} files.\n`);
+  process.stdout.write(`Initialized .warden in ${root}: ${guardrails.length} Guardrails, ${total} existing violations baselined across ${files} files.\n`);
 }
 
 export async function runDoctor(root: string, wardenRoot: string): Promise<number> {

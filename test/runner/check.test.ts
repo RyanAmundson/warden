@@ -1624,3 +1624,43 @@ describe("engine review: deleting only config.yaml", () => {
     expect(await tampered()).toEqual([{ file: ".warden/config.yaml", detail: "removed" }]);
   });
 });
+
+describe("engine review: a Guardrail added after init", () => {
+  const withDebugger = (): string =>
+    [
+      localPack().trimEnd(),
+      "  - id: no-debugger",
+      "    statement: Never leave a debugger statement.",
+      "    terms: []",
+      "    paths: []",
+      "    conflictsWith: []",
+      "    guardrails:",
+      "      - id: local-no-debugger",
+      "        kind: lint",
+      "        runs: [edit, commit]",
+      "        budgetMs: 5000",
+      "        version: 1",
+      '        implementation: "eslint:no-debugger"',
+      '        mustFail: "debugger;\\n"',
+      '        mustPass: "const a = 1;\\n"',
+      "",
+    ].join("\n");
+
+  it("baselines its existing violations when compile adds it, so an unrelated edit to an old file passes", async () => {
+    git("checkout", "-q", "main");
+    await write("c.ts", "debugger;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "old debugger");
+    git("checkout", "-q", "feature");
+    git("merge", "-q", "--no-edit", "main");
+    await write(".warden/packs/local/pack.yaml", withDebugger());
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect(JSON.parse(await read(".warden/baseline.json"))["local-no-debugger"]).toEqual({ "c.ts": 1 });
+    await write("c.ts", "debugger;\nconst c = 1;\n");
+    const { code, out } = await check();
+    expect(out).toBe("");
+    expect(code).toBe(0);
+    await write("c.ts", "debugger;\nconst c = 1;\ndebugger;\n");
+    expect((await check()).code).toBe(1);
+  });
+});

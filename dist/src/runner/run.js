@@ -5,7 +5,7 @@ import { statSync } from "node:fs";
 import { join } from "node:path";
 import { RecordError } from "../records/load.js";
 export const adapters = new Map([eslintAdapter, tscAdapter, cmdAdapter].map((a) => [a.id, a]));
-const prefixOf = (g) => g.implementation.slice(0, g.implementation.indexOf(":"));
+export const prefixOf = (g) => g.implementation.slice(0, g.implementation.indexOf(":"));
 export const unknownAdapters = (set) => {
     const known = [...adapters.keys()];
     return set.packs.flatMap((pack) => pack.practices

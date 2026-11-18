@@ -10,7 +10,7 @@ import type { Finding } from "../compiler/consistency.js";
 
 export const adapters = new Map<string, Adapter>([eslintAdapter, tscAdapter, cmdAdapter].map((a) => [a.id, a]));
 
-const prefixOf = (g: Guardrail): string => g.implementation.slice(0, g.implementation.indexOf(":"));
+export const prefixOf = (g: Guardrail): string => g.implementation.slice(0, g.implementation.indexOf(":"));
 
 export const unknownAdapters = (set: RecordSet): (Finding & { file: string })[] => {
   const known = [...adapters.keys()];

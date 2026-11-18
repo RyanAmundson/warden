@@ -1,6 +1,8 @@
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { join, matchesGlob } from "node:path";
 import { PARSE_ERROR } from "../adapters/types.js";
+import { runGuardrails } from "./run.js";
 export const BASELINE_PATH = ".warden/baseline.json";
 export function readBaseline(root) {
     try {
@@ -67,4 +69,25 @@ export function applyBaseline(results, baseline, scanned, existing, touched = ()
         if (Object.keys(entries).length === 0)
             delete next[g];
     return { failures, next };
+}
+const projectFiles = (root, globs) => {
+    const out = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" });
+    return out
+        .split("\0")
+        .filter((f) => f !== "" && existsSync(join(root, f)) && statSync(join(root, f)).isFile() && globs.some((g) => matchesGlob(f, g)));
+};
+export async function measureBaseline(set, guardrails) {
+    const files = projectFiles(set.root, set.config.packs.flatMap((p) => p.paths));
+    const results = files.length === 0 || guardrails.length === 0 ? [] : await runGuardrails(set, guardrails, files, { root: set.root, generatedDir: join(set.root, ".warden/generated"), unbudgeted: true });
+    const unparsed = results.filter((r) => r.guardrail === PARSE_ERROR).flatMap((r) => r.violations.map((v) => `${v.file}:${v.line}`));
+    const baseline = {};
+    for (const r of results) {
+        if (r.guardrail === PARSE_ERROR)
+            continue;
+        for (const v of r.violations) {
+            const entries = (baseline[r.guardrail] ??= {});
+            entries[v.file] = (entries[v.file] ?? 0) + 1;
+        }
+    }
+    return { baseline, files: files.length, unparsed };
 }

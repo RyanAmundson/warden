@@ -4,7 +4,9 @@ import { claudeSettingsAdapter } from "../adapters/claude.js";
 import type { Adapter } from "../adapters/types.js";
 import { RecordError, loadRecords, readText } from "../records/load.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
-import { adapters, refuseUnknownAdapters } from "../runner/run.js";
+import { BASELINE_PATH, measureBaseline, readBaseline, writeBaseline } from "../runner/baseline.js";
+import { isRepository } from "../runner/changed.js";
+import { adapters, prefixOf, refuseUnknownAdapters } from "../runner/run.js";
 import { admit } from "./bench.js";
 import { checkConsistency, type Finding } from "./consistency.js";
 import { mergeSettings, stamp } from "./emit.js";
@@ -32,7 +34,7 @@ const emitAll = (set: RecordSet): Record<string, string> => {
   const groups = new Map<string, Guardrail[]>();
   for (const g of set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails))) {
     if (g.kind === "instruction") continue;
-    const prefix = g.implementation.slice(0, g.implementation.indexOf(":"));
+    const prefix = prefixOf(g);
     groups.set(prefix, [...(groups.get(prefix) ?? []), g]);
   }
   const emitted: Record<string, string> = {};
@@ -101,6 +103,15 @@ export async function expectedOutputs(set: RecordSet, projectRoot: string, warde
   return { lock: computeLock(set, generated, sources, version), files, owned };
 }
 
+const previousGuardrails = (text: string | undefined): Lock["guardrails"] | undefined => {
+  if (text === undefined) return undefined;
+  try {
+    return (JSON.parse(text) as Lock).guardrails;
+  } catch {
+    return undefined;
+  }
+};
+
 export async function compile(projectRoot: string, wardenRoot: string): Promise<{ findings: Finding[]; written: string[] }> {
   const set = await loadRecords(projectRoot, wardenRoot);
   const findings = [...checkConsistency(set), ...(await runExamples(set))];
@@ -114,7 +125,20 @@ export async function compile(projectRoot: string, wardenRoot: string): Promise<
     outputs[file] = mergeSettings(file, await readText(join(projectRoot, file)), entries);
   }
 
+  const previous = previousGuardrails(await readText(join(projectRoot, LOCK_PATH)));
   await writeAll(projectRoot, outputs);
   await writeAll(projectRoot, { [LOCK_PATH]: `${JSON.stringify(lock, null, 2)}\n` });
-  return { findings: [], written: [...Object.keys(outputs), LOCK_PATH] };
+  const written = [...Object.keys(outputs), LOCK_PATH];
+  if (previous === undefined || !isRepository(projectRoot)) return { findings: [], written };
+  const checked = set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.filter((g) => g.kind !== "instruction")));
+  const added = new Set(checked.filter((g) => !(g.id in previous)).map((g) => g.id));
+  const prefixes = new Set(checked.filter((g) => added.has(g.id)).map(prefixOf));
+  const { baseline } = await measureBaseline(set, checked.filter((g) => prefixes.has(prefixOf(g))));
+  const located = Object.entries(baseline)
+    .filter(([id]) => added.has(id))
+    .map(([id, entries]) => [id, Object.fromEntries(Object.entries(entries).filter(([file]) => file !== ""))] as const)
+    .filter(([, entries]) => Object.keys(entries).length > 0);
+  if (located.length === 0) return { findings: [], written };
+  writeBaseline(projectRoot, { ...readBaseline(projectRoot), ...Object.fromEntries(located) });
+  return { findings: [], written: [...written, BASELINE_PATH] };
 }

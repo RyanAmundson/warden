@@ -18,9 +18,10 @@ const must = (root, args) => {
         throw new Error(`git ${args.join(" ")} failed: ${r.err.trim()}`);
     return r.out;
 };
+export const isRepository = (root) => git(root, ["rev-parse", "--is-inside-work-tree"]).ok;
 export const CHECK_BASE_ACTION = "run warden check --base <an existing branch>";
 export function verifyBase(root, base, action) {
-    if (!git(root, ["rev-parse", "--is-inside-work-tree"]).ok) {
+    if (!isRepository(root)) {
         throw new RecordError(root, "", "not a git repository");
     }
     if (!git(root, ["rev-parse", "--verify", "--quiet", `${base}^{commit}`]).ok) {
@@ -66,7 +67,7 @@ export const stageFile = (root, path) => {
 };
 export const unstagedFiles = (root) => names(must(root, ["diff", "-z", "--name-only", "--relative"]));
 export function lastCommittedText(root, path) {
-    if (!git(root, ["rev-parse", "--is-inside-work-tree"]).ok)
+    if (!isRepository(root))
         return undefined;
     const head = git(root, ["show", `HEAD:./${path}`]);
     if (head.ok)
