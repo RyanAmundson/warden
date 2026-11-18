@@ -10,6 +10,7 @@ export interface Evidence {
   status?: string;
   ms?: number;
   detail?: string;
+  triggered?: boolean;
 }
 
 export const wardenHome = (): string => process.env.WARDEN_HOME ?? join(homedir(), ".warden");

@@ -273,16 +273,17 @@ describe("runCheck", () => {
     expect(out).toContain("FAIL b.ts:1  no-comments");
   });
 
-  it("loop breaker prints after repeats", async () => {
+  it("loop breaker prints after repeats of an explicit path", async () => {
     await write("b.ts", "// two\nconst b = 1;\n");
-    const runs = [await check(), await check(), await check()];
+    const runs = [await check({ paths: ["b.ts"] }), await check({ paths: ["b.ts"] }), await check({ paths: ["b.ts"] })];
     expect(runs.map((r) => r.code)).toEqual([1, 1, 1]);
     expect(runs[0]?.out).not.toContain("Same failure");
     expect(runs[1]?.out).not.toContain("Same failure");
-    expect(runs[2]?.out).toContain("Same failure 3 times: fix the code to match the compliant example.");
-    expect(runs[2]?.out).toContain(
-      "Next action: this failure repeated 3 times. Rewrite the code to follow \"Do this\", or file warden dispute warden-no-comments b.ts listing the approaches you tried. Stopping without either is recorded as stalled.",
-    );
+    expect(runs[2]?.out).toContain("Same failure 3 times: warden-no-comments in b.ts.");
+    expect(runs[2]?.out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([
+      "Next action: stop editing this file; in your reply, name the rule and file, quote its Do this line, and say why it does not fit; then continue with other work.",
+    ]);
+    expect(runs[2]?.out).not.toContain("dispute");
   });
 
   it("feedback names rule, example, and one next action", async () => {
@@ -740,6 +741,30 @@ describe("final review: lock records base and project", () => {
     expect(code).toBe(2);
     expect(err).toContain("format none");
     expect(err).toContain("recompile on the base branch");
+  });
+});
+
+describe("final review: loop breaker", () => {
+  const hook = (file: string) => check({ format: "agent", hook: "claude", hookInput: JSON.stringify({ tool_input: { file_path: join(root, file) } }) });
+
+  it("repeated checks of changed files that nobody named never trip the loop breaker", async () => {
+    await write("b.ts", "// two\nconst b = 1;\n");
+    const runs = [await check(), await check(), await check()];
+    expect(runs.map((r) => r.code)).toEqual([1, 1, 1]);
+    expect(runs[2]?.out).not.toContain("Same failure");
+  });
+
+  it("hook runs after edits to another file do not count as repeats", async () => {
+    await write("b.ts", "// two\nconst b = 1;\n");
+    await write("c.ts", "const c = 1;\n");
+    const runs = [await hook("c.ts"), await hook("c.ts"), await hook("c.ts")];
+    expect(runs.map((r) => (JSON.parse(r.out) as { reason: string }).reason).some((r) => r.includes("Same failure"))).toBe(false);
+  });
+
+  it("hook runs after edits to the failing file trip the loop breaker", async () => {
+    await write("b.ts", "// two\nconst b = 1;\n");
+    const runs = [await hook("b.ts"), await hook("b.ts"), await hook("b.ts")];
+    expect((JSON.parse(runs[2]?.out ?? "") as { reason: string }).reason).toContain("Next action: stop editing this file");
   });
 });
 

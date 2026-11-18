@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command, CommanderError } from "commander";
@@ -56,6 +56,7 @@ program
       tier: oneOf<Tier>("tier", o.tier, ["edit", "commit", "boundary"]),
       format: oneOf<Format>("format", o.format, ["text", "agent", "json"]),
       hook: o.hook === undefined ? undefined : oneOf("hook", o.hook, ["claude"] as const),
+      hookInput: o.hook === undefined ? undefined : readFileSync(0, "utf8"),
     });
   });
 

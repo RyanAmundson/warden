@@ -18,8 +18,10 @@ const git = (...args: string[]): void => {
   });
 };
 
-const warden = (...args: string[]): { code: number | null; out: string; err: string } => {
-  const r = spawnSync("node", [main, ...args], { cwd: root, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home } });
+const warden = (...args: string[]): { code: number | null; out: string; err: string } => wardenIn(root, "", ...args);
+
+const wardenIn = (cwd: string, input: string, ...args: string[]): { code: number | null; out: string; err: string } => {
+  const r = spawnSync("node", [main, ...args], { cwd, input, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home } });
   return { code: r.status, out: r.stdout, err: r.stderr };
 };
 
@@ -187,5 +189,18 @@ describe("warden CLI", () => {
     const r = warden("compile");
     expect(r.code).toBe(2);
     expect(r.err).toContain("example-failed");
+  });
+
+  it("hook mode reads the edited file from the hook input on stdin", async () => {
+    init();
+    git("add", "-A");
+    git("commit", "-q", "-m", "adopt");
+    await writeFile(join(root, "src/b.ts"), "// new\nexport const b = 1;\n");
+    const input = JSON.stringify({ tool_input: { file_path: join(root, "src/b.ts") } });
+    const reasons = [1, 2, 3].map(() => (JSON.parse(wardenIn(root, input, "check", "--format", "agent", "--hook", "claude").out) as { reason: string }).reason);
+    expect(reasons[2]).toContain("Next action: stop editing this file");
+    const bad = wardenIn(root, "not json", "check", "--format", "agent", "--hook", "claude");
+    expect(bad.code).toBe(2);
+    expect(bad.err).toContain("hook input");
   });
 });

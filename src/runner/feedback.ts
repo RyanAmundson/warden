@@ -45,8 +45,7 @@ const nextAction = (failures: Violation[], set: RecordSet, notes: Notes): string
   const parse = failures.filter((v) => v.guardrail === PARSE_ERROR).sort(byLocation)[0];
   if (parse !== undefined) return `fix the syntax error at ${parse.file}:${parse.line}.`;
   if (notes.repeated !== undefined) {
-    const { guardrail, file, n } = notes.repeated;
-    return `this failure repeated ${n} times. Rewrite the code to follow "Do this", or file warden dispute ${guardrail} ${file} listing the approaches you tried. Stopping without either is recorded as stalled.`;
+    return "stop editing this file; in your reply, name the rule and file, quote its Do this line, and say why it does not fit; then continue with other work.";
   }
   const located = failures.filter((v) => v.file !== "");
   const legacy = failures.find((v) => v.file === "" && ownerOf(set, v.guardrail)?.guardrail.implementation.startsWith("cmd:") === true);
@@ -119,7 +118,7 @@ export function formatFeedback(failures: Violation[], set: RecordSet, format: Fo
     if (item.why !== undefined) lines.push(`  Why:      ${item.why}`);
   }
   if (notes.repeated !== undefined) {
-    lines.push(`Same failure ${notes.repeated.n} times: fix the code to match the compliant example.`);
+    lines.push(`Same failure ${notes.repeated.n} times: ${notes.repeated.guardrail} in ${notes.repeated.file}.`);
   }
   if (next !== null) lines.push(`Next action: ${next}`);
   return lines.join("\n");

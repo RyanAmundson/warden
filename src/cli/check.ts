@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { PARSE_ERROR, type RunContext, type RunResult, type Violation } from "../adapters/types.js";
 import { wardenVersion } from "../compiler/compile.js";
@@ -8,7 +8,7 @@ import type { Guardrail, RecordSet, Tier } from "../records/types.js";
 import { applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
 import { changedFiles, changesSinceMergeBase, lastCommittedText, showAtMergeBase, verifyBase } from "../runner/changed.js";
-import { appendEvidence, readEvidence } from "../runner/evidence.js";
+import { type Evidence, appendEvidence, readEvidence } from "../runner/evidence.js";
 import { type Format, type Notes, type Repeated, formatFeedback } from "../runner/feedback.js";
 import { runGuardrails } from "../runner/run.js";
 import { type Tamper, findTampering } from "../runner/tamper.js";
@@ -21,6 +21,7 @@ export interface CheckOptions {
   tier?: Tier;
   format: Format;
   hook?: "claude";
+  hookInput?: string;
 }
 
 const selectGuardrails = (set: RecordSet, rule: string | undefined): Guardrail[] => {
@@ -50,6 +51,19 @@ const scannedFiles = (root: string, base: string, paths: string[] | undefined): 
     }
     return file;
   });
+};
+
+const hookTrigger = (root: string, input: string): string => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(input);
+  } catch {
+    throw new RecordError("hook input", "", "is not JSON");
+  }
+  const file = (parsed as { tool_input?: { file_path?: unknown } } | null)?.tool_input?.file_path;
+  if (typeof file !== "string") throw new RecordError("hook input", "/tool_input/file_path", "is missing");
+  const absolute = resolve(root, file);
+  return relative(root, existsSync(absolute) ? realpathSync(absolute) : absolute);
 };
 
 const runCached = async (
@@ -172,13 +186,19 @@ const check = async (opts: CheckOptions): Promise<number> => {
     appendEvidence(project, { at, kind: "cost", guardrail: r.guardrail, status: r.overBudget === true ? "over-budget" : r.status, ms: r.ms });
   }
   const prior = readEvidence(project);
+  const trigger = new Set(
+    opts.hook === "claude" ? (opts.hookInput === undefined ? [] : [hookTrigger(root, opts.hookInput)]) : opts.paths === undefined ? [] : scanned,
+  );
   let repeated: Repeated | undefined;
   for (const key of new Set(failures.map((v) => `${v.guardrail}\0${v.file}`))) {
     const [guardrail, file] = key.split("\0") as [string, string];
     const detail = shas.get(file) ?? (file !== "" && exists(file) ? sha256(readFileSync(join(root, file))) : "");
-    const n =
-      prior.filter((e) => e.kind === "fired" && e.status === "fail" && e.guardrail === guardrail && e.file === file && e.detail === detail).length + 1;
-    appendEvidence(project, { at, kind: "fired", guardrail, file, status: "fail", detail });
+    const triggered = trigger.has(file);
+    appendEvidence(project, { at, kind: "fired", guardrail, file, status: "fail", detail, triggered });
+    if (!triggered) continue;
+    const same = (e: Evidence): boolean =>
+      e.kind === "fired" && e.status === "fail" && e.triggered === true && e.guardrail === guardrail && e.file === file && e.detail === detail;
+    const n = prior.filter(same).length + 1;
     if (n >= loopBreakerRepeats && (repeated === undefined || n > repeated.n)) repeated = { guardrail, file, n };
   }
   return report(failures, set, opts, { repeated, overBudget, killed });
