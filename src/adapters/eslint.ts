@@ -1,8 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
-import { ESLint, type Linter } from "eslint";
-import tseslint from "typescript-eslint";
-import { plugin } from "../../eslint-plugin/index.js";
+import type { ESLint, Linter } from "eslint";
 import { RecordError } from "../records/load.js";
 import { pathGroups } from "../records/paths.js";
 import type { Guardrail, Practice, RecordSet } from "../records/types.js";
@@ -96,7 +94,8 @@ const doThisFor = (doThis: string | undefined): { doThis?: string } => (doThis =
 
 const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<RunResult[]> => {
   const { entries } = JSON.parse(await readFile(join(ctx.generatedDir, "eslint.rules.json"), "utf8"));
-  const eslint = new ESLint({
+  const [{ ESLint: Linting }, { default: tseslint }, { plugin }] = await Promise.all([import("eslint"), import("typescript-eslint"), import("../../eslint-plugin/index.js")]);
+  const eslint = new Linting({
     cwd: ctx.root,
     overrideConfigFile: true,
     overrideConfig: [

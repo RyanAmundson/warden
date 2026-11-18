@@ -5,6 +5,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RecordSet } from "../../src/records/types.js";
 import { doctor } from "../../src/runner/doctor.js";
 
+const missing = vi.hoisted((): { name: string | undefined } => ({ name: undefined }));
+
+vi.mock("node:module", async (original) => {
+  const actual = await original<typeof import("node:module")>();
+  return {
+    ...actual,
+    createRequire: (from: string | URL) => {
+      const real = actual.createRequire(from);
+      return Object.assign((id: string) => real(id), {
+        resolve: (id: string) => {
+          if (id === missing.name) throw new Error(`Cannot find module '${id}'`);
+          return real.resolve(id);
+        },
+      });
+    },
+  };
+});
+
 let root: string;
 
 const setWith = (...commands: string[]): RecordSet => ({
@@ -52,7 +70,7 @@ describe("doctor", () => {
       "ok    tool warden eslint plugin",
       "ok    cmd script-0: npm run test:changed",
       "ok    cmd script-1: npm test",
-      "ok    cmd script-2: test ! -e broken",
+      "ok    cmd script-2: test ! -e broken  (shell)",
     ]);
   });
 
@@ -79,6 +97,30 @@ describe("doctor", () => {
     const result = await doctor(setWith("mytool --all", "othertool"));
     expect(result.lines.slice(4)).toEqual(["ok    cmd script-0: mytool --all", "FAIL  cmd script-1: othertool  othertool is not on PATH"]);
     expect(result.next).toBe("install othertool so it is on PATH, then run warden doctor");
+  });
+
+  it("skips leading assignments and treats builtins, keywords, and compound commands as the shell's", async () => {
+    await writeFile(join(root, "package.json"), JSON.stringify({ scripts: {} }));
+    const result = await doctor(setWith("FOO=1 test ! -e broken", "cd src && true", "( true )", "if true; then true; fi", "FOO=1 BAR=2 npm run lint"));
+    expect(result.lines.slice(4)).toEqual([
+      "ok    cmd script-0: FOO=1 test ! -e broken  (shell)",
+      "ok    cmd script-1: cd src && true  (shell)",
+      "ok    cmd script-2: ( true )  (shell)",
+      "ok    cmd script-3: if true; then true; fi  (shell)",
+      'FAIL  cmd script-4: FOO=1 BAR=2 npm run lint  package.json has no "lint" script',
+    ]);
+    expect(result.next).toBe('add a "lint" script to package.json, then run warden doctor');
+  });
+
+  it("reports a bundled tool that does not resolve, with its next action", async () => {
+    missing.name = "typescript";
+    try {
+      const result = await doctor(setWith());
+      expect(result.lines[2]).toMatch(/^FAIL {2}tool typescript {2}/);
+      expect(result.next).toBe("reinstall Warden so its bundled typescript loads, then run warden doctor");
+    } finally {
+      missing.name = undefined;
+    }
   });
 
   it("resolves a command given as a path from the project root", async () => {

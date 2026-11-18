@@ -997,6 +997,18 @@ describe("bundled tool versions in the lock", () => {
     expect(err).toContain("Next action: run warden compile.");
   });
 
+  it("an edited generated file is still tampering when the lock's tools are also deleted", async () => {
+    await editLock((lock) => {
+      delete lock.tools;
+    });
+    const rules = ".warden/generated/eslint.rules.json";
+    await write(rules, (await read(rules)).replace('"error"', '"off"'));
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    expect(out).toContain(`TAMPERED ${rules}  generated-drift`);
+    expect(await tampered()).toContainEqual({ file: rules, detail: "generated-drift" });
+  });
+
   it("a newer-format base lock without sources gets the format next action when a pack names an unknown adapter", async () => {
     const working = await read(".warden/lock.json");
     git("checkout", "-q", "main");

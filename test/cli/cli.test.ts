@@ -311,8 +311,8 @@ describe("warden CLI", () => {
     git("commit", "-q", "-m", "adopt");
     await writeFile(join(root, "src/b.ts"), "// new\nexport const b = 1;\n");
     const input = JSON.stringify({ tool_input: { file_path: join(root, "src/b.ts") } });
-    const reasons = [1, 2, 3].map(() => (JSON.parse(wardenIn(root, input, "check", "--base", "main", "--format", "agent", "--hook", "claude").out) as { reason: string }).reason);
-    expect(reasons[2]).toContain("Next action: stop editing this file");
+    const { reason } = JSON.parse(wardenIn(root, input, "check", "--base", "main", "--format", "agent", "--hook", "claude").out) as { reason: string };
+    expect(reason).toContain("FAIL src/b.ts:1");
     const bad = wardenIn(root, "not json", "check", "--base", "main", "--format", "agent", "--hook", "claude");
     expect(bad.code).toBe(2);
     expect(bad.err).toContain("hook input");

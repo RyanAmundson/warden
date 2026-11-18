@@ -147,7 +147,7 @@ export async function findTampering(set: RecordSet, wardenRoot: string, base: st
   const sources = [...new Set([...Object.keys(lock.sources), ...Object.keys(expected.lock.sources)])].sort();
   const sourceDrift = sources.filter((file) => lock.sources[file] !== expected.lock.sources[file]);
   found.push(...sourceDrift.map((file): Tamper => ({ file, detail: "source-drift" })));
-  if (sourceDrift.length === 0 && canonicalJson(lock) !== canonicalJson(expected.lock)) {
+  if (sourceDrift.length === 0 && canonicalJson({ ...lock, tools: null }) !== canonicalJson({ ...expected.lock, tools: null })) {
     found.push({ file: LOCK_PATH, detail: "lock-drift" });
   }
 

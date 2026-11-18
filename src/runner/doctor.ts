@@ -32,13 +32,21 @@ const scriptsOf = (root: string): Record<string, unknown> => {
   return (JSON.parse(readFileSync(file, "utf8")) as { scripts?: Record<string, unknown> }).scripts ?? {};
 };
 
+const SHELL_WORDS = new Set([
+  "!", "{", "}", "[[", ".", ":", "[", "alias", "bg", "break", "case", "cd", "command", "continue", "declare", "do", "done", "echo", "elif", "else", "esac", "eval", "exec", "exit", "export", "false", "fg", "fi", "for", "function", "getopts", "hash", "if", "jobs", "kill", "let", "local", "printf", "pwd", "read", "readonly", "return", "select", "set", "shift", "source", "test", "then", "time", "times", "trap", "true", "type", "typeset", "ulimit", "umask", "unalias", "unset", "until", "wait", "while",
+]);
+
 const commandItem = (id: string, command: string, root: string, scripts: Record<string, unknown>): Item => {
   const name = `cmd ${id}: ${command}`;
-  const word = command.trim().split(/\s+/)[0] as string;
-  const script = /^npm\s+test(\s|$)/.test(command.trim()) ? "test" : /^npm\s+run\s+([^\s-]\S*)/.exec(command.trim())?.[1];
+  const words = command.trim().split(/\s+/);
+  while (words.length > 1 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0] as string)) words.shift();
+  const word = words[0] as string;
+  const rest = words.join(" ");
+  const script = /^npm test(\s|$)/.test(rest) ? "test" : /^npm run ([^\s-]\S*)/.exec(rest)?.[1];
   if (word.includes("/")) {
     return executable(resolve(root, word)) ? { name } : { name, problem: `${word} is not an executable file in the project`, fix: `create ${word} as an executable file` };
   }
+  if (SHELL_WORDS.has(word) || !/^[A-Za-z0-9_.+-]+$/.test(word)) return { name: `${name}  (shell)` };
   if (!(process.env.PATH ?? "").split(delimiter).some((dir) => dir !== "" && executable(join(dir, word)))) {
     return { name, problem: `${word} is not on PATH`, fix: `install ${word} so it is on PATH` };
   }

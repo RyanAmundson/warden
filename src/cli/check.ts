@@ -193,16 +193,15 @@ const check = async (opts: CheckOptions): Promise<number> => {
     throw new RecordError(first.file, `/guardrails/${first.record}/implementation`, first.message);
   }
 
-  const locked = existsSync(join(root, LOCK_PATH)) ? readLock(root).tools : bundledTools();
-  const loaded = bundledTools();
-  if (canonicalJson(locked) !== canonicalJson(loaded)) {
-    throw new RecordError(LOCK_PATH, "/tools", `records bundled tools ${JSON.stringify(locked ?? {})}, but this Warden loads ${JSON.stringify(loaded)}. Next action: run warden compile.`);
-  }
-
   const tampered = await findTampering(set, opts.wardenRoot, base);
   if (tampered.length > 0) {
     for (const t of tampered) appendEvidence(project, { at, kind: "tampered", file: t.file, detail: t.detail, guardrail: t.guardrail });
     return report([], set, opts, { tampered });
+  }
+  const locked = existsSync(join(root, LOCK_PATH)) ? readLock(root).tools : bundledTools();
+  const loaded = bundledTools();
+  if (canonicalJson(locked) !== canonicalJson(loaded)) {
+    throw new RecordError(LOCK_PATH, "/tools", `records bundled tools ${JSON.stringify(locked ?? {})}, but this Warden loads ${JSON.stringify(loaded)}. Next action: run warden compile.`);
   }
 
   const tier: Tier = opts.hook === "claude" ? "edit" : (opts.tier ?? "commit");

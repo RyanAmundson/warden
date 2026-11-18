@@ -25,12 +25,11 @@ const emit = (gs: Guardrail[], _set: RecordSet): Record<string, string> => {
   return { [CONFIG_PATH]: `${JSON.stringify(config, null, 2)}\n` };
 };
 
-const TSC = createRequire(import.meta.url).resolve("typescript/bin/tsc");
-
 const run = async (gs: Guardrail[], _files: string[], ctx: RunContext): Promise<RunResult[]> => {
+  const tsc = createRequire(import.meta.url).resolve("typescript/bin/tsc");
   const budgetMs = ctx.unbudgeted === true ? undefined : Math.min(...gs.map((g) => g.budgetMs));
   const project = join(relative(ctx.root, ctx.generatedDir), "tsconfig.json");
-  const { stdout, stderr, code, signal, killed, ms } = await spawnBudgeted(process.execPath, [TSC, "-p", project, "--pretty", "false"], ctx.root, budgetMs);
+  const { stdout, stderr, code, signal, killed, ms } = await spawnBudgeted(process.execPath, [tsc, "-p", project, "--pretty", "false"], ctx.root, budgetMs);
   if (!killed && (signal !== null || (code !== 0 && code !== 1 && code !== 2))) {
     throw new Error(`tsc ended with ${signal ?? `exit code ${code}`}: ${stderr.trim()}`);
   }
