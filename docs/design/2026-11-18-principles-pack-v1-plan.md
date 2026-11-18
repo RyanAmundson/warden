@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship `packs/principles/pack.yaml` with four Practices and ten stock ESLint Guardrails, each proven by its own examples.
+**Goal:** Ship `packs/principles/pack.yaml` with three Practices and nine stock ESLint Guardrails, each proven by its own examples.
 
 **Architecture:** The pack is data only. Each Guardrail names a core ESLint rule (`eslint:<rule>`) with its options; Warden's ESLint adapter runs them all in its single pass. A vitest file proves the examples and the limits.
 
@@ -37,7 +37,7 @@
 
 **Interfaces:**
 - Consumes: `loadRecords`, `runExamples`, `runGuardrails`, `eslintAdapter`, as `test/core-pack.test.ts` uses them.
-- Produces: Guardrail ids, in this order: `principles-complexity`, `principles-nesting-depth`, `principles-function-length`, `principles-parameter-count`, `principles-file-length`, `principles-one-class-per-file`, `principles-no-inheritance-wide-interfaces`, `principles-unused-locals`, `principles-useless-constructor`, `principles-unused-private-members`.
+- Produces: Guardrail ids, in this order: `principles-complexity`, `principles-nesting-depth`, `principles-function-length`, `principles-parameter-count`, `principles-file-length`, `principles-one-class-per-file`, `principles-unused-locals`, `principles-useless-constructor`, `principles-unused-private-members`.
 
 Practices, statements, and rule options (exact):
 
@@ -45,19 +45,11 @@ Practices, statements, and rule options (exact):
 |---|---|---|
 | `small-functions` | Functions stay small: at most 10 branches, 3 levels of nesting, 50 lines, and 4 parameters. | `eslint:complexity` `[{ max: 10 }]`; `eslint:max-depth` `[{ max: 3 }]`; `eslint:max-lines-per-function` `[{ max: 50, skipBlankLines: true, skipComments: true }]`; `eslint:max-params` `[{ max: 4 }]` |
 | `one-responsibility-per-file` | A file holds one responsibility: at most 300 lines and one class. | `eslint:max-lines` `[{ max: 300, skipBlankLines: true, skipComments: true }]`; `eslint:max-classes-per-file` `[1]` |
-| `composition-and-narrow-interfaces` | Classes compose instead of inheriting, except from Error, and an interface has at most 7 members. | `eslint:no-restricted-syntax` with the two selectors below |
 | `no-unused-code` | Code declares nothing it does not use: no unused local, no useless constructor, and no unused private member. | `eslint:no-unused-vars` `[{ args: "none", ignoreRestSiblings: true }]`; `eslint:no-useless-constructor`; `eslint:no-unused-private-class-members` |
 
-`no-restricted-syntax` options:
+Practice `composition-and-narrow-interfaces` moved to `cm-wkqedr.27` during execution: the architecture pack owns `no-restricted-syntax`.
 
-```yaml
-- selector: ":matches(ClassDeclaration, ClassExpression)[superClass]:not([superClass.type='Identifier'][superClass.name='Error'])"
-  message: "composition-and-narrow-interfaces: Classes compose instead of inheriting, except from Error. Move the shared behavior into a function or a field."
-- selector: "TSInterfaceBody[body.length>7]"
-  message: "composition-and-narrow-interfaces: An interface has at most 7 members. Split it into interfaces that each serve one consumer."
-```
-
-Each `mustFail` breaks only its own Guardrail's limit by one. Each `mustPass` is the compliant rewrite and must pass all ten plus `core`.
+Each `mustFail` breaks only its own Guardrail's limit by one. Each `mustPass` is the compliant rewrite and must pass all nine plus `core`.
 
 - [ ] **Step 1: Write the failing test** `test/principles-pack.test.ts`, with config packs `core` then `principles`, both on `["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"]`, and a `check(id, source)` helper like `core-pack.test.ts`'s.
   - `principles pack examples hold`: the ids equal the list above and `await runExamples(set)` equals `[]`.
@@ -80,7 +72,7 @@ The pack-picker tests in `test/cli/cli.test.ts` assume `core` is the only bundle
 
 ### Task 3: Release proof
 
-- [ ] **Step 1:** In a scratch repo with `WARDEN_HOME` set to a scratch folder, install Warden from this branch, run `warden packs`, and confirm a `principles  bundled  4 practices  lint=10` row.
+- [ ] **Step 1:** In a scratch repo with `WARDEN_HOME` set to a scratch folder, install Warden from this branch, run `warden packs`, and confirm a `principles  bundled  3 practices  lint=9` row.
 - [ ] **Step 2:** Run `warden init --packs core,principles`. Expected: exit 0.
-- [ ] **Step 3:** For each of the ten Guardrails, commit-check one passing file and one failing file with `warden check <file> --rule <id>`. Expected: exit 0 then exit 1, with the failure naming the Practice.
+- [ ] **Step 3:** For each of the nine Guardrails, commit-check one passing file and one failing file with `warden check <file> --rule <id>`. Expected: exit 0 then exit 1, with the failure naming the Practice.
 - [ ] **Step 4:** Record the commands and exit codes in bead `cm-wkqedr.5`.

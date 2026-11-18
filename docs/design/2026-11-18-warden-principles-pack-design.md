@@ -26,7 +26,11 @@ today.
 - **Moderate limits:** complexity 10, nesting depth 3, function 50 lines,
   4 parameters, file 300 lines, 7 interface members, 1 class per file.
 - **Inheritance:** no class extends anything except `Error`. A project pack
-  may add its own framework bases later.
+  may add its own framework bases later. This check and the interface-size
+  check moved to the second release after approval: both need
+  `no-restricted-syntax`, which the architecture pack owns, and Warden lets
+  one ESLint rule back only one Guardrail across all packs (coordinator
+  ruling in `cm-wkqedr.1`). Sharing a rule is engine task `cm-wkqedr.25`.
 
 ## Approaches considered
 
@@ -67,7 +71,6 @@ may use its `port` Term in the second release. Every Practice covers
 | | | `principles-parameter-count` | `max-params` max 4 |
 | `one-responsibility-per-file` | Single responsibility | `principles-file-length` | `max-lines` max 300, blank lines and comments skipped |
 | | | `principles-one-class-per-file` | `max-classes-per-file` 1 |
-| `composition-and-narrow-interfaces` | Liskov, interface segregation | `principles-no-inheritance-wide-interfaces` | `no-restricted-syntax`: a class whose superclass is not `Error`; an interface body with more than 7 members |
 | `no-unused-code` | YAGNI | `principles-unused-locals` | `no-unused-vars` with `args: "none"` and `ignoreRestSiblings: true` |
 | | | `principles-useless-constructor` | `no-useless-constructor` |
 | | | `principles-unused-private-members` | `no-unused-private-class-members` |
@@ -75,13 +78,11 @@ may use its `port` Term in the second release. Every Practice covers
 Every Guardrail: kind `lint`, `runs: [edit, commit]`, `budgetMs: 5000`
 (the `core` value), `version: 1`.
 
-`no-restricted-syntax` carries two selectors in one Guardrail because Warden
-lets each ESLint rule implement only one Guardrail. Its messages name which
-selector failed.
+That is three Practices and nine Guardrails in this release.
 
 ## Measured on Context Manager
 
-All ten rules ran in one ESLint pass over 483 tracked TypeScript files (every
+All ten candidate rules ran in one ESLint pass over 483 tracked TypeScript files (every
 eleventh file), November 18, 2026. The rules added about 80 ms of rule time
 in total; the 1.9 s wall time was mostly parsing, which Warden's single pass
 already pays.
@@ -129,6 +130,10 @@ each a `cmd` Guardrail of kind `runtime` at `boundary`:
   (YAGNI).
 - One name exported from two files (SSOT).
 - Unused parameters through `tsc`, once the adapter maps their codes.
+- Practice `composition-and-narrow-interfaces` (Liskov and interface
+  segregation): no class extends anything except `Error`, and an interface
+  has at most 7 members. It uses `no-restricted-syntax` once
+  `cm-wkqedr.25` lets packs share a rule, or a `warden/*` rule.
 
 ## Left to the builder
 
