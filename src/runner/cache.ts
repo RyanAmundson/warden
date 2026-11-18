@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { Violation } from "../adapters/types.js";
 import type { Measurement } from "./evidence.js";
@@ -14,15 +15,17 @@ const cacheDir = (project: string): string => join(wardenHome(), "cache", projec
 export function readCache(project: string, key: string): Violation[] | undefined {
   try {
     return JSON.parse(readFileSync(join(cacheDir(project), `${key}.json`), "utf8")) as Violation[];
-  } catch (cause) {
-    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw cause;
+  } catch {
+    return undefined;
   }
 }
 
 export function writeCache(project: string, key: string, violations: Violation[]): void {
   mkdirSync(cacheDir(project), { recursive: true });
-  writeFileSync(join(cacheDir(project), `${key}.json`), JSON.stringify(violations));
+  const target = join(cacheDir(project), `${key}.json`);
+  const temp = `${target}.${randomUUID()}.tmp`;
+  writeFileSync(temp, JSON.stringify(violations));
+  renameSync(temp, target);
 }
 
 const benchDir = (): string => join(wardenHome(), "bench");

@@ -88,7 +88,7 @@ const runCached = async (set, gs, scanned, shas, ctx, project, run) => {
     const misses = new Set();
     for (const g of lint) {
         for (const f of scanned) {
-            const cached = readCache(project, keyOf(f, g));
+            const cached = run.tier === "edit" ? readCache(project, keyOf(f, g)) : undefined;
             if (cached === undefined)
                 misses.add(f);
             else
@@ -282,7 +282,7 @@ const check = async (opts, live) => {
     };
     const ctx = { root, generatedDir: join(root, ".warden/generated"), onGroup };
     const lockSha = sha256(readFileSync(join(root, LOCK_PATH)));
-    const ran = await runCached(set, guardrails, scanned, shas, ctx, project, { lockSha, warden: running });
+    const ran = await runCached(set, guardrails, scanned, shas, ctx, project, { lockSha, warden: running, tier });
     if (groups === 0) {
         openStep(live, "rules", { members: chosen.map((g) => g.id), ...where });
         closeStep(live, "done", { status: scanned.length === 0 ? "empty" : "cached" });

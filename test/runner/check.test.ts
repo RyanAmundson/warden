@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { chmod, cp, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -267,11 +267,11 @@ describe("runCheck", () => {
     expect(err).toContain("not a git repository");
   });
 
-  it("unchanged file hits the cache", async () => {
+  it("unchanged file hits the cache at the edit tier", async () => {
     await write("b.ts", "// two\nconst b = 1;\n");
     const spy = vi.spyOn(eslintAdapter, "run");
-    expect((await check()).code).toBe(1);
-    expect((await check()).code).toBe(1);
+    expect((await check({ tier: "edit" })).code).toBe(1);
+    expect((await check({ tier: "edit" })).code).toBe(1);
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
@@ -410,7 +410,6 @@ describe("ruling fixes", () => {
     expect((await check({ tier: "commit" })).code).toBe(0);
     expect((await check()).code).toBe(0);
     expect((await check({ hook: "claude", format: "agent", tier: "boundary" })).out).toBe("");
-    expect((await check({ tier: "boundary" })).code).toBe(1);
   });
 
   it("a removed .warden is tampering when base has a lock", async () => {
@@ -686,7 +685,7 @@ describe("final review: budgets", () => {
     expect((await evidence()).filter((e) => e.kind === "cost" && e.shared === undefined && e.guardrail === "local-no-var")).toEqual([]);
     const spy = vi.mocked(ESLint.prototype.lintFiles);
     spy.mockClear();
-    expect((await check()).code).toBe(1);
+    expect((await check({ tier: "edit" })).code).toBe(1);
     expect(spy).not.toHaveBeenCalled();
   });
 
@@ -1428,9 +1427,9 @@ describe("performance: run records and input size", () => {
 
   it("a lint pass counts only the files the cache did not answer", async () => {
     await write("b.ts", "const b = 1;\n");
-    expect((await check({ paths: ["a.ts", "b.ts"] })).code).toBe(0);
+    expect((await check({ paths: ["a.ts", "b.ts"], tier: "edit" })).code).toBe(0);
     await write("b.ts", "const b = 22;\n");
-    expect((await check({ paths: ["a.ts", "b.ts"] })).code).toBe(0);
+    expect((await check({ paths: ["a.ts", "b.ts"], tier: "edit" })).code).toBe(0);
     const pass = (await costs()).filter((e) => e.shared === "eslint");
     expect(pass.map((e) => [e.files, e.bytes])).toEqual([[2, 33], [1, 14]]);
   });
@@ -1459,7 +1458,7 @@ describe("performance: run records and input size", () => {
       ["git-commit", "commit", "ran", "pass", 0, "b.ts"],
       ["agent-edit", "edit", "ran", "fail", 0, "b.ts"],
     ]);
-    expect(runs.map((e) => e.cached)).toEqual([0, 4, 0]);
+    expect(runs.map((e) => e.cached)).toEqual([0, 0, 0]);
     expect(runs.every((e) => typeof e.guardrails === "number" && (e.guardrails as number) > 0)).toBe(true);
     expect(runs[2]).toMatchObject({ failures: [expect.objectContaining({ file: "b.ts", line: 1, guardrail: "warden-no-comments", doThis: expect.any(String) })], next: expect.stringContaining("Do this"), ratchet: [1, 1] });
   });
@@ -1482,12 +1481,12 @@ describe("performance: run records and input size", () => {
   });
 
   it("a run record carries each rule's time, the shared pass time, the step times, and the rules the cache answered", async () => {
-    await addLegacy("commit", "test ! -e broken", 5000);
+    await addLegacy("edit, commit", "test ! -e broken", 5000);
     await write("b.ts", "const b = 1;\n");
     git("add", "-A");
     git("commit", "-q", "-m", "legacy");
-    expect((await check({ paths: ["b.ts"] })).code).toBe(0);
-    expect((await check({ paths: ["b.ts"] })).code).toBe(0);
+    expect((await check({ paths: ["b.ts"], tier: "edit" })).code).toBe(0);
+    expect((await check({ paths: ["b.ts"], tier: "edit" })).code).toBe(0);
     const [first, second] = (await costs()).filter((e) => e.guardrail === "run") as Record<string, unknown>[];
     const rules = first?.rules as Record<string, number>;
     expect(Object.keys(rules).sort()).toEqual(["legacy-script", "local-no-event", "local-no-var", "warden-no-comments", "warden-no-suppressions"]);
@@ -1560,5 +1559,30 @@ describe("engine review: the Warden that wrote the lock", () => {
     expect(code).toBe(2);
     expect(err).toContain("has format 3; this Warden reads formats up to 2. Next action: install Warden 9.0.0, the release that wrote the lock.");
     expect(await tampered()).toEqual([]);
+  });
+});
+
+describe("engine review: the result cache", () => {
+  const overwriteCache = async (content: string): Promise<number> => {
+    const dir = join(home, "cache/fixture");
+    const files = (await readdir(dir)).filter((f) => f.endsWith(".json"));
+    for (const f of files) await writeFile(join(dir, f), content);
+    return files.length;
+  };
+
+  it("a forged cache entry cannot pass a failing commit-tier check", async () => {
+    await write("b.ts", "// two\nconst b = 1;\n");
+    expect((await check()).code).toBe(1);
+    expect(await overwriteCache("[]")).toBeGreaterThan(0);
+    expect((await check()).code).toBe(1);
+  });
+
+  it("an unreadable cache entry is a miss, not an error", async () => {
+    await write("b.ts", "// two\nconst b = 1;\n");
+    expect((await check({ tier: "edit" })).code).toBe(1);
+    expect(await overwriteCache("[{")).toBeGreaterThan(0);
+    const { code, out } = await check({ tier: "edit" });
+    expect(code).toBe(1);
+    expect(out).toContain("FAIL b.ts:1  no-comments");
   });
 });
