@@ -174,9 +174,9 @@ const openStep = (live: Live, step: Step, extra: Partial<Evidence> = {}): void =
   live.open = { step, at: performance.now() };
 };
 
-const nextOf = (message: string): string => {
+const nextOf = (message: string): string | undefined => {
   const at = message.indexOf("Next action: ");
-  return (at === -1 ? message : message.slice(at + "Next action: ".length)).replace(/\.$/, "");
+  return at === -1 ? undefined : message.slice(at + "Next action: ".length).replace(/\.$/, "");
 };
 
 const baselineTotal = (b: Record<string, Record<string, number>>): number => Object.values(b).reduce((n, e) => n + Object.values(e).reduce((a, x) => a + x, 0), 0);

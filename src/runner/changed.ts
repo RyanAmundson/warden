@@ -24,7 +24,7 @@ export function verifyBase(root: string, base: string): void {
     throw new RecordError(root, "", "not a git repository");
   }
   if (!git(root, ["rev-parse", "--verify", "--quiet", `${base}^{commit}`]).ok) {
-    throw new RecordError(".warden/config.yaml", "/base", `base ref "${base}" does not exist`);
+    throw new RecordError(".warden/config.yaml", "/base", `base ref "${base}" does not exist. Next action: run warden check --base <an existing branch>`);
   }
 }
 
