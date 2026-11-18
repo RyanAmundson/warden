@@ -2,7 +2,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { expectedOutputs } from "../compiler/compile.js";
 import { isWardenEntry } from "../compiler/emit.js";
-import { LOCK_PATH, type Lock, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
+import { LOCK_FORMAT, LOCK_PATH, type Lock, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError, readText } from "../records/load.js";
 import type { RecordSet } from "../records/types.js";
 import { BASELINE_PATH, type Baseline, carryRenames, projectWideEntries, readBaseline } from "./baseline.js";
@@ -58,9 +58,18 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
   const text = showAtMergeBase(root, base, LOCK_PATH);
   if (text === undefined) return [];
   const before = JSON.parse(text) as Lock;
+  if (before.format !== LOCK_FORMAT) {
+    throw new RecordError(
+      LOCK_PATH,
+      "/format",
+      `the lock at the merge base with ${base} has format ${before.format ?? "none"}; this Warden reads format ${LOCK_FORMAT}. Next action: recompile on the base branch (run warden compile on ${base} and commit the lock), then run warden check again.`,
+    );
+  }
   const found: Tamper[] = [];
   const tiers = Object.keys(lock.config.tierBudgetMs) as (keyof Lock["config"]["tierBudgetMs"])[];
   if (
+    lock.config.base !== before.config.base ||
+    lock.config.project !== before.config.project ||
     lock.config.loopBreakerRepeats > before.config.loopBreakerRepeats ||
     tiers.some((t) => lock.config.tierBudgetMs[t] > before.config.tierBudgetMs[t])
   ) {

@@ -71,7 +71,8 @@ describe("compile", () => {
       runs: ["commit", "edit"],
       paths: ["**/*.{ts,tsx,mts,cts} & src/**"],
     });
-    expect(lock.config).toEqual({ tierBudgetMs: { edit: 2000, commit: 30000, boundary: 120000 }, loopBreakerRepeats: 3 });
+    expect(lock.format).toBe(1);
+    expect(lock.config).toEqual({ project: "fixture", base: "main", tierBudgetMs: { edit: 2000, commit: 30000, boundary: 120000 }, loopBreakerRepeats: 3 });
   });
 
   it("lock hashes the emitted bytes", async () => {

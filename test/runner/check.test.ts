@@ -709,6 +709,40 @@ describe("final review: changed lines and renames", () => {
   });
 });
 
+describe("final review: lock records base and project", () => {
+  it("pointing base at the working branch and recompiling is loosening", async () => {
+    await write(".warden/config.yaml", config(["core", "local"]).replace("base: main", "base: feature"));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect(readLock(root).config.base).toBe("feature");
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "loosened" }]);
+  });
+
+  it("renaming the project and recompiling is loosening", async () => {
+    await write(".warden/config.yaml", config(["core", "local"]).replace("project: fixture", "project: other"));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    expect(out).toContain("TAMPERED .warden/lock.json  loosened");
+  });
+
+  it("a base lock with another format exits 2 and says to recompile on the base branch", async () => {
+    git("checkout", "-q", "main");
+    const lock = JSON.parse(await read(".warden/lock.json")) as Record<string, unknown>;
+    delete lock.format;
+    await write(".warden/lock.json", JSON.stringify(lock));
+    git("commit", "-q", "-am", "old lock");
+    git("checkout", "-q", "feature");
+    git("merge", "-q", "--no-edit", "main");
+    await write(".warden/lock.json", `${JSON.stringify(readLock(root))}\n`);
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    const { code, err } = await check();
+    expect(code).toBe(2);
+    expect(err).toContain("format none");
+    expect(err).toContain("recompile on the base branch");
+  });
+});
+
 describe("applyBaseline", () => {
   const result = (guardrail: string, files: string[], status: RunResult["status"] = "fail"): RunResult => ({
     guardrail,

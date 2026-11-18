@@ -4,12 +4,15 @@ import { join } from "node:path";
 import { pathGroups } from "../records/paths.js";
 import type { Kind, ProjectConfig, RecordSet, Tier } from "../records/types.js";
 
+export const LOCK_FORMAT = 1;
+
 export interface Lock {
+  format: number;
   warden: string;
   sources: Record<string, string>;
   generated: Record<string, string>;
   guardrails: Record<string, LockedGuardrail>;
-  config: Pick<ProjectConfig, "tierBudgetMs" | "loopBreakerRepeats">;
+  config: Pick<ProjectConfig, "project" | "base" | "tierBudgetMs" | "loopBreakerRepeats">;
 }
 
 export interface LockedGuardrail {
@@ -67,13 +70,14 @@ export function computeLock(
       }),
     )
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  const { tierBudgetMs, loopBreakerRepeats } = set.config;
+  const { project, base, tierBudgetMs, loopBreakerRepeats } = set.config;
   return {
+    format: LOCK_FORMAT,
     warden,
     sources: hashed(sources),
     generated: hashed(generated),
     guardrails: Object.fromEntries(guardrails),
-    config: { tierBudgetMs, loopBreakerRepeats },
+    config: { project, base, tierBudgetMs, loopBreakerRepeats },
   };
 }
 
