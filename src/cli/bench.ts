@@ -6,12 +6,10 @@ import { examplePrefix, withExampleProject } from "../compiler/examples.js";
 import { RecordError, loadRecords } from "../records/load.js";
 import { pathGroups } from "../records/paths.js";
 import type { BenchSettings, Guardrail, Pack, RecordSet } from "../records/types.js";
-import { type Measurement, type Verdict, appendEvidence } from "../runner/evidence.js";
+import { ESLINT_PASS, type Measurement, type Verdict, appendEvidence } from "../runner/evidence.js";
 import { adapters, runGuardrails } from "../runner/run.js";
 
 export const BENCH_DEFAULTS: BenchSettings = { baseFiles: 25, maxFiles: 3200, minMarginalMs: 20, linearMax: 1.15, sublinearMax: 0.9, constantMs: 5 };
-
-export const ESLINT_PASS = "eslint-pass";
 
 const RUNS = 3;
 

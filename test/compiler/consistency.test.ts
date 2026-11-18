@@ -54,6 +54,13 @@ describe("checkConsistency", () => {
     expect(checkConsistency(set)).toEqual([]);
   });
 
+  it("refuses a Guardrail id that Warden reserves for its own cost rows", () => {
+    const set = build([pack("a", 1, [practice("p1", "a", { guardrails: [guardrail("run")] }), practice("p2", "a", { guardrails: [guardrail("eslint-pass")] })])]);
+    const found = checkConsistency(set).filter((f) => f.code === "reserved-id");
+    expect(found.map((f) => f.record)).toEqual(["eslint-pass", "run"]);
+    expect(found[0]?.message).toBe("Guardrail id eslint-pass is reserved for Warden's own cost and scaling rows. Next action: rename Guardrail eslint-pass in packs/a/pack.yaml, then run warden compile.");
+  });
+
   it("flags duplicate-term at the second occurrence", () => {
     const term = { id: "t", definition: "d", bans: [] };
     const set = build([pack("a", 1, [], [term]), pack("b", 2, [], [term])]);

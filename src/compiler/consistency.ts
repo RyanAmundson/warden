@@ -1,4 +1,5 @@
 import type { Practice, RecordSet } from "../records/types.js";
+import { ESLINT_PASS, RUN_TOTAL } from "../runner/evidence.js";
 
 export interface Finding {
   code: string;
@@ -10,6 +11,7 @@ const CODES = [
   "duplicate-term",
   "duplicate-practice",
   "duplicate-guardrail",
+  "reserved-id",
   "prose-only",
   "conflict-overlap",
   "undefined-conflict",
@@ -49,6 +51,11 @@ export function checkConsistency(set: RecordSet): Finding[] {
   for (const id of duplicates(guardrails.map((g) => g.id))) add("duplicate-guardrail", id, `Guardrail ${id} is defined more than once.`);
 
   for (const pack of set.packs) {
+    for (const g of pack.practices.flatMap((p) => p.guardrails)) {
+      if (g.id === RUN_TOTAL || g.id === ESLINT_PASS) {
+        add("reserved-id", g.id, `Guardrail id ${g.id} is reserved for Warden's own cost and scaling rows. Next action: rename Guardrail ${g.id} in ${pack.file}, then run warden compile.`);
+      }
+    }
     for (const p of pack.practices) {
       if (!p.guardrails.some((g) => g.kind !== "instruction")) {
         add("prose-only", p.id, `Practice ${p.id} has no Guardrail that a tool enforces. Next action: add a Guardrail whose kind is not instruction, with mustFail and mustPass examples, to Practice ${p.id} in ${pack.file}, then run warden compile.`);

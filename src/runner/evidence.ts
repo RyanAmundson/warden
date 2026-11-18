@@ -44,6 +44,8 @@ export type Outcome = "ran" | "tampered" | "unstaged" | "empty";
 
 export const RUN_TOTAL = "run";
 
+export const ESLINT_PASS = "eslint-pass";
+
 export const wardenHome = (): string => process.env.WARDEN_HOME ?? join(homedir(), ".warden");
 
 const evidenceFile = (project: string): string => join(wardenHome(), "evidence", `${project}.jsonl`);

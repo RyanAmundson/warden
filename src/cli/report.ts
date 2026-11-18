@@ -1,8 +1,7 @@
 import { loadRecords } from "../records/load.js";
 import { type Kind, type Tier, kindRank } from "../records/types.js";
 import { readBaseline } from "../runner/baseline.js";
-import { type Evidence, RUN_TOTAL, type Verdict, readEvidence } from "../runner/evidence.js";
-import { ESLINT_PASS } from "./bench.js";
+import { ESLINT_PASS, type Evidence, RUN_TOTAL, type Verdict, readEvidence } from "../runner/evidence.js";
 
 const TIERS: Tier[] = ["edit", "commit", "boundary"];
 
