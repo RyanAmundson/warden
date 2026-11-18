@@ -5,7 +5,7 @@ import type { Tier } from "../records/types.js";
 
 export interface Evidence {
   at: string;
-  kind: "fired" | "cost" | "tampered" | "stalled" | "scaling";
+  kind: "fired" | "cost" | "tampered" | "stalled" | "scaling" | "step";
   guardrail?: string;
   file?: string;
   status?: string;
@@ -29,6 +29,27 @@ export interface Evidence {
   f?: number;
   warden?: string;
   previous?: Measurement;
+  trigger?: Trigger;
+  cached?: number;
+  exit?: number;
+  result?: "pass" | "fail";
+  next?: string;
+  failures?: RunFailure[];
+  ratchet?: [number, number];
+  step?: Step;
+  state?: "start" | "done" | "fail";
+}
+
+export type Trigger = "agent-edit" | "git-commit" | "manual";
+
+export type Step = "rules-intact" | "tools-ready" | "rules" | "verdict";
+
+export interface RunFailure {
+  file: string;
+  line: number;
+  guardrail: string;
+  practice: string;
+  doThis?: string;
 }
 
 export type Verdict = "constant" | "sublinear" | "linear" | "superlinear";
@@ -40,7 +61,7 @@ export interface Measurement {
   f: number;
 }
 
-export type Outcome = "ran" | "tampered" | "unstaged" | "empty";
+export type Outcome = "ran" | "tampered" | "unstaged" | "empty" | "error";
 
 export const RUN_TOTAL = "run";
 
@@ -48,7 +69,7 @@ export const ESLINT_PASS = "eslint-pass";
 
 export const wardenHome = (): string => process.env.WARDEN_HOME ?? join(homedir(), ".warden");
 
-const evidenceFile = (project: string): string => join(wardenHome(), "evidence", `${project}.jsonl`);
+export const evidenceFile = (project: string): string => join(wardenHome(), "evidence", `${project}.jsonl`);
 
 export function appendEvidence(project: string, e: Evidence): void {
   mkdirSync(join(wardenHome(), "evidence"), { recursive: true });

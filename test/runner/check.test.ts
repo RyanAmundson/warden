@@ -1446,4 +1446,54 @@ describe("performance: run records and input size", () => {
     expect(runs.map((e) => [e.outcome, e.tier])).toEqual([["empty", "commit"], ["tampered", "commit"], ["unstaged", "commit"]]);
     expect(new Set(runs.map((e) => e.run)).size).toBe(3);
   });
+
+  it("each trigger writes its record, with the cache hits, the exit code, and the result", async () => {
+    await write("b.ts", "const b = 1;\n");
+    expect((await check({ paths: ["b.ts"] })).code).toBe(0);
+    expect((await check({ paths: ["b.ts"], trigger: "git-commit" })).code).toBe(0);
+    await write("b.ts", "// two\nconst b = 1;\n");
+    expect((await check({ hook: "claude", hookInput: JSON.stringify({ tool_input: { file_path: join(root, "b.ts") } }) })).code).toBe(0);
+    const runs = (await costs()).filter((e) => e.guardrail === "run");
+    expect(runs.map((e) => [e.trigger, e.tier, e.outcome, e.result, e.exit, e.file])).toEqual([
+      ["manual", "commit", "ran", "pass", 0, "b.ts"],
+      ["git-commit", "commit", "ran", "pass", 0, "b.ts"],
+      ["agent-edit", "edit", "ran", "fail", 0, "b.ts"],
+    ]);
+    expect(runs.map((e) => e.cached)).toEqual([0, 4, 0]);
+    expect(runs.every((e) => typeof e.guardrails === "number" && (e.guardrails as number) > 0)).toBe(true);
+    expect(runs[2]).toMatchObject({ failures: [expect.objectContaining({ file: "b.ts", line: 1, guardrail: "warden-no-comments", doThis: expect.any(String) })], next: expect.stringContaining("Do this"), ratchet: [1, 1] });
+  });
+
+  it("a check that exits 2 writes an error record with its next action", async () => {
+    expect((await check({ base: undefined })).code).toBe(2);
+    const runs = (await costs()).filter((e) => e.guardrail === "run");
+    expect(runs).toEqual([expect.objectContaining({ outcome: "error", exit: 2, trigger: "manual", next: "run warden check --base main" })]);
+    expect(runs[0]?.result).toBeUndefined();
+  });
+
+  it("a check appends its steps in order as it runs", async () => {
+    await write("b.ts", "// two\nconst b = 1;\n");
+    expect((await check({ paths: ["b.ts"] })).code).toBe(1);
+    const steps = (await evidence()).filter((e) => e.kind === "step");
+    const run = (await costs()).find((e) => e.guardrail === "run")?.run;
+    expect(steps.every((e) => e.run === run && typeof e.ms === "number")).toBe(true);
+    expect(steps.map((e) => [e.step, e.state])).toEqual([
+      ["rules-intact", "start"],
+      ["rules-intact", "done"],
+      ["tools-ready", "start"],
+      ["tools-ready", "done"],
+      ["rules", "start"],
+      ["rules", "done"],
+      ["verdict", "start"],
+      ["verdict", "fail"],
+    ]);
+    expect(steps[4]).toMatchObject({ detail: "eslint", members: expect.arrayContaining(["warden-no-comments"]), trigger: "manual", tier: "commit" });
+  });
+
+  it("a tampered check fails its rules-intact step", async () => {
+    await writeFile(join(root, ".warden/generated/eslint.rules.json"), `${await read(".warden/generated/eslint.rules.json")}\n`);
+    expect((await check()).code).toBe(1);
+    const steps = (await evidence()).filter((e) => e.kind === "step");
+    expect(steps.map((e) => [e.step, e.state])).toEqual([["rules-intact", "start"], ["rules-intact", "fail"]]);
+  });
 });

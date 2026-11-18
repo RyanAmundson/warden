@@ -10,7 +10,7 @@ import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
 import { changedFiles, changesSinceMergeBase, containsHead, headCommit, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
-import { type Evidence, type Outcome, RUN_TOTAL, appendEvidence, readEvidence } from "../runner/evidence.js";
+import { type Evidence, type Outcome, RUN_TOTAL, type RunFailure, type Step, type Trigger, appendEvidence, readEvidence } from "../runner/evidence.js";
 import { type Format, type Notes, type Repeated, formatFeedback } from "../runner/feedback.js";
 import { runGuardrails, unknownAdapters } from "../runner/run.js";
 import { type Tamper, findTampering, readBaseLock, recordedBases } from "../runner/tamper.js";
@@ -25,6 +25,7 @@ export interface CheckOptions {
   format: Format;
   hook?: "claude";
   hookInput?: string;
+  trigger?: Trigger;
 }
 
 const selectGuardrails = (set: RecordSet, rule: string | undefined): Guardrail[] => {
@@ -98,8 +99,8 @@ const runCached = async (
   ctx: RunContext,
   project: string,
   run: { lockSha: string; warden: string },
-): Promise<{ perFile: RunResult[]; wholeProject: RunResult[]; ran: RunResult[] }> => {
-  if (scanned.length === 0) return { perFile: [], wholeProject: [], ran: [] };
+): Promise<{ perFile: RunResult[]; wholeProject: RunResult[]; ran: RunResult[]; cached: number }> => {
+  if (scanned.length === 0) return { perFile: [], wholeProject: [], ran: [], cached: 0 };
   const lint = gs.filter((g) => g.kind === "lint");
   const rest = gs.filter((g) => g.kind !== "lint");
   const keyOf = (f: string, g: Guardrail): string => cacheKey(f, shas.get(f) as string, g, run.lockSha, run.warden);
@@ -127,11 +128,14 @@ const runCached = async (
     return { guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms: r?.ms ?? 0, overBudget: r?.overBudget === true, ...(r?.shared === undefined ? {} : { shared: r.shared }) };
   });
   const others = rest.length > 0 ? await runGuardrails(set, rest, scanned, ctx) : [];
-  return { perFile: [...results, ...parse], wholeProject: others, ran: [...fresh, ...others] };
+  return { perFile: [...results, ...parse], wholeProject: others, ran: [...fresh, ...others], cached: hits.size };
 };
 
+const failedOf = (failures: Violation[], notes: Notes): boolean =>
+  failures.length > 0 || [notes.tampered, notes.killed, notes.unstaged].some((list) => (list ?? []).length > 0);
+
 const report = (failures: Violation[], set: RecordSet, opts: CheckOptions, notes: Notes): number => {
-  const failed = failures.length > 0 || [notes.tampered, notes.killed, notes.unstaged].some((list) => (list ?? []).length > 0);
+  const failed = failedOf(failures, notes);
   if (opts.hook === "claude") {
     if (failed) process.stdout.write(`${JSON.stringify({ decision: "block", reason: formatFeedback(failures, set, "agent", notes) })}\n`);
     return 0;
@@ -142,43 +146,89 @@ const report = (failures: Violation[], set: RecordSet, opts: CheckOptions, notes
   return failed ? 1 : 0;
 };
 
-const check = async (opts: CheckOptions): Promise<number> => {
-  const started = performance.now();
+const MAX_RECORDED_FAILURES = 10;
+
+interface Live {
+  run: string;
+  at: string;
+  tier: Tier;
+  trigger: Trigger;
+  started: number;
+  project?: string;
+  open?: { step: Step; at: number };
+}
+
+const closeStep = (live: Live, state: "done" | "fail", extra: Partial<Evidence> = {}): void => {
+  if (live.open === undefined || live.project === undefined) return;
+  appendEvidence(live.project, { at: new Date().toISOString(), kind: "step", run: live.run, step: live.open.step, state, ms: performance.now() - live.open.at, ...extra });
+  live.open = undefined;
+};
+
+const openStep = (live: Live, step: Step, extra: Partial<Evidence> = {}): void => {
+  closeStep(live, "done");
+  if (live.project === undefined) return;
+  appendEvidence(live.project, { at: new Date().toISOString(), kind: "step", run: live.run, step, state: "start", ms: 0, tier: live.tier, trigger: live.trigger, ...extra });
+  live.open = { step, at: performance.now() };
+};
+
+const nextOf = (message: string): string => {
+  const at = message.indexOf("Next action: ");
+  return (at === -1 ? message : message.slice(at + "Next action: ".length)).replace(/\.$/, "");
+};
+
+const baselineTotal = (b: Record<string, Record<string, number>>): number => Object.values(b).reduce((n, e) => n + Object.values(e).reduce((a, x) => a + x, 0), 0);
+
+const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const root = resolve(opts.root);
-  const at = new Date().toISOString();
-  const run = randomUUID();
-  const tier: Tier = opts.hook === "claude" ? "edit" : (opts.tier ?? "commit");
-  const finish = (project: string, outcome: Outcome, files: string[]): void => {
+  const { at, run, tier } = live;
+  const finish = (project: string, outcome: Outcome, files: string[], code: number, judged?: { set: RecordSet; failures?: Violation[]; notes: Notes; extra?: Partial<Evidence> }): number => {
     const bytes = files.reduce((n, f) => n + statSync(join(root, f)).size, 0);
     const commit = headCommit(root);
-    appendEvidence(project, { at, kind: "cost", guardrail: RUN_TOTAL, run, tier, outcome, ms: performance.now() - started, files: files.length, bytes, ...(commit === undefined ? {} : { commit }) });
+    const failures = judged?.failures ?? [];
+    const feedback = judged === undefined ? undefined : (JSON.parse(formatFeedback(failures, judged.set, "json", judged.notes)) as { failures: RunFailure[]; next: string | null });
+    const recorded = (feedback?.failures ?? []).slice(0, MAX_RECORDED_FAILURES).map(({ file, line, guardrail, practice, doThis }) => ({ file, line, guardrail, practice, ...(doThis === undefined ? {} : { doThis }) }));
+    appendEvidence(project, {
+      at,
+      kind: "cost",
+      guardrail: RUN_TOTAL,
+      run,
+      tier,
+      trigger: live.trigger,
+      outcome,
+      ...(outcome === "ran" && judged !== undefined ? { result: failedOf(failures, judged.notes) ? "fail" : "pass" } : {}),
+      exit: code,
+      ms: performance.now() - live.started,
+      files: files.length,
+      ...(files.length === 1 ? { file: files[0] } : {}),
+      bytes,
+      ...(commit === undefined ? {} : { commit }),
+      ...(recorded.length === 0 ? {} : { failures: recorded }),
+      ...(feedback?.next == null ? {} : { next: nextOf(feedback.next) }),
+      ...judged?.extra,
+    });
+    return code;
   };
   const removed = removedWarden(root, opts.base);
   if (removed !== undefined) {
+    live.project = removed.set.config.project;
+    openStep(live, "rules-intact");
     appendEvidence(removed.set.config.project, { at, kind: "tampered", file: removed.tamper.file, detail: removed.tamper.detail });
-    finish(removed.set.config.project, "tampered", []);
-    return report([], removed.set, opts, { tampered: [removed.tamper] });
+    closeStep(live, "fail");
+    const notes = { tampered: [removed.tamper] };
+    return finish(removed.set.config.project, "tampered", [], report([], removed.set, opts, notes), { set: removed.set, notes });
   }
   if (!existsSync(join(root, ".warden/config.yaml"))) {
     throw new RecordError(".warden/config.yaml", "", "not found. Next action: run warden init.");
   }
   const set = await loadRecords(root, opts.wardenRoot);
   const { project, loopBreakerRepeats } = set.config;
+  live.project = project;
   const base = requireBase(opts.base, set.config.base);
   verifyBase(root, base);
   refuseOwnBranch(root, base);
+  openStep(live, "rules-intact");
   if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined) {
     throw new RecordError(LOCK_PATH, "", "not found; this project was never compiled. Next action: run warden compile.");
-  }
-  const fileSha = (file: string): string => (existsSync(join(root, file)) ? sha256(readFileSync(join(root, file))) : "");
-  const doctorKey = sha256(canonicalJson(["doctor", fileSha(LOCK_PATH), fileSha("package.json")]));
-  if (readCache(project, doctorKey) === undefined) {
-    const health = await doctor(set);
-    if (health.next !== undefined) {
-      process.stderr.write(`${formatDoctor({ lines: health.lines.filter((l) => l.startsWith("FAIL")), next: health.next })}\n`);
-      return 2;
-    }
-    writeCache(project, doctorKey, []);
   }
   const unknown = unknownAdapters(set);
   if (unknown.length > 0) {
@@ -197,8 +247,8 @@ const check = async (opts: CheckOptions): Promise<number> => {
     }
     if (tampered.length > 0) {
       for (const t of tampered) appendEvidence(project, { at, kind: "tampered", file: t.file, detail: t.detail });
-      finish(project, "tampered", []);
-      return report([], set, opts, { tampered });
+      closeStep(live, "fail");
+      return finish(project, "tampered", [], report([], set, opts, { tampered }), { set, notes: { tampered } });
     }
     const [first] = unknown as [(typeof unknown)[number]];
     throw new RecordError(first.file, `/guardrails/${first.record}/implementation`, first.message);
@@ -207,14 +257,28 @@ const check = async (opts: CheckOptions): Promise<number> => {
   const tampered = await findTampering(set, opts.wardenRoot, base);
   if (tampered.length > 0) {
     for (const t of tampered) appendEvidence(project, { at, kind: "tampered", file: t.file, detail: t.detail, guardrail: t.guardrail });
-    finish(project, "tampered", []);
-    return report([], set, opts, { tampered });
+    closeStep(live, "fail");
+    return finish(project, "tampered", [], report([], set, opts, { tampered }), { set, notes: { tampered } });
+  }
+  openStep(live, "tools-ready");
+  const fileSha = (file: string): string => (existsSync(join(root, file)) ? sha256(readFileSync(join(root, file))) : "");
+  const doctorKey = sha256(canonicalJson(["doctor", fileSha(LOCK_PATH), fileSha("package.json")]));
+  const doctorCached = readCache(project, doctorKey) !== undefined;
+  if (!doctorCached) {
+    const health = await doctor(set);
+    if (health.next !== undefined) {
+      process.stderr.write(`${formatDoctor({ lines: health.lines.filter((l) => l.startsWith("FAIL")), next: health.next })}\n`);
+      closeStep(live, "fail");
+      return finish(project, "error", [], 2, { set, notes: {}, extra: { next: health.next } });
+    }
+    writeCache(project, doctorKey, []);
   }
   const locked = existsSync(join(root, LOCK_PATH)) ? readLock(root).tools : bundledTools();
   const loaded = bundledTools();
   if (canonicalJson(locked) !== canonicalJson(loaded)) {
     throw new RecordError(LOCK_PATH, "/tools", `records bundled tools ${JSON.stringify(locked ?? {})}, but this Warden loads ${JSON.stringify(loaded)}. Next action: run warden compile.`);
   }
+  closeStep(live, "done", doctorCached ? { status: "cached" } : {});
 
   const known = new Set(selectGuardrails(set, undefined).map((g) => g.id));
   const chosen = selectGuardrails(set, opts.rule).filter((g) => g.runs.includes(tier));
@@ -226,14 +290,25 @@ const check = async (opts: CheckOptions): Promise<number> => {
     const unstaged = new Set(unstagedFiles(root));
     const differing = scanned.filter((f) => unstaged.has(f));
     if (differing.length > 0) {
-      finish(project, "unstaged", scanned);
-      return report([], set, opts, { unstaged: differing, base });
+      const notes = { unstaged: differing, base };
+      return finish(project, "unstaged", scanned, report([], set, opts, notes), { set, notes });
     }
   }
   const shas = new Map(scanned.map((f) => [f, sha256(readFileSync(join(root, f)))]));
-  const ctx = { root, generatedDir: join(root, ".warden/generated") };
+  const where = { files: scanned.length, ...(scanned.length === 1 ? { file: scanned[0] } : {}) };
+  let groups = 0;
+  const onGroup = (adapter: string, ids: string[]): void => {
+    groups += 1;
+    openStep(live, "rules", { detail: adapter, members: ids, ...where });
+  };
+  const ctx = { root, generatedDir: join(root, ".warden/generated"), onGroup };
   const lockSha = sha256(readFileSync(join(root, LOCK_PATH)));
   const ran = await runCached(set, guardrails, scanned, shas, ctx, project, { lockSha, warden: await wardenVersion(opts.wardenRoot) });
+  if (groups === 0) {
+    openStep(live, "rules", { members: chosen.map((g) => g.id), ...where });
+    closeStep(live, "done", { status: scanned.length === 0 ? "empty" : "cached" });
+  }
+  openStep(live, "verdict");
   const wanted = (r: RunResult): boolean => selected.has(r.guardrail) || !known.has(r.guardrail);
   const perFile = ran.perFile.filter(wanted);
   const wholeProject = ran.wholeProject.filter(wanted);
@@ -300,16 +375,30 @@ const check = async (opts: CheckOptions): Promise<number> => {
     const n = prior.filter(same).length + 1;
     if (n >= loopBreakerRepeats && (repeated === undefined || n > repeated.n)) repeated = { guardrail, file, n };
   }
-  finish(project, scanned.length === 0 ? "empty" : "ran", scanned);
-  return report(failures, set, opts, { repeated, overBudget, killed });
+  const notes = { repeated, overBudget, killed };
+  closeStep(live, failedOf(failures, notes) ? "fail" : "done");
+  const code = report(failures, set, opts, notes);
+  return finish(project, scanned.length === 0 ? "empty" : "ran", scanned, code, { set, failures, notes, extra: { guardrails: chosen.length, cached: ran.cached, ratchet: [baselineTotal(baseline), baselineTotal(wide.next)] } });
 };
 
 export async function runCheck(opts: CheckOptions): Promise<number> {
+  const live: Live = {
+    run: randomUUID(),
+    at: new Date().toISOString(),
+    tier: opts.hook === "claude" ? "edit" : (opts.tier ?? "commit"),
+    trigger: opts.hook === "claude" ? "agent-edit" : (opts.trigger ?? "manual"),
+    started: performance.now(),
+  };
   try {
-    return await check(opts);
+    return await check(opts, live);
   } catch (cause) {
     if (!(cause instanceof RecordError)) throw cause;
     process.stderr.write(`${cause.file} ${cause.pointer}: ${cause.message}\n`);
+    closeStep(live, "fail");
+    if (live.project !== undefined) {
+      const commit = headCommit(resolve(opts.root));
+      appendEvidence(live.project, { at: live.at, kind: "cost", guardrail: RUN_TOTAL, run: live.run, tier: live.tier, trigger: live.trigger, outcome: "error", exit: 2, ms: performance.now() - live.started, files: 0, bytes: 0, next: nextOf(cause.message), ...(commit === undefined ? {} : { commit }) });
+    }
     return 2;
   }
 }

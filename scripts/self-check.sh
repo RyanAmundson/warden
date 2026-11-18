@@ -30,4 +30,4 @@ mkdir "$work/install"
 rm -rf "$work/install/node_modules/warden/packs"
 cp -R "$root/packs" "$work/install/node_modules/warden/packs"
 cd "$root"
-"$work/install/node_modules/.bin/warden" check --base main
+"$work/install/node_modules/.bin/warden" check --base main --trigger git-commit

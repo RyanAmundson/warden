@@ -74,7 +74,7 @@ describe("self-check.sh", () => {
     git("add", "-A");
     const r = sh("scripts/self-check.sh", "t1");
     expect(r.code, r.err).toBe(0);
-    expect(r.out).toBe("release old\npack new\nargs check --base main\n");
+    expect(r.out).toBe("release old\npack new\nargs check --base main --trigger git-commit\n");
   });
 
   it("requires the pinned tag as an argument", () => {

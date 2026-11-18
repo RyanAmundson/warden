@@ -69,7 +69,8 @@ program
   .option("--format <format>", "text, agent, or json", "text")
   .option("--hook <hook>", "claude")
   .option("--base <ref>", "the branch this work merges into")
-  .action(async (paths: string[], o: { rule?: string; tier: string; format: string; hook?: string; base?: string }) => {
+  .option("--trigger <trigger>", "what started this check: git-commit or manual", "manual")
+  .action(async (paths: string[], o: { rule?: string; tier: string; format: string; hook?: string; base?: string; trigger: string }) => {
     process.exitCode = await runCheck({
       root: root(),
       wardenRoot: findWardenRoot(),
@@ -80,6 +81,7 @@ program
       format: oneOf<Format>("format", o.format, ["text", "agent", "json"]),
       hook: o.hook === undefined ? undefined : oneOf("hook", o.hook, ["claude"] as const),
       hookInput: o.hook === undefined ? undefined : readFileSync(0, "utf8"),
+      trigger: oneOf("trigger", o.trigger, ["git-commit", "manual"] as const),
     });
   });
 

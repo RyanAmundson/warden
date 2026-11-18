@@ -33,6 +33,7 @@ export interface RunContext {
   root: string;
   generatedDir: string;
   unbudgeted?: boolean;
+  onGroup?: (adapter: string, guardrails: string[]) => void;
 }
 
 export interface Adapter {

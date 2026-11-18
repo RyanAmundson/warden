@@ -42,6 +42,7 @@ export async function runGuardrails(set: RecordSet, gs: Guardrail[], files: stri
   const out: RunResult[] = [];
   const size = { files: files.length, bytes: files.reduce((n, f) => n + statSync(join(ctx.root, f)).size, 0) };
   for (const [prefix, group] of groups) {
+    ctx.onGroup?.(prefix, group.map((g) => g.id));
     const results = await (adapters.get(prefix) as Adapter).run(group, files, ctx);
     const passBudget = group.reduce((n, x) => n + x.budgetMs, 0);
     const found = results.find((r) => r.shared !== undefined)?.shared;
