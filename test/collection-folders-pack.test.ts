@@ -77,7 +77,7 @@ describe("collection-folders pack", () => {
     await write("src/[widgets]/card/index.ts");
     await write("src/[widgets]/knob/knob.ts");
     const failed = await run("warden-collection-items-share-one-shape");
-    expect(failed?.violations[0]?.message).toContain("src/[widgets]/knob differs from the shape most items in src/[widgets] share: lacks [index.ts], has extra [<item>.ts]");
+    expect(failed?.violations[0]?.message).toContain("src/[widgets]/knob differs from the shape most items in src/[widgets] share: lacks [index.ts], has extra [knob.ts]");
   });
 
   it("compares entries named after their item as one shape", async () => {
@@ -94,6 +94,30 @@ describe("collection-folders pack", () => {
     await write("src/[widgets]/c/index.ts");
     const failed = await run("warden-collection-items-share-one-shape");
     expect(failed?.violations[0]?.message).toContain("src/[widgets]/c differs from the shape most items in src/[widgets] share: lacks [data.ts], has extra [index.ts]");
+  });
+
+  it("names a missing item-named file after the item it belongs to", async () => {
+    await write("src/[widgets]/Button/Button.tsx");
+    await write("src/[widgets]/Card/Card.tsx");
+    await write("src/[widgets]/Knob/index.ts");
+    const failed = await run("warden-collection-items-share-one-shape");
+    expect(failed?.violations[0]?.message).toContain("src/[widgets]/Knob differs from the shape most items in src/[widgets] share: lacks [Knob.tsx], has extra [index.ts]");
+  });
+
+  it("leaves out an empty lacks list", async () => {
+    await write("src/[widgets]/button/index.ts");
+    await write("src/[widgets]/card/index.ts");
+    await write("src/[widgets]/knob/index.ts");
+    await write("src/[widgets]/knob/notes.md");
+    const failed = await run("warden-collection-items-share-one-shape");
+    expect(failed?.violations[0]?.message).toContain("src/[widgets]/knob differs from the shape most items in src/[widgets] share: has extra [notes.md]\n");
+  });
+
+  it("passes an item named like a file the other items share", async () => {
+    await write("src/[routes]/about/index.ts");
+    await write("src/[routes]/home/index.ts");
+    await write("src/[routes]/index/index.ts");
+    expect((await run("warden-collection-items-share-one-shape"))?.status).toBe("pass");
   });
 
   it("skips a collection whose most common shapes tie", async () => {

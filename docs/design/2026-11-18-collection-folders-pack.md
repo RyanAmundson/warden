@@ -29,7 +29,9 @@ Each failure lists the offending paths, then a count and one next action.
 - An entry named after its item's folder, exactly or followed by a dot, is
   compared with that prefix replaced by `<item>`, so `Button/Button.tsx` and `Card/Card.tsx` share
   the shape `<item>.tsx` (Ryan, after review). Without this, every component
-  folder had a unique shape.
+  folder had a unique shape. An entry matches when either its own name or its
+  `<item>` form is expected, and a failure names the real file, such as
+  `Knob.tsx`.
 - A collection whose two most common shapes tie is skipped, because no shape
   is the one its items should match.
 - Plural is approximated: the last word ends in `s`. `[lib]`, `[delivery]`,
