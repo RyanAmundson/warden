@@ -1,12 +1,13 @@
 {
+  "format": 1,
   "warden": "0.1.0",
   "sources": {
     ".warden/config.yaml": "2280033b1777f6de504790f367247cbd9d99df3dc4f7605b396435ce60a48b77",
-    "packs/core/pack.yaml": "c7505f2b6ac97f958e796666b00c2afa6c9837856f1b4115cf0236da0d226037"
+    "packs/core/pack.yaml": "70928513725ddf9dc7324ca24adf88ce8c8c037644833f876e8352f4722d193a"
   },
   "generated": {
     ".claude/settings.json#warden": "25442c509b425992d4d264b54b5e5df9a3141d8f92a972248a704afaf737cc6b",
-    ".warden/generated/eslint.rules.json": "37614007bd1e9526df7229bb8c62b4ee2ddd703812b734d9da56217e2a04949a"
+    ".warden/generated/eslint.rules.json": "4e47f901a516ff01c8e9ac1c075667b01012519d067ba39bd8470158f401572d"
   },
   "guardrails": {
     "warden-no-comments": {
@@ -20,16 +21,16 @@
         "edit"
       ],
       "paths": [
-        "**/*.{ts,tsx,mts,cts} & eslint-plugin/**/*.ts",
-        "**/*.{ts,tsx,mts,cts} & src/**/*.ts",
-        "**/*.{ts,tsx,mts,cts} & test/*.ts",
-        "**/*.{ts,tsx,mts,cts} & test/adapters/*.ts",
-        "**/*.{ts,tsx,mts,cts} & test/cli/*.ts",
-        "**/*.{ts,tsx,mts,cts} & test/compiler/*.ts",
-        "**/*.{ts,tsx,mts,cts} & test/eslint-plugin/*.ts",
-        "**/*.{ts,tsx,mts,cts} & test/records/*.ts",
-        "**/*.{ts,tsx,mts,cts} & test/runner/*.ts",
-        "**/*.{ts,tsx,mts,cts} & vitest.config.ts"
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs} & eslint-plugin/**/*.ts",
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs} & src/**/*.ts",
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs} & test/*.ts",
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs} & test/adapters/*.ts",
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs} & test/cli/*.ts",
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs} & test/compiler/*.ts",
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs} & test/eslint-plugin/*.ts",
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs} & test/records/*.ts",
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs} & test/runner/*.ts",
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs} & vitest.config.ts"
       ]
     },
     "warden-no-suppressions": {
@@ -43,20 +44,22 @@
         "edit"
       ],
       "paths": [
-        "**/*.{ts,tsx,mts,cts} & eslint-plugin/**/*.ts",
-        "**/*.{ts,tsx,mts,cts} & src/**/*.ts",
-        "**/*.{ts,tsx,mts,cts} & test/*.ts",
-        "**/*.{ts,tsx,mts,cts} & test/adapters/*.ts",
-        "**/*.{ts,tsx,mts,cts} & test/cli/*.ts",
-        "**/*.{ts,tsx,mts,cts} & test/compiler/*.ts",
-        "**/*.{ts,tsx,mts,cts} & test/eslint-plugin/*.ts",
-        "**/*.{ts,tsx,mts,cts} & test/records/*.ts",
-        "**/*.{ts,tsx,mts,cts} & test/runner/*.ts",
-        "**/*.{ts,tsx,mts,cts} & vitest.config.ts"
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs} & eslint-plugin/**/*.ts",
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs} & src/**/*.ts",
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs} & test/*.ts",
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs} & test/adapters/*.ts",
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs} & test/cli/*.ts",
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs} & test/compiler/*.ts",
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs} & test/eslint-plugin/*.ts",
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs} & test/records/*.ts",
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs} & test/runner/*.ts",
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs} & vitest.config.ts"
       ]
     }
   },
   "config": {
+    "project": "warden",
+    "base": "main",
     "tierBudgetMs": {
       "edit": 2000,
       "commit": 10000,
