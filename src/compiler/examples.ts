@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, matchesGlob } from "node:path";
 import { adapters, runGuardrails } from "../runner/run.js";
 import { pathGroups } from "../records/paths.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
@@ -9,7 +9,12 @@ import type { Finding } from "./consistency.js";
 
 const TSCONFIG = JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", skipLibCheck: true }, include: ["**/*.ts"] });
 
-const exampleFile = (glob: string | undefined): string => `${(glob ?? "").split("*", 1)[0]}warden-example.ts`;
+const literal = (glob: string): string => glob.split("*", 1)[0] ?? "";
+
+const exampleFile = (group: string[] | undefined): string =>
+  `${(group ?? []).map(literal).reduce((a, b) => (b.length > a.length ? b : a), "")}warden-example.ts`;
+
+const enabledOn = (file: string, groups: string[][]): boolean => groups.length === 0 || groups.some((g) => g.every((glob) => matchesGlob(file, glob)));
 
 export async function runExamples(set: RecordSet, wardenRoot: string): Promise<Finding[]> {
   const findings: Finding[] = [];
@@ -18,16 +23,17 @@ export async function runExamples(set: RecordSet, wardenRoot: string): Promise<F
     await symlink(join(wardenRoot, "node_modules"), join(project, "node_modules"));
     await writeFile(join(project, "package.json"), "{}\n");
     await writeFile(join(project, "tsconfig.json"), TSCONFIG);
-    const checked: { g: Guardrail; file: string }[] = [];
+    const checked: { g: Guardrail; file: string; groups: string[][] }[] = [];
     const ctx = { root: project, generatedDir: join(project, ".warden/generated") };
     for (const pack of set.packs) {
       for (const practice of pack.practices) {
-        const file = exampleFile(pathGroups(practice.paths, set.config.packs.find((p) => p.id === pack.id)?.paths ?? [])[0]?.at(-1));
+        const groups = pathGroups(practice.paths, set.config.packs.find((p) => p.id === pack.id)?.paths ?? []);
+        const file = exampleFile(groups[0]);
         for (const g of practice.guardrails) {
           if (g.kind === "legacy" || g.kind === "instruction") continue;
           const adapter = adapters.get(g.implementation.slice(0, g.implementation.indexOf(":")));
           if (adapter === undefined) continue;
-          checked.push({ g, file });
+          checked.push({ g, file, groups });
           for (const [label, want] of [["mustFail", "fail"], ["mustPass", "pass"]] as const) {
             const source = g[label];
             if (source === undefined) {
@@ -49,7 +55,7 @@ export async function runExamples(set: RecordSet, wardenRoot: string): Promise<F
     for (const { g, file } of checked) {
       if (g.mustPass === undefined) continue;
       for (const other of checked) {
-        if (other.g === g || other.g.implementation.startsWith("cmd:")) continue;
+        if (other.g === g || other.g.implementation.startsWith("cmd:") || !enabledOn(file, other.groups)) continue;
         const adapter = adapters.get(other.g.implementation.slice(0, other.g.implementation.indexOf(":"))) as Adapter;
         const status = await runExample(other.g, adapter.emit([other.g], set), g.mustPass, file, ctx);
         if (status === "fail") {

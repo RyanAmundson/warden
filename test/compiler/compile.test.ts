@@ -259,6 +259,52 @@ describe("compile", () => {
     expect(findings[0]?.message).toContain("local-prefer-const");
   });
 
+  it("a mustPass example is checked only against Guardrails enabled on its path", async () => {
+    const practice = (id: string, paths: string, kind: string, implementation: string, fail: string, pass: string): string =>
+      [
+        `  - id: ${id}`,
+        "    statement: Declare with const.",
+        "    terms: []",
+        `    paths: ${paths}`,
+        "    conflictsWith: []",
+        "    guardrails:",
+        `      - id: ${id}-g`,
+        `        kind: ${kind}`,
+        "        runs: [edit]",
+        "        budgetMs: 60000",
+        "        version: 1",
+        `        implementation: "${implementation}"`,
+        `        mustFail: ${JSON.stringify(fail)}`,
+        `        mustPass: ${JSON.stringify(pass)}`,
+      ].join("\n");
+    const unsafe = "export function f(a?: string) { return a.length; }\n";
+    await usePack(
+      [
+        "id: local",
+        "layer: 1",
+        "terms: []",
+        "practices:",
+        practice("in-a", '["src/a/**"]', "lint", "eslint:no-var", "var a = 1;\n", unsafe),
+        practice("in-b", '["src/b/**"]', "type", "tsc:strictNullChecks", unsafe, "export const a = 1;\n"),
+        "",
+      ].join("\n"),
+    );
+    expect(await runExamples(await loadRecords(root, wardenRoot), wardenRoot)).toEqual([]);
+    await writeFile(
+      join(root, ".warden/packs/local/pack.yaml"),
+      [
+        "id: local",
+        "layer: 1",
+        "terms: []",
+        "practices:",
+        practice("in-a", '["src/**"]', "lint", "eslint:no-var", "var a = 1;\n", unsafe),
+        practice("in-b", '["src/**"]', "type", "tsc:strictNullChecks", unsafe, "export const a = 1;\n"),
+        "",
+      ].join("\n"),
+    );
+    expect((await runExamples(await loadRecords(root, wardenRoot), wardenRoot)).map((f) => `${f.code} ${f.record}`)).toEqual(["example-conflict in-a-g"]);
+  });
+
   it("invalid settings JSON leaves no generated file, no settings change, and no lock", async () => {
     await mkdir(join(root, ".claude"), { recursive: true });
     await writeFile(join(root, ".claude/settings.json"), "{ not json");
