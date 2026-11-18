@@ -567,4 +567,10 @@ describe("warden CLI", () => {
     expect(r.out).toContain(" NOW  ");
     expect(r.out).not.toContain("\x1b");
   });
+
+  it("--version prints the version in Warden's package", async () => {
+    const r = warden("--version");
+    expect(r.code).toBe(0);
+    expect(r.out).toBe(`${(JSON.parse(await readFile(join(wardenRoot, "package.json"), "utf8")) as { version: string }).version}\n`);
+  });
 });

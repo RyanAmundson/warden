@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "prepare": "tsc",
     "test": "tsc && vitest run --maxWorkers=2",
     "typecheck": "tsc --noEmit"
   },

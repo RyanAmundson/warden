@@ -32,7 +32,9 @@ const oneOf = <T extends string>(name: string, value: string, allowed: readonly 
   return value as T;
 };
 
-const program = new Command("warden").exitOverride();
+const program = new Command("warden")
+  .version((JSON.parse(readFileSync(join(findWardenRoot(), "package.json"), "utf8")) as { version: string }).version)
+  .exitOverride();
 const root = (): string => {
   try {
     return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
