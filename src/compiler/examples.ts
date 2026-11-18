@@ -11,8 +11,9 @@ const TSCONFIG = JSON.stringify({ compilerOptions: { target: "ES2022", module: "
 
 const literal = (glob: string): string => glob.split("*", 1)[0] ?? "";
 
-const exampleFile = (group: string[] | undefined): string =>
-  `${(group ?? []).map(literal).reduce((a, b) => (b.length > a.length ? b : a), "")}warden-example.ts`;
+export const examplePrefix = (group: string[] | undefined): string => (group ?? []).map(literal).reduce((a, b) => (b.length > a.length ? b : a), "");
+
+const exampleFile = (group: string[] | undefined): string => `${examplePrefix(group)}warden-example.ts`;
 
 const SCAFFOLD = ["package.json", "tsconfig.json"];
 
@@ -24,14 +25,22 @@ const ownedBy = (owned: Set<string>) => (key: string): boolean => {
 
 const enabledOn = (file: string, groups: string[][]): boolean => groups.length === 0 || groups.some((g) => g.every((glob) => matchesGlob(file, glob)));
 
-export async function runExamples(set: RecordSet): Promise<Finding[]> {
-  const unknown = unknownAdapters(set).map(({ code, record, message }) => ({ code, record, message }));
-  if (unknown.length > 0) return unknown;
-  const findings: Finding[] = [];
+export async function withExampleProject<T>(fn: (project: string) => Promise<T>): Promise<T> {
   const project = await mkdtemp(join(tmpdir(), "warden-examples-"));
   try {
     await writeFile(join(project, "package.json"), "{}\n");
     await writeFile(join(project, "tsconfig.json"), TSCONFIG);
+    return await fn(project);
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+}
+
+export async function runExamples(set: RecordSet): Promise<Finding[]> {
+  const unknown = unknownAdapters(set).map(({ code, record, message }) => ({ code, record, message }));
+  if (unknown.length > 0) return unknown;
+  const findings: Finding[] = [];
+  await withExampleProject(async (project) => {
     const checked: { g: Guardrail; file: string; groups: string[][]; packFile: string }[] = [];
     const ctx = { root: project, generatedDir: join(project, ".warden/generated") };
     const emittedPaths = set.packs
@@ -84,9 +93,7 @@ export async function runExamples(set: RecordSet): Promise<Finding[]> {
         }
       }
     }
-  } finally {
-    await rm(project, { recursive: true, force: true });
-  }
+  });
   return findings;
 }
 

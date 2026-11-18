@@ -50,6 +50,16 @@ export interface ProjectConfig {
   packs: { id: string; paths: string[] }[];
   tierBudgetMs: Record<Tier, number>;
   loopBreakerRepeats: number;
+  bench?: Partial<BenchSettings>;
+}
+
+export interface BenchSettings {
+  baseFiles: number;
+  maxFiles: number;
+  minMarginalMs: number;
+  linearMax: number;
+  sublinearMax: number;
+  constantMs: number;
 }
 
 export interface RecordSet {

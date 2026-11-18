@@ -106,6 +106,14 @@ describe("warden CLI", () => {
     expect(again.code).toBe(0);
   });
 
+  it("bench with an unknown rule exits 2 with one next action", () => {
+    init();
+    const r = warden("bench", "--rule", "nope");
+    expect(r.code).toBe(2);
+    expect(r.err.match(/Next action:/g)).toHaveLength(1);
+    expect(r.err).toContain('no Practice or Guardrail has id "nope"');
+  });
+
   it("explain unknown exits 2", () => {
     init();
     const r = warden("explain", "nope");

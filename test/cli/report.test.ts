@@ -122,3 +122,32 @@ it("the text report prints each tier's combined total, its pack totals, and the 
   expect(out).toContain("tier commit: median 60ms, slowest 60ms of 2000ms over 1 runs\n  pack other  median 15ms  slowest 15ms  runs 1\n");
   expect(out).toMatch(/ c {2}kind=review.*perFile=12.5ms/);
 });
+
+it("the report shows the newest bench verdict for each pack and Guardrail, with the Warden version and date, and marks a superlinear one a defect", async () => {
+  const points = [[25, 30], [50, 60], [100, 120], [200, 240]];
+  await evidence([
+    { kind: "scaling", guardrail: "a", verdict: "superlinear", k: 1.9, points, f: 1, warden: "0.1.0" },
+    { kind: "scaling", guardrail: "a", verdict: "linear", k: 1.02, points, f: 1, warden: "0.1.0" },
+    { kind: "scaling", guardrail: "b", verdict: "superlinear", k: 1.71, points, f: 1, warden: "0.1.0" },
+    { kind: "scaling", pack: "local", verdict: "superlinear", k: 1.71, points, f: 1, warden: "0.1.0" },
+    { kind: "scaling", guardrail: "eslint-pass", verdict: "linear", k: 0.98, points, f: 1, warden: "0.1.0" },
+  ]);
+  const { scaling } = await buildReport(root, wardenRoot);
+  expect(scaling).toEqual([
+    { pack: "local", verdict: "superlinear", k: 1.71, warden: "0.1.0", at },
+    { guardrail: "a", verdict: "linear", k: 1.02, warden: "0.1.0", at },
+    { guardrail: "b", verdict: "superlinear", k: 1.71, warden: "0.1.0", at },
+    { guardrail: "eslint-pass", verdict: "linear", k: 0.98, warden: "0.1.0", at },
+  ]);
+  let out = "";
+  vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+    out += String(chunk);
+    return true;
+  });
+  try {
+    await runReport(root, wardenRoot, false);
+  } finally {
+    vi.restoreAllMocks();
+  }
+  expect(out).toContain("scaling (warden bench at 0.1.0, 2026-11-18)\n  pack local  superlinear  k=1.71  DEFECT\n    a  linear  k=1.02\n    b  superlinear  k=1.71  DEFECT\n  eslint-pass  linear  k=0.98\n");
+});

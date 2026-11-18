@@ -33,7 +33,19 @@
           }
         },
         "tierBudgetMs": { "$ref": "#/$defs/tierBudgetMs" },
-        "loopBreakerRepeats": { "type": "integer", "minimum": 1 }
+        "loopBreakerRepeats": { "type": "integer", "minimum": 1 },
+        "bench": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "baseFiles": { "type": "integer", "minimum": 1 },
+            "maxFiles": { "type": "integer", "minimum": 1 },
+            "minMarginalMs": { "type": "number", "exclusiveMinimum": 0 },
+            "linearMax": { "type": "number", "exclusiveMinimum": 0 },
+            "sublinearMax": { "type": "number", "exclusiveMinimum": 0 },
+            "constantMs": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        }
       }
     },
     "term": {

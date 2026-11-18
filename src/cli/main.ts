@@ -7,6 +7,7 @@ import { Command, CommanderError } from "commander";
 import { compile } from "../compiler/compile.js";
 import type { Tier } from "../records/types.js";
 import type { Format } from "../runner/feedback.js";
+import { runBench } from "./bench.js";
 import { runCheck } from "./check.js";
 import { runExplain } from "./explain.js";
 import { runDoctor, runInit } from "./init.js";
@@ -80,6 +81,15 @@ program
       hook: o.hook === undefined ? undefined : oneOf("hook", o.hook, ["claude"] as const),
       hookInput: o.hook === undefined ? undefined : readFileSync(0, "utf8"),
     });
+  });
+
+program
+  .command("bench")
+  .description("measure how each Guardrail's time grows with input size, and fail on a superlinear one")
+  .option("--rule <id>", "only this Practice or Guardrail")
+  .option("--pack <id>", "only this pack")
+  .action(async (o: { rule?: string; pack?: string }) => {
+    process.exitCode = await runBench(root(), findWardenRoot(), o);
   });
 
 program.command("explain <id>").description("explain a Practice or Guardrail").action(async (id: string) => {

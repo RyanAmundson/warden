@@ -1,8 +1,9 @@
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { eslintAdapter } from "../src/adapters/eslint.js";
+import { runBench } from "../src/cli/bench.js";
 import { loadRecords } from "../src/records/load.js";
 import { runGuardrails } from "../src/runner/run.js";
 
@@ -55,5 +56,29 @@ it("Warden source passes its own core pack", async () => {
     expect(violations).toEqual([]);
   } finally {
     await rm(project, { recursive: true, force: true });
+  }
+});
+
+it("every shipped pack's Guardrails, and the shared ESLint pass, scale at most linearly", async () => {
+  const project = await mkdtemp(join(tmpdir(), "warden-self-bench-"));
+  const home = await mkdtemp(join(tmpdir(), "warden-self-home-"));
+  vi.stubEnv("WARDEN_HOME", home);
+  let out = "";
+  vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+    out += String(chunk);
+    return true;
+  });
+  try {
+    const shipped = (await readdir(join(repo, "packs"))).filter((id) => !id.startsWith("."));
+    await mkdir(join(project, ".warden"), { recursive: true });
+    await writeFile(join(project, ".warden/config.yaml"), config.replace("  - id: core\n    paths: [\"**/*.ts\"]", shipped.map((id) => `  - id: ${id}\n    paths: ["**/*.ts"]`).join("\n")));
+    const code = await runBench(project, repo, {});
+    expect(code, out).toBe(0);
+    expect(out).toContain("eslint-pass");
+  } finally {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    await rm(project, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true });
   }
 });

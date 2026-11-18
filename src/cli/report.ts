@@ -1,7 +1,8 @@
 import { loadRecords } from "../records/load.js";
 import { type Kind, type Tier, kindRank } from "../records/types.js";
 import { readBaseline } from "../runner/baseline.js";
-import { type Evidence, RUN_TOTAL, readEvidence } from "../runner/evidence.js";
+import { type Evidence, RUN_TOTAL, type Verdict, readEvidence } from "../runner/evidence.js";
+import { ESLINT_PASS } from "./bench.js";
 
 const TIERS: Tier[] = ["edit", "commit", "boundary"];
 
@@ -64,6 +65,15 @@ export interface TierRow {
   passes: PassTotalRow[];
 }
 
+export interface ScalingRow {
+  pack?: string;
+  guardrail?: string;
+  verdict: Verdict;
+  k?: number;
+  warden: string;
+  at: string;
+}
+
 export interface PracticeRow {
   practice: string;
   strongestKind: Kind;
@@ -71,7 +81,15 @@ export interface PracticeRow {
   guardrails: string[];
 }
 
-export async function buildReport(root: string, wardenRoot: string): Promise<{ practices: PracticeRow[]; guardrails: GuardrailRow[]; shared: SharedRow[]; tiers: TierRow[] }> {
+export interface Report {
+  practices: PracticeRow[];
+  guardrails: GuardrailRow[];
+  shared: SharedRow[];
+  tiers: TierRow[];
+  scaling: ScalingRow[];
+}
+
+export async function buildReport(root: string, wardenRoot: string): Promise<Report> {
   const set = await loadRecords(root, wardenRoot);
   const evidence: Evidence[] = readEvidence(set.config.project);
   const baseline = readBaseline(root);
@@ -147,13 +165,28 @@ export async function buildReport(root: string, wardenRoot: string): Promise<{ p
       return { practice: x.id, strongestKind, promote: strongestKind === "review" || strongestKind === "instruction", guardrails: x.guardrails.map((g) => g.id) };
     })
     .sort((a, b) => kindRank(a.strongestKind) - kindRank(b.strongestKind));
-  return { practices, guardrails, shared, tiers };
+  const newest = new Map<string, ScalingRow>();
+  for (const e of evidence) {
+    if (e.kind !== "scaling" || e.verdict === undefined || e.warden === undefined) continue;
+    const key = e.pack === undefined ? { guardrail: e.guardrail as string } : { pack: e.pack };
+    newest.set(JSON.stringify(key), { ...key, verdict: e.verdict, ...(e.k === undefined ? {} : { k: e.k }), warden: e.warden, at: e.at });
+  }
+  const scalingOf = (key: { pack: string } | { guardrail: string }): ScalingRow[] => {
+    const row = newest.get(JSON.stringify(key));
+    return row === undefined ? [] : [row];
+  };
+  const scaling = [
+    ...set.packs.flatMap((p) => [...scalingOf({ pack: p.id }), ...p.practices.flatMap((x) => x.guardrails.flatMap((g) => scalingOf({ guardrail: g.id })))]),
+    ...scalingOf({ guardrail: ESLINT_PASS }),
+  ];
+  return { practices, guardrails, shared, tiers, scaling };
 }
 
 export async function runReport(root: string, wardenRoot: string, json: boolean): Promise<number> {
-  const { practices, guardrails, shared, tiers } = await buildReport(root, wardenRoot);
+  const report = await buildReport(root, wardenRoot);
+  const { practices, guardrails, shared, tiers, scaling } = report;
   if (json) {
-    process.stdout.write(`${JSON.stringify({ practices, guardrails, shared, tiers }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     return 0;
   }
   const lines = practices.flatMap((p) => [
@@ -170,6 +203,12 @@ export async function runReport(root: string, wardenRoot: string, json: boolean)
     lines.push(`tier ${t.tier}: median ${t.medianMs}ms, slowest ${t.slowestMs}ms of ${t.budgetMs}ms over ${t.runs} runs${exits}${t.withinBudget ? "" : "  OVER"}`);
     lines.push(...t.packs.map((p) => `  pack ${p.pack}  median ${p.medianMs}ms  slowest ${p.slowestMs}ms  runs ${p.runs}`));
     lines.push(...t.passes.map((p) => `  pass ${p.shared} (${p.members.length} guardrails, parse and setup)  median ${p.medianMs}ms  slowest ${p.slowestMs}ms  runs ${p.runs}`));
+  }
+  const last = [...scaling].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)).at(-1);
+  if (last !== undefined) lines.push(`scaling (warden bench at ${last.warden}, ${last.at.slice(0, 10)})`);
+  for (const r of scaling) {
+    const label = r.pack === undefined ? `${r.guardrail === ESLINT_PASS ? "  " : "    "}${r.guardrail}` : `  pack ${r.pack}`;
+    lines.push(`${label}  ${r.verdict}${r.k === undefined ? "" : `  k=${r.k.toFixed(2)}`}${r.verdict === "superlinear" ? "  DEFECT" : ""}`);
   }
   process.stdout.write(`${lines.join("\n")}\n`);
   return 0;

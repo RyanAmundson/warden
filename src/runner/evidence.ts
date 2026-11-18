@@ -5,7 +5,7 @@ import type { Tier } from "../records/types.js";
 
 export interface Evidence {
   at: string;
-  kind: "fired" | "cost" | "tampered" | "stalled";
+  kind: "fired" | "cost" | "tampered" | "stalled" | "scaling";
   guardrail?: string;
   file?: string;
   status?: string;
@@ -23,6 +23,21 @@ export interface Evidence {
   rules?: Record<string, number>;
   outcome?: Outcome;
   commit?: string;
+  k?: number;
+  verdict?: Verdict;
+  points?: [number, number][];
+  f?: number;
+  warden?: string;
+  previous?: Measurement;
+}
+
+export type Verdict = "constant" | "sublinear" | "linear" | "superlinear";
+
+export interface Measurement {
+  verdict: Verdict;
+  k?: number;
+  points: [number, number][];
+  f: number;
 }
 
 export type Outcome = "ran" | "tampered" | "unstaged" | "empty";
