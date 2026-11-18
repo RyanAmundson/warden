@@ -38,7 +38,7 @@ const ownerOf = (set: RecordSet, id: string): { practice: Practice; guardrail: G
 
 const byLocation = (a: Violation, b: Violation): number => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line);
 
-const nextAction = (failures: Violation[], notes: Notes): string | null => {
+const nextAction = (failures: Violation[], set: RecordSet, notes: Notes): string | null => {
   if (notes.tampered !== undefined && notes.tampered.length > 0) {
     return `revert your change to ${[...new Set(notes.tampered.map((t) => t.file))].join(", ")}.`;
   }
@@ -47,6 +47,12 @@ const nextAction = (failures: Violation[], notes: Notes): string | null => {
   if (notes.repeated !== undefined) {
     const { guardrail, file, n } = notes.repeated;
     return `this failure repeated ${n} times. Rewrite the code to follow "Do this", or file warden dispute ${guardrail} ${file} listing the approaches you tried. Stopping without either is recorded as stalled.`;
+  }
+  const located = failures.filter((v) => v.file !== "");
+  const legacy = failures.find((v) => v.file === "" && ownerOf(set, v.guardrail)?.guardrail.implementation.startsWith("cmd:") === true);
+  if (located.length === 0 && legacy !== undefined) {
+    const { implementation } = (ownerOf(set, legacy.guardrail) as { guardrail: Guardrail }).guardrail;
+    return `run \`${implementation.slice(implementation.indexOf(":") + 1)}\` and fix what it reports.`;
   }
   if (failures.length > 0) {
     return 'change the code at the lines above to match "Do this". Do not edit .warden/ or generated config; that is recorded as tampering.';
@@ -92,7 +98,7 @@ export function formatFeedback(failures: Violation[], set: RecordSet, format: Fo
     ...timing("FAIL project", notes.killed ?? [], (ms, budget) => `stopped at ${ms} ms: did not finish within ${budget} budget`),
     ...timing("WARDEN DEFECT", notes.overBudget ?? [], (ms, budget) => `finished in ${ms} ms, over ${budget} budget; its result counted and the overrun is recorded as a Warden defect`),
   ];
-  const next = nextAction(failures, notes);
+  const next = nextAction(failures, set, notes);
   const tampered = notes.tampered ?? [];
   if (format === "json") {
     return JSON.stringify({ failures: items, tampered, repeated: notes.repeated, overBudget: notes.overBudget, killed: notes.killed, next });
@@ -102,6 +108,7 @@ export function formatFeedback(failures: Violation[], set: RecordSet, format: Fo
   for (const item of items) {
     lines.push(`FAIL ${item.file === "" ? "project" : `${item.file}:${item.line}`}  ${item.practice}`);
     lines.push(`  Rule:     ${item.rule}`);
+    if (item.file === "") lines.push(`  Output:   ${indent(item.message)}`);
     if (item.doThis !== undefined) lines.push(`  Do this:  ${indent(item.doThis)}`);
     if (item.why !== undefined) lines.push(`  Why:      ${item.why}`);
   }

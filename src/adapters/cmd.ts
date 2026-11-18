@@ -53,15 +53,19 @@ export const spawnBudgeted = (file: string, args: string[], cwd: string, budgetM
     });
   });
 
+export const OUTPUT_LINES = 20;
+
+const tail = (output: string): string[] => output.trimEnd().split("\n").filter((l) => l !== "").slice(-OUTPUT_LINES);
+
 const runOne = async (g: Guardrail, ctx: RunContext): Promise<RunResult> => {
   const command = g.implementation.slice(g.implementation.indexOf(":") + 1);
-  const { code, killed, ms } = await spawnBudgeted(command, [], ctx.root, ctx.unbudgeted === true ? undefined : g.budgetMs, true);
+  const { code, killed, ms, output } = await spawnBudgeted(command, [], ctx.root, ctx.unbudgeted === true ? undefined : g.budgetMs, true);
   if (killed) return { guardrail: g.id, status: "killed", violations: [], ms, command };
   if (code === 0) return { guardrail: g.id, status: "pass", violations: [], ms };
   return {
     guardrail: g.id,
     status: "fail",
-    violations: [{ guardrail: g.id, file: "", line: 0, message: `${command} exited with ${code}` }],
+    violations: [{ guardrail: g.id, file: "", line: 0, message: [`${command} exited with ${code}`, ...tail(output)].join("\n") }],
     ms,
   };
 };

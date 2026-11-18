@@ -640,6 +640,19 @@ describe("final review: budgets", () => {
   });
 });
 
+describe("final review: legacy feedback", () => {
+  it("a legacy failure shows the command output and says to run the command", async () => {
+    await addLegacy("commit", "echo broken thing; exit 1", 5000);
+    await write("b.ts", "const b = 1;\n");
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    expect(out).toContain("  Output:   echo broken thing; exit 1 exited with 1\n            broken thing");
+    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([
+      "Next action: run `echo broken thing; exit 1` and fix what it reports.",
+    ]);
+  });
+});
+
 describe("applyBaseline", () => {
   const result = (guardrail: string, files: string[], status: RunResult["status"] = "fail"): RunResult => ({
     guardrail,
