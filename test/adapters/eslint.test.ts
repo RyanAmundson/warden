@@ -1,6 +1,9 @@
-import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
-import { eslintAdapter } from "../../src/adapters/eslint.js";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { ESLint } from "eslint";
+import { describe, expect, it, vi } from "vitest";
+import { BATCH_FILES, eslintAdapter } from "../../src/adapters/eslint.js";
 import { PARSE_ERROR } from "../../src/adapters/types.js";
 import type { Guardrail, RecordSet } from "../../src/records/types.js";
 import { conformance } from "./conformance.js";
@@ -74,5 +77,26 @@ describe("eslint adapter", () => {
     const b = eslintAdapter.emit([g], { ...setFor(g), root: "/tmp/two" });
     expect(Object.keys(a)).toEqual([".warden/generated/eslint.rules.json"]);
     expect(a).toEqual(b);
+  });
+
+  it("lints in batches of at most 500 files", async () => {
+    const g = guardrail("no-debugger", "eslint:no-debugger");
+    const root = await mkdtemp(join(tmpdir(), "warden-batch-"));
+    try {
+      const files = Array.from({ length: BATCH_FILES + 1 }, (_, i) => `src/f${i}.ts`);
+      await mkdir(join(root, "src"));
+      await Promise.all(files.map((f) => writeFile(join(root, f), "debugger;\n")));
+      for (const [path, content] of Object.entries(eslintAdapter.emit([g], { ...setFor(g), root }))) {
+        await mkdir(join(root, path, ".."), { recursive: true });
+        await writeFile(join(root, path), content);
+      }
+      const spy = vi.spyOn(ESLint.prototype, "lintFiles");
+      const [r] = await eslintAdapter.run([g], files, { root, generatedDir: join(root, ".warden/generated") });
+      expect(spy.mock.calls.map((c) => [c[0]].flat().length)).toEqual([BATCH_FILES, 1]);
+      expect(r?.violations).toHaveLength(BATCH_FILES + 1);
+    } finally {
+      vi.restoreAllMocks();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

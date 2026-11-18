@@ -9,14 +9,17 @@ export interface Violation {
 
 export interface RunResult {
   guardrail: string;
-  status: "pass" | "fail" | "over-budget";
+  status: "pass" | "fail" | "killed";
   violations: Violation[];
   ms: number;
+  overBudget?: boolean;
+  command?: string;
 }
 
 export interface RunContext {
   root: string;
   generatedDir: string;
+  unbudgeted?: boolean;
 }
 
 export interface Adapter {

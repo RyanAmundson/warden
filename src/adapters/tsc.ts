@@ -1,7 +1,7 @@
-import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { join, relative } from "node:path";
 import { RecordError } from "../records/load.js";
+import { spawnBudgeted } from "./cmd.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
 import { type Adapter, PARSE_ERROR, type RunContext, type RunResult, type Violation } from "./types.js";
 
@@ -34,50 +34,11 @@ const resolveTsc = (root: string): string => {
   }
 };
 
-interface Spawned {
-  stdout: string;
-  stderr: string;
-  code: number | null;
-  signal: NodeJS.Signals | null;
-  killed: boolean;
-  ms: number;
-}
-
-const spawnTsc = (tsc: string, ctx: RunContext, budgetMs: number): Promise<Spawned> =>
-  new Promise((resolve, reject) => {
-    const start = performance.now();
-    const child = spawn(process.execPath, [tsc, "-p", join(relative(ctx.root, ctx.generatedDir), "tsconfig.json"), "--pretty", "false"], {
-      cwd: ctx.root,
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    let killed = false;
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    const timer = setTimeout(() => {
-      killed = true;
-      process.kill(-(child.pid as number), "SIGKILL");
-    }, budgetMs);
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-    child.on("close", (code, signal) => {
-      clearTimeout(timer);
-      resolve({ stdout, stderr, code, signal, killed, ms: performance.now() - start });
-    });
-  });
-
 const run = async (gs: Guardrail[], _files: string[], ctx: RunContext): Promise<RunResult[]> => {
   const tsc = resolveTsc(ctx.root);
-  const budgetMs = Math.min(...gs.map((g) => g.budgetMs));
-  const { stdout, stderr, code, signal, killed, ms } = await spawnTsc(tsc, ctx, budgetMs);
+  const budgetMs = ctx.unbudgeted === true ? undefined : Math.min(...gs.map((g) => g.budgetMs));
+  const project = join(relative(ctx.root, ctx.generatedDir), "tsconfig.json");
+  const { stdout, stderr, code, signal, killed, ms } = await spawnBudgeted(process.execPath, [tsc, "-p", project, "--pretty", "false"], ctx.root, budgetMs);
   if (!killed && (signal !== null || (code !== 0 && code !== 1 && code !== 2))) {
     throw new Error(`tsc ended with ${signal ?? `exit code ${code}`}: ${stderr.trim()}`);
   }
@@ -105,12 +66,11 @@ const run = async (gs: Guardrail[], _files: string[], ctx: RunContext): Promise<
   if (!killed && code !== 0 && !parsed) {
     throw new Error(`tsc exited with ${code} and printed no diagnostics: ${stderr.trim()}`);
   }
-  return [...byGuardrail].map(([guardrail, violations]) => ({
-    guardrail,
-    status: killed ? "over-budget" : violations.length > 0 ? "fail" : "pass",
-    violations,
-    ms,
-  }));
+  return [...byGuardrail].map(([guardrail, violations]): RunResult =>
+    killed
+      ? { guardrail, status: "killed", violations, ms, command: `npx tsc -p ${project} --pretty false` }
+      : { guardrail, status: violations.length > 0 ? "fail" : "pass", violations, ms },
+  );
 };
 
 export const tscAdapter: Adapter = { id: "tsc", emit, run };

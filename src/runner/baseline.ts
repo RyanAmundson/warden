@@ -35,7 +35,7 @@ export function applyBaseline(
   failures.push(...parseErrors.filter((v) => scanned.includes(v.file)));
   delete next[PARSE_ERROR];
   for (const r of results) {
-    if (r.status === "over-budget" || r.guardrail === PARSE_ERROR) continue;
+    if (r.status === "killed" || r.guardrail === PARSE_ERROR) continue;
     const byFile = new Map<string, Violation[]>(["", ...scanned].filter((f) => !unparsed.has(f)).map((f) => [f, []]));
     for (const v of r.violations) byFile.get(v.file)?.push(v);
     const entries = next[r.guardrail] ?? {};

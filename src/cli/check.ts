@@ -78,26 +78,28 @@ const runCached = async (
   const unparsed = new Set(parse.flatMap((r) => r.violations.map((v) => v.file)));
   const results = lint.map((g): RunResult => {
     const r = fresh.find((x) => x.guardrail === g.id);
-    if (r?.status === "over-budget") return r;
+    if (r?.status === "killed") return r;
     const violations = scanned.flatMap((f) => {
       if (!misses.has(f)) return hits.get(keyOf(f, g)) as Violation[];
       const own = (r as RunResult).violations.filter((v) => v.file === f);
       if (!unparsed.has(f)) writeCache(project, keyOf(f, g), own);
       return own;
     });
-    return { guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms: r?.ms ?? 0 };
+    return { guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms: r?.ms ?? 0, overBudget: r?.overBudget === true };
   });
   const others = rest.length > 0 ? await runGuardrails(rest, scanned, ctx) : [];
   return { perFile: [...results, ...parse], wholeProject: others, ran: [...fresh, ...others] };
 };
 
 const report = (failures: Violation[], set: RecordSet, opts: CheckOptions, notes: Notes): number => {
-  const failed = failures.length > 0 || (notes.tampered ?? []).length > 0 || (notes.overBudget ?? []).length > 0;
+  const failed = failures.length > 0 || (notes.tampered ?? []).length > 0 || (notes.killed ?? []).length > 0;
   if (opts.hook === "claude") {
     if (failed) process.stdout.write(`${JSON.stringify({ decision: "block", reason: formatFeedback(failures, set, "agent", notes) })}\n`);
     return 0;
   }
-  if (failed || opts.format === "json") process.stdout.write(`${formatFeedback(failures, set, opts.format, notes)}\n`);
+  if (failed || opts.format === "json" || (notes.overBudget ?? []).length > 0) {
+    process.stdout.write(`${formatFeedback(failures, set, opts.format, notes)}\n`);
+  }
   return failed ? 1 : 0;
 };
 
@@ -139,7 +141,10 @@ const check = async (opts: CheckOptions): Promise<number> => {
   const wanted = (r: RunResult): boolean => selected.has(r.guardrail) || !known.has(r.guardrail);
   const perFile = run.perFile.filter(wanted);
   const wholeProject = run.wholeProject.filter(wanted);
-  const overBudget = [...perFile, ...wholeProject].filter((r) => r.status === "over-budget").map((r) => ({ guardrail: r.guardrail, ms: r.ms }));
+  const overBudget = [...perFile, ...wholeProject].filter((r) => r.overBudget === true).map((r) => ({ guardrail: r.guardrail, ms: r.ms }));
+  const killed = [...perFile, ...wholeProject]
+    .filter((r) => r.status === "killed")
+    .map((r) => ({ guardrail: r.guardrail, ms: r.ms, command: r.command as string }));
 
   const exists = (f: string): boolean => existsSync(join(root, f));
   const baseline = readBaseline(root);
@@ -158,7 +163,9 @@ const check = async (opts: CheckOptions): Promise<number> => {
   const failures = [...narrow.failures, ...wide.failures];
   if (canonicalJson(wide.next) !== canonicalJson(baseline)) writeBaseline(root, wide.next);
 
-  for (const r of run.ran) appendEvidence(project, { at, kind: "cost", guardrail: r.guardrail, status: r.status, ms: r.ms });
+  for (const r of run.ran) {
+    appendEvidence(project, { at, kind: "cost", guardrail: r.guardrail, status: r.overBudget === true ? "over-budget" : r.status, ms: r.ms });
+  }
   const prior = readEvidence(project);
   let repeated: Repeated | undefined;
   for (const key of new Set(failures.map((v) => `${v.guardrail}\0${v.file}`))) {
@@ -169,7 +176,7 @@ const check = async (opts: CheckOptions): Promise<number> => {
     appendEvidence(project, { at, kind: "fired", guardrail, file, status: "fail", detail });
     if (n >= loopBreakerRepeats && (repeated === undefined || n > repeated.n)) repeated = { guardrail, file, n };
   }
-  return report(failures, set, opts, { repeated, overBudget });
+  return report(failures, set, opts, { repeated, overBudget, killed });
 };
 
 export async function runCheck(opts: CheckOptions): Promise<number> {

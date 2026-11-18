@@ -29,11 +29,18 @@ describe("cmd adapter", () => {
     expect(r?.violations[0]?.file).toBe("");
   });
 
-  it("cmd over budget", async () => {
+  it("cmd killed at its budget names the command", async () => {
     const [r] = await runGuardrails([legacy("cmd:sleep 5", 200)], [], ctx);
-    expect(r?.status).toBe("over-budget");
+    expect(r?.status).toBe("killed");
+    expect(r?.command).toBe("sleep 5");
     expect(r?.ms).toBeLessThan(1000);
     expect(spawnSync("pgrep", ["-f", "sleep 5"]).status).toBe(1);
+  });
+
+  it("a process group that is already gone at the budget is still reported as killed", async () => {
+    const orphan = `node -e "require('child_process').spawn('sleep', ['1'], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] }).unref()"`;
+    const [r] = await runGuardrails([legacy(`cmd:${orphan}`, 300)], [], ctx);
+    expect(r?.status).toBe("killed");
   });
 
   it("emits nothing", () => {

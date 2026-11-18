@@ -18,13 +18,10 @@ export async function runGuardrails(gs: Guardrail[], files: string[], ctx: RunCo
   }
   const out: RunResult[] = [];
   for (const [prefix, group] of groups) {
-    const start = performance.now();
     const results = await (adapters.get(prefix) as Adapter).run(group, files, ctx);
-    const elapsed = performance.now() - start;
     for (const r of results) {
       const g = group.find((x) => x.id === r.guardrail);
-      const ms = prefix === "cmd" ? r.ms : elapsed;
-      out.push({ ...r, ms, status: r.status === "over-budget" || (g !== undefined && ms > g.budgetMs) ? "over-budget" : r.status });
+      out.push({ ...r, overBudget: ctx.unbudgeted !== true && r.status !== "killed" && g !== undefined && r.ms > g.budgetMs });
     }
   }
   return out;

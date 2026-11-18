@@ -15,10 +15,15 @@ export interface OverBudget {
   ms: number;
 }
 
+export interface Killed extends OverBudget {
+  command: string;
+}
+
 export interface Notes {
   tampered?: Tamper[];
   repeated?: Repeated;
   overBudget?: OverBudget[];
+  killed?: Killed[];
 }
 
 const EXAMPLE_LINES = 15;
@@ -46,10 +51,9 @@ const nextAction = (failures: Violation[], notes: Notes): string | null => {
   if (failures.length > 0) {
     return 'change the code at the lines above to match "Do this". Do not edit .warden/ or generated config; that is recorded as tampering.';
   }
-  const slow = notes.overBudget?.[0];
-  if (slow !== undefined) {
-    return `${slow.guardrail} exceeded its time budget; this is recorded as a Warden defect, not a problem in your code. Re-run warden check once; if it repeats, continue your task and report it.`;
-  }
+  const killed = notes.killed?.[0];
+  if (killed !== undefined) return `run \`${killed.command}\` directly to see why it does not finish.`;
+  if ((notes.overBudget ?? []).length > 0) return "continue your task; nothing in your code failed.";
   return null;
 };
 
@@ -72,21 +76,26 @@ export function formatFeedback(failures: Violation[], set: RecordSet, format: Fo
         why: owner === undefined ? undefined : `warden explain ${owner.practice.id}`,
       };
     });
-  const slow = (notes.overBudget ?? []).map(({ guardrail, ms }) => {
-    const owner = ownerOf(set, guardrail);
-    const limit = owner === undefined ? "" : ` > ${owner.guardrail.budgetMs} ms`;
-    return {
-      guardrail,
-      practice: owner?.practice.id ?? guardrail,
-      rule: owner?.practice.statement,
-      reason: `over budget (${Math.round(ms)} ms${limit})`,
-      why: owner === undefined ? undefined : `warden explain ${owner.practice.id}`,
-    };
-  });
+  const timing = (label: string, list: OverBudget[], reason: (ms: number, budget: string) => string) =>
+    list.map(({ guardrail, ms }) => {
+      const owner = ownerOf(set, guardrail);
+      return {
+        label,
+        guardrail,
+        practice: owner?.practice.id ?? guardrail,
+        rule: owner?.practice.statement,
+        reason: reason(Math.round(ms), owner === undefined ? "its" : `its ${owner.guardrail.budgetMs} ms`),
+        why: owner === undefined ? undefined : `warden explain ${owner.practice.id}`,
+      };
+    });
+  const slow = [
+    ...timing("FAIL project", notes.killed ?? [], (ms, budget) => `stopped at ${ms} ms: did not finish within ${budget} budget`),
+    ...timing("WARDEN DEFECT", notes.overBudget ?? [], (ms, budget) => `finished in ${ms} ms, over ${budget} budget; its result counted and the overrun is recorded as a Warden defect`),
+  ];
   const next = nextAction(failures, notes);
   const tampered = notes.tampered ?? [];
   if (format === "json") {
-    return JSON.stringify({ failures: items, tampered, repeated: notes.repeated, overBudget: notes.overBudget, next });
+    return JSON.stringify({ failures: items, tampered, repeated: notes.repeated, overBudget: notes.overBudget, killed: notes.killed, next });
   }
 
   const lines: string[] = tampered.map((t) => `TAMPERED ${t.file}  ${t.detail}`);
@@ -97,7 +106,7 @@ export function formatFeedback(failures: Violation[], set: RecordSet, format: Fo
     if (item.why !== undefined) lines.push(`  Why:      ${item.why}`);
   }
   for (const item of slow) {
-    lines.push(`FAIL project  ${item.practice}`);
+    lines.push(`${item.label}  ${item.practice}`);
     if (item.rule !== undefined) lines.push(`  Rule:     ${item.rule}`);
     lines.push(`  Reason:   ${item.reason}`);
     if (item.why !== undefined) lines.push(`  Why:      ${item.why}`);

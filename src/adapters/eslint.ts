@@ -9,6 +9,8 @@ import { type Adapter, PARSE_ERROR, type RunContext, type RunResult, type Violat
 
 const RULES_PATH = ".warden/generated/eslint.rules.json";
 
+export const BATCH_FILES = 500;
+
 const ruleId = (g: Guardrail): string => g.implementation.slice(g.implementation.indexOf(":") + 1);
 
 const ruleValue = (options: unknown): unknown =>
@@ -54,9 +56,13 @@ const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<R
     allowInlineConfig: false,
     warnIgnored: false,
   });
-  const start = performance.now();
-  const results = await eslint.lintFiles(files);
-  const ms = performance.now() - start;
+  const results: ESLint.LintResult[] = [];
+  let ms = 0;
+  for (let i = 0; i < files.length; i += BATCH_FILES) {
+    const start = performance.now();
+    results.push(...(await eslint.lintFiles(files.slice(i, i + BATCH_FILES))));
+    ms = Math.max(ms, performance.now() - start);
+  }
   const byRule = new Map<string, Violation[]>();
   for (const g of gs) byRule.set(ruleId(g), []);
   const owner = new Map(gs.map((g) => [ruleId(g), g.id]));

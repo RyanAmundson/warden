@@ -3,9 +3,11 @@ import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { ESLint } from "eslint";
 import { eslintAdapter } from "../../src/adapters/eslint.js";
 import { PARSE_ERROR, type RunResult } from "../../src/adapters/types.js";
 import { runCheck } from "../../src/cli/check.js";
+import { runInit } from "../../src/cli/init.js";
 import { compile } from "../../src/compiler/compile.js";
 import { readLock, sha256 } from "../../src/compiler/lock.js";
 import { applyBaseline } from "../../src/runner/baseline.js";
@@ -317,7 +319,7 @@ describe("runCheck", () => {
   it("explicit paths are checked instead of changed files", async () => {
     const { code, out } = await check({ paths: ["a.ts"], format: "json" });
     expect(code).toBe(0);
-    expect(JSON.parse(out)).toEqual({ failures: [], tampered: [], overBudget: [], next: null });
+    expect(JSON.parse(out)).toEqual({ failures: [], tampered: [], overBudget: [], killed: [], next: null });
   });
 
   it("rule narrows the run to one practice", async () => {
@@ -434,14 +436,14 @@ describe("ruling fixes", () => {
     expect(JSON.parse(await read(".warden/baseline.json"))).toEqual({ "warden-no-comments": { "a.ts": 1 } });
   });
 
-  it("over budget names the budget and a re-run next action", async () => {
+  it("a Guardrail killed at its budget fails and says to run its command directly", async () => {
     await addLegacy("commit", "sleep 2", 200);
     await write("b.ts", "const b = 1;\n");
     const { code, out } = await check();
     expect(code).toBe(1);
-    expect(out).toMatch(/^ {2}Reason: {3}over budget \(\d+ ms > 200 ms\)$/m);
+    expect(out).toMatch(/^ {2}Reason: {3}stopped at \d+ ms: did not finish within its 200 ms budget$/m);
     expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([
-      "Next action: legacy-script exceeded its time budget; this is recorded as a Warden defect, not a problem in your code. Re-run warden check once; if it repeats, continue your task and report it.",
+      "Next action: run `sleep 2` directly to see why it does not finish.",
     ]);
     expect(out).not.toMatch(/blocked|cannot proceed/i);
   });
@@ -585,6 +587,59 @@ describe("review fixes", () => {
   });
 });
 
+const slowLint = (ms: number): void => {
+  const real = performance.now.bind(performance);
+  let skew = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => real() + skew);
+  const lint = ESLint.prototype.lintFiles;
+  vi.spyOn(ESLint.prototype, "lintFiles").mockImplementation(async function (this: ESLint, files) {
+    const out = await lint.call(this, files);
+    if (![files].flat().some((f) => f.includes("warden-example"))) skew += ms;
+    return out;
+  });
+};
+
+describe("final review: budgets", () => {
+  it("a lint Guardrail over budget still counts and caches its violations, and records a Warden defect", async () => {
+    await write("b.ts", "var b = 1;\n");
+    slowLint(6000);
+    const first = await check();
+    expect(first.code).toBe(1);
+    expect(first.out).toContain("FAIL b.ts:1  no-var");
+    expect(first.out).toMatch(/^WARDEN DEFECT {2}no-var$/m);
+    expect((await evidence()).filter((e) => e.kind === "cost" && e.status === "over-budget").map((e) => e.guardrail)).toContain("local-no-var");
+    const spy = vi.mocked(ESLint.prototype.lintFiles);
+    spy.mockClear();
+    expect((await check()).code).toBe(1);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("a lint Guardrail over budget with no violations passes", async () => {
+    await write("b.ts", "const b = 1;\n");
+    slowLint(6000);
+    const { code, out } = await check();
+    expect(code).toBe(0);
+    expect(out).toMatch(/^WARDEN DEFECT {2}no-comments$/m);
+    expect(out).toContain("Next action: continue your task; nothing in your code failed.");
+  });
+
+  it("init baselines the whole repository without Guardrail budgets", async () => {
+    const repo = await realpath(await mkdtemp(join(tmpdir(), "warden-init-")));
+    try {
+      await writeFile(join(repo, "a.ts"), "// c\nconst a = 1;\n");
+      execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "init", "-q", "-b", "main"], { cwd: repo });
+      execFileSync("git", ["add", "-A"], { cwd: repo });
+      execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "s"], { cwd: repo });
+      slowLint(60000);
+      vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+      expect(await runInit(repo, wardenRoot)).toBe(0);
+      expect(JSON.parse(await readFile(join(repo, ".warden/baseline.json"), "utf8"))).toEqual({ "warden-no-comments": { "a.ts": 1 } });
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("applyBaseline", () => {
   const result = (guardrail: string, files: string[], status: RunResult["status"] = "fail"): RunResult => ({
     guardrail,
@@ -605,9 +660,9 @@ describe("applyBaseline", () => {
     expect(applyBaseline([result("legacy", ["", ""])], baseline, ["a.ts"], () => true).failures).toHaveLength(2);
   });
 
-  it("over budget keeps the baseline", () => {
+  it("a killed result keeps the baseline", () => {
     const baseline = { g: { "a.ts": 2 } };
-    expect(applyBaseline([result("g", [], "over-budget")], baseline, ["a.ts"], () => true)).toEqual({ failures: [], next: baseline });
+    expect(applyBaseline([result("g", [], "killed")], baseline, ["a.ts"], () => true)).toEqual({ failures: [], next: baseline });
   });
 
   it("never absorbs a parse error", () => {

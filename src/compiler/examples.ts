@@ -82,7 +82,7 @@ async function runExample(
     if (results.some((r) => r.guardrail === PARSE_ERROR && r.status === "fail")) return "parse-error";
     const own = results.find((r) => r.guardrail === g.id);
     if (own === undefined) throw new Error(`no result for guardrail ${g.id}`);
-    return own.status;
+    return own.status === "killed" || own.overBudget === true ? "over-budget" : own.status;
   } finally {
     await rm(target, { force: true });
   }
