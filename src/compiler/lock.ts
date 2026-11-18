@@ -3,9 +3,9 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { pathGroups } from "../records/paths.js";
-import type { Kind, ProjectConfig, RecordSet, Tier } from "../records/types.js";
+import { type BenchSettings, type Kind, type ProjectConfig, type RecordSet, type Tier, benchSettings } from "../records/types.js";
 
-export const LOCK_FORMAT = 1;
+export const LOCK_FORMAT = 2;
 
 export interface Lock {
   format: number;
@@ -14,7 +14,7 @@ export interface Lock {
   tools: Record<string, string>;
   generated: Record<string, string>;
   guardrails: Record<string, LockedGuardrail>;
-  config: Pick<ProjectConfig, "project" | "base" | "tierBudgetMs" | "loopBreakerRepeats">;
+  config: Pick<ProjectConfig, "project" | "base" | "tierBudgetMs" | "loopBreakerRepeats"> & { bench?: BenchSettings };
 }
 
 export interface LockedGuardrail {
@@ -87,7 +87,7 @@ export function computeLock(
     tools: bundledTools(),
     generated: hashed(generated),
     guardrails: Object.fromEntries(guardrails),
-    config: { project, base, tierBudgetMs, loopBreakerRepeats },
+    config: { project, base, tierBudgetMs, loopBreakerRepeats, bench: benchSettings(set.config) },
   };
 }
 

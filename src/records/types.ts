@@ -62,6 +62,10 @@ export interface BenchSettings {
   constantMs: number;
 }
 
+export const BENCH_DEFAULTS: BenchSettings = { baseFiles: 25, maxFiles: 3200, minMarginalMs: 20, linearMax: 1.15, sublinearMax: 0.9, constantMs: 5 };
+
+export const benchSettings = (config: ProjectConfig): BenchSettings => ({ ...BENCH_DEFAULTS, ...config.bench });
+
 export interface RecordSet {
   config: ProjectConfig;
   packs: Pack[];

@@ -5,11 +5,9 @@ import { wardenVersion } from "../compiler/compile.js";
 import { enabledOn, examplePrefix, withExampleProject } from "../compiler/examples.js";
 import { RecordError, loadRecords } from "../records/load.js";
 import { pathGroups } from "../records/paths.js";
-import type { BenchSettings, Guardrail, Pack, RecordSet } from "../records/types.js";
+import { type BenchSettings, type Guardrail, type Pack, type RecordSet, benchSettings } from "../records/types.js";
 import { ESLINT_PASS, type Measurement, type Verdict, appendEvidence } from "../runner/evidence.js";
 import { adapters, runGuardrails } from "../runner/run.js";
-
-export const BENCH_DEFAULTS: BenchSettings = { baseFiles: 25, maxFiles: 3200, minMarginalMs: 20, linearMax: 1.15, sublinearMax: 0.9, constantMs: 5 };
 
 const RUNS = 3;
 
@@ -154,7 +152,7 @@ const r1 = (n: number): number => Math.round(n * 10) / 10;
 export async function runBench(root: string, wardenRoot: string, opts: { rule?: string; pack?: string }): Promise<number> {
   try {
     const set = await loadRecords(root, wardenRoot);
-    const cfg = { ...BENCH_DEFAULTS, ...set.config.bench };
+    const cfg = benchSettings(set.config);
     const subjects = subjectsOf(set, select(set, opts.rule, opts.pack));
     const warden = await wardenVersion(wardenRoot);
     const at = new Date().toISOString();

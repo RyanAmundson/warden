@@ -4,7 +4,7 @@ import { expectedOutputs } from "../compiler/compile.js";
 import { isWardenEntry } from "../compiler/emit.js";
 import { LOCK_FORMAT, LOCK_PATH, type Lock, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError, readText } from "../records/load.js";
-import { type Kind, type RecordSet, kindRank } from "../records/types.js";
+import { type BenchSettings, type Kind, type RecordSet, kindRank } from "../records/types.js";
 import { BASELINE_PATH, type Baseline, carryRenames, projectWideEntries, readBaseline } from "./baseline.js";
 import { changesSinceMergeBase, containsHead, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
 
@@ -76,6 +76,10 @@ export function readBaseLock(root: string, base: string): Lock | undefined {
   return before;
 }
 
+const benchLoosened = (was: BenchSettings | undefined, now: BenchSettings | undefined): boolean =>
+  was !== undefined &&
+  (now === undefined || now.linearMax > was.linearMax || now.constantMs > was.constantMs || now.minMarginalMs > was.minMarginalMs || now.maxFiles < was.maxFiles);
+
 const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
   const before = readBaseLock(root, base);
   if (before === undefined) return [];
@@ -89,6 +93,7 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
   if (
     changed(before.config.project, lock.config.project) ||
     lock.config.loopBreakerRepeats > before.config.loopBreakerRepeats ||
+    benchLoosened(before.config.bench, lock.config.bench) ||
     tiers.some((t) => lock.config.tierBudgetMs[t] > before.config.tierBudgetMs[t])
   ) {
     found.push({ file: LOCK_PATH, detail: "loosened" });

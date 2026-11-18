@@ -85,8 +85,14 @@ describe("compile", () => {
       runs: ["commit", "edit"],
       paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs} & src/**"],
     });
-    expect(lock.format).toBe(1);
-    expect(lock.config).toEqual({ project: "fixture", base: "main", tierBudgetMs: { edit: 2000, commit: 30000, boundary: 120000 }, loopBreakerRepeats: 3 });
+    expect(lock.format).toBe(2);
+    expect(lock.config).toEqual({
+      project: "fixture",
+      base: "main",
+      tierBudgetMs: { edit: 2000, commit: 30000, boundary: 120000 },
+      loopBreakerRepeats: 3,
+      bench: { baseFiles: 25, maxFiles: 3200, minMarginalMs: 20, linearMax: 1.15, sublinearMax: 0.9, constantMs: 5 },
+    });
   });
 
   it("lock records the versions of the tools Warden loads, read from each tool's own package.json", async () => {

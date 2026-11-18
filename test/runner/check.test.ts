@@ -955,7 +955,7 @@ describe("final review: lock records base and project", () => {
 
   it("a base lock from a newer Warden exits 2 and says to update Warden", async () => {
     await commitBaseLock((lock) => {
-      lock.format = 2;
+      lock.format = 3;
     });
     git("checkout", "-q", "feature");
     git("merge", "-q", "--no-edit", "main");
@@ -964,6 +964,27 @@ describe("final review: lock records base and project", () => {
     expect(code).toBe(2);
     expect(err).toContain("Next action: update this project's Warden to the release that wrote the lock on main");
     expect(err).toContain("then run warden check --base main again.");
+  });
+});
+
+describe("bench settings in the lock", () => {
+  const withBench = (setting: string): string => config(["core", "local"]).replace("loopBreakerRepeats: 3", `loopBreakerRepeats: 3\nbench:\n  ${setting}`);
+
+  for (const setting of ["linearMax: 1.5", "constantMs: 50", "minMarginalMs: 500", "maxFiles: 400"]) {
+    it(`setting ${setting} in config.yaml is loosening`, async () => {
+      await write(".warden/config.yaml", withBench(setting));
+      expect((await compile(root, wardenRoot)).findings).toEqual([]);
+      expect(readLock(root).config.bench).toMatchObject(Object.fromEntries([[setting.split(": ")[0] as string, Number(setting.split(": ")[1])]]));
+      expect((await check()).code).toBe(1);
+      expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "loosened" }]);
+    });
+  }
+
+  it("tightening the bench settings is not loosening", async () => {
+    await write(".warden/config.yaml", withBench("linearMax: 1.05\n  maxFiles: 6400\n  constantMs: 2"));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect((await check()).code).toBe(0);
+    expect(await tampered()).toEqual([]);
   });
 });
 
@@ -1013,7 +1034,7 @@ describe("bundled tool versions in the lock", () => {
     const working = await read(".warden/lock.json");
     git("checkout", "-q", "main");
     await editLock((lock) => {
-      lock.format = 2;
+      lock.format = 3;
       delete lock.sources;
     });
     git("commit", "-q", "-am", "newer base lock");
