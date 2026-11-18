@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
 const main = join(wardenRoot, "dist/src/cli/main.js");
-const bundled = readdirSync(join(wardenRoot, "packs")).sort((a, b) => a.localeCompare(b));
+const bundled = readdirSync(join(wardenRoot, "packs"), { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort((a, b) => a.localeCompare(b));
 const everyPack = [...bundled, "local"].join(",");
 
 let root: string;

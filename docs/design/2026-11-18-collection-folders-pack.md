@@ -14,9 +14,9 @@ array: it holds item folders of one kind. Every other folder is an object.
 | `collection-holds-only-folders` | `warden-collection-holds-only-folders` | a file directly inside a collection |
 | `collections-do-not-nest` | `warden-collections-do-not-nest` | `[a]/[b]` |
 | `collection-names-are-plural-kebab-case` | `warden-collection-names-are-plural-kebab-case` | a collection name that is not `[kebab-case]` ending in `s` |
-| `collection-items-share-one-shape` | `warden-collection-items-share-one-shape` | an item whose top-level file and folder names differ from the most common set in its collection |
+| `collection-items-share-one-shape` | `warden-collection-items-share-one-shape` | an item whose top-level file and folder names differ from the shape most items in its collection share |
 
-Each failure lists the offending paths and ends with one next action.
+Each failure lists the offending paths, then a count and one next action.
 
 ## Decisions (Ryan, November 18, 2026)
 
@@ -26,6 +26,12 @@ Each failure lists the offending paths and ends with one next action.
   top-level entries as the most common item shape in its collection. The design
   asked for a declared item layout per collection; a pack cannot know a
   project's layouts, so Ryan chose the heuristic.
+- An entry name that repeats its item's folder name is compared with the item
+  name replaced by `<item>`, so `Button/Button.tsx` and `Card/Card.tsx` share
+  the shape `<item>.tsx` (Ryan, after review). Without this, every component
+  folder had a unique shape.
+- A collection whose two most common shapes tie is skipped, because no shape
+  is the one its items should match.
 - Plural is approximated: the last word ends in `s`. `[lib]`, `[delivery]`,
   and `[timeline]` fail.
 
@@ -40,7 +46,8 @@ that contain at least one file are seen.
 
 The kind is `runtime`, not `lint`. `warden check` treats `lint` results as
 per-file and drops a `cmd` violation, whose file is empty, so a `cmd` Guardrail
-of kind `lint` would never fail.
+of kind `lint` would never fail. `type` would run, but it would misstate a
+filesystem script as a type check.
 
 ## Limits
 
@@ -49,11 +56,15 @@ of kind `lint` would never fail.
   already has a violation, and existing deviations cannot be baselined. An `fs`
   adapter that reports per-file violations removes this limit.
 - The failure message starts with the whole inline command, because the `cmd`
-  adapter prints the command before the output.
+  adapter prints the command before the output. The adapter keeps the last 20
+  output lines, so a failure shows at most 19 paths before its count line.
 - The same file-listing prefix is repeated in all four scripts, because a `cmd`
   command cannot reference a file inside the pack.
-- Next.js dynamic route folders such as `[id]` look like collections. Do not
-  enable this pack on those paths.
+- A `cmd` script scans the whole repository and ignores the pack's configured
+  paths. Next.js dynamic route folders such as `[id]` look like collections, so
+  do not enable this pack in a repository that uses them.
+- Outside a git work tree, the walk descends into `node_modules` before
+  filtering it, and skips symbolic links.
 
 ## Measured in Context Manager (November 18, 2026)
 
@@ -64,6 +75,6 @@ Tracked and untracked, not ignored, files:
 | holds only folders | 204 loose files |
 | do not nest | 1: `[libs]/ui-kit/src/[primitives]/[utils]` |
 | plural kebab-case | 5 folders: `[lib]`, `[delivery]`, `[timeline]` |
-| one shape | 248 items across 68 collections |
+| one shape | 80 items in 8 of 68 collections; 30 tied collections skipped |
 
 The whole scan of 6,875 files takes about 0.2 seconds per Guardrail.
