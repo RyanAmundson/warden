@@ -5,9 +5,9 @@ import { wardenVersion } from "../compiler/compile.js";
 import { LOCK_PATH, canonicalJson, sha256 } from "../compiler/lock.js";
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import type { Guardrail, RecordSet, Tier } from "../records/types.js";
-import { applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
+import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { changedFiles, changesSinceMergeBase, lastCommittedText, showAtMergeBase, unstagedFiles, verifyBase } from "../runner/changed.js";
+import { changedFiles, changesSinceMergeBase, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
 import { type Evidence, appendEvidence, readEvidence } from "../runner/evidence.js";
 import { type Format, type Notes, type Repeated, formatFeedback } from "../runner/feedback.js";
 import { runGuardrails } from "../runner/run.js";
@@ -195,7 +195,10 @@ const check = async (opts: CheckOptions): Promise<number> => {
         ].filter((f) => f !== "");
   const wide = applyBaseline(wholeProject, narrow.next, judged, exists, touched);
   const failures = [...narrow.failures, ...wide.failures];
-  if (tier !== "edit" && canonicalJson(wide.next) !== canonicalJson(baseline)) writeBaseline(root, wide.next);
+  if (tier !== "edit" && canonicalJson(wide.next) !== canonicalJson(baseline)) {
+    writeBaseline(root, wide.next);
+    if (tier === "commit") stageFile(root, BASELINE_PATH);
+  }
 
   for (const r of run.ran) {
     appendEvidence(project, { at, kind: "cost", guardrail: r.guardrail, status: r.overBudget === true ? "over-budget" : r.status, ms: r.ms });

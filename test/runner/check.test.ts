@@ -865,6 +865,16 @@ describe("residual fixes: baseline writes", () => {
   });
 });
 
+describe("residual fixes: commit tier stages the baseline it writes", () => {
+  it("a shrunk baseline is staged, so the next commit-tier check passes", async () => {
+    await write("a.ts", "const a = 1;\n");
+    expect((await check()).code).toBe(0);
+    expect(git("diff", "--name-only")).toBe("");
+    const { code, out } = await check({}, false);
+    expect(code, out).toBe(0);
+  });
+});
+
 describe("residual fixes: after a carried rename", () => {
   beforeEach(async () => {
     git("mv", "a.ts", "renamed.ts");

@@ -40,6 +40,10 @@ export function changedFiles(root: string, base: string): string[] {
   return [...new Set(files)].sort();
 }
 
+export const stageFile = (root: string, path: string): void => {
+  must(root, ["add", "--", path]);
+};
+
 export const unstagedFiles = (root: string): string[] => names(must(root, ["diff", "-z", "--name-only", "--relative"]));
 
 export function lastCommittedText(root: string, path: string): string | undefined {
