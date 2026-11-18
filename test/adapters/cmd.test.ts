@@ -1,8 +1,10 @@
 import { spawnSync } from "node:child_process";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { cmdAdapter } from "../../src/adapters/cmd.js";
 import { runGuardrails } from "../../src/runner/run.js";
-import type { Guardrail } from "../../src/records/types.js";
+import type { Guardrail, RecordSet } from "../../src/records/types.js";
+import { conformance } from "./conformance.js";
 
 const legacy = (implementation: string, budgetMs = 5000): Guardrail => ({
   id: "g",
@@ -14,6 +16,10 @@ const legacy = (implementation: string, budgetMs = 5000): Guardrail => ({
 });
 
 const ctx = { root: process.cwd(), generatedDir: "" };
+
+const fixtures = resolve(import.meta.dirname, "../fixtures/adapters");
+
+const emptySet: RecordSet = { root: "", packs: [], config: {} as never };
 
 describe("cmd adapter", () => {
   it("cmd pass", async () => {
@@ -30,11 +36,11 @@ describe("cmd adapter", () => {
   });
 
   it("cmd killed at its budget names the command", async () => {
-    const [r] = await runGuardrails([legacy("cmd:sleep 5", 200)], [], ctx);
+    const [r] = await runGuardrails([legacy("cmd:sleep 4.731", 200)], [], ctx);
     expect(r?.status).toBe("killed");
-    expect(r?.command).toBe("sleep 5");
+    expect(r?.command).toBe("sleep 4.731");
     expect(r?.ms).toBeLessThan(1000);
-    expect(spawnSync("pgrep", ["-f", "sleep 5"]).status).toBe(1);
+    expect(spawnSync("pgrep", ["-f", "sleep 4.731"]).status).toBe(1);
   });
 
   it("a process group that is already gone at the budget is still reported as killed", async () => {
@@ -51,6 +57,16 @@ describe("cmd adapter", () => {
   });
 
   it("emits nothing", () => {
-    expect(cmdAdapter.emit([legacy("cmd:true")], { root: "", packs: [], config: {} as never })).toEqual({});
+    expect(cmdAdapter.emit([legacy("cmd:true")], emptySet)).toEqual({});
+  });
+
+  it("cmd conformance: a command that exits zero in the project has no violations", async () => {
+    await conformance(cmdAdapter, resolve(fixtures, "cmd-clean"), [legacy("cmd:test ! -e broken")], emptySet, [], []);
+  });
+
+  it("cmd conformance: a command that exits non-zero is one project-wide violation", async () => {
+    await conformance(cmdAdapter, resolve(fixtures, "cmd-broken"), [legacy("cmd:test ! -e broken")], emptySet, [], [
+      { guardrail: "g", file: "", line: 0, message: "test ! -e broken exited with 1" },
+    ]);
   });
 });
