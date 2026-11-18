@@ -71,6 +71,7 @@ export interface ScalingRow {
   k?: number;
   warden: string;
   at: string;
+  flippedFrom?: Verdict;
 }
 
 export interface PracticeRow {
@@ -168,7 +169,8 @@ export async function buildReport(root: string, wardenRoot: string): Promise<Rep
   for (const e of evidence) {
     if (e.kind !== "scaling" || e.verdict === undefined || e.warden === undefined) continue;
     const key = e.pack === undefined ? { guardrail: e.guardrail as string } : { pack: e.pack };
-    newest.set(JSON.stringify(key), { ...key, verdict: e.verdict, ...(e.k === undefined ? {} : { k: e.k }), warden: e.warden, at: e.at });
+    const flipped = e.previous !== undefined && e.previous.verdict !== e.verdict ? { flippedFrom: e.previous.verdict } : {};
+    newest.set(JSON.stringify(key), { ...key, verdict: e.verdict, ...(e.k === undefined ? {} : { k: e.k }), warden: e.warden, at: e.at, ...flipped });
   }
   const scalingOf = (key: { pack: string } | { guardrail: string }): ScalingRow[] => {
     const row = newest.get(JSON.stringify(key));
@@ -203,11 +205,13 @@ export async function runReport(root: string, wardenRoot: string, json: boolean)
     lines.push(...t.packs.map((p) => `  pack ${p.pack}  median ${p.medianMs}ms  slowest ${p.slowestMs}ms  runs ${p.runs}`));
     lines.push(...t.passes.map((p) => `  pass ${p.shared} (${p.members.length} guardrails, parse and setup)  median ${p.medianMs}ms  slowest ${p.slowestMs}ms  runs ${p.runs}`));
   }
-  const last = [...scaling].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)).at(-1);
-  if (last !== undefined) lines.push(`scaling (warden bench at ${last.warden}, ${last.at.slice(0, 10)})`);
+  if (scaling.length > 0) lines.push("scaling (warden bench)");
   for (const r of scaling) {
     const label = r.pack === undefined ? `${r.guardrail === ESLINT_PASS ? "  " : "    "}${r.guardrail}` : `  pack ${r.pack}`;
-    lines.push(`${label}  ${r.verdict}${r.k === undefined ? "" : `  k=${r.k.toFixed(2)}`}${r.verdict === "superlinear" ? "  DEFECT" : ""}`);
+    const k = r.k === undefined ? "" : `  k=${r.k.toFixed(2)}`;
+    const defect = r.verdict === "superlinear" ? "  DEFECT" : "";
+    const flip = r.flippedFrom === undefined ? "" : `  flipped from ${r.flippedFrom}`;
+    lines.push(`${label}  ${r.verdict}${k}${defect}${flip}  (warden ${r.warden}, ${r.at.slice(0, 10)})`);
   }
   process.stdout.write(`${lines.join("\n")}\n`);
   return 0;
