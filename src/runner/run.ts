@@ -40,9 +40,13 @@ export async function runGuardrails(set: RecordSet, gs: Guardrail[], files: stri
   const out: RunResult[] = [];
   for (const [prefix, group] of groups) {
     const results = await (adapters.get(prefix) as Adapter).run(group, files, ctx);
+    const passBudget = group.reduce((n, x) => n + x.budgetMs, 0);
+    const found = results.find((r) => r.shared !== undefined)?.shared;
+    const shared = found === undefined ? undefined : { ...found, budgetMs: passBudget };
     for (const r of results) {
       const g = group.find((x) => x.id === r.guardrail);
-      out.push({ ...r, overBudget: ctx.unbudgeted !== true && r.status !== "killed" && g !== undefined && r.ms > g.budgetMs });
+      const budget = shared === undefined ? g?.budgetMs : passBudget;
+      out.push({ ...r, ...(shared === undefined ? {} : { shared }), overBudget: ctx.unbudgeted !== true && r.status !== "killed" && g !== undefined && budget !== undefined && r.ms > budget });
     }
   }
   return out;

@@ -9,6 +9,12 @@ export interface Violation {
   doThis?: string;
 }
 
+export interface SharedPass {
+  id: string;
+  guardrails: number;
+  budgetMs?: number;
+}
+
 export interface RunResult {
   guardrail: string;
   status: "pass" | "fail" | "killed";
@@ -16,6 +22,7 @@ export interface RunResult {
   ms: number;
   overBudget?: boolean;
   command?: string;
+  shared?: SharedPass;
 }
 
 export interface RunContext {

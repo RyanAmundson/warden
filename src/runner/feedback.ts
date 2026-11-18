@@ -13,6 +13,7 @@ export interface Repeated {
 export interface OverBudget {
   guardrail: string;
   ms: number;
+  budgetMs?: number;
 }
 
 export interface Killed extends OverBudget {
@@ -94,14 +95,14 @@ export function formatFeedback(failures: Violation[], set: RecordSet, format: Fo
       };
     });
   const timing = (label: string, list: OverBudget[], reason: (ms: number, budget: string) => string) =>
-    list.map(({ guardrail, ms }) => {
+    list.map(({ guardrail, ms, budgetMs }) => {
       const owner = ownerOf(set, guardrail);
       return {
         label,
         guardrail,
         practice: owner?.practice.id ?? guardrail,
         rule: owner?.practice.statement,
-        reason: reason(Math.round(ms), owner === undefined ? "its" : `its ${owner.guardrail.budgetMs} ms`),
+        reason: reason(Math.round(ms), budgetMs !== undefined ? `the ${budgetMs} ms shared` : owner === undefined ? "its" : `its ${owner.guardrail.budgetMs} ms`),
         why: owner === undefined ? undefined : `warden explain ${owner.practice.id}`,
       };
     });

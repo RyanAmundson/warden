@@ -663,12 +663,17 @@ const slowLint = (ms: number): void => {
 describe("final review: budgets", () => {
   it("a lint Guardrail over budget still counts and caches its violations, and records a Warden defect", async () => {
     await write("b.ts", "var b = 1;\n");
-    slowLint(6000);
+    slowLint(60000);
     const first = await check();
     expect(first.code).toBe(1);
     expect(first.out).toContain("FAIL b.ts:1  no-var");
     expect(first.out).toMatch(/^WARDEN DEFECT {2}no-var$/m);
-    expect((await evidence()).filter((e) => e.kind === "cost" && e.status === "over-budget").map((e) => e.guardrail)).toContain("local-no-var");
+    expect(first.out).toMatch(/over the \d+ ms shared budget/);
+    const costs = (await evidence()).filter((e) => e.kind === "cost" && e.shared === "eslint");
+    expect(costs).toHaveLength(1);
+    expect(costs[0]).toMatchObject({ status: "over-budget", guardrails: expect.any(Number) });
+    expect(costs[0]?.guardrail).toBeUndefined();
+    expect((await evidence()).filter((e) => e.kind === "cost" && e.shared === undefined && e.guardrail === "local-no-var")).toEqual([]);
     const spy = vi.mocked(ESLint.prototype.lintFiles);
     spy.mockClear();
     expect((await check()).code).toBe(1);
@@ -677,7 +682,7 @@ describe("final review: budgets", () => {
 
   it("a lint Guardrail over budget with no violations passes", async () => {
     await write("b.ts", "const b = 1;\n");
-    slowLint(6000);
+    slowLint(60000);
     const { code, out } = await check();
     expect(code).toBe(0);
     expect(out).toMatch(/^WARDEN DEFECT {2}no-comments$/m);

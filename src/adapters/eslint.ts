@@ -113,7 +113,7 @@ const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<R
   for (let i = 0; i < files.length; i += BATCH_FILES) {
     const start = performance.now();
     results.push(...(await eslint.lintFiles(files.slice(i, i + BATCH_FILES))));
-    ms = Math.max(ms, performance.now() - start);
+    ms += performance.now() - start;
   }
   const byRule = new Map<string, Violation[]>();
   for (const g of gs) byRule.set(ruleId(g), []);
@@ -143,11 +143,12 @@ const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<R
       });
     }
   }
+  const shared = { id: "eslint", guardrails: gs.length };
   const out = gs.map((g): RunResult => {
     const violations = byRule.get(ruleId(g)) as Violation[];
-    return { guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms };
+    return { guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms, shared };
   });
-  return parseErrors.length > 0 ? [...out, { guardrail: PARSE_ERROR, status: "fail", violations: parseErrors, ms }] : out;
+  return parseErrors.length > 0 ? [...out, { guardrail: PARSE_ERROR, status: "fail", violations: parseErrors, ms, shared }] : out;
 };
 
 export const eslintAdapter: Adapter = { id: "eslint", emit, run };

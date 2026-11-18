@@ -102,6 +102,32 @@ describe("eslint adapter", () => {
     }
   });
 
+  it("a pass takes the sum of its batch times and is marked shared by every Guardrail in it", async () => {
+    const a = guardrail("a", "eslint:no-debugger");
+    const b = guardrail("b", "eslint:no-var");
+    const root = await mkdtemp(join(tmpdir(), "warden-time-"));
+    try {
+      const files = Array.from({ length: BATCH_FILES + 1 }, (_, i) => `src/f${i}.ts`);
+      const set = setFor(a);
+      (set.packs[0]?.practices[0]?.guardrails as Guardrail[]).push(b);
+      for (const [path, content] of Object.entries(eslintAdapter.emit([a, b], { ...set, root }))) {
+        await mkdir(join(root, path, ".."), { recursive: true });
+        await writeFile(join(root, path), content);
+      }
+      vi.spyOn(ESLint.prototype, "lintFiles").mockResolvedValue([]);
+      const clock = [0, 100, 100, 350];
+      vi.spyOn(performance, "now").mockImplementation(() => clock.shift() as number);
+      const results = await eslintAdapter.run([a, b], files, { root, generatedDir: join(root, ".warden/generated") });
+      expect(results.map((r) => [r.guardrail, r.ms, r.shared])).toEqual([
+        ["a", 350, { id: "eslint", guardrails: 2 }],
+        ["b", 350, { id: "eslint", guardrails: 2 }],
+      ]);
+    } finally {
+      vi.restoreAllMocks();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("emit refuses two Guardrails that share an ESLint rule", () => {
     const a = guardrail("a", "eslint:no-debugger");
     const b = guardrail("b", "eslint:no-debugger");

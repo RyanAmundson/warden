@@ -122,7 +122,7 @@ const runCached = async (
       if (!unparsed.has(f)) writeCache(project, keyOf(f, g), own);
       return own;
     });
-    return { guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms: r?.ms ?? 0, overBudget: r?.overBudget === true };
+    return { guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms: r?.ms ?? 0, overBudget: r?.overBudget === true, ...(r?.shared === undefined ? {} : { shared: r.shared }) };
   });
   const others = rest.length > 0 ? await runGuardrails(set, rest, scanned, ctx) : [];
   return { perFile: [...results, ...parse], wholeProject: others, ran: [...fresh, ...others] };
@@ -207,7 +207,7 @@ const check = async (opts: CheckOptions): Promise<number> => {
   const wanted = (r: RunResult): boolean => selected.has(r.guardrail) || !known.has(r.guardrail);
   const perFile = run.perFile.filter(wanted);
   const wholeProject = run.wholeProject.filter(wanted);
-  const overBudget = [...perFile, ...wholeProject].filter((r) => r.overBudget === true).map((r) => ({ guardrail: r.guardrail, ms: r.ms }));
+  const overBudget = [...perFile, ...wholeProject].filter((r) => r.overBudget === true).map((r) => ({ guardrail: r.guardrail, ms: r.ms, ...(r.shared?.budgetMs === undefined ? {} : { budgetMs: r.shared.budgetMs }) }));
   const killed = [...perFile, ...wholeProject]
     .filter((r) => r.status === "killed")
     .map((r) => ({ guardrail: r.guardrail, ms: r.ms, command: r.command as string }));
@@ -239,8 +239,15 @@ const check = async (opts: CheckOptions): Promise<number> => {
     if (tier === "commit") stageFile(root, BASELINE_PATH);
   }
 
+  const sharedPasses = new Set<unknown>();
   for (const r of run.ran) {
-    appendEvidence(project, { at, kind: "cost", guardrail: r.guardrail, status: r.overBudget === true ? "over-budget" : r.status, ms: r.ms });
+    if (r.shared === undefined) {
+      appendEvidence(project, { at, kind: "cost", guardrail: r.guardrail, status: r.overBudget === true ? "over-budget" : r.status, ms: r.ms });
+    } else if (!sharedPasses.has(r.shared)) {
+      sharedPasses.add(r.shared);
+      const over = run.ran.some((x) => x.shared === r.shared && x.overBudget === true);
+      appendEvidence(project, { at, kind: "cost", shared: r.shared.id, guardrails: r.shared.guardrails, status: over ? "over-budget" : "pass", ms: r.ms });
+    }
   }
   const prior = readEvidence(project);
   const trigger = new Set(

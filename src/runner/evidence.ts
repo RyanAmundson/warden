@@ -9,6 +9,8 @@ export interface Evidence {
   file?: string;
   status?: string;
   ms?: number;
+  shared?: string;
+  guardrails?: number;
   detail?: string;
   triggered?: boolean;
 }
