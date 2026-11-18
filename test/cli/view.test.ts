@@ -10,18 +10,18 @@ const at = (time: string): string => `2026-11-18T${time}.000Z`;
 
 const steps = (run: string, time: string, last: "done" | "fail" = "done"): Evidence[] => [
   { at: at(time), kind: "step", run, step: "rules-intact", state: "start", ms: 0, tier: "edit", trigger: "agent-edit" },
-  { at: at(time), kind: "step", run, step: "rules-intact", state: "done", ms: 2.2 },
+  { at: at(time), kind: "step", run, step: "rules-intact", state: "done", ms: 2 },
   { at: at(time), kind: "step", run, step: "tools-ready", state: "start", ms: 0 },
-  { at: at(time), kind: "step", run, step: "tools-ready", state: "done", ms: 0.4, status: "cached" },
+  { at: at(time), kind: "step", run, step: "tools-ready", state: "done", ms: 0, status: "cached" },
   { at: at(time), kind: "step", run, step: "rules", state: "start", ms: 0, tier: "edit", trigger: "agent-edit", files: 1, file: "src/hooks/useRx.ts", detail: "eslint", members: ["warden-no-comments", "warden-no-suppressions"] },
-  { at: at(time), kind: "step", run, step: "rules", state: "done", ms: 4.1 },
+  { at: at(time), kind: "step", run, step: "rules", state: "done", ms: 8 },
   { at: at(time), kind: "step", run, step: "verdict", state: "start", ms: 0 },
-  { at: at(time), kind: "step", run, step: "verdict", state: last, ms: 0.3 },
+  { at: at(time), kind: "step", run, step: "verdict", state: last, ms: 1 },
 ];
 
-const passRun: Evidence = { at: at("14:01:40"), kind: "cost", guardrail: "run", run: "r1", tier: "commit", trigger: "git-commit", outcome: "ran", result: "pass", exit: 0, ms: 9, files: 3, bytes: 90, guardrails: 2, cached: 0, ratchet: [44175, 44174] };
+const passRun: Evidence = { at: at("14:01:40"), kind: "cost", guardrail: "run", run: "r1", tier: "commit", trigger: "git-commit", outcome: "ran", result: "pass", exit: 0, ms: 13, files: 3, bytes: 90, guardrails: 2, cached: 0, ratchet: [44175, 44174], rules: { "warden-no-comments": 3, "warden-no-suppressions": 3 }, passes: { eslint: 2 }, cachedRules: [], steps: { "rules-intact": 2, "tools-ready": 0, rules: 8, verdict: 1 } };
 const blockRun: Evidence = {
-  at: at("14:02:11"), kind: "cost", guardrail: "run", run: "r2", tier: "edit", trigger: "agent-edit", outcome: "ran", result: "fail", exit: 0, ms: 5, files: 1, file: "src/hooks/useRx.ts", bytes: 30, guardrails: 2, cached: 0, ratchet: [44174, 44174],
+  at: at("14:02:11"), kind: "cost", guardrail: "run", run: "r2", tier: "edit", trigger: "agent-edit", outcome: "ran", result: "fail", exit: 0, ms: 12, files: 1, file: "src/hooks/useRx.ts", bytes: 30, guardrails: 2, cached: 0, ratchet: [44174, 44174], rules: { "warden-no-comments": 3, "warden-no-suppressions": 3 }, passes: { eslint: 2 }, cachedRules: [], steps: { "rules-intact": 2, "tools-ready": 0, rules: 8, verdict: 1 },
   failures: [{ file: "src/hooks/useRx.ts", line: 2, guardrail: "warden-no-comments", practice: "no-comments" }],
   next: 'change the code at the lines above to match "Do this"',
 };
@@ -60,14 +60,16 @@ it("renders a passing run at 80 columns", () => {
   fits(lines);
   expect(lines[0]).toMatch(/^ WARDEN {2}context-manager · base origin\/main · v9\.8\.7 +q quit {2}r rerun {2}↑↓ runs$/);
   expect(lines[1]).toBe("─".repeat(80));
-  expect(lines[2]).toBe(" NOW  commit check · 3 files · triggered by git commit");
+  expect(lines[2]).toBe(" NOW  commit check · 3 files · triggered by git commit · 13 ms");
   expect(lines[3]).toMatch(/^ {3}✓ 1 rules intact {6}lock matches, 0 tampered files +2 ms$/);
   expect(lines[4]).toMatch(/^ {3}✓ 2 tools ready {7}eslint 9\.39\.5 · typescript 5\.9\.3 +cached$/);
-  expect(lines[5]).toMatch(/^ {3}✓ 3 rules {13}warden-no-comments · warden-no-suppressions +4 ms$/);
-  expect(lines[6]).toMatch(/^ {3}✓ 4 verdict {11}pass +0 ms$/);
+  expect(lines[5]).toMatch(/^ {3}✓ 3 rules {13}warden-no-comments 3 ms +8 ms$/);
+  expect(lines[6]).toBe(`${" ".repeat(25)}warden-no-suppressions 3 ms · eslint pass 2 ms`);
+  expect(lines[7]).toMatch(/^ {3}✓ 4 verdict {11}pass +1 ms$/);
+  expect(lines[8]).toMatch(/^ {5}setup and records +2 ms$/);
   expect(lines).toContainEqual(expect.stringMatching(/^ RULES \(core pack\) +strength +fired +median +budget$/));
   expect(lines).toContainEqual(expect.stringMatching(/^ {3}warden-no-comments +proven +12 +4 ms +2000 ms$/));
-  expect(lines).toContainEqual(expect.stringMatching(/^ > 14:01:40 {2}commit {2}3 files +✓ pass {3}9 ms +44,175 → 44,174$/));
+  expect(lines).toContainEqual(expect.stringMatching(/^ > 14:01:40 {2}commit {2}3 files +✓ pass +13 ms {2}2 rules$/));
   expect(lines.at(-2)).toBe("─".repeat(80));
   expect(lines.at(-1)).toBe(" The last run passed; nothing to do.");
 });
@@ -75,11 +77,44 @@ it("renders a passing run at 80 columns", () => {
 it("renders a blocked run at 80 columns with its failure and one next action", () => {
   const lines = render(model([...steps("r1", "14:01:40"), passRun, ...steps("r2", "14:02:11", "fail"), blockRun]), size, 0);
   fits(lines);
-  expect(lines[2]).toBe(" NOW  edit check · src/hooks/useRx.ts · triggered by agent edit");
-  expect(lines[6]).toMatch(/^ {3}✗ 4 verdict {11}BLOCK {2}src\/hooks\/useRx\.ts:2 warden-no-comments +0 ms$/);
-  expect(lines).toContainEqual(expect.stringMatching(/^ > 14:02:11 {2}edit {4}useRx\.ts +✗ BLOCK {2}no-comments L2 +44,174 → 44,174$/));
+  expect(lines[2]).toBe(" NOW  edit check · src/hooks/useRx.ts · triggered by agent edit · 12 ms");
+  expect(lines[7]).toMatch(/^ {3}✗ 4 verdict {11}BLOCK {2}src\/hooks\/useRx\.ts:2 warden-no-comments +1 ms$/);
+  expect(lines).toContainEqual(expect.stringMatching(/^ > 14:02:11 {2}edit {4}useRx\.ts +✗ BLOCK no-comments L2 +12 ms {2}2 rules$/));
   expect(lines).toContainEqual(expect.stringMatching(/^ {3}14:01:40 {2}commit/));
   expect(lines.filter((l) => l.includes("Next action:"))).toEqual([' Next action: change the code at the lines above to match "Do this"']);
+});
+
+it("a selected run lists each step's time and each rule's time, and the parts add up to the run total", () => {
+  const run: Evidence = { ...passRun, run: "r9", ms: 70, rules: { "warden-no-comments": 4, "warden-no-suppressions": 4 }, passes: { eslint: 57 }, steps: { "rules-intact": 2, "tools-ready": 0, rules: 65, verdict: 1 } };
+  const events = steps("r9", "14:01:40").map((e) => (e.state === "start" ? e : { ...e, ms: run.steps?.[e.step as keyof typeof run.steps] ?? 0 }));
+  const lines = render(model([...events, run]), size, 0);
+  fits(lines);
+  const ms = (line: string): number[] => [...line.matchAll(/(\d+) ms/g)].map((m) => Number(m[1]));
+  const rulesAt = lines.findIndex((l) => l.startsWith("   ✓ 3 rules"));
+  expect(lines[rulesAt]).toMatch(/warden-no-comments 4 ms +65 ms$/);
+  expect(lines[rulesAt + 1]).toBe(`${" ".repeat(25)}warden-no-suppressions 4 ms · eslint pass 57 ms`);
+  const parts = [...ms(lines[rulesAt] as string).slice(0, -1), ...ms(lines[rulesAt + 1] as string)];
+  expect(parts.reduce((a, b) => a + b, 0)).toBe(65);
+  const stepTotals = lines.filter((l) => /^ {3}✓ \d /.test(l)).map((l) => (l.endsWith("cached") ? 0 : (ms(l).at(-1) as number)));
+  const setup = ms(lines.find((l) => l.startsWith("     setup and records")) as string)[0] as number;
+  expect(stepTotals.reduce((a, b) => a + b, 0) + setup).toBe(70);
+  expect(lines[2]).toMatch(/· 70 ms$/);
+});
+
+it("time in the rules step that no rule or pass accounts for is shown as loading and cache", () => {
+  const run: Evidence = { ...passRun, run: "r8", rules: { "warden-no-comments": 1 }, passes: { eslint: 2 } };
+  const lines = render(model([...steps("r8", "14:01:40"), run]), size, 0);
+  expect(lines.join("\n").replace(/ +8 ms\n {25}/, " · ")).toContain("warden-no-comments 1 ms · eslint pass 2 ms · loading and cache 5 ms");
+});
+
+it("an old record says what it did not record, never a blank or a bare ran", () => {
+  const old: Evidence = { at: at("14:15:13"), kind: "cost", guardrail: "run", run: "old", tier: "commit", outcome: "ran", ms: 650, files: 3, bytes: 9 };
+  const lines = render(model([old]), size, 0);
+  fits(lines);
+  expect(lines[3]).toBe("   steps not recorded (older Warden) · total 650 ms");
+  const row = lines.find((l) => l.startsWith(" > 14:15:13")) as string;
+  expect(row).toBe(" > 14:15:13  -       3 files        ? result and rules not recorded · 650 ms");
+  expect(row).not.toMatch(/\bran\b/);
 });
 
 it("wraps a long next action instead of cutting it", () => {
@@ -110,7 +145,7 @@ it("lights up the steps of a run still in progress", () => {
 
 it("shows the selected run in NOW and marks it in RECENT RUNS", () => {
   const lines = render(model([...steps("r1", "14:01:40"), passRun, ...steps("r2", "14:02:11", "fail"), blockRun]), size, 1);
-  expect(lines[2]).toBe(" NOW  commit check · 3 files · triggered by git commit");
+  expect(lines[2]).toBe(" NOW  commit check · 3 files · triggered by git commit · 13 ms");
   expect(lines).toContainEqual(expect.stringMatching(/^ > 14:01:40/));
   expect(lines).toContainEqual(expect.stringMatching(/^ {3}14:02:11/));
 });

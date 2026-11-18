@@ -1481,6 +1481,28 @@ describe("performance: run records and input size", () => {
     expect(steps.at(-1)).toMatchObject({ step: "rules", state: "fail" });
   });
 
+  it("a run record carries each rule's time, the shared pass time, the step times, and the rules the cache answered", async () => {
+    await addLegacy("commit", "test ! -e broken", 5000);
+    await write("b.ts", "const b = 1;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "legacy");
+    expect((await check({ paths: ["b.ts"] })).code).toBe(0);
+    expect((await check({ paths: ["b.ts"] })).code).toBe(0);
+    const [first, second] = (await costs()).filter((e) => e.guardrail === "run") as Record<string, unknown>[];
+    const rules = first?.rules as Record<string, number>;
+    expect(Object.keys(rules).sort()).toEqual(["legacy-script", "local-no-event", "local-no-var", "warden-no-comments", "warden-no-suppressions"]);
+    const passes = first?.passes as Record<string, number>;
+    expect(Object.keys(passes)).toEqual(["eslint"]);
+    const steps = first?.steps as Record<string, number>;
+    expect(Object.keys(steps)).toEqual(["rules-intact", "tools-ready", "rules", "verdict"]);
+    const parts = Object.values(rules).reduce((a, b) => a + b, 0) + (passes.eslint as number);
+    expect(parts).toBeLessThanOrEqual((steps.rules as number) + 1);
+    expect(Object.values(steps).reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(first?.ms as number);
+    expect(first?.cachedRules).toEqual([]);
+    expect(Object.keys(second?.rules as Record<string, number>)).toEqual(["legacy-script"]);
+    expect((second?.cachedRules as string[]).sort()).toEqual(["local-no-event", "local-no-var", "warden-no-comments", "warden-no-suppressions"]);
+  });
+
   it("a check appends its steps in order as it runs", async () => {
     await write("b.ts", "// two\nconst b = 1;\n");
     expect((await check({ paths: ["b.ts"] })).code).toBe(1);

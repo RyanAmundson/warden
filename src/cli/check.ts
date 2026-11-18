@@ -156,11 +156,14 @@ interface Live {
   started: number;
   project?: string;
   open?: { step: Step; at: number };
+  steps: Partial<Record<Step, number>>;
 }
 
 const closeStep = (live: Live, state: "done" | "fail", extra: Partial<Evidence> = {}): void => {
   if (live.open === undefined || live.project === undefined) return;
-  appendEvidence(live.project, { at: new Date().toISOString(), kind: "step", run: live.run, step: live.open.step, state, ms: performance.now() - live.open.at, ...extra });
+  const ms = performance.now() - live.open.at;
+  live.steps[live.open.step] = (live.steps[live.open.step] ?? 0) + ms;
+  appendEvidence(live.project, { at: new Date().toISOString(), kind: "step", run: live.run, step: live.open.step, state, ms, ...extra });
   live.open = undefined;
 };
 
@@ -198,6 +201,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
       ...(outcome === "ran" && judged !== undefined ? { result: failedOf(failures, judged.notes) ? "fail" : "pass" } : {}),
       exit: code,
       ms: performance.now() - live.started,
+      steps: live.steps,
       files: files.length,
       ...(files.length === 1 ? { file: files[0] } : {}),
       bytes,
@@ -346,16 +350,21 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
 
   const packOf = new Map(set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.map((g) => [g.id, p.id] as const))));
   const sharedPasses = new Set<unknown>();
+  const ruleTimes: Record<string, number> = {};
+  const passTimes: Record<string, number> = {};
   for (const r of ran.ran) {
     const size = { run, tier, files: r.files, bytes: r.bytes };
     if (r.shared === undefined || r.shared.guardrails === 1) {
       const pack = packOf.get(r.guardrail);
+      if (r.guardrail !== PARSE_ERROR) ruleTimes[r.guardrail] = r.ms;
       appendEvidence(project, { at, kind: "cost", guardrail: r.guardrail, status: r.overBudget === true ? "over-budget" : r.status, ms: r.ms, ...size, ...(pack === undefined ? {} : { pack }) });
     } else if (!sharedPasses.has(r.shared)) {
       sharedPasses.add(r.shared);
       const members = ran.ran.filter((x) => x.shared === r.shared && x.guardrail !== PARSE_ERROR);
       const over = members.some((x) => x.overBudget === true);
       const rules = Object.fromEntries(members.map((x) => [x.guardrail, x.ruleMs ?? 0]));
+      Object.assign(ruleTimes, rules);
+      passTimes[r.shared.id] = r.ms - Object.values(rules).reduce((a, b) => a + b, 0);
       appendEvidence(project, { at, kind: "cost", shared: r.shared.id, guardrails: r.shared.guardrails, members: r.shared.members, status: over ? "over-budget" : "pass", ms: r.ms, ...size, rules });
     }
   }
@@ -378,7 +387,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const notes = { repeated, overBudget, killed };
   closeStep(live, failedOf(failures, notes) ? "fail" : "done");
   const code = report(failures, set, opts, notes);
-  return finish(project, scanned.length === 0 ? "empty" : "ran", scanned, code, { set, failures, notes, extra: { guardrails: chosen.length, cached: ran.cached, ratchet: [baselineTotal(baseline), baselineTotal(wide.next)] } });
+  return finish(project, scanned.length === 0 ? "empty" : "ran", scanned, code, { set, failures, notes, extra: { guardrails: chosen.length, cached: ran.cached, rules: ruleTimes, passes: passTimes, cachedRules: chosen.filter((g) => ruleTimes[g.id] === undefined).map((g) => g.id), ratchet: [baselineTotal(baseline), baselineTotal(wide.next)] } });
 };
 
 export async function runCheck(opts: CheckOptions): Promise<number> {
@@ -388,6 +397,7 @@ export async function runCheck(opts: CheckOptions): Promise<number> {
     tier: opts.hook === "claude" ? "edit" : (opts.tier ?? "commit"),
     trigger: opts.hook === "claude" ? "agent-edit" : (opts.trigger ?? "manual"),
     started: performance.now(),
+    steps: {},
   };
   try {
     return await check(opts, live);
@@ -398,7 +408,7 @@ export async function runCheck(opts: CheckOptions): Promise<number> {
     if (live.project !== undefined) {
       const commit = headCommit(resolve(opts.root));
       const next = known ? nextOf(cause.message) : `run warden check again; it stopped with: ${(cause as Error).message}`;
-      appendEvidence(live.project, { at: live.at, kind: "cost", guardrail: RUN_TOTAL, run: live.run, tier: live.tier, trigger: live.trigger, outcome: "error", exit: 2, ms: performance.now() - live.started, files: 0, bytes: 0, next, ...(commit === undefined ? {} : { commit }) });
+      appendEvidence(live.project, { at: live.at, kind: "cost", guardrail: RUN_TOTAL, run: live.run, tier: live.tier, trigger: live.trigger, outcome: "error", exit: 2, ms: performance.now() - live.started, steps: live.steps, files: 0, bytes: 0, next, ...(commit === undefined ? {} : { commit }) });
     }
     if (!known) throw cause;
     return 2;

@@ -20,14 +20,28 @@ export const clock = (at: string): string => new Date(at).toTimeString().slice(0
 
 export const target = (e: Evidence): string => e.file ?? `${e.files ?? 0} file${e.files === 1 ? "" : "s"}`;
 
-export const verdictOf = (e: Evidence): string => e.result ?? e.outcome ?? "";
+export const verdictOf = (e: Evidence): string => e.result ?? (e.outcome === "ran" ? "no result recorded" : (e.outcome ?? ""));
+
+export const NOT_RECORDED = "rules not recorded (older Warden)";
+
+export const ruleParts = (e: Evidence): string[] | undefined => {
+  if (e.rules === undefined) return undefined;
+  const ms = (n: number): string => `${Math.round(n)} ms`;
+  return [
+    ...Object.entries(e.rules).map(([id, n]) => `${id} ${ms(n)}`),
+    ...Object.entries(e.passes ?? {}).map(([id, n]) => `${id} pass ${ms(n)}`),
+    ...((e.cachedRules ?? []).length === 0 ? [] : [`${(e.cachedRules as string[]).length} cached`]),
+  ];
+};
+
+export const ruleTimes = (e: Evidence): string => ruleParts(e)?.join(" · ") ?? NOT_RECORDED;
 
 export const firstFailure = (e: Evidence): string => {
   const f = e.failures?.[0];
   return f === undefined ? "" : `${f.file === "" ? "project" : `${f.file}:${f.line}`} ${f.guardrail}`;
 };
 
-const COLUMNS = ["time", "trigger", "tier", "files", "rules", "cached", "result", "ms", "first failure"];
+const COLUMNS = ["time", "trigger", "tier", "files", "rules", "cached", "result", "ms", "first failure", "rule times"];
 
 const cells = (e: Evidence): string[] => [
   clock(e.at),
@@ -38,10 +52,11 @@ const cells = (e: Evidence): string[] => [
   e.cached === undefined ? "-" : String(e.cached),
   verdictOf(e),
   String(Math.round(e.ms ?? 0)),
-  firstFailure(e),
+  firstFailure(e) === "" ? "-" : firstFailure(e),
+  ruleTimes(e),
 ];
 
-const WIDTHS = [8, 10, 8, 24, 5, 6, 8, 6, 0];
+const WIDTHS = [8, 10, 8, 24, 5, 6, 8, 6, 36, 0];
 
 const row = (values: string[]): string => values.map(visible).map((v, i) => (WIDTHS[i] === 0 ? v : v.padEnd(WIDTHS[i] as number))).join("  ").trimEnd();
 
@@ -50,7 +65,7 @@ const escape = (text: string): string => text.replaceAll("&", "&amp;").replaceAl
 const page = (project: string, runs: Evidence[], report: Report): string => {
   const timeline = [...runs]
     .reverse()
-    .map((e) => `<tr class="${escape(verdictOf(e))}">${[e.at.replace("T", " ").slice(0, 19), e.trigger ?? "-", e.tier ?? "-", target(e), verdictOf(e), `${Math.round(e.ms ?? 0)} ms`, (e.commit ?? "").slice(0, 7), e.next ?? ""].map((c) => `<td>${escape(c)}</td>`).join("")}</tr>`)
+    .map((e) => `<tr class="${escape(verdictOf(e))}">${[e.at.replace("T", " ").slice(0, 19), e.trigger ?? "-", e.tier ?? "-", target(e), verdictOf(e), `${Math.round(e.ms ?? 0)} ms`, (e.commit ?? "").slice(0, 7), ruleTimes(e), e.next ?? ""].map((c) => `<td>${escape(c)}</td>`).join("")}</tr>`)
     .join("\n");
   const practices = report.practices
     .map((p) => {
@@ -79,7 +94,7 @@ span { color: var(--muted); } pre { margin: 4px 0 0; white-space: pre-wrap; } .f
 </style></head><body>
 <h1>Warden runs · ${escape(project)}</h1>
 <h2>Run timeline</h2>
-<div class="scroll"><table><tr><th>time</th><th>trigger</th><th>tier</th><th>files</th><th>result</th><th>ms</th><th>commit</th><th>next action</th></tr>
+<div class="scroll"><table><tr><th>time</th><th>trigger</th><th>tier</th><th>files</th><th>result</th><th>ms</th><th>commit</th><th>rule times</th><th>next action</th></tr>
 ${timeline}
 </table></div>
 <h2>Practices</h2>

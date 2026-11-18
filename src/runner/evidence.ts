@@ -38,6 +38,9 @@ export interface Evidence {
   ratchet?: [number, number];
   step?: Step;
   state?: "start" | "done" | "fail";
+  passes?: Record<string, number>;
+  cachedRules?: string[];
+  steps?: Partial<Record<Step, number>>;
 }
 
 export type Trigger = "agent-edit" | "git-commit" | "manual";

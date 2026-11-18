@@ -16,7 +16,7 @@ let root: string;
 let home: string;
 let out: string;
 
-const passed = { kind: "cost", guardrail: "run", run: "r1", at: "2026-11-18T14:01:40.000Z", tier: "commit", trigger: "git-commit", outcome: "ran", result: "pass", exit: 0, ms: 9.4, files: 3, bytes: 90, guardrails: 4, cached: 2, commit: "abc1234def" };
+const passed = { kind: "cost", guardrail: "run", run: "r1", at: "2026-11-18T14:01:40.000Z", tier: "commit", trigger: "git-commit", outcome: "ran", result: "pass", exit: 0, ms: 9.4, files: 3, bytes: 90, guardrails: 4, cached: 2, commit: "abc1234def", rules: { "warden-no-comments": 3 }, passes: { eslint: 2 }, cachedRules: ["a", "b"] };
 const blocked = {
   kind: "cost", guardrail: "run", run: "r2", at: "2026-11-18T14:02:11.000Z", tier: "edit", trigger: "agent-edit", outcome: "ran", result: "fail", exit: 0, ms: 5, files: 1, file: "src/useRx.ts", bytes: 30, guardrails: 2, cached: 0, commit: "fedcba9876",
   failures: [{ file: "src/useRx.ts", line: 2, guardrail: "warden-no-comments", practice: "no-comments", doThis: "export const sumOfPrices = 1;" }],
@@ -52,9 +52,9 @@ afterEach(async () => {
 it("lists the newest runs as a table, newest last, with the first failure", async () => {
   expect(await runRuns(root, wardenRoot, { limit: 20, format: "text" })).toBe(0);
   const rows = out.trimEnd().split("\n");
-  expect(rows[0]).toMatch(/^time\s+trigger\s+tier\s+files\s+rules\s+cached\s+result\s+ms\s+first failure$/);
-  expect(rows[1]).toMatch(/^14:01:40\s+git-commit\s+commit\s+3 files\s+4\s+2\s+pass\s+9\s*$/);
-  expect(rows[2]).toMatch(/^14:02:11\s+agent-edit\s+edit\s+src\/useRx\.ts\s+2\s+0\s+fail\s+5\s+src\/useRx\.ts:2 warden-no-comments$/);
+  expect(rows[0]).toMatch(/^time\s+trigger\s+tier\s+files\s+rules\s+cached\s+result\s+ms\s+first failure\s+rule times$/);
+  expect(rows[1]).toMatch(/^14:01:40\s+git-commit\s+commit\s+3 files\s+4\s+2\s+pass\s+9\s+-\s+warden-no-comments 3 ms · eslint pass 2 ms · 2 cached$/);
+  expect(rows[2]).toMatch(/^14:02:11\s+agent-edit\s+edit\s+src\/useRx\.ts\s+2\s+0\s+fail\s+5\s+src\/useRx\.ts:2 warden-no-comments\s+rules not recorded \(older Warden\)$/);
   expect(rows).toHaveLength(3);
 });
 
@@ -63,9 +63,11 @@ it("--limit keeps the newest N runs", async () => {
   expect(out.trimEnd().split("\n").slice(1).map((r) => r.slice(0, 8))).toEqual(["14:02:11"]);
 });
 
-it("--format json prints the run records", async () => {
+it("--format json prints the run records with their rule times", async () => {
   await runRuns(root, wardenRoot, { limit: 20, format: "json" });
-  expect((JSON.parse(out) as { run: string }[]).map((r) => r.run)).toEqual(["r1", "r2"]);
+  const runs = JSON.parse(out) as { run: string; rules?: Record<string, number>; passes?: Record<string, number> }[];
+  expect(runs.map((r) => r.run)).toEqual(["r1", "r2"]);
+  expect(runs[0]).toMatchObject({ rules: { "warden-no-comments": 3 }, passes: { eslint: 2 } });
 });
 
 it("--follow prints a run that lands after it starts, until interrupted", async () => {
@@ -109,6 +111,7 @@ it("--html writes one self-contained page with the latest run's commit and resul
   expect(page).toContain("no-comments");
   expect(page).toContain("proven");
   expect(page).toContain("export const sumOfPrices = 1;");
+  expect(page).toContain("warden-no-comments 3 ms · eslint pass 2 ms · 2 cached");
   expect(page).not.toMatch(/<script|<link|https?:\/\//);
   expect(out).toContain(file);
 });

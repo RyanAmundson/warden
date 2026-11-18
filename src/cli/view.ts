@@ -6,7 +6,7 @@ import { RecordError, loadRecords } from "../records/load.js";
 import type { Tier } from "../records/types.js";
 import { type Evidence, type Step, readEvidence } from "../runner/evidence.js";
 import { buildReport } from "./report.js";
-import { clock, firstFailure, runRecords, target, visible } from "./runs.js";
+import { NOT_RECORDED, clock, firstFailure, ruleParts, runRecords, target, visible } from "./runs.js";
 
 export interface RuleRow {
   guardrail: string;
@@ -96,50 +96,77 @@ const wrap = (text: string, width: number, most: number): string[] => {
 
 const count = (n: number): string => n.toLocaleString("en-US");
 
+const DETAIL = 25;
+
+const partLines = (first: string, parts: string[], right: string, width: number): string[] => {
+  const room = width - DETAIL - right.length - 1;
+  const lines: string[] = [];
+  for (const part of parts) {
+    const last = lines.at(-1);
+    if (last !== undefined && last.length + 3 + part.length <= room) lines[lines.length - 1] = `${last} · ${part}`;
+    else lines.push(part);
+  }
+  const [head = "", ...rest] = lines;
+  return [spread(`${first}${head}`, right, width), ...rest.map((l) => clip(`${" ".repeat(DETAIL)}${l}`, width))];
+};
+
 const stepLines = (shown: Shown | undefined, tools: Record<string, string>, width: number): string[] => {
   const all = shown?.steps ?? [];
+  const record = shown?.record;
+  if (record !== undefined && all.length === 0) return [clip(`   steps not recorded (older Warden) · total ${Math.round(record.ms ?? 0)} ms`, width)];
   const finished = STEPS.filter(({ step }) => {
     const last = all.filter((e) => e.step === step).at(-1);
     return last !== undefined && last.state !== "start";
   }).length;
-  return STEPS.map(({ step, done, running }, i) => {
+  const lines = STEPS.flatMap(({ step, done, running }, i): string[] => {
     const events = all.filter((e) => e.step === step);
     const last = events.at(-1);
     const n = i + 1;
-    if (last === undefined) return `   ○ ${n} ${done}`;
+    if (last === undefined) return [`   ○ ${n} ${done}`];
     const members = [...new Set(events.flatMap((e) => e.members ?? []))].join(" · ");
     if (last.state === "start" && shown?.interrupted === true) {
-      return spread(`   ✗ ${n} ${done.padEnd(18)}${members}`, "interrupted", width);
+      return [spread(`   ✗ ${n} ${done.padEnd(18)}${members}`, "interrupted", width)];
     }
     if (last.state === "start") {
       const bar = "█".repeat(Math.round((finished / STEPS.length) * BAR)).padEnd(BAR, "░");
-      return spread(`   ● ${n} ${running.padEnd(18)}${step === "rules" ? `${bar}  ${members}` : ""}`, "...", width);
+      return [spread(`   ● ${n} ${running.padEnd(18)}${step === "rules" ? `${bar}  ${members}` : ""}`, "...", width)];
     }
     const failed = events.some((e) => e.state === "fail");
     const ms = events.filter((e) => e.state !== "start").reduce((sum, e) => sum + (e.ms ?? 0), 0);
     const cached = events.some((e) => e.status === "cached") && step === "tools-ready";
+    const first = `   ${failed ? "✗" : "✓"} ${n} ${done.padEnd(18)}`;
+    const right = cached ? "cached" : `${Math.round(ms)} ms`;
+    if (step === "rules" && record !== undefined) {
+      const listed = Object.values(record.rules ?? {}).reduce((a, b) => a + b, 0) + Object.values(record.passes ?? {}).reduce((a, b) => a + b, 0);
+      const setup = Math.round(ms - listed);
+      const parts = [...(ruleParts(record) ?? [NOT_RECORDED]), ...(record.rules !== undefined && setup >= 1 ? [`loading and cache ${setup} ms`] : [])];
+      return partLines(first, parts.length === 0 ? [last.status === "empty" ? "no changed files" : "every result cached"] : parts, right, width);
+    }
     const detail = (() => {
       if (step === "rules-intact") return failed ? "records or generated config changed outside warden compile" : "lock matches, 0 tampered files";
       if (step === "tools-ready") return failed ? "a bundled tool or a cmd Guardrail's command is missing" : Object.entries(tools).filter(([name]) => name !== "typescript-eslint").map(([name, v]) => `${name} ${v}`).join(" · ");
       if (step === "rules") return members === "" ? (last.status === "empty" ? "no changed files" : "every result cached") : members;
-      const first = shown?.record === undefined ? "" : firstFailure(shown.record);
-      return failed ? `BLOCK  ${first}`.trimEnd() : "pass";
+      const blocked = record === undefined ? "" : firstFailure(record);
+      return failed ? `BLOCK  ${blocked}`.trimEnd() : "pass";
     })();
-    return spread(`   ${failed ? "✗" : "✓"} ${n} ${done.padEnd(18)}${detail}`, cached ? "cached" : `${Math.round(ms)} ms`, width);
+    return [spread(`${first}${detail}`, right, width)];
   });
+  if (record === undefined) return lines;
+  const stepped = all.filter((e) => e.state !== "start").reduce((sum, e) => sum + (e.ms ?? 0), 0);
+  return [...lines, spread("     setup and records", `${Math.round((record.ms ?? 0) - stepped)} ms`, width)];
 };
 
 const verdictCell = (e: Evidence): string => {
-  if (e.outcome === "ran" && e.result === "pass") return `✓ pass   ${Math.round(e.ms ?? 0)} ms`;
+  if (e.outcome === "ran" && e.result === "pass") return "✓ pass";
   if (e.outcome === "ran" && e.result === "fail") {
     const f = e.failures?.[0];
-    return `✗ BLOCK  ${f === undefined ? "" : `${f.practice} ${f.file === "" ? "project" : `L${f.line}`}`}`.trimEnd();
+    return `✗ BLOCK ${f === undefined ? "" : `${f.practice} ${f.file === "" ? "project" : `L${f.line}`}`}`.trimEnd();
   }
   if (e.outcome === "tampered") return "✗ TAMPERED";
   if (e.outcome === "unstaged") return "✗ unstaged";
   if (e.outcome === "error") return "✗ error";
   if (e.outcome === "empty") return "· no changes";
-  return `· ${e.outcome ?? ""}`;
+  return e.outcome === "ran" ? "? no result recorded" : `· ${e.outcome ?? ""}`;
 };
 
 const footer = (shown: Shown | undefined, live: boolean): string => {
@@ -180,7 +207,7 @@ export function render(model: ViewModel, size: Size, selected: number): string[]
     const tier = shown.record?.tier ?? first?.tier ?? "";
     const trigger = shown.record?.trigger ?? first?.trigger;
     const where = shown.record === undefined ? shown.steps.find((e) => e.files !== undefined) : shown.record;
-    return [` NOW  ${tier === "" ? "" : `${tier} `}check`, ...(where === undefined ? [] : [target(where)]), ...(trigger === undefined ? [] : [`triggered by ${TRIGGER[trigger] ?? trigger}`]), ...(shown.interrupted === true ? ["interrupted"] : [])].join(" · ");
+    return [` NOW  ${tier === "" ? "" : `${tier} `}check`, ...(where === undefined ? [] : [target(where)]), ...(trigger === undefined ? [] : [`triggered by ${TRIGGER[trigger] ?? trigger}`]), ...(shown.interrupted === true ? ["interrupted"] : []), ...(shown.record?.ms === undefined ? [] : [`${Math.round(shown.record.ms)} ms`])].join(" · ");
   })();
   const top = [spread(` WARDEN  ${model.project} · base ${model.base} · v${model.version}`, "q quit  r rerun  ↑↓ runs", width), rule, clip(head, width), ...stepLines(shown, model.tools, width), ""];
   const bottom = [rule, ...wrap(footer(shown, live), width, 3)];
@@ -193,15 +220,25 @@ export function render(model: ViewModel, size: Size, selected: number): string[]
     ...model.rules.slice(0, ruleRows).map((r) => spread(`   ${r.guardrail}`, `${r.strength.padStart(8)} ${String(r.fired).padStart(7)} ${r.median.padStart(8)} ${`${r.budgetMs} ms`.padStart(9)}`, width)),
   ];
   const start = Math.max(0, Math.min(pick - runRows + 1, runs.length - runRows));
-  const recent = [
-    spread(" RECENT RUNS", "ratchet left", width),
-    ...runs.slice(start, start + runRows).map((e, i) => {
-      const mark = !live && start + i === pick ? ">" : " ";
-      const ratchet = e.ratchet === undefined ? "" : `${count(e.ratchet[0])} → ${count(e.ratchet[1])}`;
-      const trigger = SHORT[e.trigger ?? ""] ?? e.trigger ?? "-";
-      return spread(` ${mark} ${clock(e.at)}  ${trigger.padEnd(6)}  ${basename(target(e)).padEnd(18)} ${verdictCell(e)}`, ratchet, width);
-    }),
-  ];
+  const rows = runs.slice(start, start + runRows).map((e, i) => {
+    const mark = !live && start + i === pick ? ">" : " ";
+    const trigger = SHORT[e.trigger ?? ""] ?? e.trigger ?? "-";
+    const ms = `${Math.round(e.ms ?? 0)} ms`;
+    const lead = ` ${mark} ${clock(e.at)}  ${trigger.padEnd(6)}  ${basename(target(e)).padEnd(14)} `;
+    if (e.rules === undefined) {
+      const what = e.outcome === "ran" && e.result === undefined ? "? result and rules not recorded" : `${verdictCell(e)} · rules not recorded`;
+      return clip(`${lead}${what} · ${ms}`, width);
+    }
+    const left = `${lead}${verdictCell(e).padEnd(22)} ${ms.padStart(7)}  `;
+    const n = e.guardrails ?? Object.keys(e.rules).length;
+    const ratchet = e.ratchet === undefined ? "" : `${count(e.ratchet[0])} → ${count(e.ratchet[1])}`;
+    const counted = `${n} rule${n === 1 ? "" : "s"}`;
+    const named = `${counted}: ${Object.keys(e.rules ?? {}).join(" · ")}`;
+    const rules = left.length + named.length <= width ? named : counted;
+    const line = `${left}${rules}`;
+    return ratchet !== "" && line.length + ratchet.length + 2 <= width ? `${line.padEnd(width - ratchet.length)}${ratchet}` : clip(line, width);
+  });
+  const recent = [spread(" RECENT RUNS", width >= 100 ? "ratchet left" : "", width), ...rows];
   const middle = size.rows - top.length - bottom.length >= 3 ? [...rules, "", ...recent] : [];
   return [...top, ...middle, ...bottom].slice(0, Math.max(size.rows, 2)).map((l) => l.trimEnd());
 }
