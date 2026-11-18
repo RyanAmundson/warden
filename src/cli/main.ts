@@ -13,6 +13,7 @@ import { runExplain } from "./explain.js";
 import { runDoctor, runInit } from "./init.js";
 import { runPacks } from "./packs.js";
 import { runReport } from "./report.js";
+import { runRuns } from "./runs.js";
 
 const findWardenRoot = (): string => {
   let dir = dirname(fileURLToPath(import.meta.url));
@@ -101,6 +102,25 @@ program.command("explain <id>").description("explain a Practice or Guardrail").a
 program.command("report").description("Guardrails grouped by Practice, strongest kind first").option("--json", "print JSON").option("--format <format>", "text or json", "text").action(async (o: { json?: boolean; format: string }) => {
   process.exitCode = await runReport(root(), findWardenRoot(), o.json === true || oneOf("format", o.format, ["text", "json"] as const) === "json");
 });
+
+program
+  .command("runs")
+  .description("the most recent checks: when, what started them, and whether they passed")
+  .option("--limit <n>", "how many runs to show", "20")
+  .option("--format <format>", "text or json", "text")
+  .option("--follow", "print each new run as it lands, until interrupted")
+  .option("--html <file>", "write one self-contained page of the runs, Practices, and failures")
+  .action(async (o: { limit: string; format: string; follow?: boolean; html?: string }) => {
+    const stop = new AbortController();
+    process.once("SIGINT", () => stop.abort());
+    process.exitCode = await runRuns(root(), findWardenRoot(), {
+      limit: Number(o.limit),
+      format: oneOf("format", o.format, ["text", "json"] as const),
+      follow: o.follow === true,
+      signal: stop.signal,
+      ...(o.html === undefined ? {} : { html: o.html }),
+    });
+  });
 
 try {
   await program.parseAsync(process.argv);

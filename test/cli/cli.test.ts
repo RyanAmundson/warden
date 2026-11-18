@@ -547,4 +547,15 @@ describe("warden CLI", () => {
     await writeFile(join(root, "package.json"), JSON.stringify({ scripts: { "test:changed": "true" } }));
     expect(warden("doctor").code).toBe(0);
   });
+
+  it("check --trigger git-commit records its trigger, and runs --format json shows it", () => {
+    init();
+    git("add", "-A");
+    git("commit", "-q", "-m", "adopt");
+    expect(warden("check", "--base", "main", "--trigger", "git-commit").code).toBe(0);
+    expect(warden("check", "--base", "main", "--trigger", "agent").code).toBe(2);
+    const r = warden("runs", "--format", "json");
+    expect(r.code, r.err).toBe(0);
+    expect((JSON.parse(r.out) as { trigger: string }[]).map((e) => e.trigger)).toEqual(["git-commit"]);
+  });
 });
