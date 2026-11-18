@@ -10,6 +10,7 @@ import type { Format } from "../runner/feedback.js";
 import { runCheck } from "./check.js";
 import { runExplain } from "./explain.js";
 import { runInit } from "./init.js";
+import { runPacks } from "./packs.js";
 import { runReport } from "./report.js";
 
 const findWardenRoot = (): string => {
@@ -38,6 +39,10 @@ const root = (): string => {
 
 program.command("init").description("create .warden, compile, and baseline current violations").action(async () => {
   process.exitCode = await runInit(root(), findWardenRoot());
+});
+
+program.command("packs").description("list available packs and which are on").option("--format <format>", "text or json", "text").action(async (o: { format: string }) => {
+  process.exitCode = await runPacks(root(), findWardenRoot(), oneOf("format", o.format, ["text", "json"] as const) === "json");
 });
 
 program.command("compile").description("compile records into tool configs and the lock").action(async () => {

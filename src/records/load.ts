@@ -57,6 +57,28 @@ export function parseConfig(file: string, text: string): ProjectConfig {
   return value as ProjectConfig;
 }
 
+export async function readPack(projectRoot: string, wardenRoot: string, id: string, configFile: string): Promise<{ pack: Pack; source: "bundled" | "local" }> {
+  const bundled = join(wardenRoot, "packs", id, "pack.yaml");
+  const local = join(projectRoot, ".warden", "packs", id, "pack.yaml");
+  const [inBundled, inLocal] = await Promise.all([readText(bundled), readText(local)]);
+  if (inBundled !== undefined && inLocal !== undefined) {
+    throw new RecordError(configFile, "/packs", `pack ${id} exists in both ${bundled} and ${local}`);
+  }
+  const file = inBundled !== undefined ? bundled : local;
+  const text = inBundled ?? inLocal;
+  if (text === undefined) {
+    throw new RecordError(configFile, "/packs", `pack ${id} not found in ${bundled} or ${local}`);
+  }
+  const value = parseYaml(file, text);
+  check(file, validatePack, value);
+  const pack = value as Pack;
+  if (pack.id !== id) {
+    throw new RecordError(file, "/id", `pack id ${pack.id} does not match directory ${id}`);
+  }
+  for (const practice of pack.practices) practice.pack = pack.id;
+  return { pack, source: inBundled !== undefined ? "bundled" : "local" };
+}
+
 export async function loadRecords(projectRoot: string, wardenRoot: string): Promise<RecordSet> {
   const configFile = join(projectRoot, ".warden", "config.yaml");
   const configText = await readText(configFile);
@@ -69,25 +91,7 @@ export async function loadRecords(projectRoot: string, wardenRoot: string): Prom
       throw new RecordError(configFile, "/packs", `pack ${entry.id} is listed more than once`);
     }
     seen.add(entry.id);
-    const bundled = join(wardenRoot, "packs", entry.id, "pack.yaml");
-    const local = join(projectRoot, ".warden", "packs", entry.id, "pack.yaml");
-    const [inBundled, inLocal] = await Promise.all([readText(bundled), readText(local)]);
-    if (inBundled !== undefined && inLocal !== undefined) {
-      throw new RecordError(configFile, "/packs", `pack ${entry.id} exists in both ${bundled} and ${local}`);
-    }
-    const file = inBundled !== undefined ? bundled : local;
-    const text = inBundled ?? inLocal;
-    if (text === undefined) {
-      throw new RecordError(configFile, "/packs", `pack ${entry.id} not found in ${bundled} or ${local}`);
-    }
-    const value = parseYaml(file, text);
-    check(file, validatePack, value);
-    const pack = value as Pack;
-    if (pack.id !== entry.id) {
-      throw new RecordError(file, "/id", `pack id ${pack.id} does not match directory ${entry.id}`);
-    }
-    for (const practice of pack.practices) practice.pack = pack.id;
-    packs.push(pack);
+    packs.push((await readPack(projectRoot, wardenRoot, entry.id, configFile)).pack);
   }
   return { config, packs, root: projectRoot };
 }

@@ -242,4 +242,64 @@ describe("warden CLI", () => {
     expect(r.code, r.err).toBe(1);
     expect((JSON.parse(r.out) as { failures: { file: string }[] }).failures.map((f) => f.file)).toEqual(["src/b.ts"]);
   });
+
+  describe("pack picker", () => {
+    const localPack = async (): Promise<void> => {
+      await mkdir(join(root, ".warden/packs/local"), { recursive: true });
+      await writeFile(
+        join(root, ".warden/packs/local/pack.yaml"),
+        [
+          "id: local",
+          "layer: 1",
+          "terms: []",
+          "practices:",
+          "  - id: no-var",
+          "    statement: Declare with const.",
+          "    terms: []",
+          "    paths: []",
+          "    conflictsWith: []",
+          "    guardrails:",
+          "      - id: local-no-var",
+          "        kind: lint",
+          "        runs: [edit]",
+          "        budgetMs: 5000",
+          "        version: 1",
+          '        implementation: "eslint:no-var"',
+          '        mustFail: "var a = 1;\\n"',
+          '        mustPass: "const a = 1;\\n"',
+          "",
+        ].join("\n"),
+      );
+    };
+
+    it("packs lists bundled then local with on and off states", async () => {
+      init();
+      await localPack();
+      const r = warden("packs");
+      expect(r.code, r.err).toBe(0);
+      const lines = r.out.trim().split("\n");
+      expect(lines[0]).toMatch(/^core {2}bundled {2}\d+ practices {2}on {2}\*\*\/\*\.\{ts,tsx,js,mjs\}$/);
+      expect(lines[1]).toBe("local  local  1 practices  off");
+    });
+
+    it("packs --format json returns the same data", async () => {
+      init();
+      await localPack();
+      const data = JSON.parse(warden("packs", "--format", "json").out) as { packs: { id: string; source: string; practices: number; on: boolean; paths: string[] }[] };
+      expect(data.packs.map((p) => [p.id, p.source, p.on])).toEqual([
+        ["core", "bundled", true],
+        ["local", "local", false],
+      ]);
+      expect(data.packs[1]?.practices).toBe(1);
+      expect(data.packs[0]?.paths).toEqual(["**/*.{ts,tsx,js,mjs}"]);
+    });
+
+    it("packs without a config shows everything off and ends with the init next action", async () => {
+      await localPack();
+      const r = warden("packs");
+      expect(r.code, r.err).toBe(0);
+      expect(r.out).not.toContain("  on");
+      expect(r.out.trim().split("\n").at(-1)).toBe("Next action: run warden init --packs core,local");
+    });
+  });
 });
