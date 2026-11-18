@@ -558,4 +558,13 @@ describe("warden CLI", () => {
     expect(r.code, r.err).toBe(0);
     expect((JSON.parse(r.out) as { trigger: string }[]).map((e) => e.trigger)).toEqual(["git-commit"]);
   });
+
+  it("plain warden outside a terminal prints the view once as plain text and exits 0", () => {
+    init();
+    const r = warden();
+    expect(r.code, r.err).toBe(0);
+    expect(r.out).toContain(" WARDEN  ");
+    expect(r.out).toContain(" NOW  ");
+    expect(r.out).not.toContain("\x1b");
+  });
 });

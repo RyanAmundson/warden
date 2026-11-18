@@ -17,7 +17,7 @@ export const runRecords = (evidence: Evidence[]): Evidence[] => evidence.filter(
 
 export const clock = (at: string): string => new Date(at).toTimeString().slice(0, 8);
 
-export const target = (e: Evidence): string => e.file ?? `${e.files ?? 0} files`;
+export const target = (e: Evidence): string => e.file ?? `${e.files ?? 0} file${e.files === 1 ? "" : "s"}`;
 
 export const verdictOf = (e: Evidence): string => e.result ?? e.outcome ?? "";
 
