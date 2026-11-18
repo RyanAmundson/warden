@@ -29,11 +29,11 @@ const emit = (gs: Guardrail[], set: RecordSet): Record<string, string> => {
     files: pathsFor(g, set),
     rules: { [ruleId(g)]: ruleValue(g.options) },
   }));
-  return { [RULES_PATH]: `${JSON.stringify(entries, null, 2)}\n` };
+  return { [RULES_PATH]: `${JSON.stringify({ entries }, null, 2)}\n` };
 };
 
 const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<RunResult[]> => {
-  const entries = JSON.parse(await readFile(join(ctx.generatedDir, "eslint.rules.json"), "utf8"));
+  const { entries } = JSON.parse(await readFile(join(ctx.generatedDir, "eslint.rules.json"), "utf8"));
   const eslint = new ESLint({
     cwd: ctx.root,
     overrideConfigFile: true,
