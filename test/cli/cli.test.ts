@@ -272,6 +272,22 @@ describe("warden CLI", () => {
       );
     };
 
+    it("report orders Practices by strongest kind and marks review-only ones promote", async () => {
+      await mkdir(join(root, ".warden/packs/local"), { recursive: true });
+      await writeFile(
+        join(root, ".warden/packs/local/pack.yaml"),
+        ["id: local", "layer: 1", "terms: []", "practices:", "  - id: no-var", "    statement: Declare with const.", "    terms: []", "    paths: []", "    conflictsWith: []", "    guardrails:",
+          "      - id: local-no-var", "        kind: review", "        runs: [edit]", "        budgetMs: 5000", "        version: 1", '        implementation: "eslint:no-var"',
+          '        mustFail: "var a = 1;\\n"', '        mustPass: "const a = 1;\\n"', ""].join("\n"),
+      );
+      expect(warden("init", "--packs", "core,local").code).toBe(0);
+      const json = JSON.parse(warden("report", "--format", "json").out) as { practices: { practice: string; strongestKind: string; promote: boolean }[] };
+      expect(json.practices.at(-1)).toMatchObject({ practice: "no-var", strongestKind: "review", promote: true });
+      expect(json.practices.slice(0, -1).every((p) => p.strongestKind === "lint" && !p.promote)).toBe(true);
+      const lines = warden("report").out.split("\n");
+      expect(lines.filter((l) => l.startsWith("practice ")).at(-1)).toBe("practice no-var  strongest=review  promote");
+    });
+
     it("packs lists bundled then local with on and off states", async () => {
       init();
       await localPack();

@@ -82,8 +82,8 @@ program.command("explain <id>").description("explain a Practice or Guardrail").a
   process.exitCode = await runExplain(root(), findWardenRoot(), id);
 });
 
-program.command("report").description("one row per Guardrail").option("--json", "print JSON").action(async (o: { json?: boolean }) => {
-  process.exitCode = await runReport(root(), findWardenRoot(), o.json === true);
+program.command("report").description("Guardrails grouped by Practice, strongest kind first").option("--json", "print JSON").option("--format <format>", "text or json", "text").action(async (o: { json?: boolean; format: string }) => {
+  process.exitCode = await runReport(root(), findWardenRoot(), o.json === true || oneOf("format", o.format, ["text", "json"] as const) === "json");
 });
 
 try {

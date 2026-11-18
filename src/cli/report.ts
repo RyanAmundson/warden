@@ -1,5 +1,5 @@
 import { loadRecords } from "../records/load.js";
-import type { Tier } from "../records/types.js";
+import { type Kind, type Tier, kindRank } from "../records/types.js";
 import { readBaseline } from "../runner/baseline.js";
 import { type Evidence, readEvidence } from "../runner/evidence.js";
 
@@ -32,7 +32,14 @@ export interface TierRow {
   withinBudget: boolean;
 }
 
-export async function buildReport(root: string, wardenRoot: string): Promise<{ guardrails: GuardrailRow[]; tiers: TierRow[] }> {
+export interface PracticeRow {
+  practice: string;
+  strongestKind: Kind;
+  promote: boolean;
+  guardrails: string[];
+}
+
+export async function buildReport(root: string, wardenRoot: string): Promise<{ practices: PracticeRow[]; guardrails: GuardrailRow[]; tiers: TierRow[] }> {
   const set = await loadRecords(root, wardenRoot);
   const evidence: Evidence[] = readEvidence(set.config.project);
   const baseline = readBaseline(root);
@@ -55,19 +62,30 @@ export async function buildReport(root: string, wardenRoot: string): Promise<{ g
     const budgetMs = set.config.tierBudgetMs[tier];
     return { tier, medianTotalMs: total, budgetMs, withinBudget: total <= budgetMs };
   });
-  return { guardrails, tiers };
+  const practices = set.packs
+    .flatMap((p) => p.practices)
+    .filter((x) => x.guardrails.length > 0)
+    .map((x): PracticeRow => {
+      const strongestKind = x.guardrails.map((g) => g.kind).sort((a, b) => kindRank(a) - kindRank(b))[0] as Kind;
+      return { practice: x.id, strongestKind, promote: strongestKind === "review" || strongestKind === "instruction", guardrails: x.guardrails.map((g) => g.id) };
+    })
+    .sort((a, b) => kindRank(a.strongestKind) - kindRank(b.strongestKind));
+  return { practices, guardrails, tiers };
 }
 
 export async function runReport(root: string, wardenRoot: string, json: boolean): Promise<number> {
-  const { guardrails, tiers } = await buildReport(root, wardenRoot);
+  const { practices, guardrails, tiers } = await buildReport(root, wardenRoot);
   if (json) {
-    process.stdout.write(`${JSON.stringify({ guardrails, tiers }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ practices, guardrails, tiers }, null, 2)}\n`);
     return 0;
   }
-  const lines = guardrails.map(
-    (r) =>
-      `${r.guardrail}  practice=${r.practice}  kind=${r.kind}  ${r.strength}  baseline=${r.baselineRemaining}  fired=${r.fired}  median=${r.medianMs}ms  slowest=${r.slowestMs}ms`,
-  );
+  const lines = practices.flatMap((p) => [
+    `practice ${p.practice}  strongest=${p.strongestKind}${p.promote ? "  promote" : ""}`,
+    ...p.guardrails.map((id) => {
+      const r = guardrails.find((x) => x.guardrail === id) as GuardrailRow;
+      return `  ${r.guardrail}  kind=${r.kind}  ${r.strength}  baseline=${r.baselineRemaining}  fired=${r.fired}  median=${r.medianMs}ms  slowest=${r.slowestMs}ms`;
+    }),
+  ]);
   lines.push(...tiers.map((t) => `tier ${t.tier}: ${t.medianTotalMs}ms of ${t.budgetMs}ms${t.withinBudget ? "" : "  OVER"}`));
   process.stdout.write(`${lines.join("\n")}\n`);
   return 0;
