@@ -879,6 +879,25 @@ describe("residual fixes", () => {
     expect(await tampered()).toEqual([]);
   });
 
+  it("restoring the oldest recorded base on a branch whose base is now another branch is a moved base", async () => {
+    git("checkout", "-q", "main");
+    await write(".warden/config.yaml", config(["core", "local"]).replace("base: main", "base: trunk"));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    git("add", "-A");
+    git("commit", "-q", "-m", "base is trunk");
+    git("branch", "-m", "main", "trunk");
+    git("branch", "-D", "feature");
+    git("checkout", "-q", "-b", "feature", "trunk");
+    await write(".warden/config.yaml", config(["core", "local"]));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    git("add", "-A");
+    git("commit", "-q", "-m", "base back to main");
+    const { code, err } = await check({ base: "trunk" });
+    expect(err).toBe("");
+    expect(code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "base-moved" }]);
+  });
+
   it("--base naming a ref whose tip contains HEAD is refused unless the lock always recorded that base", async () => {
     git("branch", "own", "HEAD");
     const refused = await check({ base: "own" });
