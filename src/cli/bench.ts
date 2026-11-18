@@ -95,17 +95,24 @@ const measure = (set: RecordSet, s: Subject, cfg: BenchSettings): Promise<Measur
       }
       return median(times);
     };
-    const f = await sample(1);
+    const seen = new Map<number, number>();
+    const at = async (n: number): Promise<number> => {
+      if (!seen.has(n)) seen.set(n, await sample(n));
+      return seen.get(n) as number;
+    };
+    const sizes = async (base: number): Promise<[number, number][]> => {
+      const points: [number, number][] = [];
+      for (const m of [1, 2, 4, 8]) points.push([base * m, await at(base * m)]);
+      return points;
+    };
+    const f = await at(1);
     let base = cfg.baseFiles;
-    let first = await sample(base);
-    while (first - f < cfg.minMarginalMs && base * 16 <= cfg.maxFiles) {
+    while ((await at(base)) - f < cfg.minMarginalMs) {
+      if (base * 16 > cfg.maxFiles) return { verdict: "constant", points: await sizes(cfg.baseFiles), f };
       base *= 2;
-      first = await sample(base);
     }
-    const measurable = first - f >= cfg.minMarginalMs;
-    const points: [number, number][] = [[base, first]];
-    for (const m of [2, 4, 8]) points.push([base * m, await sample(base * m)]);
-    if (!measurable || (points[3] as [number, number])[1] - f < cfg.constantMs) return { verdict: "constant", points, f };
+    const points = await sizes(base);
+    if ((points[3] as [number, number])[1] - f < cfg.constantMs) return { verdict: "constant", points, f };
     const k = slope(points, f);
     return { verdict: k > cfg.linearMax ? "superlinear" : k < cfg.sublinearMax ? "sublinear" : "linear", k, points, f };
   });

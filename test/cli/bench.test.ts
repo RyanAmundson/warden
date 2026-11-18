@@ -101,7 +101,7 @@ it("a time proportional to files is linear, one fixed time is constant, and both
   const rows = await scaling();
   const lin = rows.find((e) => e.guardrail === "lin");
   expect(lin).toMatchObject({ verdict: "linear", f: 3, warden: "0.1.0", points: [[25, 27], [50, 52], [100, 102], [200, 202]] });
-  expect(rows.find((e) => e.guardrail === "flat")).toMatchObject({ verdict: "constant", f: 5, points: [[400, 5], [800, 5], [1600, 5], [3200, 5]] });
+  expect(rows.find((e) => e.guardrail === "flat")).toMatchObject({ verdict: "constant", f: 5, points: [[25, 5], [50, 5], [100, 5], [200, 5]] });
   expect(rows.find((e) => e.pack === "local")).toMatchObject({ verdict: "linear" });
 });
 
