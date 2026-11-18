@@ -12,5 +12,6 @@
     "rootDir": ".",
     "types": ["node"]
   },
-  "include": ["src", "test", "schema", "vitest.config.ts"]
+  "include": ["src", "test", "schema", "vitest.config.ts"],
+  "exclude": ["test/fixtures"]
 }

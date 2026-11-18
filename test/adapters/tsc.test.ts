@@ -1,0 +1,132 @@
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+import { tscAdapter } from "../../src/adapters/tsc.js";
+import { RecordError } from "../../src/records/load.js";
+import type { Guardrail, RecordSet } from "../../src/records/types.js";
+import { conformance } from "./conformance.js";
+
+const guardrail = (id: string, implementation: string): Guardrail => ({
+  id,
+  kind: "type",
+  runs: ["commit"],
+  budgetMs: 60000,
+  version: 1,
+  implementation,
+  mustFail: "bad",
+  mustPass: "good",
+});
+
+const set: RecordSet = {
+  root: "",
+  config: {
+    warden: "0.1.0",
+    project: "p",
+    base: "main",
+    packs: [],
+    tierBudgetMs: { edit: 1000, commit: 1000, boundary: 1000 },
+    loopBreakerRepeats: 3,
+  },
+  packs: [],
+};
+
+const source = resolve(import.meta.dirname, "../fixtures/tsc-project");
+const wardenModules = resolve(import.meta.dirname, "../../node_modules");
+
+const withProject = async (fn: (root: string) => Promise<void>): Promise<void> => {
+  const root = await mkdtemp(join(tmpdir(), "warden-tsc-"));
+  try {
+    await cp(source, root, { recursive: true });
+    await symlink(wardenModules, join(root, "node_modules"));
+    await fn(root);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+};
+
+const emitInto = async (root: string, gs: Guardrail[]): Promise<void> => {
+  for (const [path, content] of Object.entries(tscAdapter.emit(gs, { ...set, root }))) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), content);
+  }
+};
+
+const ctxFor = (root: string) => ({ root, generatedDir: join(root, ".warden/generated") });
+
+describe("tsc adapter", () => {
+  it("tsc conformance: flags a possibly undefined access", async () => {
+    const fixture = await mkdtemp(join(tmpdir(), "warden-tsc-fixture-"));
+    try {
+      await cp(source, fixture, { recursive: true });
+      await symlink(wardenModules, join(fixture, "node_modules"));
+      const g = guardrail("strict-null", "tsc:strictNullChecks");
+      await conformance(tscAdapter, fixture, [g], set, ["src/a.ts"], [
+        {
+          guardrail: "strict-null",
+          file: "src/a.ts",
+          line: 3,
+          message: "TS18048: 'name' is possibly 'undefined'.",
+        },
+      ]);
+    } finally {
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the project's own paths mapping", async () => {
+    await withProject(async (root) => {
+      const g = guardrail("strict-null", "tsc:strictNullChecks");
+      await emitInto(root, [g]);
+      const results = await tscAdapter.run([g], [], ctxFor(root));
+      expect(results.flatMap((r) => r.violations.map((v) => v.message)).filter((m) => m.startsWith("TS2307"))).toEqual([]);
+      expect(results.find((r) => r.guardrail === "tsc:baseline-errors")?.violations).toEqual([]);
+    });
+  });
+
+  it("emits a relative extends and identical output from different roots", () => {
+    const g = guardrail("strict-null", "tsc:strictNullChecks");
+    const a = tscAdapter.emit([g], { ...set, root: "/tmp/one" });
+    const b = tscAdapter.emit([g], { ...set, root: "/tmp/two" });
+    expect(a).toEqual(b);
+    const config = JSON.parse(a[".warden/generated/tsconfig.json"] as string);
+    expect(config.extends).toBe("../../tsconfig.json");
+    expect(config.compilerOptions).toEqual({ noEmit: true, strictNullChecks: true });
+  });
+
+  it("sends unmatched codes to tsc:baseline-errors", async () => {
+    await withProject(async (root) => {
+      await writeFile(join(root, "src/b.ts"), "export const n: number = 'x';\n");
+      const g = guardrail("strict-null", "tsc:strictNullChecks");
+      await emitInto(root, [g]);
+      const results = await tscAdapter.run([g], [], ctxFor(root));
+      const baseline = results.find((r) => r.guardrail === "tsc:baseline-errors");
+      expect(baseline?.status).toBe("fail");
+      expect(baseline?.violations.map((v) => `${v.file}:${v.line}`)).toEqual(["src/b.ts:1"]);
+    });
+  });
+
+  it("accepts a top-level @generated key in the generated tsconfig", async () => {
+    await withProject(async (root) => {
+      const g = guardrail("strict-null", "tsc:strictNullChecks");
+      await emitInto(root, [g]);
+      const path = join(root, ".warden/generated/tsconfig.json");
+      const config = JSON.parse(await readFile(path, "utf8"));
+      await writeFile(path, JSON.stringify({ "@generated": "by warden 0.1.0", ...config }, null, 2));
+      const results = await tscAdapter.run([g], [], ctxFor(root));
+      expect(results.flatMap((r) => r.violations.map((v) => v.line))).toEqual([3]);
+    });
+  });
+
+  it("throws a RecordError naming the root when typescript cannot be resolved", async () => {
+    const root = await mkdtemp(join(tmpdir(), "warden-tsc-none-"));
+    try {
+      await writeFile(join(root, "package.json"), "{}");
+      const g = guardrail("strict-null", "tsc:strictNullChecks");
+      await expect(tscAdapter.run([g], [], ctxFor(root))).rejects.toThrow(RecordError);
+      await expect(tscAdapter.run([g], [], ctxFor(root))).rejects.toThrow(root);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

@@ -1,10 +1,11 @@
 import { cmdAdapter } from "../adapters/cmd.js";
 import { eslintAdapter } from "../adapters/eslint.js";
+import { tscAdapter } from "../adapters/tsc.js";
 import type { Adapter, RunContext, RunResult } from "../adapters/types.js";
 import { RecordError } from "../records/load.js";
 import type { Guardrail } from "../records/types.js";
 
-const adapters = new Map<string, Adapter>([eslintAdapter, cmdAdapter].map((a) => [a.id, a]));
+const adapters = new Map<string, Adapter>([eslintAdapter, tscAdapter, cmdAdapter].map((a) => [a.id, a]));
 
 export async function runGuardrails(gs: Guardrail[], files: string[], ctx: RunContext): Promise<RunResult[]> {
   const groups = new Map<string, Guardrail[]>();
