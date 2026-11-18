@@ -29,10 +29,10 @@ const write = async (file: string, content: string): Promise<void> => {
   await writeFile(join(root, file), content);
 };
 
-const check = async (gs: Guardrail[], source: string) => {
-  await write("src/a.ts", source);
+const check = async (gs: Guardrail[], source: string, file = "src/a.ts") => {
+  await write(file, source);
   for (const [file, content] of Object.entries(eslintAdapter.emit(gs, set))) await write(file, content);
-  return runGuardrails(gs, ["src/a.ts"], { root, generatedDir: join(root, ".warden/generated") });
+  return runGuardrails(gs, [file], { root, generatedDir: join(root, ".warden/generated") });
 };
 
 beforeEach(async () => {
@@ -55,6 +55,12 @@ describe("core pack", () => {
         expect(passed?.status, `${other.id} on ${g.id} mustPass`).toBe("pass");
       }
     }
+  });
+
+  it.each(["src/a.tsx", "src/a.mts", "src/a.cts"])("covers %s files", async (file) => {
+    const source = file.endsWith("x") ? "export const a = <div>{/* note */}</div>;\n" : "// note\nexport const a = 1;\n";
+    const [result] = await check(guardrails.slice(0, 1), source, file);
+    expect(result?.status).toBe("fail");
   });
 
   it("reports an inline suppression comment as a no-suppressions violation", async () => {

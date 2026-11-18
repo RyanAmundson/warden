@@ -49,6 +49,8 @@ it("Warden source passes its own core pack", async () => {
       root: repo,
       generatedDir: join(project, ".warden/generated"),
     });
+    expect(results.map((r) => r.guardrail)).toEqual(guardrails.map((g) => g.id));
+    expect(results.map((r) => r.status)).toEqual(guardrails.map(() => "pass"));
     const violations = results.flatMap((r) => r.violations.map((v) => `${relative(repo, join(repo, v.file))}:${v.line} ${v.message}`));
     expect(violations).toEqual([]);
   } finally {

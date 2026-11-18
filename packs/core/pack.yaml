@@ -8,7 +8,7 @@ practices:
   - id: no-comments
     statement: Source files carry no comments.
     terms: [guardrail]
-    paths: ["**/*.ts"]
+    paths: ["**/*.{ts,tsx,mts,cts}"]
     conflictsWith: []
     guardrails:
       - id: warden-no-comments
@@ -22,7 +22,7 @@ practices:
   - id: no-suppressions
     statement: Source files carry no inline suppressions and no skipped tests.
     terms: [guardrail]
-    paths: ["**/*.ts"]
+    paths: ["**/*.{ts,tsx,mts,cts}"]
     conflictsWith: []
     guardrails:
       - id: warden-no-suppressions
