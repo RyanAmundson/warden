@@ -1664,3 +1664,14 @@ describe("engine review: a Guardrail added after init", () => {
     expect((await check()).code).toBe(1);
   });
 });
+
+describe("engine review: an Evidence line that does not parse", () => {
+  it("is skipped, so a truncated last line does not stop the next check", async () => {
+    await write("b.ts", "// two\nconst b = 1;\n");
+    expect((await check({ paths: ["b.ts"] })).code).toBe(1);
+    await writeFile(join(home, "evidence/fixture.jsonl"), `${await readFile(join(home, "evidence/fixture.jsonl"), "utf8")}{"at":"2026`);
+    const { code, err } = await check({ paths: ["b.ts"] });
+    expect(err).toBe("");
+    expect(code).toBe(1);
+  });
+});

@@ -87,8 +87,11 @@ export function readEvidence(project: string): Evidence[] {
     if ((cause as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw cause;
   }
-  return text
-    .split("\n")
-    .filter((l) => l !== "")
-    .map((l) => JSON.parse(l) as Evidence);
+  return text.split("\n").flatMap((l) => {
+    try {
+      return l === "" ? [] : [JSON.parse(l) as Evidence];
+    } catch {
+      return [];
+    }
+  });
 }

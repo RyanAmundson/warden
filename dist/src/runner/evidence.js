@@ -19,8 +19,12 @@ export function readEvidence(project) {
             return [];
         throw cause;
     }
-    return text
-        .split("\n")
-        .filter((l) => l !== "")
-        .map((l) => JSON.parse(l));
+    return text.split("\n").flatMap((l) => {
+        try {
+            return l === "" ? [] : [JSON.parse(l)];
+        }
+        catch {
+            return [];
+        }
+    });
 }
