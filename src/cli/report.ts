@@ -1,7 +1,7 @@
 import { loadRecords } from "../records/load.js";
 import { type Kind, type Tier, kindRank } from "../records/types.js";
 import { readBaseline } from "../runner/baseline.js";
-import { type Evidence, readEvidence } from "../runner/evidence.js";
+import { type Evidence, RUN_TOTAL, readEvidence } from "../runner/evidence.js";
 
 const TIERS: Tier[] = ["edit", "commit", "boundary"];
 
@@ -14,6 +14,8 @@ const median = (xs: number[]): number => {
 
 const round = (n: number): number => Math.round(n);
 
+const spread = (xs: number[]): { medianMs: number; slowestMs: number; runs: number } => ({ medianMs: round(median(xs)), slowestMs: round(Math.max(0, ...xs)), runs: xs.length });
+
 export interface GuardrailRow {
   guardrail: string;
   practice: string;
@@ -24,6 +26,7 @@ export interface GuardrailRow {
   medianMs?: number;
   slowestMs?: number;
   costShared?: string;
+  medianMsPerFile?: number;
 }
 
 export interface SharedRow {
@@ -34,11 +37,31 @@ export interface SharedRow {
   slowestMs: number;
 }
 
+export interface PackTotalRow {
+  pack: string;
+  medianMs: number;
+  slowestMs: number;
+  runs: number;
+}
+
+export interface PassTotalRow {
+  shared: string;
+  members: string[];
+  medianMs: number;
+  slowestMs: number;
+  runs: number;
+}
+
 export interface TierRow {
   tier: Tier;
-  medianTotalMs: number;
+  medianMs: number;
+  slowestMs: number;
+  runs: number;
+  earlyExits: number;
   budgetMs: number;
   withinBudget: boolean;
+  packs: PackTotalRow[];
+  passes: PassTotalRow[];
 }
 
 export interface PracticeRow {
@@ -71,8 +94,10 @@ export async function buildReport(root: string, wardenRoot: string): Promise<{ p
   const sharedFor = (id: string): SharedRow | undefined => shared.find((s) => s.members.includes(id) && keyOf(s.members) === latest.get(id));
   const guardrails = pairs.map(({ g, x }): GuardrailRow => {
     const costShared = sharedFor(g.id)?.shared;
-    const ms = evidence.filter((e) => e.kind === "cost" && e.guardrail === g.id && e.ms !== undefined).map((e) => e.ms as number);
-    const own = costShared === undefined ? { medianMs: round(median(ms)), slowestMs: round(Math.max(0, ...ms)) } : { costShared };
+    const rows = evidence.filter((e) => e.kind === "cost" && e.guardrail === g.id && e.outcome === undefined && e.ms !== undefined);
+    const ms = rows.map((e) => e.ms as number);
+    const perFile = rows.filter((e) => (e.files ?? 0) > 0).map((e) => (e.ms as number) / (e.files as number));
+    const own = costShared === undefined ? { medianMs: round(median(ms)), slowestMs: round(Math.max(0, ...ms)), ...(perFile.length === 0 ? {} : { medianMsPerFile: Math.round(median(perFile) * 100) / 100 }) } : { costShared };
     return {
       guardrail: g.id,
       practice: x.id,
@@ -83,12 +108,36 @@ export async function buildReport(root: string, wardenRoot: string): Promise<{ p
       ...own,
     };
   });
+  const packOf = new Map(set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.map((g) => [g.id, p.id] as const))));
   const tiers = TIERS.map((tier): TierRow => {
-    const inTier = pairs.filter(({ g }) => g.runs.includes(tier));
-    const own = inTier.reduce((n, { g }) => n + ((guardrails.find((r) => r.guardrail === g.id) as GuardrailRow).medianMs ?? 0), 0);
-    const total = shared.filter((s) => inTier.some(({ g }) => s.members.includes(g.id))).reduce((n, s) => n + s.medianMs, own);
+    const inTier = evidence.filter((e) => e.kind === "cost" && e.tier === tier && e.run !== undefined && e.ms !== undefined);
+    const totals = inTier.filter((e) => e.guardrail === RUN_TOTAL && e.outcome !== undefined);
+    const ran = totals.filter((e) => e.outcome === "ran").map((e) => e.ms as number);
+    const byPack = new Map<string, Map<string, number>>();
+    const charge = (pack: string | undefined, run: string, ms: number): void => {
+      if (pack === undefined) return;
+      const runs = byPack.get(pack) ?? new Map<string, number>();
+      runs.set(run, (runs.get(run) ?? 0) + ms);
+      byPack.set(pack, runs);
+    };
+    for (const e of inTier) {
+      if (e.outcome !== undefined) continue;
+      if (e.shared === undefined) charge(e.pack, e.run as string, e.ms as number);
+      else for (const [id, ms] of Object.entries(e.rules ?? {})) charge(packOf.get(id), e.run as string, ms);
+    }
+    const packs = set.packs.flatMap((p): PackTotalRow[] => {
+      const runs = byPack.get(p.id);
+      return runs === undefined ? [] : [{ pack: p.id, ...spread([...runs.values()]) }];
+    });
+    const passes = [...current].flatMap((key): PassTotalRow[] => {
+      const rows = inTier.filter((e) => passRows.has(e) && e.rules !== undefined && keyOf(e.members as string[]) === key);
+      if (rows.length === 0) return [];
+      const overhead = rows.map((e) => (e.ms as number) - Object.values(e.rules as Record<string, number>).reduce((a, b) => a + b, 0));
+      return [{ shared: rows[0]?.shared as string, members: rows[0]?.members as string[], ...spread(overhead) }];
+    });
     const budgetMs = set.config.tierBudgetMs[tier];
-    return { tier, medianTotalMs: total, budgetMs, withinBudget: total <= budgetMs };
+    const combined = spread(ran);
+    return { tier, ...combined, earlyExits: totals.length - ran.length, budgetMs, withinBudget: combined.medianMs <= budgetMs, packs, passes };
   });
   const practices = set.packs
     .flatMap((p) => p.practices)
@@ -111,11 +160,17 @@ export async function runReport(root: string, wardenRoot: string, json: boolean)
     `practice ${p.practice}  strongest=${p.strongestKind}${p.promote ? "  promote" : ""}`,
     ...p.guardrails.map((id) => {
       const r = guardrails.find((x) => x.guardrail === id) as GuardrailRow;
-      return `  ${r.guardrail}  kind=${r.kind}  ${r.strength}  baseline=${r.baselineRemaining}  fired=${r.fired}  median=${r.costShared === undefined ? `${r.medianMs}ms` : "shared"}  slowest=${r.costShared === undefined ? `${r.slowestMs}ms` : "shared"}`;
+      const perFile = r.medianMsPerFile === undefined ? "" : `  perFile=${r.medianMsPerFile}ms`;
+      return `  ${r.guardrail}  kind=${r.kind}  ${r.strength}  baseline=${r.baselineRemaining}  fired=${r.fired}  median=${r.costShared === undefined ? `${r.medianMs}ms` : "shared"}  slowest=${r.costShared === undefined ? `${r.slowestMs}ms` : "shared"}${perFile}`;
     }),
   ]);
   lines.push(...shared.map((s) => `cost ${s.shared} (shared, ${s.guardrails} guardrails)  median=${s.medianMs}ms  slowest=${s.slowestMs}ms`));
-  lines.push(...tiers.map((t) => `tier ${t.tier}: ${t.medianTotalMs}ms of ${t.budgetMs}ms${t.withinBudget ? "" : "  OVER"}`));
+  for (const t of tiers) {
+    const exits = t.earlyExits === 0 ? "" : `, ${t.earlyExits} early exits`;
+    lines.push(`tier ${t.tier}: median ${t.medianMs}ms, slowest ${t.slowestMs}ms of ${t.budgetMs}ms over ${t.runs} runs${exits}${t.withinBudget ? "" : "  OVER"}`);
+    lines.push(...t.packs.map((p) => `  pack ${p.pack}  median ${p.medianMs}ms  slowest ${p.slowestMs}ms  runs ${p.runs}`));
+    lines.push(...t.passes.map((p) => `  pass ${p.shared} (${p.members.length} guardrails, parse and setup)  median ${p.medianMs}ms  slowest ${p.slowestMs}ms  runs ${p.runs}`));
+  }
   process.stdout.write(`${lines.join("\n")}\n`);
   return 0;
 }

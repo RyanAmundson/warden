@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { buildReport } from "../../src/cli/report.js";
+import { buildReport, runReport } from "../../src/cli/report.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
 const at = "2026-11-18T00:00:00.000Z";
@@ -64,4 +64,61 @@ it("a Guardrail that joins a shared pass after running alone is charged to the p
   const report = await buildReport(root, wardenRoot);
   expect(report.shared.map((s) => s.members)).toEqual([["a", "b", "c"]]);
   expect(report.guardrails.find((g) => g.guardrail === "c")?.costShared).toBe("eslint");
+});
+
+const runRow = (run: string, tier: string, ms: number, outcome = "ran"): Record<string, unknown> => ({ kind: "cost", guardrail: "run", run, tier, outcome, ms, files: 1, bytes: 10 });
+
+const perRunRows = (): Record<string, unknown>[] => [
+  { kind: "cost", guardrail: "c", status: "pass", ms: 999 },
+  { kind: "cost", shared: "eslint", guardrails: 2, members: ["a", "b"], status: "pass", ms: 50, run: "r1", tier: "edit", files: 2, bytes: 20, rules: { a: 10, b: 20 } },
+  { kind: "cost", guardrail: "c", pack: "local", status: "pass", ms: 40, run: "r1", tier: "edit", files: 4, bytes: 40 },
+  runRow("r1", "edit", 300),
+  { kind: "cost", shared: "eslint", guardrails: 2, members: ["a", "b"], status: "pass", ms: 30, run: "r2", tier: "edit", files: 1, bytes: 10, rules: { a: 5, b: 5 } },
+  { kind: "cost", guardrail: "c", pack: "local", status: "pass", ms: 30, run: "r2", tier: "edit", files: 2, bytes: 20 },
+  runRow("r2", "edit", 100),
+  runRow("r3", "edit", 200),
+  runRow("r4", "edit", 3, "tampered"),
+  { kind: "cost", guardrail: "d", pack: "other", status: "pass", ms: 15, run: "r5", tier: "commit", files: 1, bytes: 10 },
+  runRow("r5", "commit", 60),
+];
+
+it("a tier's combined total is the median of its ran run records, and early exits are counted apart", async () => {
+  await evidence(perRunRows());
+  const edit = (await buildReport(root, wardenRoot)).tiers.find((t) => t.tier === "edit");
+  expect(edit).toMatchObject({ medianMs: 200, slowestMs: 300, runs: 3, earlyExits: 1, budgetMs: 1000, withinBudget: true });
+  expect(edit?.medianMs).toBeLessThan(40 + 50 + 30 + 30 + 300);
+});
+
+it("a pack total sums its Guardrails' time in each run, leaves out runs where it did no work, and the pass overhead is its own row", async () => {
+  await evidence(perRunRows());
+  const { tiers } = await buildReport(root, wardenRoot);
+  const edit = tiers.find((t) => t.tier === "edit");
+  expect(edit?.packs).toEqual([{ pack: "local", medianMs: 55, slowestMs: 70, runs: 2 }]);
+  expect(edit?.passes).toEqual([{ shared: "eslint", members: ["a", "b"], medianMs: 20, slowestMs: 20, runs: 2 }]);
+  const commit = tiers.find((t) => t.tier === "commit");
+  expect(commit?.packs).toEqual([{ pack: "other", medianMs: 15, slowestMs: 15, runs: 1 }]);
+  expect(commit?.passes).toEqual([]);
+});
+
+it("a Guardrail's own rows give its median time per file", async () => {
+  await evidence(perRunRows());
+  const c = (await buildReport(root, wardenRoot)).guardrails.find((g) => g.guardrail === "c");
+  expect(c?.medianMsPerFile).toBe(12.5);
+});
+
+it("the text report prints each tier's combined total, its pack totals, and the pass overhead once", async () => {
+  await evidence(perRunRows());
+  let out = "";
+  vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+    out += String(chunk);
+    return true;
+  });
+  try {
+    expect(await runReport(root, wardenRoot, false)).toBe(0);
+  } finally {
+    vi.restoreAllMocks();
+  }
+  expect(out).toContain("tier edit: median 200ms, slowest 300ms of 1000ms over 3 runs, 1 early exits\n  pack local  median 55ms  slowest 70ms  runs 2\n  pass eslint (2 guardrails, parse and setup)  median 20ms  slowest 20ms  runs 2\n");
+  expect(out).toContain("tier commit: median 60ms, slowest 60ms of 2000ms over 1 runs\n  pack other  median 15ms  slowest 15ms  runs 1\n");
+  expect(out).toMatch(/ c {2}kind=review.*perFile=12.5ms/);
 });
