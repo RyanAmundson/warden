@@ -24,6 +24,9 @@ export interface RunResult {
   overBudget?: boolean;
   command?: string;
   shared?: SharedPass;
+  files?: number;
+  bytes?: number;
+  ruleMs?: number;
 }
 
 export interface RunContext {

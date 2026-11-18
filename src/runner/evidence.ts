@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { Tier } from "../records/types.js";
 
 export interface Evidence {
   at: string;
@@ -14,7 +15,19 @@ export interface Evidence {
   members?: string[];
   detail?: string;
   triggered?: boolean;
+  run?: string;
+  tier?: Tier;
+  pack?: string;
+  files?: number;
+  bytes?: number;
+  rules?: Record<string, number>;
+  outcome?: Outcome;
+  commit?: string;
 }
+
+export type Outcome = "ran" | "tampered" | "unstaged" | "empty";
+
+export const RUN_TOTAL = "run";
 
 export const wardenHome = (): string => process.env.WARDEN_HOME ?? join(homedir(), ".warden");
 

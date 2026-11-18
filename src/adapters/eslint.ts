@@ -106,6 +106,7 @@ const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<R
     ],
     allowInlineConfig: false,
     warnIgnored: false,
+    stats: true,
   });
   const results: ESLint.LintResult[] = [];
   let ms = 0;
@@ -118,7 +119,11 @@ const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<R
   for (const g of gs) byRule.set(ruleId(g), []);
   const owner = new Map(gs.map((g) => [ruleId(g), g.id]));
   const parseErrors: Violation[] = [];
+  const ruleMs = new Map<string, number>();
   for (const result of results) {
+    for (const pass of result.stats?.times.passes ?? []) {
+      for (const [id, t] of Object.entries(pass.rules ?? {})) ruleMs.set(id, (ruleMs.get(id) ?? 0) + t.total);
+    }
     const source = result.messages.length > 0 ? await readFile(result.filePath, "utf8") : "";
     const suppressed = new Set(result.messages.filter((m) => m.ruleId === NO_SUPPRESSIONS).map((m) => `${m.line}:${m.column}`));
     for (const m of result.messages) {
@@ -145,7 +150,7 @@ const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<R
   const shared = { id: "eslint", guardrails: gs.length, members: gs.map((g) => g.id) };
   const out = gs.map((g): RunResult => {
     const violations = byRule.get(ruleId(g)) as Violation[];
-    return { guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms, shared };
+    return { guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms, shared, ruleMs: ruleMs.get(ruleId(g)) ?? 0 };
   });
   return parseErrors.length > 0 ? [...out, { guardrail: PARSE_ERROR, status: "fail", violations: parseErrors, ms, shared }] : out;
 };

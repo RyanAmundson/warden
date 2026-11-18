@@ -40,6 +40,11 @@ export function changedFiles(root: string, base: string): string[] {
   return [...new Set(files)].sort();
 }
 
+export const headCommit = (root: string): string | undefined => {
+  const r = git(root, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+  return r.ok ? r.out.trim() : undefined;
+};
+
 export const containsHead = (root: string, ref: string): boolean => git(root, ["merge-base", "--is-ancestor", "HEAD", ref]).ok;
 
 export function historyOf(root: string, path: string): string[] {

@@ -95,6 +95,19 @@ describe("tsc adapter", () => {
     });
   });
 
+  it("reports the files and bytes of every file in the program it checked", async () => {
+    await withProject(async (root) => {
+      const g = guardrail("strict-null", "tsc:strictNullChecks");
+      await emitInto(root, [g]);
+      const own = (await readFile(join(root, "src/a.ts"))).length;
+      const results = await tscAdapter.run([g], [], ctxFor(root));
+      for (const r of results) {
+        expect(r.files).toBeGreaterThan(1);
+        expect(r.bytes).toBeGreaterThan(own);
+      }
+    });
+  });
+
   it("emits a relative extends and identical output from different roots", () => {
     const g = guardrail("strict-null", "tsc:strictNullChecks");
     const a = tscAdapter.emit([g], { ...set, root: "/tmp/one" });

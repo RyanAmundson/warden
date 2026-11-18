@@ -1369,3 +1369,50 @@ describe("applyBaseline", () => {
     expect(next).toEqual({ g: { "a.ts": 1 } });
   });
 });
+
+describe("performance: run records and input size", () => {
+  const costs = async (): Promise<Record<string, unknown>[]> => (await evidence()).filter((e) => e.kind === "cost");
+
+  it("a check writes one run record, and every cost row carries the run, tier, and size, with the pack on a Guardrail's own row", async () => {
+    await addLegacy("commit", "test ! -e broken", 5000);
+    await write("b.ts", "const b = 1;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "legacy");
+    expect((await check({ paths: ["a.ts", "b.ts"] })).code).toBe(0);
+    const rows = await costs();
+    const runs = rows.filter((e) => e.guardrail === "run");
+    expect(runs).toEqual([
+      expect.objectContaining({ outcome: "ran", tier: "commit", files: 2, bytes: 33, commit: git("rev-parse", "HEAD").trim(), run: expect.any(String), ms: expect.any(Number) }),
+    ]);
+    const id = runs[0]?.run;
+    const pass = rows.filter((e) => e.shared === "eslint");
+    expect(pass).toHaveLength(1);
+    expect(pass[0]).toMatchObject({ run: id, tier: "commit", files: 2, bytes: 33 });
+    expect(pass[0]?.pack).toBeUndefined();
+    const members = pass[0]?.members as string[];
+    expect(Object.keys(pass[0]?.rules as Record<string, number>).sort()).toEqual([...members].sort());
+    expect(Object.values(pass[0]?.rules as Record<string, number>).every((ms) => typeof ms === "number" && ms >= 0)).toBe(true);
+    expect(rows.filter((e) => e.guardrail === "legacy-script")).toEqual([expect.objectContaining({ run: id, tier: "commit", pack: "legacy", files: 2, bytes: 33 })]);
+  });
+
+  it("a lint pass counts only the files the cache did not answer", async () => {
+    await write("b.ts", "const b = 1;\n");
+    expect((await check({ paths: ["a.ts", "b.ts"] })).code).toBe(0);
+    await write("b.ts", "const b = 22;\n");
+    expect((await check({ paths: ["a.ts", "b.ts"] })).code).toBe(0);
+    const pass = (await costs()).filter((e) => e.shared === "eslint");
+    expect(pass.map((e) => [e.files, e.bytes])).toEqual([[2, 33], [1, 14]]);
+  });
+
+  it("an early exit writes a run record with its outcome", async () => {
+    expect((await check()).code).toBe(0);
+    await writeFile(join(root, ".warden/generated/eslint.rules.json"), `${await read(".warden/generated/eslint.rules.json")}\n`);
+    expect((await check()).code).toBe(1);
+    git("checkout", "HEAD", "--", ".warden/generated/eslint.rules.json");
+    await write("a.ts", "// one\nconst a = 2;\n");
+    expect((await check({}, false)).code).toBe(1);
+    const runs = (await costs()).filter((e) => e.guardrail === "run");
+    expect(runs.map((e) => [e.outcome, e.tier])).toEqual([["empty", "commit"], ["tampered", "commit"], ["unstaged", "commit"]]);
+    expect(new Set(runs.map((e) => e.run)).size).toBe(3);
+  });
+});

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { PARSE_ERROR, type RunContext, type RunResult, type Violation } from "../adapters/types.js";
@@ -7,9 +8,9 @@ import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import type { Guardrail, RecordSet, Tier } from "../records/types.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { changedFiles, changesSinceMergeBase, containsHead, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
+import { changedFiles, changesSinceMergeBase, containsHead, headCommit, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
-import { type Evidence, appendEvidence, readEvidence } from "../runner/evidence.js";
+import { type Evidence, type Outcome, RUN_TOTAL, appendEvidence, readEvidence } from "../runner/evidence.js";
 import { type Format, type Notes, type Repeated, formatFeedback } from "../runner/feedback.js";
 import { runGuardrails, unknownAdapters } from "../runner/run.js";
 import { type Tamper, findTampering, readBaseLock, recordedBases } from "../runner/tamper.js";
@@ -142,11 +143,20 @@ const report = (failures: Violation[], set: RecordSet, opts: CheckOptions, notes
 };
 
 const check = async (opts: CheckOptions): Promise<number> => {
+  const started = performance.now();
   const root = resolve(opts.root);
   const at = new Date().toISOString();
+  const run = randomUUID();
+  const tier: Tier = opts.hook === "claude" ? "edit" : (opts.tier ?? "commit");
+  const finish = (project: string, outcome: Outcome, files: string[]): void => {
+    const bytes = files.reduce((n, f) => n + statSync(join(root, f)).size, 0);
+    const commit = headCommit(root);
+    appendEvidence(project, { at, kind: "cost", guardrail: RUN_TOTAL, run, tier, outcome, ms: performance.now() - started, files: files.length, bytes, ...(commit === undefined ? {} : { commit }) });
+  };
   const removed = removedWarden(root, opts.base);
   if (removed !== undefined) {
     appendEvidence(removed.set.config.project, { at, kind: "tampered", file: removed.tamper.file, detail: removed.tamper.detail });
+    finish(removed.set.config.project, "tampered", []);
     return report([], removed.set, opts, { tampered: [removed.tamper] });
   }
   if (!existsSync(join(root, ".warden/config.yaml"))) {
@@ -187,6 +197,7 @@ const check = async (opts: CheckOptions): Promise<number> => {
     }
     if (tampered.length > 0) {
       for (const t of tampered) appendEvidence(project, { at, kind: "tampered", file: t.file, detail: t.detail });
+      finish(project, "tampered", []);
       return report([], set, opts, { tampered });
     }
     const [first] = unknown as [(typeof unknown)[number]];
@@ -196,6 +207,7 @@ const check = async (opts: CheckOptions): Promise<number> => {
   const tampered = await findTampering(set, opts.wardenRoot, base);
   if (tampered.length > 0) {
     for (const t of tampered) appendEvidence(project, { at, kind: "tampered", file: t.file, detail: t.detail, guardrail: t.guardrail });
+    finish(project, "tampered", []);
     return report([], set, opts, { tampered });
   }
   const locked = existsSync(join(root, LOCK_PATH)) ? readLock(root).tools : bundledTools();
@@ -204,7 +216,6 @@ const check = async (opts: CheckOptions): Promise<number> => {
     throw new RecordError(LOCK_PATH, "/tools", `records bundled tools ${JSON.stringify(locked ?? {})}, but this Warden loads ${JSON.stringify(loaded)}. Next action: run warden compile.`);
   }
 
-  const tier: Tier = opts.hook === "claude" ? "edit" : (opts.tier ?? "commit");
   const known = new Set(selectGuardrails(set, undefined).map((g) => g.id));
   const chosen = selectGuardrails(set, opts.rule).filter((g) => g.runs.includes(tier));
   const selected = new Set(chosen.map((g) => g.id));
@@ -214,15 +225,18 @@ const check = async (opts: CheckOptions): Promise<number> => {
   if (tier === "commit") {
     const unstaged = new Set(unstagedFiles(root));
     const differing = scanned.filter((f) => unstaged.has(f));
-    if (differing.length > 0) return report([], set, opts, { unstaged: differing, base });
+    if (differing.length > 0) {
+      finish(project, "unstaged", scanned);
+      return report([], set, opts, { unstaged: differing, base });
+    }
   }
   const shas = new Map(scanned.map((f) => [f, sha256(readFileSync(join(root, f)))]));
   const ctx = { root, generatedDir: join(root, ".warden/generated") };
   const lockSha = sha256(readFileSync(join(root, LOCK_PATH)));
-  const run = await runCached(set, guardrails, scanned, shas, ctx, project, { lockSha, warden: await wardenVersion(opts.wardenRoot) });
+  const ran = await runCached(set, guardrails, scanned, shas, ctx, project, { lockSha, warden: await wardenVersion(opts.wardenRoot) });
   const wanted = (r: RunResult): boolean => selected.has(r.guardrail) || !known.has(r.guardrail);
-  const perFile = run.perFile.filter(wanted);
-  const wholeProject = run.wholeProject.filter(wanted);
+  const perFile = ran.perFile.filter(wanted);
+  const wholeProject = ran.wholeProject.filter(wanted);
   const overBudget = [...perFile, ...wholeProject].filter((r) => r.overBudget === true).map((r) => ({ guardrail: r.guardrail, ms: r.ms, ...(r.shared?.budgetMs === undefined ? {} : { budgetMs: r.shared.budgetMs }) }));
   const killed = [...perFile, ...wholeProject]
     .filter((r) => r.status === "killed")
@@ -255,14 +269,19 @@ const check = async (opts: CheckOptions): Promise<number> => {
     if (tier === "commit") stageFile(root, BASELINE_PATH);
   }
 
+  const packOf = new Map(set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.map((g) => [g.id, p.id] as const))));
   const sharedPasses = new Set<unknown>();
-  for (const r of run.ran) {
+  for (const r of ran.ran) {
+    const size = { run, tier, files: r.files, bytes: r.bytes };
     if (r.shared === undefined || r.shared.guardrails === 1) {
-      appendEvidence(project, { at, kind: "cost", guardrail: r.guardrail, status: r.overBudget === true ? "over-budget" : r.status, ms: r.ms });
+      const pack = packOf.get(r.guardrail);
+      appendEvidence(project, { at, kind: "cost", guardrail: r.guardrail, status: r.overBudget === true ? "over-budget" : r.status, ms: r.ms, ...size, ...(pack === undefined ? {} : { pack }) });
     } else if (!sharedPasses.has(r.shared)) {
       sharedPasses.add(r.shared);
-      const over = run.ran.some((x) => x.shared === r.shared && x.overBudget === true);
-      appendEvidence(project, { at, kind: "cost", shared: r.shared.id, guardrails: r.shared.guardrails, members: r.shared.members, status: over ? "over-budget" : "pass", ms: r.ms });
+      const members = ran.ran.filter((x) => x.shared === r.shared && x.guardrail !== PARSE_ERROR);
+      const over = members.some((x) => x.overBudget === true);
+      const rules = Object.fromEntries(members.map((x) => [x.guardrail, x.ruleMs ?? 0]));
+      appendEvidence(project, { at, kind: "cost", shared: r.shared.id, guardrails: r.shared.guardrails, members: r.shared.members, status: over ? "over-budget" : "pass", ms: r.ms, ...size, rules });
     }
   }
   const prior = readEvidence(project);
@@ -281,6 +300,7 @@ const check = async (opts: CheckOptions): Promise<number> => {
     const n = prior.filter(same).length + 1;
     if (n >= loopBreakerRepeats && (repeated === undefined || n > repeated.n)) repeated = { guardrail, file, n };
   }
+  finish(project, scanned.length === 0 ? "empty" : "ran", scanned);
   return report(failures, set, opts, { repeated, overBudget, killed });
 };
 
