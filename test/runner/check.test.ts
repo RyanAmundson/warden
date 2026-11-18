@@ -713,12 +713,14 @@ describe("final review: changed lines and renames", () => {
 });
 
 describe("final review: lock records base and project", () => {
-  it("pointing base at the working branch and recompiling is loosening", async () => {
+  it("pointing base at the working branch and recompiling is a moved base", async () => {
     await write(".warden/config.yaml", config(["core", "local"]).replace("base: main", "base: feature"));
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
     expect(readLock(root).config.base).toBe("feature");
-    expect((await check()).code).toBe(1);
-    expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "loosened" }]);
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "base-moved" }]);
+    expect(out).toContain("Next action: revert the base change in .warden/config.yaml and run warden compile.");
   });
 
   it("renaming the project and recompiling is loosening", async () => {
@@ -830,13 +832,43 @@ describe("residual fixes", () => {
     expect(failedFiles(out)).toEqual(["a.ts"]);
   });
 
-  it("a base committed as the agent's own branch is loosening against the base the hook names", async () => {
+  const commitOwnBase = async (): Promise<void> => {
     await write(".warden/config.yaml", config(["core", "local"]).replace("base: main", "base: feature"));
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
     git("add", "-A");
     git("commit", "-q", "-m", "own base");
+  };
+
+  it("a base committed as the agent's own branch is a moved base against the base the hook names", async () => {
+    await commitOwnBase();
     expect((await check({ base: "main" })).code).toBe(1);
-    expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "loosened" }]);
+    expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "base-moved" }]);
+  });
+
+  it("a moved base committed at HEAD is caught even when the working copy restores it", async () => {
+    await commitOwnBase();
+    await write(".warden/config.yaml", config(["core", "local"]));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect((await check({ base: "main" }, false)).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "base-moved" }]);
+  });
+
+  it("the reviewer's repro: --base set to the agent's own committed branch exits 2 and names the base it merges into", async () => {
+    await commitOwnBase();
+    expect(JSON.parse(await read(".claude/settings.json")).hooks.PostToolUse[0].hooks[0].command).toContain("--base 'feature'");
+    const { code, err } = await check({ base: "feature" });
+    expect(code).toBe(2);
+    expect(err).toContain("Next action: run warden check --base main");
+    expect(await tampered()).toEqual([]);
+  });
+
+  it("--base naming a ref whose tip contains HEAD is refused unless the lock always recorded that base", async () => {
+    git("branch", "own", "HEAD");
+    const refused = await check({ base: "own" });
+    expect(refused.code).toBe(2);
+    expect(refused.err).toContain("Next action: run warden check --base main");
+    git("checkout", "-q", "main");
+    expect((await check({ base: "main" })).code).toBe(0);
   });
 
   it("check without --base exits 2 and names the command to run", async () => {

@@ -7,7 +7,7 @@ import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import type { Guardrail, RecordSet, Tier } from "../records/types.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { changedFiles, changesSinceMergeBase, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
+import { changedFiles, changesSinceMergeBase, containsHead, historyOf, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
 import { type Evidence, appendEvidence, readEvidence } from "../runner/evidence.js";
 import { type Format, type Notes, type Repeated, formatFeedback } from "../runner/feedback.js";
 import { runGuardrails } from "../runner/run.js";
@@ -38,6 +38,21 @@ const requireBase = (base: string | undefined, configured: string): string => {
   throw new RecordError("", "/base", `--base is missing; Warden takes the base branch from the command, never from the editable config. Next action: run warden check --base ${configured}`);
 };
 
+const refuseOwnBranch = (root: string, base: string): void => {
+  if (!containsHead(root, base)) return;
+  const recorded = historyOf(root, LOCK_PATH).flatMap((text) => {
+    const value = (JSON.parse(text) as { config?: { base?: unknown } }).config?.base;
+    return typeof value === "string" ? [value] : [];
+  });
+  if (recorded.every((b) => b === base)) return;
+  const original = recorded[recorded.length - 1] as string;
+  throw new RecordError(
+    "",
+    "/base",
+    `--base ${base} already contains this work, so the merge-base lock would compare with itself; the lock first recorded base ${original}. Next action: run warden check --base ${original}`,
+  );
+};
+
 const removedWarden = (root: string, given: string | undefined): { set: RecordSet; tamper: Tamper } | undefined => {
   if (existsSync(join(root, ".warden"))) return undefined;
   const text = lastCommittedText(root, ".warden/config.yaml");
@@ -45,6 +60,7 @@ const removedWarden = (root: string, given: string | undefined): { set: RecordSe
   const config = parseConfig(".warden/config.yaml", text);
   const base = requireBase(given, config.base);
   verifyBase(root, base);
+  refuseOwnBranch(root, base);
   if (showAtMergeBase(root, base, LOCK_PATH) === undefined) return undefined;
   return { set: { config, packs: [], root }, tamper: { file: ".warden", detail: "removed" } };
 };
@@ -139,6 +155,7 @@ const check = async (opts: CheckOptions): Promise<number> => {
   const { project, loopBreakerRepeats } = set.config;
   const base = requireBase(opts.base, set.config.base);
   verifyBase(root, base);
+  refuseOwnBranch(root, base);
   if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined) {
     throw new RecordError(LOCK_PATH, "", "not found; this project was never compiled. Next action: run warden compile.");
   }

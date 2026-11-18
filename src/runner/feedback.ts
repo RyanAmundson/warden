@@ -40,6 +40,9 @@ const ownerOf = (set: RecordSet, id: string): { practice: Practice; guardrail: G
 const byLocation = (a: Violation, b: Violation): number => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line);
 
 const nextAction = (failures: Violation[], set: RecordSet, notes: Notes): string | null => {
+  if (notes.tampered?.some((t) => t.detail === "base-moved") === true) {
+    return "revert the base change in .warden/config.yaml and run warden compile.";
+  }
   if (notes.tampered !== undefined && notes.tampered.length > 0) {
     return `revert your change to ${[...new Set(notes.tampered.map((t) => t.file))].join(", ")}.`;
   }

@@ -40,6 +40,16 @@ export function changedFiles(root: string, base: string): string[] {
   return [...new Set(files)].sort();
 }
 
+export const containsHead = (root: string, ref: string): boolean => git(root, ["merge-base", "--is-ancestor", "HEAD", ref]).ok;
+
+export function historyOf(root: string, path: string): string[] {
+  const commits = names(must(root, ["log", "-z", "--format=%H", "HEAD", "--", path]));
+  return commits.flatMap((sha) => {
+    const r = git(root, ["show", `${sha}:./${path}`]);
+    return r.ok ? [r.out] : [];
+  });
+}
+
 export const stageFile = (root: string, path: string): void => {
   must(root, ["add", "--", path]);
 };

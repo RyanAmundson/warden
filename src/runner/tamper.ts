@@ -6,11 +6,11 @@ import { LOCK_FORMAT, LOCK_PATH, type Lock, canonicalJson, readLock, sha256 } fr
 import { RecordError, readText } from "../records/load.js";
 import type { RecordSet } from "../records/types.js";
 import { BASELINE_PATH, type Baseline, carryRenames, projectWideEntries, readBaseline } from "./baseline.js";
-import { changesSinceMergeBase, showAtMergeBase } from "./changed.js";
+import { changesSinceMergeBase, lastCommittedText, showAtMergeBase } from "./changed.js";
 
 export interface Tamper {
   file: string;
-  detail: "missing-lock" | "leftover-temp" | "hooks-disabled" | "generated-drift" | "source-drift" | "lock-drift" | "loosened" | "removed";
+  detail: "missing-lock" | "leftover-temp" | "hooks-disabled" | "generated-drift" | "source-drift" | "lock-drift" | "loosened" | "removed" | "base-moved";
   guardrail?: string;
 }
 
@@ -68,8 +68,10 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
   const changed = (was: unknown, now: unknown): boolean => was !== undefined && was !== now;
   const found: Tamper[] = [];
   const tiers = Object.keys(lock.config.tierBudgetMs) as (keyof Lock["config"]["tierBudgetMs"])[];
+  const committed = lastCommittedText(root, LOCK_PATH);
+  const heads = [lock, ...(committed === undefined ? [] : [JSON.parse(committed) as Lock])];
+  if (heads.some((l) => changed(before.config.base, l.config?.base))) found.push({ file: LOCK_PATH, detail: "base-moved" });
   if (
-    changed(before.config.base, lock.config.base) ||
     changed(before.config.project, lock.config.project) ||
     lock.config.loopBreakerRepeats > before.config.loopBreakerRepeats ||
     tiers.some((t) => lock.config.tierBudgetMs[t] > before.config.tierBudgetMs[t])
