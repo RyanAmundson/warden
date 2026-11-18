@@ -1,0 +1,11 @@
+warden: "0.1.0"
+project: "warden"
+base: main
+packs:
+  - id: core
+    paths: ["src/**/*.ts", "eslint-plugin/**/*.ts", "vitest.config.ts", "test/*.ts", "test/cli/*.ts", "test/runner/*.ts", "test/compiler/*.ts", "test/records/*.ts", "test/adapters/*.ts", "test/eslint-plugin/*.ts"]
+tierBudgetMs:
+  edit: 2000
+  commit: 10000
+  boundary: 120000
+loopBreakerRepeats: 3

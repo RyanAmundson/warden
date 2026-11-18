@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(.warden/**)",
+      "Write(.warden/**)",
+      "Bash(git commit*--no-verify*)",
+      "Bash(git commit -n*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx warden check --format agent --hook claude"
+          }
+        ]
+      }
+    ]
+  }
+}
