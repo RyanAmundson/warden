@@ -15,7 +15,7 @@ const config = [
   "base: main",
   "packs:",
   "  - id: core",
-  "    paths: [\"**/*.{ts,tsx,mts,cts}\"]",
+  "    paths: [\"**/*.{ts,tsx,mts,cts,js,mjs,cjs}\"]",
   "tierBudgetMs: { edit: 1000, commit: 2000, boundary: 5000 }",
   "loopBreakerRepeats: 3",
   "",
@@ -51,8 +51,8 @@ describe("core pack", () => {
     expect(await runExamples(set, wardenRoot)).toEqual([]);
   });
 
-  it.each(["src/a.tsx", "src/a.mts", "src/a.cts"])("covers %s files", async (file) => {
-    const source = file.endsWith("x") ? "export const a = <div>{/* note */}</div>;\n" : "// note\nexport const a = 1;\n";
+  it.each(["src/a.tsx", "src/a.mts", "src/a.cts", "src/a.js", "src/a.mjs", "src/a.cjs"])("covers %s files", async (file) => {
+    const source = file.endsWith("x") ? "export const a = <div>{/* note */}</div>;\n" : "// note\nconst a = 1;\n";
     const [result] = await check(guardrails.slice(0, 1), source, file);
     expect(result?.status).toBe("fail");
   });

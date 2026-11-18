@@ -504,7 +504,7 @@ describe("review fixes", () => {
     git("add", "-A");
     git("commit", "-q", "-m", "narrow");
     git("branch", "-f", "main", "HEAD");
-    expect(readLock(root).guardrails["warden-no-comments"]?.paths).toEqual(["**/*.{ts,tsx,mts,cts} & src/**/*.ts"]);
+    expect(readLock(root).guardrails["warden-no-comments"]?.paths).toEqual(["**/*.{ts,tsx,mts,cts,js,mjs,cjs} & src/**/*.ts"]);
     await write("fixtures/y.ts", "// c\nconst y = 1;\n");
     expect((await check({ paths: ["fixtures/y.ts"] })).code).toBe(0);
     await write("src/x.ts", "// c\nconst x = 1;\n");

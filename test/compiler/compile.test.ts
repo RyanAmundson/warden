@@ -69,7 +69,7 @@ describe("compile", () => {
       implementation: "eslint:warden/no-comments",
       options: null,
       runs: ["commit", "edit"],
-      paths: ["**/*.{ts,tsx,mts,cts} & src/**"],
+      paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs} & src/**"],
     });
     expect(lock.format).toBe(1);
     expect(lock.config).toEqual({ project: "fixture", base: "main", tierBudgetMs: { edit: 2000, commit: 30000, boundary: 120000 }, loopBreakerRepeats: 3 });
