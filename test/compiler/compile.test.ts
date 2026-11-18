@@ -225,4 +225,13 @@ describe("compile", () => {
     expect(findings.map((f) => `${f.code} ${f.record}`)).toEqual(["example-conflict local-no-var"]);
     expect(findings[0]?.message).toContain("local-prefer-const");
   });
+
+  it("invalid settings JSON leaves no generated file, no settings change, and no lock", async () => {
+    await mkdir(join(root, ".claude"), { recursive: true });
+    await writeFile(join(root, ".claude/settings.json"), "{ not json");
+    await expect(compile(root, wardenRoot)).rejects.toThrow(".claude/settings.json is not valid JSON");
+    expect(await read(".claude/settings.json")).toBe("{ not json");
+    await expect(readFile(join(root, ".warden/generated/eslint.rules.json"))).rejects.toThrow();
+    await expect(readFile(join(root, ".warden/lock.json"))).rejects.toThrow();
+  });
 });

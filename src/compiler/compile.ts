@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { claudeSettingsAdapter } from "../adapters/claude.js";
 import type { Adapter } from "../adapters/types.js";
@@ -46,9 +46,20 @@ const emitAll = (set: RecordSet): Record<string, string> => {
   return emitted;
 };
 
-const write = async (root: string, file: string, content: string): Promise<void> => {
-  await mkdir(dirname(join(root, file)), { recursive: true });
-  await writeFile(join(root, file), content);
+const writeAll = async (root: string, outputs: Record<string, string>): Promise<void> => {
+  const staged: [string, string][] = [];
+  try {
+    for (const [file, content] of Object.entries(outputs)) {
+      const target = join(root, file);
+      const temp = `${target}.warden-tmp-${process.pid}`;
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(temp, content);
+      staged.push([temp, target]);
+    }
+    for (const [temp, target] of staged) await rename(temp, target);
+  } finally {
+    for (const [temp] of staged) await rm(temp, { force: true });
+  }
 };
 
 export async function compile(projectRoot: string, wardenRoot: string): Promise<{ findings: Finding[]; written: string[] }> {
@@ -79,20 +90,15 @@ export async function compile(projectRoot: string, wardenRoot: string): Promise<
     owned[file] = { ...owned[file], [key.slice(at + 1)]: entries };
   }
 
+  const outputs: Record<string, string> = { ...files };
   const generated = { ...files };
-  const written: string[] = [];
-  for (const [file, content] of Object.entries(files)) {
-    await write(projectRoot, file, content);
-    written.push(file);
-  }
   for (const [file, entries] of Object.entries(owned)) {
-    await write(projectRoot, file, mergeSettings(file, await readText(join(projectRoot, file)), entries));
+    outputs[file] = mergeSettings(file, await readText(join(projectRoot, file)), entries);
     generated[`${file}#warden`] = canonicalJson(entries);
-    written.push(file);
   }
-
   const lock = computeLock(set, generated, sources, version);
-  await write(projectRoot, LOCK_PATH, `${JSON.stringify(lock, null, 2)}\n`);
-  written.push(LOCK_PATH);
-  return { findings: [], written };
+
+  await writeAll(projectRoot, outputs);
+  await writeAll(projectRoot, { [LOCK_PATH]: `${JSON.stringify(lock, null, 2)}\n` });
+  return { findings: [], written: [...Object.keys(outputs), LOCK_PATH] };
 }
