@@ -55,7 +55,7 @@ describe("compile", () => {
     expect(Object.keys(rules)[0]).toBe("@generated");
     expect(Array.isArray(rules.entries)).toBe(true);
     const settings = JSON.parse(await read(".claude/settings.json"));
-    expect(settings.permissions.deny).toEqual(["Edit(.warden/**)", "Write(.warden/**)", "Bash(git commit*--no-verify*)"]);
+    expect(settings.permissions.deny).toEqual(["Edit(.warden/**)", "Write(.warden/**)", "Bash(git commit*--no-verify*)", "Bash(git commit -n*)"]);
     const lock = readLock(root);
     expect(Object.keys(lock.generated).sort()).toEqual([
       ".claude/settings.json#warden",
@@ -79,7 +79,7 @@ describe("compile", () => {
     const settings = JSON.parse(await read(".claude/settings.json"));
     expect(settings.model).toBe("x");
     expect(settings.permissions.allow).toEqual(["Read"]);
-    expect(settings.permissions.deny).toEqual(["Bash(rm*)", "Edit(.warden/**)", "Write(.warden/**)", "Bash(git commit*--no-verify*)"]);
+    expect(settings.permissions.deny).toEqual(["Bash(rm*)", "Edit(.warden/**)", "Write(.warden/**)", "Bash(git commit*--no-verify*)", "Bash(git commit -n*)"]);
   });
 
   it("compile registers the edit-tier hook once", async () => {

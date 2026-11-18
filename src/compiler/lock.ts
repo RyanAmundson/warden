@@ -12,7 +12,7 @@ export interface Lock {
 
 export const LOCK_PATH = ".warden/lock.json";
 
-export const sha256 = (content: string): string => createHash("sha256").update(content).digest("hex");
+export const sha256 = (content: string | Buffer): string => createHash("sha256").update(content).digest("hex");
 
 export function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;

@@ -8,7 +8,7 @@ import { adapters } from "../runner/run.js";
 import { checkConsistency, type Finding } from "./consistency.js";
 import { mergeSettings, stamp } from "./emit.js";
 import { runExamples } from "./examples.js";
-import { LOCK_PATH, canonicalJson, computeLock, sha256 } from "./lock.js";
+import { LOCK_PATH, type Lock, canonicalJson, computeLock, sha256 } from "./lock.js";
 
 const SETTINGS_KEY = "#";
 
@@ -62,11 +62,13 @@ const writeAll = async (root: string, outputs: Record<string, string>): Promise<
   }
 };
 
-export async function compile(projectRoot: string, wardenRoot: string): Promise<{ findings: Finding[]; written: string[] }> {
-  const set = await loadRecords(projectRoot, wardenRoot);
-  const findings = [...checkConsistency(set), ...(await runExamples(set, wardenRoot))];
-  if (findings.length > 0) return { findings, written: [] };
+export interface Expected {
+  lock: Lock;
+  files: Record<string, string>;
+  owned: Record<string, Record<string, unknown[]>>;
+}
 
+export async function expectedOutputs(set: RecordSet, projectRoot: string, wardenRoot: string): Promise<Expected> {
   const version = (JSON.parse(await readFile(join(wardenRoot, "package.json"), "utf8")) as { version: string }).version;
   const sources = await sourceFiles(set, projectRoot, wardenRoot);
   const sourceHash = sha256(
@@ -90,13 +92,21 @@ export async function compile(projectRoot: string, wardenRoot: string): Promise<
     owned[file] = { ...owned[file], [key.slice(at + 1)]: entries };
   }
 
-  const outputs: Record<string, string> = { ...files };
   const generated = { ...files };
+  for (const [file, entries] of Object.entries(owned)) generated[`${file}#warden`] = canonicalJson(entries);
+  return { lock: computeLock(set, generated, sources, version), files, owned };
+}
+
+export async function compile(projectRoot: string, wardenRoot: string): Promise<{ findings: Finding[]; written: string[] }> {
+  const set = await loadRecords(projectRoot, wardenRoot);
+  const findings = [...checkConsistency(set), ...(await runExamples(set, wardenRoot))];
+  if (findings.length > 0) return { findings, written: [] };
+
+  const { lock, files, owned } = await expectedOutputs(set, projectRoot, wardenRoot);
+  const outputs: Record<string, string> = { ...files };
   for (const [file, entries] of Object.entries(owned)) {
     outputs[file] = mergeSettings(file, await readText(join(projectRoot, file)), entries);
-    generated[`${file}#warden`] = canonicalJson(entries);
   }
-  const lock = computeLock(set, generated, sources, version);
 
   await writeAll(projectRoot, outputs);
   await writeAll(projectRoot, { [LOCK_PATH]: `${JSON.stringify(lock, null, 2)}\n` });

@@ -18,7 +18,7 @@
       "required": ["warden", "project", "base", "packs", "tierBudgetMs", "loopBreakerRepeats"],
       "properties": {
         "warden": { "type": "string", "minLength": 1 },
-        "project": { "type": "string", "minLength": 1 },
+        "project": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
         "base": { "type": "string", "minLength": 1 },
         "packs": {
           "type": "array",

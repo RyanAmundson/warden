@@ -1,0 +1,136 @@
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
+import type { RunContext, RunResult, Violation } from "../adapters/types.js";
+import { canonicalJson, sha256 } from "../compiler/lock.js";
+import { RecordError, loadRecords } from "../records/load.js";
+import type { Guardrail, RecordSet } from "../records/types.js";
+import { applyBaseline, readBaseline, writeBaseline } from "../runner/baseline.js";
+import { cacheKey, readCache, writeCache } from "../runner/cache.js";
+import { changedFiles, verifyBase } from "../runner/changed.js";
+import { appendEvidence, readEvidence } from "../runner/evidence.js";
+import { type Format, type Notes, type Repeated, formatFeedback } from "../runner/feedback.js";
+import { runGuardrails } from "../runner/run.js";
+import { findTampering } from "../runner/tamper.js";
+
+export interface CheckOptions {
+  root: string;
+  wardenRoot: string;
+  paths?: string[];
+  rule?: string;
+  format: Format;
+  hook?: "claude";
+}
+
+const selectGuardrails = (set: RecordSet, rule: string | undefined): Guardrail[] => {
+  const gs = set.packs.flatMap((p) =>
+    p.practices.flatMap((x) => x.guardrails.filter((g) => g.kind !== "instruction" && (rule === undefined || g.id === rule || x.id === rule))),
+  );
+  if (rule !== undefined && gs.length === 0) throw new RecordError("", "/rule", `no Practice or Guardrail has id "${rule}"`);
+  return gs;
+};
+
+const scannedFiles = (root: string, base: string, paths: string[] | undefined): string[] => {
+  if (paths === undefined) return changedFiles(root, base).filter((f) => existsSync(join(root, f)) && statSync(join(root, f)).isFile());
+  return paths.map((p) => {
+    const file = relative(root, resolve(root, p));
+    if (file.startsWith("..") || !existsSync(join(root, file)) || !statSync(join(root, file)).isFile()) {
+      throw new RecordError("", "/paths", `${p} is not a file in ${root}`);
+    }
+    return file;
+  });
+};
+
+const runCached = async (
+  gs: Guardrail[],
+  scanned: string[],
+  shas: Map<string, string>,
+  ctx: RunContext,
+  project: string,
+): Promise<{ results: RunResult[]; ran: RunResult[] }> => {
+  if (scanned.length === 0) return { results: [], ran: [] };
+  const lint = gs.filter((g) => g.kind === "lint");
+  const rest = gs.filter((g) => g.kind !== "lint");
+  const keyOf = (f: string, g: Guardrail): string => cacheKey(f, shas.get(f) as string, g);
+  const hits = new Map<string, Violation[]>();
+  const misses = new Set<string>();
+  for (const g of lint) {
+    for (const f of scanned) {
+      const cached = readCache(project, keyOf(f, g));
+      if (cached === undefined) misses.add(f);
+      else hits.set(keyOf(f, g), cached);
+    }
+  }
+  const fresh = misses.size > 0 ? await runGuardrails(lint, [...misses], ctx) : [];
+  const results = lint.map((g): RunResult => {
+    const r = fresh.find((x) => x.guardrail === g.id);
+    if (r?.status === "over-budget") return r;
+    const violations = scanned.flatMap((f) => {
+      if (!misses.has(f)) return hits.get(keyOf(f, g)) as Violation[];
+      const own = (r as RunResult).violations.filter((v) => v.file === f);
+      writeCache(project, keyOf(f, g), own);
+      return own;
+    });
+    return { guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms: r?.ms ?? 0 };
+  });
+  const others = rest.length > 0 ? await runGuardrails(rest, scanned, ctx) : [];
+  return { results: [...results, ...others], ran: [...fresh, ...others] };
+};
+
+const report = (failures: Violation[], set: RecordSet, opts: CheckOptions, notes: Notes): number => {
+  const failed = failures.length > 0 || (notes.tampered ?? []).length > 0;
+  if (opts.hook === "claude") {
+    if (failed) process.stdout.write(`${JSON.stringify({ decision: "block", reason: formatFeedback(failures, set, "agent", notes) })}\n`);
+    return 0;
+  }
+  if (failed || opts.format === "json") process.stdout.write(`${formatFeedback(failures, set, opts.format, notes)}\n`);
+  return failed ? 1 : 0;
+};
+
+const check = async (opts: CheckOptions): Promise<number> => {
+  const root = resolve(opts.root);
+  const set = await loadRecords(root, opts.wardenRoot);
+  const { project, base, loopBreakerRepeats } = set.config;
+  verifyBase(root, base);
+  const at = new Date().toISOString();
+
+  const tampered = await findTampering(set, opts.wardenRoot, base);
+  if (tampered.length > 0) {
+    for (const t of tampered) appendEvidence(project, { at, kind: "tampered", file: t.file, detail: t.detail, guardrail: t.guardrail });
+    return report([], set, opts, { tampered });
+  }
+
+  const selected = new Set(selectGuardrails(set, opts.rule).map((g) => g.id));
+  const guardrails = selectGuardrails(set, undefined).filter((g) => g.kind === "lint" || selected.has(g.id));
+  const scanned = scannedFiles(root, base, opts.paths);
+  const shas = new Map(scanned.map((f) => [f, sha256(readFileSync(join(root, f)))]));
+  const ctx = { root, generatedDir: join(root, ".warden/generated") };
+  const run = await runCached(guardrails, scanned, shas, ctx, project);
+  const results = opts.rule === undefined ? run.results : run.results.filter((r) => selected.has(r.guardrail));
+
+  const baseline = readBaseline(root);
+  const { failures, next } = applyBaseline(results, baseline, scanned, (f) => existsSync(join(root, f)));
+  if (canonicalJson(next) !== canonicalJson(baseline)) writeBaseline(root, next);
+
+  for (const r of run.ran) appendEvidence(project, { at, kind: "cost", guardrail: r.guardrail, status: r.status, ms: r.ms });
+  const prior = readEvidence(project);
+  let repeated: Repeated | undefined;
+  for (const key of new Set(failures.map((v) => `${v.guardrail}\0${v.file}`))) {
+    const [guardrail, file] = key.split("\0") as [string, string];
+    const detail = shas.get(file) ?? "";
+    const n =
+      prior.filter((e) => e.kind === "fired" && e.status === "fail" && e.guardrail === guardrail && e.file === file && e.detail === detail).length + 1;
+    appendEvidence(project, { at, kind: "fired", guardrail, file, status: "fail", detail });
+    if (n >= loopBreakerRepeats && (repeated === undefined || n > repeated.n)) repeated = { guardrail, file, n };
+  }
+  return report(failures, set, opts, { repeated });
+};
+
+export async function runCheck(opts: CheckOptions): Promise<number> {
+  try {
+    return await check(opts);
+  } catch (cause) {
+    if (!(cause instanceof RecordError)) throw cause;
+    process.stderr.write(`${cause.file} ${cause.pointer}: ${cause.message}\n`);
+    return 2;
+  }
+}

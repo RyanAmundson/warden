@@ -20,6 +20,8 @@ const runsWardenCheck = (entry: unknown): boolean =>
   Array.isArray(entry.hooks) &&
   entry.hooks.some((h) => isObject(h) && typeof h.command === "string" && h.command.includes("warden check"));
 
+export const isWardenEntry = (entry: unknown, ours: Set<string>): boolean => ours.has(canonicalJson(entry)) || runsWardenCheck(entry);
+
 export function mergeSettings(file: string, existing: string | undefined, owned: Record<string, unknown[]>): string {
   let settings: unknown = {};
   if (existing !== undefined) {
@@ -43,7 +45,7 @@ export function mergeSettings(file: string, existing: string | undefined, owned:
     const current = node[leaf] ?? [];
     if (!Array.isArray(current)) throw new Error(`${file} ${path} must be an array`);
     const ours = new Set(entries.map(canonicalJson));
-    node[leaf] = [...current.filter((e) => !ours.has(canonicalJson(e)) && !runsWardenCheck(e)), ...entries];
+    node[leaf] = [...current.filter((e) => !isWardenEntry(e, ours)), ...entries];
   }
   return `${JSON.stringify(settings, null, 2)}\n`;
 }

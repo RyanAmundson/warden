@@ -2,7 +2,7 @@ import type { Adapter } from "./types.js";
 
 export const SETTINGS_FILE = ".claude/settings.json";
 
-const DENY = ["Edit(.warden/**)", "Write(.warden/**)", "Bash(git commit*--no-verify*)"];
+const DENY = ["Edit(.warden/**)", "Write(.warden/**)", "Bash(git commit*--no-verify*)", "Bash(git commit -n*)"];
 
 const HOOK = {
   matcher: "Edit|Write|MultiEdit",
