@@ -27,5 +27,7 @@ ln -s "$root/node_modules" "$work/prev/node_modules"
 (cd "$work/prev" && npm run build --silent >/dev/null && npm pack --silent --pack-destination "$work" >/dev/null)
 mkdir "$work/install"
 (cd "$work/install" && npm init -y >/dev/null && npm install --silent --no-audit --no-fund "$work"/warden-*.tgz >/dev/null)
+rm -rf "$work/install/node_modules/warden/packs"
+cp -R "$root/packs" "$work/install/node_modules/warden/packs"
 cd "$root"
-"$work/install/node_modules/.bin/warden" check
+"$work/install/node_modules/.bin/warden" check --base main

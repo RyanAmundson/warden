@@ -48,6 +48,35 @@ describe("self-check.sh", () => {
     expect(sh("scripts/self-check.sh", "v0.1.0").code).toBe(1);
   });
 
+  it("judges with the tagged release's code over the working copy's packs and names the base", async () => {
+    const bin = [
+      "#!/usr/bin/env node",
+      "const { readFileSync, realpathSync } = require(\"node:fs\");",
+      "const { dirname, join } = require(\"node:path\");",
+      "const here = dirname(realpathSync(process.argv[1]));",
+      "process.stdout.write(`release ${readFileSync(join(here, \"release.txt\"), \"utf8\")}`);",
+      "process.stdout.write(`pack ${readFileSync(join(here, \"packs/core/pack.yaml\"), \"utf8\")}`);",
+      "process.stdout.write(`args ${process.argv.slice(2).join(\" \")}\\n`);",
+      "",
+    ].join("\n");
+    const manifest = { name: "warden", version: "0.0.0", bin: { warden: "bin.js" }, scripts: { build: "true" }, files: ["bin.js", "release.txt", "packs"] };
+    await writeFile(join(repo, "package.json"), JSON.stringify(manifest));
+    await writeFile(join(repo, "bin.js"), bin);
+    await chmod(join(repo, "bin.js"), 0o755);
+    await writeFile(join(repo, "release.txt"), "old\n");
+    await mkdir(join(repo, "packs/core"), { recursive: true });
+    await writeFile(join(repo, "packs/core/pack.yaml"), "old\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "release");
+    git("tag", "t1");
+    await writeFile(join(repo, "release.txt"), "new\n");
+    await writeFile(join(repo, "packs/core/pack.yaml"), "new\n");
+    git("add", "-A");
+    const r = sh("scripts/self-check.sh", "t1");
+    expect(r.code, r.err).toBe(0);
+    expect(r.out).toBe("release old\npack new\nargs check --base main\n");
+  });
+
   it("requires the pinned tag as an argument", () => {
     const r = sh("scripts/self-check.sh");
     expect(r.code).toBe(2);
