@@ -863,6 +863,22 @@ describe("residual fixes", () => {
     expect(await tampered()).toEqual([]);
   });
 
+  it("a moved base merged into the base branch is refused with advice that differs from the command and clears the refusal", async () => {
+    await commitOwnBase();
+    git("checkout", "-q", "main");
+    git("merge", "-q", "--no-edit", "feature");
+    const refused = await check({ base: "main" });
+    expect(refused.code).toBe(2);
+    expect(refused.err).not.toContain("Next action: run warden check --base main");
+    expect(refused.err).toContain("Next action: revert base in .warden/config.yaml to main and run warden compile");
+    await write(".warden/config.yaml", config(["core", "local"]));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    const again = await check({ base: "main" });
+    expect(again.err).toBe("");
+    expect(again.code, again.out).toBe(0);
+    expect(await tampered()).toEqual([]);
+  });
+
   it("--base naming a ref whose tip contains HEAD is refused unless the lock always recorded that base", async () => {
     git("branch", "own", "HEAD");
     const refused = await check({ base: "own" });

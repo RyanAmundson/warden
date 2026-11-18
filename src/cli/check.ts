@@ -2,16 +2,16 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { PARSE_ERROR, type RunContext, type RunResult, type Violation } from "../adapters/types.js";
 import { wardenVersion } from "../compiler/compile.js";
-import { LOCK_PATH, canonicalJson, sha256 } from "../compiler/lock.js";
+import { LOCK_PATH, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import type { Guardrail, RecordSet, Tier } from "../records/types.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { changedFiles, changesSinceMergeBase, containsHead, historyOf, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
+import { changedFiles, changesSinceMergeBase, containsHead, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
 import { type Evidence, appendEvidence, readEvidence } from "../runner/evidence.js";
 import { type Format, type Notes, type Repeated, formatFeedback } from "../runner/feedback.js";
 import { runGuardrails } from "../runner/run.js";
-import { type Tamper, findTampering } from "../runner/tamper.js";
+import { type Tamper, findTampering, recordedBases } from "../runner/tamper.js";
 
 export interface CheckOptions {
   root: string;
@@ -40,17 +40,16 @@ const requireBase = (base: string | undefined, configured: string): string => {
 
 const refuseOwnBranch = (root: string, base: string): void => {
   if (!containsHead(root, base)) return;
-  const recorded = historyOf(root, LOCK_PATH).flatMap((text) => {
-    const value = (JSON.parse(text) as { config?: { base?: unknown } }).config?.base;
-    return typeof value === "string" ? [value] : [];
-  });
+  const recorded = recordedBases(root);
   if (recorded.every((b) => b === base)) return;
-  const original = recorded[recorded.length - 1] as string;
-  throw new RecordError(
-    "",
-    "/base",
-    `--base ${base} already contains this work, so the merge-base lock would compare with itself; the lock first recorded base ${original}. Next action: run warden check --base ${original}`,
-  );
+  const original = recorded.at(-1) as string;
+  const working = existsSync(join(root, LOCK_PATH)) ? readLock(root).config?.base : undefined;
+  if (original === base && working === base) return;
+  const next =
+    original === base
+      ? `the lock's base changed in this branch's history and now reads ${working}. Next action: revert base in .warden/config.yaml to ${original} and run warden compile`
+      : `the lock first recorded base ${original}. Next action: run warden check --base ${original}`;
+  throw new RecordError("", "/base", `--base ${base} already contains this work, so the merge-base lock would compare with itself; ${next}`);
 };
 
 const removedWarden = (root: string, given: string | undefined): { set: RecordSet; tamper: Tamper } | undefined => {
