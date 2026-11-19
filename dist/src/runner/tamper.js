@@ -104,7 +104,8 @@ const loosened = (root, base, lock) => {
         const now = lock.guardrails[id];
         const known = now !== undefined && g.kind !== undefined;
         const stronger = known && g.kind === "instruction" && kindRank(now.kind) < kindRank(g.kind);
-        if (known && kindRank(now.kind) > kindRank(g.kind))
+        const cmdLintToRuntime = known && g.kind === "lint" && now.kind === "runtime" && g.implementation.startsWith("cmd:");
+        if (known && !cmdLintToRuntime && kindRank(now.kind) > kindRank(g.kind))
             found.push({ file: LOCK_PATH, detail: "weakened-kind", guardrail: id, was: g.kind });
         const weaker = now === undefined ||
             now.budgetMs > g.budgetMs ||

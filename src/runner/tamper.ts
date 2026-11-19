@@ -124,7 +124,8 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
     const now = lock.guardrails[id];
     const known = now !== undefined && g.kind !== undefined;
     const stronger = known && g.kind === "instruction" && kindRank(now.kind as Kind) < kindRank(g.kind as Kind);
-    if (known && kindRank(now.kind as Kind) > kindRank(g.kind as Kind)) found.push({ file: LOCK_PATH, detail: "weakened-kind", guardrail: id, was: g.kind });
+    const cmdLintToRuntime = known && g.kind === "lint" && now.kind === "runtime" && g.implementation.startsWith("cmd:");
+    if (known && !cmdLintToRuntime && kindRank(now.kind as Kind) > kindRank(g.kind as Kind)) found.push({ file: LOCK_PATH, detail: "weakened-kind", guardrail: id, was: g.kind });
     const weaker =
       now === undefined ||
       now.budgetMs > g.budgetMs ||

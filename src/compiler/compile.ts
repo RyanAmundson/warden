@@ -1,5 +1,5 @@
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, join, relative, sep } from "node:path";
 import type { Adapter } from "../adapters/types.js";
 import { RecordError, loadRecords, readText } from "../records/load.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
@@ -13,16 +13,25 @@ import { stamp } from "./emit.js";
 import { runExamples } from "./examples.js";
 import { LOCK_PATH, type Lock, computeLock, sha256 } from "./lock.js";
 
+const localPackFiles = async (projectRoot: string, id: string): Promise<string[]> => {
+  try {
+    const entries = await readdir(join(projectRoot, ".warden/packs", id), { recursive: true, withFileTypes: true });
+    return entries.filter((e) => e.isFile() && e.name !== ".DS_Store").map((e) => relative(projectRoot, join(e.parentPath, e.name)).split(sep).join("/"));
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw cause;
+  }
+};
+
 const sourceFiles = async (set: RecordSet, projectRoot: string, wardenRoot: string): Promise<Record<string, string>> => {
   const out: Record<string, string> = {};
   const config = await readText(join(projectRoot, ".warden/config.yaml"));
   if (config === undefined) throw new RecordError(join(projectRoot, ".warden/config.yaml"), "", "file not found");
   out[".warden/config.yaml"] = config;
   for (const { id } of set.config.packs) {
-    for (const [key, base] of [[`packs/${id}/pack.yaml`, wardenRoot], [`.warden/packs/${id}/pack.yaml`, projectRoot]] as const) {
-      const text = await readText(join(base, key));
-      if (text !== undefined) out[key] = text;
-    }
+    const bundled = await readText(join(wardenRoot, `packs/${id}/pack.yaml`));
+    if (bundled !== undefined) out[`packs/${id}/pack.yaml`] = bundled;
+    for (const key of await localPackFiles(projectRoot, id)) out[key] = (await readText(join(projectRoot, key))) as string;
   }
   return out;
 };

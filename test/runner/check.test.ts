@@ -872,6 +872,37 @@ describe("final review: legacy feedback", () => {
   });
 });
 
+describe("a cmd Guardrail that runs a script in its pack", () => {
+  it("runs {pack} as the pack folder, names the resolved command, and treats a script edit as tampering", async () => {
+    await write(".warden/packs/legacy/check.sh", "test ! -e broken || { echo broken thing; exit 1; }\n");
+    await addLegacy("commit", "sh {pack}/check.sh", 5000);
+    const script = join(root, ".warden/packs/legacy/check.sh");
+    await write("broken", "x\n");
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    expect(out).toContain(`  Output:   sh ${script} exited with 1\n            broken thing`);
+    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([`Next action: run \`sh ${script}\` and fix what it reports.`]);
+    await write(".warden/packs/legacy/check.sh", "true\n");
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: ".warden/packs/legacy/check.sh", detail: "source-drift" });
+  });
+
+  it("moving a base-locked cmd Guardrail from lint to runtime, as compile asks, is not tampering", async () => {
+    await write(".warden/config.yaml", config(["core", "local", "legacy"]));
+    await write(".warden/packs/legacy/pack.yaml", legacyPack("commit", "test ! -e broken", 5000).replace("kind: legacy", "kind: runtime"));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    const lock = JSON.parse(await read(".warden/lock.json")) as { guardrails: Record<string, { kind: string }> };
+    (lock.guardrails["legacy-script"] as { kind: string }).kind = "lint";
+    await write(".warden/lock.json", `${JSON.stringify(lock, null, 2)}\n`);
+    git("add", "-A");
+    git("commit", "-q", "-m", "cmd lint");
+    git("branch", "-f", "main", "HEAD");
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect((await check()).code).toBe(0);
+    expect(await tampered()).toEqual([]);
+  });
+});
+
 describe("final review: project-wide baseline", () => {
   it("a baseline entry for the whole project is tampering, so it cannot silence a legacy Guardrail", async () => {
     await addLegacy("commit", "test ! -e broken", 5000);
