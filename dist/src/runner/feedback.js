@@ -1,4 +1,4 @@
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { runIt } from "../adapters/cmd.js";
 import { PARSE_ERROR } from "../adapters/types.js";
 const sourceName = (file) => {
@@ -64,7 +64,8 @@ const nextAction = (failures, set, notes) => {
     if (parse !== undefined)
         return `fix the syntax error at ${parse.file}:${parse.line}.`;
     if (notes.repeated !== undefined) {
-        return "stop editing this file; in your reply, name the rule and file, quote its Do this line, and say why it does not fit; then continue with other work.";
+        const command = `warden dispute ${shellWords([notes.repeated.guardrail, resolve(set.root, notes.repeated.file)])}`;
+        return `stop editing this file and run ${command} with --reason and --attempt describing what you tried, then continue with other work.`;
     }
     const located = failures.filter((v) => v.file !== "");
     const legacy = failures.find((v) => v.file === "" && ownerOf(set, v.guardrail)?.guardrail.implementation.startsWith("cmd:") === true);

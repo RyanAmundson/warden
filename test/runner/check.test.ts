@@ -316,9 +316,8 @@ describe("runCheck", () => {
     expect(runs[1]?.out).not.toContain("Same failure");
     expect(runs[2]?.out).toContain("Same failure 3 times: warden-no-comments in b.ts.");
     expect(runs[2]?.out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([
-      "Next action: stop editing this file; in your reply, name the rule and file, quote its Do this line, and say why it does not fit; then continue with other work.",
+      `Next action: stop editing this file and run warden dispute 'warden-no-comments' '${join(root, "b.ts")}' with --reason and --attempt describing what you tried, then continue with other work.`,
     ]);
-    expect(runs[2]?.out).not.toContain("dispute");
   });
 
   it("the loop breaker counts only repeats in the last LOOP_TAIL_BYTES of Evidence, so an old failure does not count and check never reads the whole history", async () => {
