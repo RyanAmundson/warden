@@ -1,5 +1,6 @@
 import { readSync, writeSync } from "node:fs";
 import { createRequire } from "node:module";
+import { Server, Socket } from "node:net";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -33,6 +34,21 @@ interface Failure {
   pointer: string;
   message: string;
 }
+
+const refuse = (owner: object, key: string, what: string): void => {
+  Object.defineProperty(owner, key, {
+    value: () => {
+      throw new Error(`Warden's sandbox refuses ${what}: pack code may not use ${key}`);
+    },
+    writable: false,
+    configurable: false,
+  });
+};
+
+refuse(Socket.prototype, "connect", "socket connections");
+refuse(Server.prototype, "listen", "socket servers");
+refuse(process, "kill", "process signals");
+refuse(process, "_kill", "process signals");
 
 const require = createRequire(import.meta.url);
 

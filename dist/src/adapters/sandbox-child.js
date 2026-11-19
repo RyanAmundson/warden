@@ -1,7 +1,21 @@
 import { readSync, writeSync } from "node:fs";
 import { createRequire } from "node:module";
+import { Server, Socket } from "node:net";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+const refuse = (owner, key, what) => {
+    Object.defineProperty(owner, key, {
+        value: () => {
+            throw new Error(`Warden's sandbox refuses ${what}: pack code may not use ${key}`);
+        },
+        writable: false,
+        configurable: false,
+    });
+};
+refuse(Socket.prototype, "connect", "socket connections");
+refuse(Server.prototype, "listen", "socket servers");
+refuse(process, "kill", "process signals");
+refuse(process, "_kill", "process signals");
 const require = createRequire(import.meta.url);
 const pause = new Int32Array(new SharedArrayBuffer(4));
 const send = (value) => {
