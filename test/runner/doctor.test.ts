@@ -36,6 +36,7 @@ const setIn = (packDir: string | undefined, ...commands: string[]): RecordSet =>
       file: join(root, "packs/local/pack.yaml"),
       layer: 1,
       terms: [],
+      capabilities: [],
       practices: [
         {
           id: "scripts-pass",
