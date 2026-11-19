@@ -11,11 +11,12 @@ import { eslintAdapter } from "../../src/adapters/eslint.js";
 import { PARSE_ERROR, type RunResult } from "../../src/adapters/types.js";
 import { runCheck } from "../../src/cli/check.js";
 import { runInit } from "../../src/cli/init.js";
-import { compile } from "../../src/compiler/compile.js";
+import { compile, expectedOutputs } from "../../src/compiler/compile.js";
 import { readLock, sha256 } from "../../src/compiler/lock.js";
+import { loadRecords } from "../../src/records/load.js";
 import { applyBaseline } from "../../src/runner/baseline.js";
 import { LOOP_TAIL_BYTES } from "../../src/runner/evidence.js";
-import { recordedBases } from "../../src/runner/tamper.js";
+import { findTampering, recordedBases } from "../../src/runner/tamper.js";
 
 const packageRoot = resolve(import.meta.dirname, "../..");
 let wardenRoot: string;
@@ -1190,6 +1191,43 @@ describe("a whole-tree Guardrail", () => {
     expect(loosened.code).toBe(1);
     expect(loosened.out.split("\n").filter((l) => l.startsWith("TAMPERED"))).toEqual(["TAMPERED .warden/lock.json  loosened tree-flagged"]);
     expect(await tampered()).toContainEqual({ file: ".warden/lock.json", detail: "loosened" });
+  });
+
+  it("accepts the bundled principles default when an older lock omitted contractExports", async () => {
+    const withPrinciples = config(["core", "local", "principles"]);
+    await write(".warden/config.yaml", withPrinciples);
+    const set = await loadRecords(root, wardenRoot);
+    const current = await expectedOutputs(set, root, wardenRoot);
+    const before = structuredClone(current.lock);
+    const withoutSettings = Object.values(before.guardrails).filter((guardrail) => guardrail.settings !== undefined);
+    expect(withoutSettings.length).toBeGreaterThan(0);
+    for (const guardrail of withoutSettings) delete guardrail.settings;
+    const recordBaseLock = async () => {
+      await write(".warden/lock.json", JSON.stringify(before));
+      git("add", ".warden");
+      git("commit", "-qm", "historical lock");
+      git("branch", "-f", "main", "HEAD");
+    };
+    await recordBaseLock();
+
+    const changedSettings = async (config: string) => {
+      await write(".warden/config.yaml", config);
+      const records = await loadRecords(root, wardenRoot);
+      const { lock, files } = await expectedOutputs(records, root, wardenRoot);
+      for (const [file, content] of Object.entries(files)) await write(file, content);
+      await write(".warden/lock.json", JSON.stringify(lock));
+      return (await findTampering(records, wardenRoot, "main", false)).filter((entry) => entry.detail === "loosened");
+    };
+    expect(await changedSettings(withPrinciples)).toEqual([]);
+    const explicitExemption = withPrinciples.replace('  - id: principles\n    paths: ["**/*.ts"]', '  - id: principles\n    paths: ["**/*.ts"]\n    settings: { contractExports: [Widget] }');
+    expect(await changedSettings(explicitExemption)).toContainEqual(expect.objectContaining({
+      detail: "loosened", guardrail: "principles-unused-exports",
+    }));
+    delete before.sources["packs/principles/pack.yaml"];
+    await recordBaseLock();
+    expect(await changedSettings(withPrinciples)).toContainEqual(expect.objectContaining({
+      detail: "loosened", guardrail: "principles-unused-exports",
+    }));
   });
 
   it("editing a local pack's shipped code and recompiling is loosening", async () => {
