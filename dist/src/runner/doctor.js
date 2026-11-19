@@ -68,7 +68,7 @@ const hooksPath = (root) => {
 export const HOOKS_DIR = dirname(COMMIT_HOOK);
 export const hooksDir = (root) => resolve(root, execFileSync("git", ["rev-parse", "--git-path", "hooks"], { cwd: root, encoding: "utf8" }).trim());
 export const hooksUnused = (root) => hooksPath(root) === undefined && (!existsSync(hooksDir(root)) || readdirSync(hooksDir(root)).every((f) => f.endsWith(".sample")));
-const commitHookItem = (root) => {
+export const commitHookItem = (root) => {
     const name = `git pre-commit hook: ${COMMIT_HOOK}`;
     const dir = hooksDir(root);
     const chained = dir !== resolve(root, HOOKS_DIR);

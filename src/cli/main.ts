@@ -10,6 +10,7 @@ import type { Tier } from "../records/types.js";
 import type { Format } from "../runner/feedback.js";
 import { runBench } from "./bench.js";
 import { runCheck } from "./check.js";
+import { DEFAULT_PORT, installDaemon, runDaemon, uninstallDaemon } from "./daemon.js";
 import { runExplain } from "./explain.js";
 import { runDoctor, runInit } from "./init.js";
 import { runPacks } from "./packs.js";
@@ -137,6 +138,19 @@ program
       signal: AbortSignal.any([stop.signal, outputClosed.signal]),
       ...(o.html === undefined ? {} : { html: o.html }),
     });
+  });
+
+program
+  .command("daemon [action]")
+  .description("run the per-machine daemon that watches .warden projects and serves the local API; install or uninstall it as a launchd agent")
+  .option("--port <n>", "the 127.0.0.1 port for the API", String(DEFAULT_PORT))
+  .action(async (action: string | undefined, o: { port: string }) => {
+    const port = Number(o.port);
+    if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`--port must be an integer from 0 to 65535, not ${o.port}. Next action: run warden daemon --port ${DEFAULT_PORT}`);
+    const chosen = action === undefined ? "run" : oneOf("daemon", "action", action, ["install", "uninstall"] as const);
+    if (chosen === "install") process.exitCode = installDaemon(fileURLToPath(import.meta.url), port);
+    else if (chosen === "uninstall") process.exitCode = uninstallDaemon();
+    else process.exitCode = await runDaemon(findWardenRoot(), port);
   });
 
 program

@@ -6,6 +6,7 @@ import { RecordError, loadRecords } from "../records/load.js";
 import { initAction, listPacks } from "./packs.js";
 import { measureBaseline, writeBaseline } from "../runner/baseline.js";
 import { verifyBase } from "../runner/changed.js";
+import { registerProject } from "../runner/daemon.js";
 import { HOOKS_DIR, doctor, formatDoctor, hooksUnused } from "../runner/doctor.js";
 const CONFIG_PATH = ".warden/config.yaml";
 const configText = (project, packs, base) => [
@@ -60,6 +61,7 @@ export async function runInit(root, wardenRoot, requested = ["core"], base = "ma
     }
     if (hooksUnused(root))
         execFileSync("git", ["config", "core.hooksPath", HOOKS_DIR], { cwd: root });
+    registerProject(root);
     return runDoctor(root, wardenRoot);
 }
 async function initialize(root, wardenRoot, packs, base) {

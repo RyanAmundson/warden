@@ -86,7 +86,7 @@ export const hooksDir = (root: string): string => resolve(root, execFileSync("gi
 export const hooksUnused = (root: string): boolean =>
   hooksPath(root) === undefined && (!existsSync(hooksDir(root)) || readdirSync(hooksDir(root)).every((f) => f.endsWith(".sample")));
 
-const commitHookItem = (root: string): Item => {
+export const commitHookItem = (root: string): Item => {
   const name = `git pre-commit hook: ${COMMIT_HOOK}`;
   const dir = hooksDir(root);
   const chained = dir !== resolve(root, HOOKS_DIR);

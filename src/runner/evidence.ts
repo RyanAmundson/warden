@@ -45,9 +45,10 @@ export interface Evidence {
   passes?: Record<string, number>;
   cachedRules?: string[];
   steps?: Partial<Record<Step, number>>;
+  root?: string;
 }
 
-export type Trigger = "agent-edit" | "git-commit" | "manual";
+export type Trigger = "agent-edit" | "git-commit" | "manual" | "daemon";
 
 export type Step = "rules-intact" | "tools-ready" | "rules" | "verdict";
 

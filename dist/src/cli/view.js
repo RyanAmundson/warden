@@ -235,7 +235,7 @@ export function render(model, size, selected) {
     const middle = size.rows - top.length - bottom.length >= 3 ? [...rules, "", ...recent] : [];
     return [...top, ...middle, ...bottom].slice(0, Math.max(size.rows, 2)).map((l) => visible(l).trimEnd());
 }
-const BANDS = [
+export const BANDS = [
     { name: "DETERMINISTIC", kinds: ["type", "lint", "runtime"] },
     { name: "JUDGMENT", kinds: ["model", "review"] },
     { name: "PROSE", kinds: ["instruction", "legacy"] },
@@ -285,12 +285,10 @@ export function renderLayers(model, size) {
 }
 const MIN_BAR = 8;
 const LEGEND = [" █ baselined, allowed until touched", " ▓ new in the last run, blocking"];
-export function renderViolations(model, size) {
-    const width = Math.max(40, size.cols);
-    const rule = "─".repeat(width);
+export const packViolations = (model) => {
     const runs = runRecords(model.evidence);
     const baselined = new Map(model.rules.map((r) => [r.guardrail, r.baselined]));
-    const packs = model.packs.map((pack) => {
+    return model.packs.map((pack) => {
         const ids = model.layers.filter((r) => r.pack === pack).map((r) => r.guardrail);
         const run = runs.filter((e) => ids.some((id) => e.rules?.[id] !== undefined || (e.cachedRules ?? []).includes(id))).at(-1);
         const fresh = (id) => (run === undefined ? undefined : (run.failures ?? []).filter((f) => f.guardrail === id).length);
@@ -298,6 +296,12 @@ export function renderViolations(model, size) {
         const sum = (xs) => (run === undefined ? undefined : xs.reduce((a, b) => a + (b ?? 0), 0));
         return { label: pack, old: rows.reduce((a, r) => a + r.old, 0), fresh: sum(rows.map((r) => r.fresh)), last: run === undefined ? "" : `${clock(run.at).slice(0, 5)} ${SHORT[run.trigger ?? ""] ?? run.trigger ?? "-"}`, run, rows };
     });
+};
+export function renderViolations(model, size) {
+    const width = Math.max(40, size.cols);
+    const rule = "─".repeat(width);
+    const runs = runRecords(model.evidence);
+    const packs = packViolations(model);
     const newText = (n) => (n === undefined ? "–" : count(n));
     const layout = (guardrails, lastRun) => {
         const rows = packs.flatMap((p) => [p, ...(guardrails ? p.rows.map((r) => ({ ...r, last: "" })) : [])]);
@@ -340,7 +344,7 @@ export function renderViolations(model, size) {
 const BAND_MARKS = ["█", "▒", "░"];
 const UNKNOWN = { name: "unknown", mark: "·" };
 const MIN_LABEL = 8;
-const bandCounts = (run) => {
+export const bandCounts = (run) => {
     const kinds = run.kinds ?? { unknown: (run.failures ?? []).length };
     return [...BANDS.map((b) => b.kinds.reduce((n, k) => n + (kinds[k] ?? 0), 0)), kinds.unknown ?? 0];
 };

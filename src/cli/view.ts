@@ -274,7 +274,7 @@ export function render(model: ViewModel, size: Size, selected: number): string[]
   return [...top, ...middle, ...bottom].slice(0, Math.max(size.rows, 2)).map((l) => visible(l).trimEnd());
 }
 
-const BANDS: { name: string; kinds: Kind[] }[] = [
+export const BANDS: { name: string; kinds: Kind[] }[] = [
   { name: "DETERMINISTIC", kinds: ["type", "lint", "runtime"] },
   { name: "JUDGMENT", kinds: ["model", "review"] },
   { name: "PROSE", kinds: ["instruction", "legacy"] },
@@ -331,12 +331,10 @@ const MIN_BAR = 8;
 
 const LEGEND = [" █ baselined, allowed until touched", " ▓ new in the last run, blocking"];
 
-export function renderViolations(model: ViewModel, size: Size): string[] {
-  const width = Math.max(40, size.cols);
-  const rule = "─".repeat(width);
+export const packViolations = (model: ViewModel) => {
   const runs = runRecords(model.evidence);
   const baselined = new Map(model.rules.map((r) => [r.guardrail, r.baselined]));
-  const packs = model.packs.map((pack) => {
+  return model.packs.map((pack) => {
     const ids = model.layers.filter((r) => r.pack === pack).map((r) => r.guardrail);
     const run = runs.filter((e) => ids.some((id) => e.rules?.[id] !== undefined || (e.cachedRules ?? []).includes(id))).at(-1);
     const fresh = (id: string): number | undefined => (run === undefined ? undefined : (run.failures ?? []).filter((f) => f.guardrail === id).length);
@@ -344,6 +342,13 @@ export function renderViolations(model: ViewModel, size: Size): string[] {
     const sum = (xs: (number | undefined)[]): number | undefined => (run === undefined ? undefined : xs.reduce<number>((a, b) => a + (b ?? 0), 0));
     return { label: pack, old: rows.reduce((a, r) => a + r.old, 0), fresh: sum(rows.map((r) => r.fresh)), last: run === undefined ? "" : `${clock(run.at).slice(0, 5)} ${SHORT[run.trigger ?? ""] ?? run.trigger ?? "-"}`, run, rows };
   });
+};
+
+export function renderViolations(model: ViewModel, size: Size): string[] {
+  const width = Math.max(40, size.cols);
+  const rule = "─".repeat(width);
+  const runs = runRecords(model.evidence);
+  const packs = packViolations(model);
   const newText = (n: number | undefined): string => (n === undefined ? "–" : count(n));
   const layout = (guardrails: boolean, lastRun: boolean) => {
     const rows = packs.flatMap((p) => [p, ...(guardrails ? p.rows.map((r) => ({ ...r, last: "" })) : [])]);
@@ -390,7 +395,7 @@ const UNKNOWN = { name: "unknown", mark: "·" };
 
 const MIN_LABEL = 8;
 
-const bandCounts = (run: Evidence): number[] => {
+export const bandCounts = (run: Evidence): number[] => {
   const kinds = run.kinds ?? { unknown: (run.failures ?? []).length };
   return [...BANDS.map((b) => b.kinds.reduce((n, k) => n + (kinds[k] ?? 0), 0)), kinds.unknown ?? 0];
 };

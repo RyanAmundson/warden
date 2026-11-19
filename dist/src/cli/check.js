@@ -9,6 +9,7 @@ import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
 import { checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
+import { heartbeatProblem } from "../runner/daemon.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
 import { formatFeedback } from "../runner/feedback.js";
@@ -171,6 +172,7 @@ const check = async (opts, live) => {
             run,
             tier,
             trigger: live.trigger,
+            root,
             outcome,
             ...(outcome === "ran" && judged !== undefined ? { result: failedOf(failures, judged.notes) ? "fail" : "pass" } : {}),
             exit: code,
@@ -397,6 +399,11 @@ export async function runCheck(opts) {
         started: performance.now(),
         steps: {},
     };
+    const stale = live.tier === "commit" ? heartbeatProblem() : undefined;
+    if (stale !== undefined) {
+        process.stderr.write(`${stale}\n`);
+        return 1;
+    }
     try {
         return await check(opts, live);
     }
