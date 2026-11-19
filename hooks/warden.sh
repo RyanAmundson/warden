@@ -10,7 +10,7 @@ version=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$here/../.claude-plugin/plug
 installed=$(warden --version 2>/dev/null)
 refusal=
 if [ -z "$installed" ] && command -v warden >/dev/null 2>&1; then
-  refusal=$(warden --version 2>&1 >/dev/null)
+  refusal=$(warden --version 2>&1 >/dev/null | grep 'Next action:' | tail -n 1)
 fi
 lowest=$(printf '%s\n%s\n' "$installed" "$version" | sort -t. -k1,1n -k2,2n -k3,3n | head -n 1)
 if [ -z "$installed" ] || { [ "$installed" != "$version" ] && [ "$lowest" = "$installed" ]; }; then

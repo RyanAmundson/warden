@@ -921,7 +921,7 @@ describe("the Claude Code plugin hook", () => {
     init();
     const preload = join(shims, "fake.cjs");
     await writeFile(preload, "Object.defineProperty(process, 'versions', { value: { ...process.versions, node: '22.11.0' } });\n");
-    await writeFile(join(shims, "warden"), `#!/bin/sh\nNODE_OPTIONS="--require ${preload}" exec "${process.execPath}" "${main}" "$@"\n`, { mode: 0o755 });
+    await writeFile(join(shims, "warden"), `#!/bin/sh\necho "(node:1) ExperimentalWarning: noise" >&2\nNODE_OPTIONS="--require ${preload}" exec "${process.execPath}" "${main}" "$@"\n`, { mode: 0o755 });
     for (const [event, input] of [["guard", edit("src/a.ts")], ["guard", bash("git commit -m x")], ["check", edit("src/a.ts")]] as const) {
       const r = hook(event, input);
       expect(r.code).toBe(2);

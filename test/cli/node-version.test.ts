@@ -27,8 +27,10 @@ beforeAll(async () => {
 
 afterAll(() => rm(scratch, { recursive: true, force: true }));
 
-const run = (fake: string): { code: number | null; out: string; err: string } => {
-  const r = spawnSync(process.execPath, [main, "--version"], { encoding: "utf8", env: { ...process.env, WARDEN_HOME: scratch, NODE_OPTIONS: `--require ${join(scratch, "fake.cjs")}`, FAKE_NODE: fake } });
+const bin = resolve(import.meta.dirname, "../../bin/warden.js");
+
+const run = (fake: string, entry = main): { code: number | null; out: string; err: string } => {
+  const r = spawnSync(process.execPath, [entry, "--version"], { encoding: "utf8", env: { ...process.env, WARDEN_HOME: scratch, NODE_OPTIONS: `--require ${join(scratch, "fake.cjs")}`, FAKE_NODE: fake } });
   return { code: r.status, out: r.stdout, err: r.stderr };
 };
 
@@ -42,5 +44,18 @@ describe("the warden entry", () => {
 
   it("runs on Node 25", () => {
     expect(run("25.0.0").code).toBe(0);
+  });
+
+  it("the bin wrapper refuses an older Node with only the refusal line", () => {
+    const r = run("22.11.0", bin);
+    expect(r.code).toBe(2);
+    expect(r.out).toBe("");
+    expect(r.err).toBe("Warden needs Node 25 or newer; this is Node 22.11.0. Next action: install Node 25 or newer, then run warden again\n");
+  });
+
+  it("the bin wrapper runs warden on Node 25", () => {
+    const r = run("25.0.0", bin);
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(/^\d+\.\d+\.\d+\n$/);
   });
 });

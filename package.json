@@ -25,9 +25,10 @@
     "vitest": "4.1.12"
   },
   "bin": {
-    "warden": "dist/src/cli/main.js"
+    "warden": "bin/warden.js"
   },
   "files": [
+    "bin",
     "dist/src",
     "dist/eslint-plugin",
     "dist/schema",
