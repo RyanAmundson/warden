@@ -15,6 +15,7 @@ export interface Tamper {
   was?: string;
   sources?: string[];
   commits?: string[];
+  dirty?: string[];
 }
 
 const SETTINGS_FILES = [".claude/settings.json", ".claude/settings.local.json"];
@@ -154,12 +155,13 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
 const unsignedChanges = (root: string, base: string, wardenRoot: string): Tamper[] => {
   const signers = join(wardenRoot, SIGNERS_FILE);
   const listed = existsSync(signers) && readFileSync(signers, "utf8").trim() !== "";
-  const failed = [...changeSignatures(root, base, ".warden", signers)].filter(([file]) => file !== BASELINE_PATH);
+  const { files, commits, dirty } = changeSignatures(root, base, ".warden", signers);
+  const failed = [...files].filter(([file]) => file !== BASELINE_PATH);
   if (!listed) return failed.map(([file]): Tamper => ({ file, detail: "no-allowed-signers" }));
-  if (failed.some(([, { status }]) => status !== "N") && spawnSync("ssh-keygen", ["-?"]).error !== undefined) {
+  if (failed.some(([, status]) => status !== "N") && spawnSync("ssh-keygen", ["-?"]).error !== undefined) {
     throw new RecordError("", "", "ssh-keygen is not on PATH, so signatures on .warden changes cannot be checked. Next action: install OpenSSH so ssh-keygen is on PATH, then run warden check again.");
   }
-  return failed.map(([file, { status, commits }]): Tamper => ({ file, detail: status === "N" ? "unsigned" : "untrusted-signature", commits }));
+  return failed.map(([file, status]): Tamper => ({ file, detail: status === "N" ? "unsigned" : "untrusted-signature", commits, dirty }));
 };
 
 export async function findTampering(set: RecordSet, wardenRoot: string, base: string): Promise<Tamper[]> {

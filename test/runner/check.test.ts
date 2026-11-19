@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { chmod, cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -2009,10 +2010,21 @@ describe("signed .warden changes", () => {
     expect(code).toBe(1);
     expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
     expect(out.match(/Next action:/g)).toHaveLength(1);
-    expect(out).toContain(`Next action: run git revert --no-edit ${git("rev-parse", "HEAD").trim()} to undo the commits that changed .warden/ without an allowed signature, then run warden check again.`);
+    expect(out).toContain(`Next action: run git revert --no-edit -m 1 ${git("rev-parse", "HEAD").trim()} to undo the commits that changed .warden/ without an allowed signature, then run warden check again.`);
   });
 
-  it("a staged revert of a committed unsigned change is told to git revert the commit, which a refusing pre-commit hook does not block", async () => {
+  const follow = async (out: string): Promise<void> => {
+    const action = /Next action: run (.*) to undo the commits/.exec(out)?.[1];
+    expect(action).toBeDefined();
+    const hooks = join(root, ".git", "refusing-hooks");
+    await mkdir(hooks, { recursive: true });
+    await writeFile(join(hooks, "pre-commit"), "#!/bin/sh\nexit 1\n");
+    await chmod(join(hooks, "pre-commit"), 0o755);
+    const env = { ...process.env, GIT_CONFIG_COUNT: "2", GIT_CONFIG_KEY_0: "core.hooksPath", GIT_CONFIG_VALUE_0: hooks, GIT_CONFIG_KEY_1: "commit.gpgsign", GIT_CONFIG_VALUE_1: "false", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
+    execFileSync("sh", ["-c", action as string], { cwd: root, env, stdio: "ignore" });
+  };
+
+  it("a staged revert of a committed unsigned change is told a command that works, which a refusing pre-commit hook does not block", async () => {
     await write(".warden/notes.txt", "two\n");
     git("commit", "-q", "-am", "agent change");
     const sha = git("rev-parse", "HEAD").trim();
@@ -2020,15 +2032,97 @@ describe("signed .warden changes", () => {
     const { code, out } = await check();
     expect(code).toBe(1);
     expect(out.match(/Next action:/g)).toHaveLength(1);
-    expect(out).toContain(`Next action: run git revert --no-edit ${sha} to undo`);
-    git("reset", "-q", "--hard");
-    const hooks = join(root, ".git", "refusing-hooks");
-    await mkdir(hooks);
-    await writeFile(join(hooks, "pre-commit"), "#!/bin/sh\nexit 1\n");
-    await chmod(join(hooks, "pre-commit"), 0o755);
-    git("-c", `core.hooksPath=${hooks}`, "revert", "--no-edit", sha);
+    expect(out).toContain(`Next action: run git stash push -- '.warden/notes.txt' && git revert --no-edit -m 1 ${sha} to undo`);
+    await follow(out);
     expect((await check()).code).toBe(0);
   });
+
+  it("an unsigned merge is told a revert that works", async () => {
+    git("checkout", "-q", "-b", "side");
+    await write(".warden/side.txt", "side\n");
+    git("add", "-A");
+    commitSigned("ryan", "side");
+    git("checkout", "-q", "feature");
+    git("merge", "-q", "--no-ff", "--no-commit", "side");
+    await write(".warden/notes.txt", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "merge side");
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    expect(out).toContain(`git revert --no-edit -m 1 ${git("rev-parse", "HEAD").trim()} to undo`);
+    await follow(out);
+    expect((await check()).code).toBe(0);
+  });
+
+  it("an unsigned commit that loosens a Guardrail is told to revert it first, and that clears every failure", async () => {
+    await write(".warden/packs/local/pack.yaml", localPack().replace("runs: [edit, commit]", "runs: [edit]"));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    git("add", "-A");
+    git("commit", "-q", "-m", "loosen");
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    expect((await tampered()).map((t) => t.detail)).toContain("loosened");
+    expect(out.match(/Next action:/g)).toHaveLength(1);
+    await follow(out);
+    expect((await check()).code).toBe(0);
+  });
+
+  it("several unsigned commits are listed newest first, so their revert applies", async () => {
+    await write(".warden/b.txt", "x\n");
+    await write(".warden/notes.txt", "c1\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "c1");
+    await write(".warden/b.txt", "y\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "c2");
+    await write(".warden/notes.txt", "c3\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "c3");
+    const { out } = await check();
+    expect(out).toContain(`git revert --no-edit -m 1 ${git("rev-list", "main..HEAD").trim().split("\n").join(" ")} to undo`);
+    await follow(out);
+    expect((await check()).code).toBe(0);
+  });
+
+  it("a graft cannot hide an unsigned deletion", async () => {
+    git("rm", "-q", ".warden/notes.txt");
+    git("commit", "-q", "-m", "delete notes");
+    await writeFile(join(root, ".git/info/grafts"), `${git("rev-parse", "HEAD").trim()} ${git("rev-parse", "main~1").trim()}\n`);
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
+  });
+
+  it("a graft cannot move the merge base onto an unsigned change", async () => {
+    await write(".warden/notes.txt", "evil\n");
+    git("commit", "-q", "-am", "agent change");
+    const [u, n, before] = ["HEAD", "main", "main~1"].map((r) => git("rev-parse", r).trim()) as [string, string, string];
+    const x = git("commit-tree", `${u}^{tree}`, "-p", before, "-m", "stand-in").trim();
+    await writeFile(join(root, ".git/info/grafts"), `${n} ${before} ${x}\n${u} ${x}\n`);
+    expect(git("merge-base", "main", "HEAD").trim()).toBe(x);
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
+  });
+
+  it("a forged commit-graph cannot give an unsigned commit the base tree", async () => {
+    await write(".warden/notes.txt", "evil\n");
+    git("commit", "-q", "-am", "agent change");
+    const [u, tree] = [git("rev-parse", "HEAD").trim(), git("rev-parse", "main^{tree}").trim()];
+    git("commit-graph", "write", "--reachable");
+    const file = join(root, ".git/objects/info/commit-graph");
+    const b = await readFile(file);
+    const chunk = new Map(Array.from({ length: (b[6] as number) + 1 }, (_, i) => [b.subarray(8 + 12 * i, 12 + 12 * i).toString("latin1"), Number(b.readBigUInt64BE(12 + 12 * i))]));
+    const [oidl, cdat] = [chunk.get("OIDL") as number, chunk.get("CDAT") as number];
+    let i = 0;
+    while (b.subarray(oidl + 20 * i, oidl + 20 * i + 20).toString("hex") !== u) i++;
+    Buffer.from(tree, "hex").copy(b, cdat + 36 * i);
+    createHash("sha1").update(b.subarray(0, b.length - 20)).digest().copy(b, b.length - 20);
+    await chmod(file, 0o644);
+    await writeFile(file, b);
+    expect(git("diff", "main", "HEAD", "--", ".warden")).toBe("");
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
+  });
+
 
   it("a replace ref cannot stand a base-tree commit in for an unsigned change", async () => {
     await write(".warden/notes.txt", "two\n");

@@ -42,20 +42,22 @@ const ownerOf = (set: RecordSet, id: string): { practice: Practice; guardrail: G
 
 const byLocation = (a: Violation, b: Violation): number => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line);
 
+const shellWords = (words: string[]): string => words.map((f) => `'${f.replaceAll("'", "'\\''")}'`).join(" ");
+
 const nextAction = (failures: Violation[], set: RecordSet, notes: Notes): string | null => {
-  if (notes.tampered?.some((t) => t.detail === "base-moved") === true) {
-    return "revert the base change in .warden/config.yaml and run warden compile.";
-  }
   if (notes.tampered?.some((t) => t.detail === "no-allowed-signers") === true) {
     return "reinstall Warden from a release that ships its allowed_signers file, then run warden check again.";
   }
+  const signed = notes.tampered?.find((t) => (t.commits ?? []).length > 0);
+  if (signed !== undefined) {
+    const stash = (signed.dirty ?? []).length === 0 ? "" : `git stash push -- ${shellWords(signed.dirty ?? [])} && `;
+    return `run ${stash}git revert --no-edit -m 1 ${(signed.commits ?? []).join(" ")} to undo the commits that changed .warden/ without an allowed signature, then run warden check again.`;
+  }
+  if (notes.tampered?.some((t) => t.detail === "base-moved") === true) {
+    return "revert the base change in .warden/config.yaml and run warden compile.";
+  }
   const weakened = notes.tampered?.find((t) => t.detail === "weakened-kind");
   if (weakened !== undefined) return `restore kind ${weakened.was} on ${weakened.guardrail} and run warden compile.`;
-  const tampered = (notes.tampered ?? []).filter((t) => t.commits === undefined);
-  const commits = [...new Set((notes.tampered ?? []).flatMap((t) => t.commits ?? []))];
-  if (tampered.length === 0 && commits.length > 0) {
-    return `run git revert --no-edit ${commits.join(" ")} to undo the commits that changed .warden/ without an allowed signature, then run warden check again.`;
-  }
   if (notes.tampered !== undefined && notes.tampered.length > 0) {
     const sources = notes.tampered.flatMap((t) => t.sources ?? []);
     if (sources.length === 0) return `revert your change to ${[...new Set(notes.tampered.map((t) => t.file))].join(", ")}.`;
@@ -64,7 +66,7 @@ const nextAction = (failures: Violation[], set: RecordSet, notes: Notes): string
   }
   if ((notes.unstaged ?? []).length > 0) {
     if (notes.base === undefined) throw new Error("an unstaged note needs the base to name the next command");
-    return `run git add -- ${notes.unstaged?.map((f) => `'${f.replaceAll("'", "'\\''")}'`).join(" ")}, then run warden check --base ${notes.base}.`;
+    return `run git add -- ${shellWords(notes.unstaged ?? [])}, then run warden check --base ${notes.base}.`;
   }
   const parse = failures.filter((v) => v.guardrail === PARSE_ERROR).sort(byLocation)[0];
   if (parse !== undefined) return `fix the syntax error at ${parse.file}:${parse.line}.`;

@@ -1,8 +1,19 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { RecordError } from "../records/load.js";
 
-const env = (): NodeJS.ProcessEnv => ({ ...process.env, GIT_NO_REPLACE_OBJECTS: "1" });
+const noGrafts = join(tmpdir(), `warden-no-grafts-${randomUUID()}`);
+
+const env = (): NodeJS.ProcessEnv => ({
+  ...process.env,
+  GIT_NO_REPLACE_OBJECTS: "1",
+  GIT_GRAFT_FILE: noGrafts,
+  GIT_CONFIG_COUNT: "1",
+  GIT_CONFIG_KEY_0: "core.commitGraph",
+  GIT_CONFIG_VALUE_0: "false",
+});
 
 const git = (root: string, args: string[]): { ok: boolean; out: string; err: string } => {
   try {
@@ -153,30 +164,43 @@ export function showAtMergeBase(root: string, base: string, path: string): strin
   return must(root, ["show", spec]);
 }
 
-export interface Unverified {
-  status: string;
+export interface Signatures {
+  files: Map<string, string>;
   commits: string[];
+  dirty: string[];
 }
 
-export function changeSignatures(root: string, base: string, dir: string, allowedSignersFile: string): Map<string, Unverified> {
+const firstParentUndo = (root: string, at: string, bad: Set<string>): string[] => {
+  const chain = must(root, ["rev-list", "--first-parent", "--parents", `${at}..HEAD`]).split("\n").filter((l) => l !== "").map((l) => l.split(" "));
+  return chain.flatMap(([commit, first, ...merged]) => {
+    const brought = merged.length === 0 ? [] : must(root, ["rev-list", `${first}..${commit}`]).split("\n");
+    return bad.has(commit as string) || brought.some((c) => bad.has(c)) ? [commit as string] : [];
+  });
+};
+
+export function changeSignatures(root: string, base: string, dir: string, allowedSignersFile: string): Signatures {
   const at = mergeBase(root, base);
   const paths = names(must(root, ["--literal-pathspecs", "diff", "-z", "--name-only", "--no-renames", "--relative", at, "HEAD", "--", dir]));
-  const found = new Map<string, Unverified>();
-  if (paths.length === 0) return found;
+  const files = new Map<string, string>();
+  if (paths.length === 0) return { files, commits: [], dirty: [] };
   const verify = ["-c", "gpg.ssh.program=ssh-keygen", "-c", "gpg.program=false", "-c", "gpg.x509.program=false", "-c", `gpg.ssh.allowedSignersFile=${allowedSignersFile}`, "--literal-pathspecs"];
   const mark = `\x01${randomUUID()}`;
   const log = must(root, [...verify, "log", "-z", "--topo-order", "--diff-merges=dense-combined", "--no-renames", "--relative", "--name-only", `--format=${mark}%G?%H`, `${at}..HEAD`, "--", ...paths]);
   const seen = new Set<string>();
+  const bad = new Set<string>();
   for (const entry of log.split(mark).slice(1)) {
     const end = entry.search(/[\n\0]/);
     const [status, commit] = [entry[0] as string, entry.slice(1, end)];
     for (const path of names(entry.slice(end + 1).replace(/^\n/, ""))) {
       seen.add(path);
       if (status === "G") continue;
-      const was = found.get(path);
-      found.set(path, { status: was?.status ?? status, commits: [...(was?.commits ?? []), commit] });
+      bad.add(commit);
+      if (!files.has(path)) files.set(path, status);
     }
   }
-  for (const path of paths) if (!seen.has(path)) found.set(path, { status: "N", commits: [] });
-  return found;
+  for (const path of paths) if (!seen.has(path)) files.set(path, "N");
+  const commits = firstParentUndo(root, at, bad);
+  const touched = new Set(commits.flatMap((c) => names(must(root, ["diff", "-z", "--name-only", "--no-renames", `${c}^1`, c]))));
+  const dirty = names(must(root, ["diff", "-z", "--name-only", "--no-renames", "HEAD"])).filter((p) => touched.has(p));
+  return { files, commits, dirty };
 }
