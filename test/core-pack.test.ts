@@ -7,6 +7,7 @@ import { eslintAdapter } from "../src/adapters/eslint.js";
 import { loadRecords } from "../src/records/load.js";
 import type { Guardrail, RecordSet } from "../src/records/types.js";
 import { runGuardrails } from "../src/runner/run.js";
+import { benchPack } from "./pack-bench.js";
 
 const wardenRoot = resolve(import.meta.dirname, "..");
 const config = [
@@ -46,6 +47,11 @@ beforeEach(async () => {
 afterEach(() => rm(root, { recursive: true, force: true }));
 
 describe("core pack", () => {
+  it("core pack Guardrails scale at most linearly", async () => {
+    const { code, out } = await benchPack(root, "core");
+    expect(code, out).toBe(0);
+  });
+
   it("core pack examples hold", async () => {
     expect(guardrails.map((g) => g.id)).toEqual(["warden-no-comments", "warden-no-suppressions"]);
     expect(await runExamples(set)).toEqual([]);

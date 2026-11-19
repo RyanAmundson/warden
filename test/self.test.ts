@@ -61,7 +61,7 @@ it("Warden source passes its own core pack", async () => {
   }
 });
 
-it("every shipped pack's Guardrails, and the shared ESLint pass, scale at most linearly", async () => {
+it("an unnarrowed bench measures the shared ESLint pass once, beside a fixture ESLint Guardrail", async () => {
   const project = await mkdtemp(join(tmpdir(), "warden-self-bench-"));
   const home = await mkdtemp(join(tmpdir(), "warden-self-home-"));
   vi.stubEnv("WARDEN_HOME", home);
@@ -71,12 +71,13 @@ it("every shipped pack's Guardrails, and the shared ESLint pass, scale at most l
     return true;
   });
   try {
-    const shipped = (await readdir(join(repo, "packs"))).filter((id) => !id.startsWith("."));
-    await mkdir(join(project, ".warden"), { recursive: true });
-    await writeFile(join(project, ".warden/config.yaml"), config.replace("  - id: core\n    paths: [\"**/*.ts\"]", shipped.map((id) => `  - id: ${id}\n    paths: ["**/*.ts"]`).join("\n")));
+    await mkdir(join(project, ".warden/packs/lintpass"), { recursive: true });
+    await writeFile(join(project, ".warden/packs/lintpass/pack.yaml"), lintPassPack);
+    await writeFile(join(project, ".warden/config.yaml"), config.replace("  - id: core", "  - id: lintpass"));
     const code = await runBench(project, repo, {});
     expect(code, out).toBe(0);
-    expect(out).toContain("eslint-pass");
+    expect(out.match(/^ {2}eslint-pass +\w+/gm), out).toHaveLength(1);
+    expect(out).toMatch(/^ {4}lint-pass-fixture +\w+/m);
   } finally {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
@@ -84,6 +85,12 @@ it("every shipped pack's Guardrails, and the shared ESLint pass, scale at most l
     await rm(home, { recursive: true, force: true });
   }
 });
+
+const lintPassPack = [
+  "id: lintpass", "layer: 9", "terms: []", "practices:", "  - id: lint-pass", "    statement: Code carries no comments.", "    terms: []", "    paths: []", "    conflictsWith: []", "    guardrails:",
+  "      - id: lint-pass-fixture", "        kind: lint", "        runs: [commit]", "        budgetMs: 5000", "        version: 1", '        implementation: "eslint:warden/no-comments"',
+  '        mustFail: "// a\\nconst a = 1;\\n"', '        mustPass: "export const a = 1;\\n"', "",
+].join("\n");
 
 const STAND_IN = "quadratic-stand-in";
 
