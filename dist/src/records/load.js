@@ -1,8 +1,20 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Ajv } from "ajv";
 import { parse } from "yaml";
 import schema from "../../schema/records.schema.json" with { type: "json" };
+export const findWardenRoot = () => {
+    let dir = dirname(fileURLToPath(import.meta.url));
+    while (!existsSync(join(dir, "packs")) || !existsSync(join(dir, "package.json"))) {
+        const parent = dirname(dir);
+        if (parent === dir)
+            throw new Error("cannot locate the Warden package root");
+        dir = parent;
+    }
+    return dir;
+};
 export class RecordError extends Error {
     file;
     pointer;

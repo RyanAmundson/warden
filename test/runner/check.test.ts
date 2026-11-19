@@ -914,6 +914,16 @@ describe("a cmd Guardrail that runs a script in its pack", () => {
     expect(await tampered()).toContainEqual({ file: ".warden/packs/legacy/check.sh", detail: "source-drift" });
   });
 
+  it("a script that exits 2 stops the check with exit 2 and the script's next action, not a Guardrail failure", async () => {
+    await write(".warden/packs/legacy/check.sh", "test ! -e broken || exit 1; test ! -e nogit || { echo 'git is not on PATH. Next action: install git so that it is on PATH.'; exit 2; }\n");
+    await addLegacy("commit", 'sh "$WARDEN_PACK_DIR/check.sh"', 5000);
+    await write("nogit", "x\n");
+    const { code, out, err } = await check();
+    expect(code).toBe(2);
+    expect(out).toBe("");
+    expect(err).toBe(`${join(root, ".warden/packs/legacy/pack.yaml")} /guardrails/legacy-script/implementation: sh "${join(root, ".warden/packs/legacy/check.sh")}" exited with 2, an error in its environment or usage, not a violation: git is not on PATH. Next action: install git so that it is on PATH.\n`);
+  });
+
   it("moving a base-locked cmd Guardrail from lint to runtime, as compile asks, is not tampering", async () => {
     await write(".warden/config.yaml", config(["core", "local", "legacy"]));
     await write(".warden/packs/legacy/pack.yaml", legacyPack("commit", "test ! -e broken", 5000).replace("kind: legacy", "kind: runtime"));
