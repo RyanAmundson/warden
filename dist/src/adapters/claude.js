@@ -11,12 +11,24 @@ const parseInput = (input) => {
     }
 };
 const real = (path) => (existsSync(path) ? realpathSync(path) : join(real(dirname(path)), basename(path)));
-export const hookTrigger = (root, input) => {
-    const file = parseInput(input).tool_input?.file_path;
-    if (typeof file !== "string")
-        throw new RecordError("hook input", "/tool_input/file_path", `is missing${NEXT}`);
-    return relative(root, real(resolve(root, file)));
+const PATCH_FILE = /^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm;
+const CODEX_NEXT = ". Next action: update Codex, then retry the tool call";
+const editedFiles = (parsed) => {
+    if (parsed.tool_name !== "apply_patch") {
+        const file = parsed.tool_input?.file_path;
+        if (typeof file !== "string")
+            throw new RecordError("hook input", "/tool_input/file_path", `is missing${NEXT}`);
+        return [file];
+    }
+    const patch = parsed.tool_input?.command;
+    if (typeof patch !== "string")
+        throw new RecordError("hook input", "/tool_input/command", `is missing${CODEX_NEXT}`);
+    const files = [...patch.matchAll(PATCH_FILE)].map((m) => m[1].trim());
+    if (files.length === 0)
+        throw new RecordError("hook input", "/tool_input/command", `names no file to patch${CODEX_NEXT}`);
+    return files;
 };
+export const hookTriggers = (root, input) => editedFiles(parseInput(input)).map((file) => relative(root, real(resolve(root, file))));
 const SEPARATORS = ";&|\n()`";
 export function shellCommands(source) {
     const commands = [];
@@ -143,10 +155,10 @@ export function refusal(root, input) {
         }
         return undefined;
     }
-    if (!["Edit", "Write", "MultiEdit"].includes(parsed.tool_name))
+    if (!["Edit", "Write", "MultiEdit", "apply_patch"].includes(parsed.tool_name))
         return undefined;
-    const file = hookTrigger(root, input);
-    if (file !== ".warden" && !file.startsWith(".warden/"))
+    const file = hookTriggers(root, input).find((f) => f === ".warden" || f.startsWith(".warden/"));
+    if (file === undefined)
         return undefined;
     return `${file} is a Warden record, and only a person changes Warden's records. Next action: tell the user what to change in ${file}, so they edit it and run warden compile.`;
 }

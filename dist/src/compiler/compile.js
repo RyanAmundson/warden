@@ -7,7 +7,7 @@ import { readBaseLock } from "../runner/tamper.js";
 import { adapters, prefixOf, refuseUnknownAdapters } from "../runner/run.js";
 import { admit } from "./bench.js";
 import { checkConsistency } from "./consistency.js";
-import { stamp } from "./emit.js";
+import { COMMIT_HOOK, commitHook, stamp } from "./emit.js";
 import { runExamples } from "./examples.js";
 import { LOCK_PATH, computeLock, sha256 } from "./lock.js";
 const localPackFiles = async (projectRoot, id) => {
@@ -63,7 +63,7 @@ const writeAll = async (root, outputs) => {
             const target = join(root, file);
             const temp = `${target}.warden-tmp-${process.pid}`;
             await mkdir(dirname(target), { recursive: true });
-            await writeFile(temp, content);
+            await writeFile(temp, content, { mode: file === COMMIT_HOOK ? 0o755 : 0o644 });
             staged.push([temp, target]);
         }
         for (const [temp, target] of staged)
@@ -82,7 +82,8 @@ export async function expectedOutputs(set, projectRoot, wardenRoot) {
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
         .map(([path, content]) => `${path}\0${content}\0`)
         .join(""));
-    const files = Object.fromEntries(Object.entries(emitAll(set)).map(([key, content]) => [key, stamp(key, content, version, sourceHash)]));
+    const emitted = { ...emitAll(set), [COMMIT_HOOK]: commitHook(version, set.config.base) };
+    const files = Object.fromEntries(Object.entries(emitted).map(([key, content]) => [key, stamp(key, content, version, sourceHash)]));
     return { lock: computeLock(set, files, sources, version), files };
 }
 const previousGuardrails = (text) => {

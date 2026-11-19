@@ -1,7 +1,9 @@
-import { accessSync, constants, existsSync, readFileSync, statSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { accessSync, constants, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
-import { delimiter, join, resolve } from "node:path";
+import { delimiter, dirname, join, relative, resolve } from "node:path";
 import { commandOf, packDirs } from "../adapters/cmd.js";
+import { COMMIT_HOOK } from "../compiler/emit.js";
 import { TOOLS, firstLine } from "../compiler/lock.js";
 const wardenRequire = createRequire(import.meta.url);
 const executable = (file) => {
@@ -52,7 +54,29 @@ const toolItem = async (name, load) => {
         return { name: `tool ${name}`, problem: firstLine(cause.message), fix: `reinstall Warden so its bundled ${name} loads` };
     }
 };
-export async function doctor(set) {
+const hooksPath = (root) => {
+    const r = spawnSync("git", ["config", "--get", "core.hooksPath"], { cwd: root, encoding: "utf8" });
+    return r.status === 0 ? r.stdout.trim() : undefined;
+};
+export const HOOKS_DIR = dirname(COMMIT_HOOK);
+export const hooksDir = (root) => resolve(root, execFileSync("git", ["rev-parse", "--git-path", "hooks"], { cwd: root, encoding: "utf8" }).trim());
+export const hooksUnused = (root) => hooksPath(root) === undefined && (!existsSync(hooksDir(root)) || readdirSync(hooksDir(root)).every((f) => f.endsWith(".sample")));
+const commitHookItem = (root) => {
+    const name = `git pre-commit hook: ${COMMIT_HOOK}`;
+    const dir = hooksDir(root);
+    const chained = dir !== resolve(root, HOOKS_DIR);
+    const preCommit = join(dir, "pre-commit");
+    const shown = relative(root, preCommit).startsWith("..") ? preCommit : relative(root, preCommit);
+    if (chained && !(existsSync(preCommit) && readFileSync(preCommit, "utf8").includes(COMMIT_HOOK))) {
+        if (hooksUnused(root))
+            return { name, problem: "git runs no Warden commit check", fix: `run git config core.hooksPath ${HOOKS_DIR}` };
+        return { name, problem: `git runs hooks from ${dirname(shown)}, and its pre-commit does not run Warden's`, fix: `make ${shown} an executable script that runs ${COMMIT_HOOK} and exits with its status` };
+    }
+    if (!executable(join(root, COMMIT_HOOK)))
+        return { name, problem: "is not executable, so git skips it", fix: `run chmod +x ${COMMIT_HOOK}` };
+    return { name };
+};
+export async function doctor(set, withCommitHook = false) {
     const items = [];
     for (const tool of TOOLS)
         items.push(await toolItem(tool, () => wardenRequire.resolve(tool)));
@@ -63,6 +87,8 @@ export async function doctor(set) {
         if (g.implementation.startsWith("cmd:"))
             items.push(commandItem(g.id, commandOf(g, dirs.get(g.id)), set.root, scripts));
     }
+    if (withCommitHook)
+        items.push(commitHookItem(set.root));
     const failed = items.find((i) => i.fix !== undefined);
     return {
         lines: items.map((i) => (i.problem === undefined ? `ok    ${i.name}` : `FAIL  ${i.name}  ${i.problem}`)),

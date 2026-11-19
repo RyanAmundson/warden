@@ -77,9 +77,44 @@ In a project that has one:
 The hooks set `onFailure` to `block`, which requires Claude Code v2.1.295 or
 later.
 
-Codex hooks are not shipped. They would go in this repository beside
-`hooks/hooks.json`, as a Codex hook config that calls the same
-`hooks/warden.sh guard` and `hooks/warden.sh check` commands.
+## Codex plugin
+
+The same marketplace serves Codex. `.codex-plugin/plugin.json` points Codex at
+`hooks/codex.json`, which runs the same `hooks/warden.sh guard` and
+`hooks/warden.sh check` commands as the Claude Code plugin:
+
+```bash
+codex plugin marketplace add RyanAmundson/warden
+codex plugin add warden@warden
+```
+
+Codex asks you to review the plugin's hooks before they run. Once trusted:
+
+- Before an `apply_patch` or a shell command, the hook refuses a patch that
+  adds, updates, deletes, or moves a file under `.warden/`, and a `git commit`
+  that skips the pre-commit hook.
+- After an `apply_patch`, the hook runs the edit check and returns its block
+  decision to Codex.
+- A missing or older global `warden` blocks patches and commits with the
+  install command, as in Claude Code.
+
+## Git pre-commit hook
+
+`warden compile` writes `.warden/generated/hooks/pre-commit`, an executable
+hook that runs `warden check --base <base> --trigger git-commit`. The lock
+records it, so an edit to it is tampering. If `warden` is not on `PATH`, the
+hook refuses the commit with the install command as its one next action.
+
+`warden init` points git at it with `git config core.hooksPath
+.warden/generated/hooks` when git runs no other hooks. The setting lives in
+`.git/config`, so nothing outside `.warden/` changes in the project.
+`warden doctor` reports a checkout where git does not run the hook, with one
+next action:
+
+- In a fresh clone, run `git config core.hooksPath .warden/generated/hooks`.
+- Where the project already has hooks, make its `pre-commit` hook run
+  `.warden/generated/hooks/pre-commit` and exit with its status, for example
+  with the line `.warden/generated/hooks/pre-commit || exit $?`.
 
 ## Release
 
@@ -88,7 +123,8 @@ npm run release -- 0.1.9
 ```
 
 On `main` with a clean tree, the release script bumps the version in
-`package.json` and `.claude-plugin/plugin.json` and commits,
+`package.json`, `.claude-plugin/plugin.json`, and `.codex-plugin/plugin.json`
+and commits,
 tags `v<version>` and pushes `main` and the tag, reinstalls the global
 `warden` from the tag, pins Warden's pre-commit hook to the tag with
 `scripts/install-hooks.sh`, recompiles Warden's own lock and commits and

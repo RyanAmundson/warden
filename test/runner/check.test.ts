@@ -1751,7 +1751,7 @@ describe("engine review: the Warden that wrote the lock", () => {
     expect(err).toContain("Next action: run warden compile, stage .warden, and commit.");
     expect(await tampered()).toEqual([]);
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
-    expect(Object.keys(JSON.parse(await read(".warden/lock.json")).generated)).toEqual([".warden/generated/eslint.rules.json"]);
+    expect(Object.keys(JSON.parse(await read(".warden/lock.json")).generated)).toEqual([".warden/generated/eslint.rules.json", ".warden/generated/hooks/pre-commit"]);
     expect((await check()).code).toBe(0);
   });
 
