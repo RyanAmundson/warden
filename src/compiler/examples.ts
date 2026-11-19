@@ -11,6 +11,16 @@ import type { Finding } from "./consistency.js";
 
 const TSCONFIG = JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", skipLibCheck: true }, include: ["**/*.ts"] });
 
+export function withExampleUnits(set: RecordSet, guardrail: Guardrail, folders: string[]): RecordSet {
+  const fixture = guardrail.unitExample;
+  if (fixture === undefined) return set;
+  return { ...set, config: {
+    ...set.config,
+    unitKinds: { fixture: fixture.kind },
+    units: folders.map((folder, i) => ({ id: `fixture-${i}`, kind: "fixture", folder: posix.join(folder, fixture.folder) })),
+  } };
+}
+
 export const examplePrefix = (group: string[] | undefined): string => (group ?? []).map(literalOf).reduce((a, b) => (b.length > a.length ? b : a), "");
 
 const exampleFile = (group: string[] | undefined): string => `${examplePrefix(group)}warden-example.ts`;
@@ -132,7 +142,7 @@ export async function runExamples(project: RecordSet): Promise<Finding[]> {
     for (const { g, file, packFile } of checked) {
       if (typeof g.mustPass !== "string") continue;
       for (const other of checked) {
-        if (other.g === g || other.g.implementation.startsWith("cmd:") || !enabledOn(file, other.groups)) continue;
+        if (other.g === g || other.g.implementation.startsWith("cmd:") || other.g.unitExample !== undefined || !enabledOn(file, other.groups)) continue;
         const adapter = adapters.get(other.g.implementation.slice(0, other.g.implementation.indexOf(":"))) as Adapter;
         const status = await runExample(set, other.g, adapter.emit([other.g], set), g.mustPass, file, ctx);
         if (status === "fail") {
@@ -164,7 +174,7 @@ async function runExample(
       if (dir !== undefined) made.push(dir);
       await writeFile(join(ctx.root, path), content);
     }
-    const results = await runGuardrails(set, [g], Object.keys(tree), ctx);
+    const results = await runGuardrails(withExampleUnits(set, g, [""]), [g], Object.keys(tree), ctx);
     if (results.some((r) => r.guardrail === PARSE_ERROR && r.status === "fail")) return "parse-error";
     const own = results.find((r) => r.guardrail === g.id);
     if (own === undefined) throw new Error(`no result for guardrail ${g.id}`);

@@ -194,13 +194,16 @@ Codex asks you to review the plugin's hooks before they run. Once trusted:
 Declare Unit kinds and Unit ownership in `.warden/config.yaml`. A kind fixes the
 document name and section order. A Unit names the kind and owns a project-relative
 folder. Use `.` for the project root and nest Units to give a subfolder a more
-specific owner. A Unit can also name a Term from an enabled pack.
+specific owner. A Unit can also name a Term from an enabled pack. Set a kind's
+`layout` to the allowed file globs relative to each Unit folder. Omit it to
+adopt the documentation rules before restricting the layout.
 
 ```yaml
 unitKinds:
   contract:
     document: CONTRACT.md
     sections: [Purpose, Owns, Interfaces, Invariants]
+    layout: ["src/**/*.ts"]
 units:
   - id: core
     kind: contract
@@ -218,6 +221,20 @@ the record to `units` and creates `src/metrics/CONTRACT.md` with sections in
 the declared order. It refuses to overwrite a document. Add `units: []` for
 a project starting without any declared Units. Run `warden compile` after
 adding a Unit record, then sign the commit that changes `.warden/`.
+
+In projects with `units`, the core pack's boundary check verifies the
+registered document and its level-two headings, flags extra Markdown files,
+and checks ownership and layouts for tracked and unignored worktree paths.
+Tracked symlinks and submodule entries count as paths. Unit documents must
+be regular Markdown files. The root can hold repository files such as
+`package.json` without a root Unit. Its only exempt Markdown documents are
+`README.md` and `AGENTS.md`. Each other path needs an owner. Run the check
+from a full worktree:
+
+```bash
+warden check --base main --tier boundary --rule warden-unit-layout
+```
+
 
 ## Git pre-commit hook
 

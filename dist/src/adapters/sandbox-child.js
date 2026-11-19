@@ -103,10 +103,16 @@ const tree = async ({ entry, input }) => {
             throw new Error(answer.error ?? `no text for ${file}`);
         return answer.text;
     };
+    const markdownSections = (text) => {
+        const { marked } = require("marked");
+        return marked.lexer(text)
+            .filter((token) => token.type === "heading" && token.depth === 2)
+            .map((token) => token.text);
+    };
     const start = performance.now();
     let found;
     try {
-        const given = { ...input, read, ...(input.imports === undefined ? {} : { imports: new Map(input.imports) }) };
+        const given = { ...input, read, markdownSections, ...(input.imports === undefined ? {} : { imports: new Map(input.imports) }) };
         Object.defineProperty(given, "ts", { get: () => require("typescript"), enumerable: true });
         found = check(given);
     }

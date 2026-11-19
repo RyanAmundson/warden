@@ -28,6 +28,7 @@ export interface LockedGuardrail {
   runs: Tier[];
   paths: string[];
   settings?: unknown;
+  scope?: "project";
 }
 
 export const TOOLS = ["eslint", "typescript-eslint", "typescript"] as const;
@@ -126,7 +127,8 @@ export function computeLock(
             implementation: g.implementation,
             options: g.options ?? null,
             runs: [...g.runs].sort(),
-            paths: [...paths].sort(),
+            paths: g.scope === "project" ? [] : [...paths].sort(),
+            ...(g.scope === undefined ? {} : { scope: g.scope }),
             ...(entry?.settings === undefined ? {} : { settings: entry.settings }),
           },
         ]);

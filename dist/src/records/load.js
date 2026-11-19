@@ -84,8 +84,20 @@ function refuseBackslashes(file, pointer, paths) {
         throw new RecordError(file, `${pointer}/${i}`, `path ${glob} holds a backslash, which Node's glob matcher does not read as an escape. Next action: write ${backslashFix(glob)} in place of ${glob} in ${file}, then run warden compile.`);
     });
 }
+const validUnitFolder = (folder) => folder === "." || (!/[\\:\p{Cc}]/u.test(folder) &&
+    folder.split("/").every((part) => part !== "" && part !== "." && part !== ".." && ![".git", ".warden", ".claude", ".agents"].includes(part.toLowerCase())));
+const validateUnitLayout = (file, pointer, layout) => {
+    if (layout === undefined)
+        return;
+    refuseBackslashes(file, pointer, layout);
+    const invalid = layout.findIndex((path) => path.startsWith("/") || path.startsWith("!") || path.split("/").some((part) => part === "" || part === "." || part === ".."));
+    if (invalid !== -1)
+        throw new RecordError(file, `${pointer}/${invalid}`, "Use a positive glob relative to the Unit folder.");
+};
 export function validateUnits(file, config, packs, ignoreCase) {
     const terms = new Set(packs.flatMap((pack) => pack.terms.map((term) => term.id)));
+    for (const [kind, definition] of Object.entries(config.unitKinds ?? {}))
+        validateUnitLayout(file, `/unitKinds/${kind}/layout`, definition.layout);
     const ids = new Set();
     const folders = new Set();
     for (const [i, unit] of (config.units ?? []).entries()) {
@@ -94,8 +106,8 @@ export function validateUnits(file, config, packs, ignoreCase) {
             throw new RecordError(file, `${pointer}/id`, `Unit ${unit.id} is declared more than once.`);
         ids.add(unit.id);
         const folder = unit.folder;
-        if (folder !== "." && (/[\\:\p{Cc}]/u.test(folder) || folder.split("/").some((part) => part === "" || part === "." || part === ".."))) {
-            throw new RecordError(file, `${pointer}/folder`, "Use a project-relative folder with forward slashes, or . for the project root.");
+        if (!validUnitFolder(folder)) {
+            throw new RecordError(file, `${pointer}/folder`, "Use a project-relative folder with forward slashes, or . for the project root. Control folders cannot hold Units.");
         }
         const key = pathCaseKey(folder, ignoreCase);
         if (folders.has(key))
@@ -130,6 +142,21 @@ export async function readPack(projectRoot, wardenRoot, id, configFile) {
     const value = parseYaml(file, text);
     check(file, validatePack, value);
     const pack = value;
+    for (const [practiceIndex, practice] of pack.practices.entries()) {
+        for (const [guardrailIndex, guardrail] of practice.guardrails.entries()) {
+            const pointer = `/practices/${practiceIndex}/guardrails/${guardrailIndex}`;
+            if (guardrail.scope === "project" && (!guardrail.implementation.startsWith("fs:") || guardrail.runs.some((tier) => tier !== "boundary"))) {
+                throw new RecordError(file, `${pointer}/scope`, "Project scope requires the fs adapter and runs: [boundary].");
+            }
+            if (guardrail.unitExample === undefined)
+                continue;
+            const { kind, folder } = guardrail.unitExample;
+            if (guardrail.scope !== "project" || folder === "." || !validUnitFolder(folder)) {
+                throw new RecordError(file, `${pointer}/unitExample`, "Use a project-scoped fs Guardrail and a non-root example Unit folder.");
+            }
+            validateUnitLayout(file, `${pointer}/unitExample/kind/layout`, kind.layout);
+        }
+    }
     if (pack.id !== id) {
         throw new RecordError(file, "/id", `pack id ${pack.id} does not match directory ${id}`);
     }

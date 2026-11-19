@@ -8,7 +8,7 @@ import { wardenVersion } from "../compiler/compile.js";
 import { LOCK_FORMAT, LOCK_PATH, bundledTools, canonicalJson, olderThan, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import type { Guardrail, Kind, RecordSet, Tier } from "../records/types.js";
-import { BASELINE_PATH, applyBaseline, carryRenames, projectFiles, readBaseline, writeBaseline } from "../runner/baseline.js";
+import { BASELINE_PATH, applyBaseline, carryRenames, projectFiles, projectInventory, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
 import { commitsOf, covers, indexTree, stagedMismatch, checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, stageFile, sparseMode, stagedFiles, type StagedBlob, unstagedFiles, verifyBase, checkoutBlobs } from "../runner/changed.js";
 import { type Detection, heartbeatProblem, openAlerts } from "../runner/daemon.js";
@@ -105,7 +105,12 @@ const runCached = async (
 ): Promise<{ perFile: RunResult[]; wholeProject: RunResult[]; ran: RunResult[]; cached: number }> => {
   const lint = scanned.length === 0 ? [] : gs.filter((g) => g.kind === "lint" && !wholeTree(g));
   const rest = gs.filter((g) => g.kind !== "lint" && !wholeTree(g) && (scanned.length > 0 || !g.implementation.startsWith("eslint:")));
-  const trees = gs.filter(wholeTree);
+  const trees = gs.filter((g) => wholeTree(g) && g.scope !== "project");
+  const full = gs.filter((g) => g.scope === "project");
+  const activeFull = full.filter((g) => set.config.units !== undefined || g.unitExample === undefined);
+  if (activeFull.length > 0 && sparseMode(set.root) !== "off") {
+    throw new RecordError("", "/rule", "Project-scoped rules need the complete checkout. Next action: run the same Warden check from a full worktree.");
+  }
   const keyOf = (f: string, g: Guardrail): string => cacheKey(f, shas.get(f) as string, g, run.lockSha, run.warden);
   const hits = new Map<string, Violation[]>();
   const misses = new Set<string>();
@@ -134,6 +139,15 @@ const runCached = async (
     ...(rest.length > 0 ? await sized(set, rest, scanned, ctx) : []),
     ...(trees.length > 0 ? await sized(set, trees, projectFiles(set.root, set.config.packs.flatMap((p) => p.paths), run.tier !== "commit"), ctx) : []),
   ];
+  if (activeFull.length > 0) {
+    const start = performance.now();
+    const { entries, nonRegular, bytes } = await projectInventory(set.root);
+    const results = await runGuardrails(set, activeFull, entries, {
+      ...ctx,
+      projectInventory: { nonRegular, discoveryMs: performance.now() - start },
+    });
+    others.push(...results.map((result) => ({ files: entries.length, bytes, ...result })));
+  }
   return { perFile: [...results, ...parse], wholeProject: others, ran: [...fresh, ...others], cached: hits.size };
 };
 

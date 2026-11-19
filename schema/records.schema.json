@@ -61,6 +61,7 @@
       "additionalProperties": false,
       "properties": {
         "document": { "type": "string", "pattern": "^[A-Z][A-Z0-9_-]*\\.md$" },
+        "layout": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
         "sections": {
           "type": "array",
           "minItems": 1,
@@ -117,6 +118,14 @@
         "version": { "type": "integer", "minimum": 1 },
         "implementation": { "type": "string", "minLength": 1 },
         "options": {},
+        "scope": { "const": "project" },
+        "unitExample": {
+          "type": "object", "additionalProperties": false, "required": ["folder", "kind"],
+          "properties": {
+            "folder": { "type": "string", "minLength": 1 },
+            "kind": { "$ref": "#/$defs/unitKind" }
+          }
+        },
         "sources": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "mustFail": { "$ref": "#/$defs/example" },
         "mustPass": { "$ref": "#/$defs/example" }

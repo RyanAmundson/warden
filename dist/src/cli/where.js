@@ -1,8 +1,7 @@
 import { realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { loadRecords } from "../records/load.js";
-import { pathCaseKey } from "../records/paths.js";
-import { loadUnits } from "../records/units.js";
+import { loadUnits, unitLookup } from "../records/units.js";
 const relativeWithin = (root, path) => {
     const projectPath = relative(root, path).split(sep).join("/");
     return isAbsolute(projectPath) || projectPath === ".." || projectPath.startsWith("../") ? undefined : projectPath;
@@ -39,16 +38,7 @@ export async function runWhere(root, wardenRoot, query) {
         return 2;
     }
     const projectPath = named.length === 0 ? unitPath(root, query) : undefined;
-    const ownershipKey = (path) => pathCaseKey(path, records.unitIgnoreCase === true);
-    const pathKey = projectPath === undefined ? undefined : ownershipKey(projectPath);
-    const unit = named[0] ?? (pathKey !== undefined ? units
-        .filter(({ folder }) => {
-        if (folder === ".")
-            return true;
-        const key = ownershipKey(folder);
-        return pathKey === key || pathKey.startsWith(`${key}/`);
-    })
-        .sort((a, b) => b.folder.length - a.folder.length)[0] : undefined);
+    const unit = named[0] ?? (projectPath === undefined ? undefined : unitLookup(units, records.unitIgnoreCase === true)(projectPath || "."));
     process.stdout.write(unit === undefined ? `No Unit for ${query}.\n` : `${unit.id}\t${unit.document}\n`);
     return 0;
 }

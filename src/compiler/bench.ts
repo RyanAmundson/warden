@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { Adapter, RunResult } from "../adapters/types.js";
 import type { Finding } from "./consistency.js";
-import { examplePrefix, withExampleProject } from "./examples.js";
+import { examplePrefix, withExampleProject, withExampleUnits } from "./examples.js";
 import { canonicalJson, packFiles, sha256 } from "./lock.js";
 import { RecordError, exampleSet } from "../records/load.js";
 import { enabledOn, pathGroups } from "../records/paths.js";
@@ -45,7 +45,7 @@ const copyOf = (g: Guardrail, prefix: string, i: number): { path: string; origin
     : Object.entries(g.mustPass ?? {}).map(([path, content]) => ({ path: i === 0 ? path : `${prefix}bench-${i}/${path}`, original: path, content }));
 
 const refuseUnmatched = (s: Subject, rerun: string): void => {
-  if (prefixOf(s.g) === "cmd") return;
+  if (prefixOf(s.g) === "cmd" || s.g.scope === "project") return;
   const lost = copyOf(s.g, s.prefix, 1).find((c) => enabledOn(c.original, s.groups) && !enabledOn(c.path, s.groups));
   if (lost === undefined) return;
   throw new RecordError(
@@ -74,21 +74,24 @@ const measure = (project: RecordSet, s: Subject, cfg: BenchSettings, rerun: stri
     const ctx = { root, generatedDir: join(root, ".warden/generated"), base: commit, unbudgeted: true, signal };
     await writeTree(root, (adapters.get(prefixOf(s.g)) as Adapter).emit([s.g], set));
     const files: string[] = [];
+    const folders: string[] = [];
     let copies = 0;
     const timed = async (n: number, count: number): Promise<number[]> => {
       signal?.throwIfAborted();
       const tree: Record<string, string> = {};
       for (; copies < n; copies++) {
+        if (s.g.unitExample !== undefined) folders.push(copies === 0 ? "" : `${s.prefix}bench-${copies}`);
         for (const c of copyOf(s.g, s.prefix, copies)) {
           tree[c.path] = c.content;
           files.push(c.path);
         }
       }
       await writeTree(root, tree);
+      const scenario = withExampleUnits(set, s.g, folders);
       const times: number[] = [];
       for (let i = 0; i < count; i++) {
         signal?.throwIfAborted();
-        const results = await runGuardrails(set, [s.g], files, ctx);
+        const results = await runGuardrails(scenario, [s.g], files, ctx);
         signal?.throwIfAborted();
         const bad = results.find((r) => r.status !== "pass");
         if (bad !== undefined) {
@@ -144,7 +147,7 @@ export const subjectsOf = (set: RecordSet, gs: Guardrail[]): Subject[] =>
     pack.practices.flatMap((x) => {
       const groups = pathGroups(x.paths, set.config.packs.find((p) => p.id === pack.id)?.paths ?? []);
       const prefix = examplePrefix(groups[0]);
-      return x.guardrails.filter((g) => gs.includes(g)).map((g): Subject => ({ id: g.id, g, pack, practice: x.id, prefix, groups, time: (r) => r.ruleMs ?? r.ms }));
+      return x.guardrails.filter((g) => gs.includes(g)).map((g): Subject => ({ id: g.id, g, pack, practice: x.id, prefix: g.scope === "project" ? "" : prefix, groups: g.scope === "project" ? [] : groups, time: (r) => r.ruleMs ?? r.ms }));
     }),
   );
 

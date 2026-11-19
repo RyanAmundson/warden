@@ -1,4 +1,5 @@
-import type { Guardrail, RecordSet } from "../records/types.js";
+import type { Guardrail, RecordSet, UnitKind } from "../records/types.js";
+import type { Unit } from "../records/units.js";
 
 export interface Violation {
   guardrail: string;
@@ -36,6 +37,8 @@ export interface RunContext {
   base?: string;
   settingsOf?: (g: Guardrail) => Record<string, unknown> | undefined;
   signal?: AbortSignal;
+  projectInventory?: { nonRegular: string[]; discoveryMs: number };
+  unitStructure?: { units: (Unit & { kindRecord: UnitKind })[]; ignoreCase: boolean };
   onGroup?: (adapter: string, guardrails: string[]) => void;
 }
 

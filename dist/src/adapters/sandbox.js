@@ -17,7 +17,7 @@ const hops = (path) => {
     }
     return [...seen, realpathSync(path)];
 };
-const TOOLS = ["eslint", "typescript-eslint", "typescript"];
+const TOOLS = ["eslint", "typescript-eslint", "typescript", "marked"];
 const installDirs = () => {
     const root = findWardenRoot();
     const require = createRequire(import.meta.url);

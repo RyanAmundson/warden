@@ -4,6 +4,7 @@ import { fsAdapter, graphAdapter } from "../adapters/tree.js";
 import { tscAdapter } from "../adapters/tsc.js";
 import type { Adapter, RunContext, RunResult } from "../adapters/types.js";
 import { RecordError } from "../records/load.js";
+import { declaredUnits } from "../records/units.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
 import type { Finding } from "../compiler/consistency.js";
 
@@ -40,7 +41,8 @@ export async function runGuardrails(set: RecordSet, gs: Guardrail[], files: stri
   refuseUnknownAdapters(set);
   const packOf = new Map(set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.map((g) => [g, p.id] as const))));
   const settingsOf = (g: Guardrail): Record<string, unknown> | undefined => set.config.packs.find((p) => p.id === packOf.get(g))?.settings;
-  ctx = { ...ctx, settingsOf };
+  const units = gs.some((g) => g.scope === "project") ? declaredUnits(set) : undefined;
+  ctx = { ...ctx, settingsOf, ...(units === undefined ? {} : { unitStructure: { units, ignoreCase: set.unitIgnoreCase === true } }) };
   const groups = new Map<string, Guardrail[]>();
   for (const g of gs) groups.set(prefixOf(g), [...(groups.get(prefixOf(g)) ?? []), g]);
   const out: RunResult[] = [];

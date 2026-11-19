@@ -21,6 +21,8 @@ export interface Guardrail {
   version: number;
   implementation: string;
   options?: unknown;
+  scope?: "project";
+  unitExample?: { folder: string; kind: UnitKind };
   sources?: string[];
   mustFail?: Example;
   mustPass?: Example;
@@ -75,6 +77,7 @@ export interface UnitDeclaration {
 export interface UnitKind {
   document: string;
   sections: string[];
+  layout?: string[];
 }
 
 export interface ProjectConfig {

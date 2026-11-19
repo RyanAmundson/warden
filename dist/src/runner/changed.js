@@ -114,8 +114,8 @@ export const mergeBase = (root, base) => {
     throw new RecordError("", "/base", `${base} and HEAD share no history. Next action: run warden check --base <the branch this work merges into>.`);
 };
 const HUNK = /^@@ -\S+ \+(\d+)(?:,(\d+))? @@/;
-async function patchLines(root, at, receive) {
-    const child = spawn("git", ["-c", "core.quotePath=false", "diff", "-U0", "-M", "--no-color", "--no-ext-diff", "--relative", "--src-prefix=a/", "--dst-prefix=b/", at, "--"], { cwd: root, env: env(), stdio: ["ignore", "pipe", "pipe"] });
+async function gitRecords(root, args, delimiter, receive) {
+    const child = spawn("git", args, { cwd: root, env: env(), stdio: ["ignore", "pipe", "pipe"] });
     let error = "";
     child.stderr.setEncoding("utf8").on("data", (chunk) => {
         if (error.length < 4096)
@@ -128,7 +128,7 @@ async function patchLines(root, at, receive) {
     try {
         let remainder = "";
         for await (const chunk of child.stdout.setEncoding("utf8")) {
-            const rows = (remainder + chunk).split("\n");
+            const rows = (remainder + chunk).split(delimiter);
             remainder = rows.pop();
             for (const line of rows)
                 receive(line);
@@ -141,10 +141,32 @@ async function patchLines(root, at, receive) {
         await completed;
         throw cause;
     }
-    const failure = await completed;
+    return completed;
+}
+async function patchLines(root, at, receive) {
+    const args = ["-c", "core.quotePath=false", "diff", "-U0", "-M", "--no-color", "--no-ext-diff", "--relative", "--src-prefix=a/", "--dst-prefix=b/", at, "--"];
+    const failure = await gitRecords(root, args, "\n", receive);
     if (failure !== undefined) {
         throw new RecordError(root, "", `Git could not read the changed lines: ${failure}. Next action: run git diff from the project root to diagnose the Git error.`);
     }
+}
+export async function listWorktreeEntries(root) {
+    const entries = new Map();
+    const indexed = await gitRecords(root, ["ls-files", "-z", "--stage"], "\0", (record) => {
+        const file = record.slice(record.indexOf("\t") + 1);
+        entries.set(file, entries.get(file) === true || record.startsWith("160000 "));
+    });
+    if (indexed !== undefined) {
+        throw new RecordError(root, "", `Git could not read tracked paths: ${indexed}. Next action: run git ls-files --stage from the project root to diagnose the Git error.`);
+    }
+    const untracked = await gitRecords(root, ["ls-files", "-z", "--others", "--exclude-standard"], "\0", (file) => {
+        if (!entries.has(file))
+            entries.set(file, false);
+    });
+    if (untracked !== undefined) {
+        throw new RecordError(root, "", `Git could not read untracked paths: ${untracked}. Next action: run git ls-files --others --exclude-standard from the project root to diagnose the Git error.`);
+    }
+    return entries;
 }
 export async function changesSinceMergeBase(root, base) {
     const at = mergeBase(root, base);
