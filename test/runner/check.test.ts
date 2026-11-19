@@ -2073,6 +2073,27 @@ describe("signed .warden changes", () => {
     expect((await check()).code).toBe(0);
   });
 
+  it("a signed merge that changes .warden itself passes", async () => {
+    git("checkout", "-q", "-b", "side");
+    await write(".warden/side.txt", "side\n");
+    git("add", "-A");
+    commitSigned("ryan", "side");
+    git("checkout", "-q", "feature");
+    git("merge", "-q", "--no-ff", "--no-commit", "side");
+    await write(".warden/notes.txt", "merged\n");
+    git("add", "-A");
+    commitSigned("ryan", "merge side");
+    expect((await check()).code).toBe(0);
+    expect(await tampered()).toEqual([]);
+  });
+
+  it("a signed rename under .warden passes", async () => {
+    git("mv", ".warden/notes.txt", ".warden/moved.txt");
+    commitSigned("ryan", "rename notes");
+    expect((await check()).code).toBe(0);
+    expect(await tampered()).toEqual([]);
+  });
+
   it("an unsigned deletion under .warden is unsigned", async () => {
     git("rm", "-q", ".warden/notes.txt");
     git("commit", "-q", "-m", "delete notes");
