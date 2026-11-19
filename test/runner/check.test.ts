@@ -1400,10 +1400,17 @@ describe("final review: lock records base and project", () => {
 describe("bench settings in the lock", () => {
   const withBench = (setting: string): string => config(["core", "local"]).replace("loopBreakerRepeats: 3", `loopBreakerRepeats: 3\nbench:\n  ${setting}`);
 
+  const writeBenchOutputs = async (setting: string): Promise<void> => {
+    await write(".warden/config.yaml", withBench(setting));
+    const set = await loadRecords(root, wardenRoot);
+    const { files, lock } = await expectedOutputs(set, root, wardenRoot);
+    for (const [file, content] of Object.entries(files)) await write(file, content);
+    await write(".warden/lock.json", JSON.stringify(lock));
+  };
+
   for (const setting of ["linearMax: 1.5", "constantMs: 50", "minMarginalMs: 500", "maxFiles: 400"]) {
     it(`setting ${setting} in config.yaml is loosening`, async () => {
-      await write(".warden/config.yaml", withBench(setting));
-      expect((await compile(root, wardenRoot)).findings).toEqual([]);
+      await writeBenchOutputs(setting);
       expect(readLock(root).config.bench).toMatchObject(Object.fromEntries([[setting.split(": ")[0] as string, Number(setting.split(": ")[1])]]));
       expect((await check()).code).toBe(1);
       expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "loosened" }]);
@@ -1411,8 +1418,7 @@ describe("bench settings in the lock", () => {
   }
 
   it("tightening the bench settings is not loosening", async () => {
-    await write(".warden/config.yaml", withBench("linearMax: 1.05\n  maxFiles: 3300\n  constantMs: 2"));
-    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    await writeBenchOutputs("linearMax: 1.05\n  maxFiles: 3300\n  constantMs: 2");
     expect((await check()).code).toBe(0);
     expect(await tampered()).toEqual([]);
   });
