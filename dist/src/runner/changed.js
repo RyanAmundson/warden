@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { existsSync, readdirSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { lstatSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { RecordError } from "../records/load.js";
 const noGrafts = join(tmpdir(), `warden-no-grafts-${randomUUID()}`);
 const env = () => ({
@@ -154,14 +154,15 @@ export function showAtMergeBase(root, base, path) {
 }
 export function changeSignatures(root, base, dir, allowedSignersFile, staged, alongside) {
     const at = mergeBase(root, base);
-    const spec = `:(literal${git(root, ["config", "--bool", "core.ignorecase"]).out.trim() === "true" ? ",icase" : ""})${dir}`;
+    const icase = git(root, ["config", "--bool", "core.ignorecase"]).out.trim() === "true";
+    const spec = `:(literal${icase ? ",icase" : ""})${dir}`;
     const diff = (...trees) => names(must(root, ["diff", "-z", "--name-only", "--no-renames", "--ignore-submodules=none", "--relative", ...trees, "--", spec]));
     const committed = diff(at, "HEAD");
     const judged = staged ? diff("--cached", at) : committed;
     const scope = [...new Set([...committed, ...judged])];
     const files = new Map();
     if (scope.length === 0)
-        return { files, restore: { base: at, paths: [], known: [], stray: [], aliased: false } };
+        return { files, restore: { base: at, paths: [], known: [], stray: [], unstage: [], aliased: false } };
     const verify = ["-c", "gpg.ssh.program=ssh-keygen", "-c", "gpg.program=false", "-c", "gpg.x509.program=false", "-c", `gpg.ssh.allowedSignersFile=${allowedSignersFile}`, "--literal-pathspecs"];
     const mark = `\x01${randomUUID()}`;
     const log = must(root, [...verify, "log", "-z", "--topo-order", "--diff-merges=dense-combined", "--no-renames", "--ignore-submodules=none", "--relative", "--name-only", `--format=${mark}%G?`, `${at}..HEAD`, "--", ...scope]);
@@ -185,8 +186,24 @@ export function changeSignatures(root, base, dir, allowedSignersFile, staged, al
     const paths = [...new Set([...bad.keys(), ...scope.filter((p) => alongside.includes(p))])].sort();
     const listed = (args) => (paths.length === 0 ? [] : names(must(root, ["--literal-pathspecs", ...args, "--", ...paths])));
     const known = [...new Set([...listed(["ls-tree", "-r", "-z", "--name-only", "--full-tree", at]), ...listed(["ls-files", "-z", "--cached"])])].sort();
-    const onDisk = (p) => existsSync(join(root, dirname(p))) && readdirSync(join(root, dirname(p))).includes(basename(p));
-    const stray = paths.filter((p) => !known.includes(p) && onDisk(p));
-    const aliased = new Set(paths.map((p) => p.toLowerCase())).size < paths.length;
-    return { files, restore: { base: at, paths, known, stray, aliased } };
+    const onDisk = (p) => {
+        let path = dir;
+        for (const part of p.slice(dir.length + 1).split("/")) {
+            const entries = readdirSync(join(root, path));
+            const name = entries.includes(part) ? part : icase ? entries.find((e) => e.toLowerCase() === part.toLowerCase()) : undefined;
+            if (name === undefined)
+                return undefined;
+            path = `${path}/${name}`;
+            const entry = lstatSync(join(root, path));
+            if (entry.isSymbolicLink() || !entry.isDirectory())
+                return path;
+        }
+        return path;
+    };
+    const stray = [...new Set(paths.filter((p) => !known.includes(p)).map(onDisk).filter((p) => p !== undefined))].sort();
+    const indexed = names(must(root, ["ls-files", "-z", "--cached", "--", spec]));
+    const same = (a, b) => a === b || (icase && a.toLowerCase() === b.toLowerCase());
+    const unstage = stray.filter((p) => lstatSync(join(root, p)).isSymbolicLink()).flatMap((p) => indexed.filter((e) => same(e, p)));
+    const aliased = new Set(paths.map((p) => p.toLowerCase())).size < paths.length || (icase && paths.some((p) => indexed.some((e) => e !== p && same(e, p))));
+    return { files, restore: { base: at, paths, known, stray, unstage, aliased } };
 }
