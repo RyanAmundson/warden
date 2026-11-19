@@ -27,7 +27,7 @@ const commandItem = (id, command, root, scripts, packDir) => {
     const raw = command.trim().split(/\s+/);
     const words = raw.map((w) => {
         const expanded = withPackDir(w, packDir ?? "");
-        return expanded === w ? w : expanded.slice(expanded.indexOf(packDir ?? "")).replace(/["';]+$/, "");
+        return expanded === w ? w : expanded.slice(expanded.indexOf(packDir ?? "")).replace(/["']/g, "").replace(/;+$/, "");
     });
     const absent = words.find((w, i) => w !== raw[i] && !existsSync(w));
     if (absent !== undefined)
