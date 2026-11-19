@@ -250,9 +250,9 @@ export interface StagedMismatch {
   hidden: string[];
 }
 
-export function stagedMismatch(root: string, base: string): StagedMismatch {
+export function stagedMismatch(root: string): StagedMismatch {
   const literal = (args: string[]): string[] => names(must(root, ["--literal-pathspecs", ...args]));
-  const staged = literal(["diff", "-z", "--cached", "--name-only", "--relative", "--no-renames", "--diff-filter=AM", mergeBase(root, base)]);
+  const staged = literal(["diff", "-z", "--cached", "--name-only", "--relative", "--no-renames", "--diff-filter=AM"]);
   if (staged.length === 0) return { paths: [], hidden: [] };
   const index = new Map(
     literal(["ls-files", "-s", "-z", "--", ...staged]).map((line) => {

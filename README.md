@@ -171,7 +171,10 @@ A commit counts as another machine's only when a remote-tracking ref of a
 configured remote reached it by fetch, pull, or clone, as that ref's reflog
 records. A remote-tracking ref moved by a push or by `git update-ref` grants
 no exemption. A commit the daemon has flagged stays flagged while any ref,
-remote-tracking refs included, reaches it.
+remote-tracking refs included, reaches it. A commit pulled while the daemon
+was stopped loses its exemption when `git fetch --prune` deletes that
+remote-tracking ref and its reflog before the daemon restarts; the daemon then
+flags it, and `warden check --base <base>` on that branch clears it.
 
 An open alert for a commit that no local branch or worktree HEAD reaches any
 more is dropped.

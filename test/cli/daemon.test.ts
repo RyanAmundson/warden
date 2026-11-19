@@ -399,6 +399,22 @@ it("a commit-tier check judges the staged blob of a file that is missing from di
   expect(warden(root, {}, "check", "--base", "main").code).toBe(0);
 });
 
+it("a commit-tier check in a sparse checkout ignores files an earlier branch commit changed outside the sparse set", async () => {
+  await mkdir(join(root, "docs"), { recursive: true });
+  await writeFile(join(root, "docs/x.md"), "hi\n");
+  git(root, "add", "-A");
+  commitUnhooked("docs");
+  git(root, "switch", "-q", "-c", "feat");
+  await writeFile(join(root, "docs/x.md"), "hi\nmore\n");
+  git(root, "add", "-A");
+  commitUnhooked("docs on branch");
+  git(root, "sparse-checkout", "set", "--no-cone", "/*", "!/docs/");
+  expect(existsSync(join(root, "docs/x.md"))).toBe(false);
+  await writeFile(join(root, "src/s.ts"), "export const s = 1;\n");
+  git(root, "add", "src/s.ts");
+  expect(warden(root, {}, "check", "--base", "main").code).toBe(0);
+});
+
 it("a commit-tier check judges a skip-worktree or assume-unchanged blob, not the file on disk", async () => {
   const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: root, input: "// bad comment\nexport const a = 1;\n", encoding: "utf8" }).trim();
   git(root, "update-index", "--cacheinfo", `100644,${blob},src/a.ts`);

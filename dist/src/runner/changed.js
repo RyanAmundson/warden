@@ -205,9 +205,9 @@ export const covers = (root, run, c) => {
     const parent = c.parents[0];
     return run.tree === c.tree && (parent === undefined || (run.mergeBase !== undefined && (run.mergeBase === parent || isAncestor(root, run.mergeBase, parent))));
 };
-export function stagedMismatch(root, base) {
+export function stagedMismatch(root) {
     const literal = (args) => names(must(root, ["--literal-pathspecs", ...args]));
-    const staged = literal(["diff", "-z", "--cached", "--name-only", "--relative", "--no-renames", "--diff-filter=AM", mergeBase(root, base)]);
+    const staged = literal(["diff", "-z", "--cached", "--name-only", "--relative", "--no-renames", "--diff-filter=AM"]);
     if (staged.length === 0)
         return { paths: [], hidden: [] };
     const index = new Map(literal(["ls-files", "-s", "-z", "--", ...staged]).map((line) => {
