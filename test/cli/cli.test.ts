@@ -930,6 +930,17 @@ describe("the Claude Code plugin hook", () => {
     expect(hook("guard", bash("npm test"))).toEqual({ code: 0, out: "", err: "" });
   });
 
+  it("with warden on PATH failing for another reason, shows that error and does not say warden is missing", async () => {
+    init();
+    await writeFile(join(shims, "warden"), `#!/bin/sh\necho "Error: Cannot find module x" >&2\nexit 1\n`, { mode: 0o755 });
+    const r = hook("guard", edit("src/a.ts"));
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("Error: Cannot find module x");
+    expect(r.err).toContain("exit status 1");
+    expect(r.err).not.toContain("not on PATH");
+    expect(r.err.match(/Next action/g)).toHaveLength(1);
+  });
+
   it("with warden matching or newer than the plugin, hands the call to warden", async () => {
     init();
     expect(denied(hook("guard", bash("git commit -n")))).toContain("-n skips the pre-commit hook");
