@@ -55,7 +55,7 @@ const escape = (word: string): string => word.replace(/[.*+?^${}()|[\]\\]/g, "\\
 
 const duplicates = (ids: string[]): string[] => ids.filter((id, i) => ids.indexOf(id) !== i);
 
-export function checkConsistency(set: RecordSet, elsewhere: ReadonlyMap<string, string> = new Map()): Finding[] {
+export function checkConsistency(set: RecordSet, elsewhere: ReadonlyMap<string, string>): Finding[] {
   const findings: Finding[] = [];
   const add = (code: string, record: string, message: string): void => {
     findings.push({ code, record, message });
