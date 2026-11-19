@@ -9,6 +9,11 @@ import { targetOf } from "../adapters/pack-code.js";
 import { COMMIT_HOOK } from "../compiler/emit.js";
 import { TOOLS, firstLine, olderThan, scriptsOf } from "../compiler/lock.js";
 import { skillPath, SKILLS_DIR } from "../compiler/skills.js";
+export const SKILL_HARNESSES = ["claude", "codex"];
+const skillDirs = {
+    claude: { path: ".claude/skills", name: "Claude Code" },
+    codex: { path: ".agents/skills", name: "Codex" },
+};
 const wardenRequire = createRequire(import.meta.url);
 const executable = (file) => {
     try {
@@ -58,16 +63,19 @@ const real = (file) => {
         return undefined;
     }
 };
-const skillItem = (id, root) => {
-    const link = `.claude/skills/${id}`;
+const skillItem = (id, root, harness) => {
+    const { path, name: harnessName } = skillDirs[harness];
+    const link = `${path}/${id}`;
     const target = real(join(root, SKILLS_DIR, id));
     if (target === undefined || !existsSync(join(root, skillPath(id))))
         return { name: `skill ${id}`, problem: `${skillPath(id)} does not exist`, fix: "run warden compile" };
     if (real(join(root, link)) === target)
         return { name: `skill ${id}` };
     const entry = lstatSync(join(root, link), { throwIfNoEntry: false });
-    const prepare = entry?.isSymbolicLink() === true ? `run unlink ${link} && ` : entry === undefined ? "run " : `move ${link} to a different path, then run `;
-    return { name: `skill ${id}`, problem: `${link} does not link to ${SKILLS_DIR}/${id}, so Claude Code cannot load the skill`, fix: `${prepare}mkdir -p .claude/skills && ln -s ../../${SKILLS_DIR}/${id} ${link}` };
+    const unlink = entry?.isSymbolicLink() === true ? `unlink ${link} && ` : "";
+    const prepare = entry === undefined || unlink !== "" ? "run " : `move ${join(root, link)} to a different path, then run `;
+    const repair = `(cd "$(git rev-parse --show-toplevel)" && ${unlink}mkdir -p ${path} && ln -s ../../${SKILLS_DIR}/${id} ${link})`;
+    return { name: `skill ${id}`, problem: `${link} does not link to ${SKILLS_DIR}/${id}, so ${harnessName} cannot load the skill`, fix: `${prepare}${repair}` };
 };
 const toolItem = async (name, load) => {
     try {
@@ -157,7 +165,7 @@ export const commitHookItem = (root) => {
         return { name, problem: "is not executable, so git skips it", fix: `run chmod +x ${COMMIT_HOOK}` };
     return { name };
 };
-export async function doctor(set, explicit = false) {
+export async function doctor(set, explicit = false, harness = "claude") {
     const items = [];
     for (const tool of TOOLS)
         items.push(await toolItem(tool, () => wardenRequire.resolve(tool)));
@@ -170,17 +178,17 @@ export async function doctor(set, explicit = false) {
     if (explicit) {
         for (const c of set.packs.flatMap((p) => p.capabilities))
             if (c.kind === "skill")
-                items.push(skillItem(c.id, set.root));
+                items.push(skillItem(c.id, set.root, harness));
         items.push(commitHookItem(set.root));
     }
-    const plugin = explicit ? pluginState(set.root) : undefined;
+    const plugin = explicit && harness === "claude" ? pluginState(set.root) : undefined;
     if (plugin?.state === "enabled")
         items.push(pluginVersionItem(set.root, plugin));
     const note = plugin === undefined || plugin.state === "enabled" ? [] : [`note  Claude plugin ${PLUGIN} is ${plugin.state === "missing" ? "not installed" : `disabled in ${plugin.file}`}, so Claude Code edits are not checked; to check them, ${pluginAction(plugin)}`];
     const failed = items.find((i) => i.fix !== undefined);
     return {
         lines: [...items.map((i) => (i.problem === undefined ? `ok    ${i.name}` : `FAIL  ${i.name}  ${i.problem}`)), ...note],
-        next: failed === undefined ? undefined : `${failed.fix}, then run warden doctor`,
+        next: failed === undefined ? undefined : `${failed.fix}, then run warden doctor${harness === "claude" ? "" : ` --harness ${harness}`}`,
     };
 }
 export const formatDoctor = ({ lines, next }) => [...lines, ...(next === undefined ? [] : [`Next action: ${next}`])].join("\n");

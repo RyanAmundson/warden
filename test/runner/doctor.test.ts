@@ -174,7 +174,10 @@ describe("doctor", () => {
     expect(result.next).toBe("create ./scripts/missing.sh as an executable file, then run warden doctor");
   });
 
-  it("a skill without its .claude link fails doctor, and the printed command clears it", async () => {
+  it.each([
+    ["claude", ".claude/skills", "Claude Code", "warden doctor"],
+    ["codex", ".agents/skills", "Codex", "warden doctor --harness codex"],
+  ] as const)("checks the %s skill link and prints a working repair", async (harness, skillsDir, harnessName, retry) => {
     const set = setWith();
     (set.packs[0] as RecordSet["packs"][number]).capabilities = [
       { id: "review-gate", kind: "skill", serves: "review", purpose: "p", when: "w", upholds: [], commands: [], replaces: [], pack: "local" },
@@ -190,23 +193,26 @@ describe("doctor", () => {
     const automatic = await doctor(set);
     expect(automatic.next).toBeUndefined();
     expect(skillLines(automatic.lines)).toEqual([]);
-    const before = await doctor(set, true);
-    expect(skillLines(before.lines)).toEqual([expect.stringMatching(/^FAIL  skill review-gate  /)]);
-    const command = /^run (.*), then run warden doctor$/.exec(before.next ?? "")?.[1];
-    expect(command).toBe("mkdir -p .claude/skills && ln -s ../../.warden/generated/skills/review-gate .claude/skills/review-gate");
-    execFileSync("sh", ["-c", command as string], { cwd: root });
-    const after = await doctor(set, true);
+    const before = await doctor(set, true, harness);
+    expect(skillLines(before.lines)).toEqual([`FAIL  skill review-gate  ${skillsDir}/review-gate does not link to .warden/generated/skills/review-gate, so ${harnessName} cannot load the skill`]);
+    const nested = join(root, "nested folder");
+    await mkdir(nested);
+    const linkCommand = `mkdir -p ${skillsDir} && ln -s ../../.warden/generated/skills/review-gate ${skillsDir}/review-gate`;
+    const command = `(cd "$(git rev-parse --show-toplevel)" && ${linkCommand})`;
+    expect(before.next).toBe(`run ${command}, then run ${retry}`);
+    execFileSync("sh", ["-c", command], { cwd: nested });
+    const after = await doctor(set, true, harness);
     expect(after.next).toBeUndefined();
     expect(skillLines(after.lines)).toEqual(["ok    skill review-gate"]);
-    const link = join(root, ".claude/skills/review-gate");
+    const link = join(root, skillsDir, "review-gate");
     await unlink(link);
     await symlink("missing", link);
-    const stale = await doctor(set, true);
+    const stale = await doctor(set, true, harness);
     expect(skillLines(stale.lines)).toEqual([expect.stringMatching(/^FAIL  skill review-gate  /)]);
-    const repair = /^run (.*), then run warden doctor$/.exec(stale.next ?? "")?.[1];
-    expect(repair).toMatch(/^unlink /);
-    execFileSync("sh", ["-c", repair as string], { cwd: root });
-    expect((await doctor(set, true)).next).toBeUndefined();
+    const repair = `(cd "$(git rev-parse --show-toplevel)" && unlink ${skillsDir}/review-gate && ${linkCommand})`;
+    expect(stale.next).toBe(`run ${repair}, then run ${retry}`);
+    execFileSync("sh", ["-c", repair], { cwd: nested });
+    expect((await doctor(set, true, harness)).next).toBeUndefined();
   });
 
   it("explicit doctor detects a stale installed Claude plugin and accepts its updated version", async () => {

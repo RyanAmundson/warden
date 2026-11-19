@@ -7,7 +7,7 @@ import { initAction, listPacks } from "./packs.js";
 import { measureBaseline, writeBaseline } from "../runner/baseline.js";
 import { verifyBase } from "../runner/changed.js";
 import { appendEvidence } from "../runner/evidence.js";
-import { HOOKS_DIR, doctor, formatDoctor, hooksUnused } from "../runner/doctor.js";
+import { type SkillHarness, HOOKS_DIR, doctor, formatDoctor, hooksUnused } from "../runner/doctor.js";
 
 const CONFIG_PATH = ".warden/config.yaml";
 
@@ -76,8 +76,8 @@ async function initialize(root: string, wardenRoot: string, packs: string[], bas
   process.stdout.write(`Initialized .warden in ${root}: ${guardrails.length} Guardrails, ${total} existing violations baselined across ${files} files.\n`);
 }
 
-export async function runDoctor(root: string, wardenRoot: string): Promise<number> {
-  const health = await doctor(await loadRecords(root, wardenRoot), true);
+export async function runDoctor(root: string, wardenRoot: string, harness?: SkillHarness): Promise<number> {
+  const health = await doctor(await loadRecords(root, wardenRoot), true, harness);
   process.stdout.write(`${formatDoctor(health)}\n`);
   return health.next === undefined ? 0 : 2;
 }
