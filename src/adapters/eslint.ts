@@ -45,6 +45,10 @@ const emit = (gs: Guardrail[], set: RecordSet): Record<string, string> => {
       throw new RecordError(file, `/guardrails/${g.id}/implementation`, `ESLint rule ${ruleId(g)} is already the implementation of Guardrail ${other}, and a plugin rule carries one Practice. Next action: remove Guardrail ${g.id} from ${file}, then run warden compile.`);
     }
     users.set(ruleId(g), g.id);
+    if (!isPluginRule(targetOf(g)) && (g.id === "warden" || set.packs.some((p) => p.id === g.id))) {
+      const file = owner(g, set).file ?? "";
+      throw new RecordError(file, `/guardrails/${g.id}/id`, `Guardrail id ${g.id} is also the ESLint namespace of a pack's rules. Next action: rename Guardrail ${g.id} in ${file}, then run warden compile.`);
+    }
   }
   const entries = gs.map((g) => {
     const { practice, paths, settings } = owner(g, set);

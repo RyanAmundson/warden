@@ -1,5 +1,5 @@
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join, relative, sep } from "node:path";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { RecordError, loadRecords, readText } from "../records/load.js";
 import { BASELINE_PATH, measureBaseline, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { hasCommit, isRepository } from "../runner/changed.js";
@@ -9,18 +9,7 @@ import { admit } from "./bench.js";
 import { checkConsistency } from "./consistency.js";
 import { COMMIT_HOOK, commitHook, stamp } from "./emit.js";
 import { runExamples } from "./examples.js";
-import { LOCK_PATH, computeLock, sha256 } from "./lock.js";
-const packFiles = async (base, dir) => {
-    try {
-        const entries = await readdir(join(base, dir), { recursive: true, withFileTypes: true });
-        return entries.filter((e) => e.isFile() && e.name !== ".DS_Store").map((e) => relative(base, join(e.parentPath, e.name)).split(sep).join("/"));
-    }
-    catch (cause) {
-        if (cause.code === "ENOENT")
-            return [];
-        throw cause;
-    }
-};
+import { LOCK_PATH, computeLock, packFiles, sha256 } from "./lock.js";
 const sourceFiles = async (set, projectRoot, wardenRoot) => {
     const out = {};
     const config = await readText(join(projectRoot, ".warden/config.yaml"));

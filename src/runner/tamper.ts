@@ -137,9 +137,11 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
       now.budgetMs > g.budgetMs ||
       !covers(now.runs, g.runs) ||
       !pathsCover(now.paths, g.paths) ||
-      (!stronger && (now.implementation !== g.implementation || canonicalJson(now.options) !== canonicalJson(g.options)));
+      (!stronger && (now.implementation !== g.implementation || canonicalJson(now.options) !== canonicalJson(g.options) || canonicalJson(now.settings ?? null) !== canonicalJson(g.settings ?? null)));
     if (weaker) found.push({ file: LOCK_PATH, detail: "loosened", guardrail: id });
   }
+  const editedCode = Object.keys(before.sources ?? {}).filter((k) => /^\.warden\/packs\/[^/]+\/./.test(k) && !k.endsWith("/pack.yaml") && before.sources[k] !== lock.sources[k]);
+  if (editedCode.length > 0) found.push({ file: LOCK_PATH, detail: "loosened" });
   const { renames } = changesSinceMergeBase(root, base);
   const baseBaseline = carryRenames(JSON.parse(showAtMergeBase(root, base, BASELINE_PATH) ?? "{}") as Baseline, renames);
   for (const [id, entries] of Object.entries(carryRenames(readBaseline(root), renames))) {

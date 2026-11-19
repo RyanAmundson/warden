@@ -491,6 +491,11 @@ packs:
 
 Examples run with the schema's first `examples` entry, never with the
 project's settings, so a project's settings cannot break a bundled example.
+The lock records each Guardrail's resolved settings, so a change to them
+against the base branch is loosening, like a change to its options. An edit
+to a local pack's shipped code is loosening too. Bench admission is keyed on
+the hash of every file in the pack's folder, so an edit to the code benches
+its Guardrails again.
 
 | Practice | Guardrail | Adapter |
 |---|---|---|

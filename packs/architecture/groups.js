@@ -29,10 +29,11 @@ export const groupOf = (file, settings) => {
 
 export const conformanceOf = (group) => `${stem(group.port)}.conformance.ts`;
 
-export const isCompositionRoot = (file, settings) => settings.compositionRoots.some((glob) => matchesGlob(file, glob));
+const matchesPath = (file, glob) => (glob.startsWith("!") ? !matchesGlob(file, glob.slice(1)) : matchesGlob(file, glob));
+
+export const isCompositionRoot = (file, settings) => settings.compositionRoots.some((glob) => matchesPath(file, glob));
 
 export const isTest = (file) => /(^|\/)(test|tests|__tests__)\//.test(file) || /\.(test|spec|config)\.[^/]+$/.test(file);
-
 
 export const resolveFrom = (file, specifier) => (specifier.startsWith(".") ? posix.normalize(posix.join(posix.dirname(file), specifier)) : undefined);
 

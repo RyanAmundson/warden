@@ -1,4 +1,4 @@
-import { conformanceOf, groupOf, sameModule } from "./groups.js";
+import { conformanceOf, groupOf, sameModule, stem } from "./groups.js";
 
 export const groupsIn = (files, settings) => {
   const groups = new Map();
@@ -14,14 +14,16 @@ export const groupsIn = (files, settings) => {
 
 export const anchorOf = (group) => group.files.find((f) => sameModule(f, group.port)) ?? group.files[0];
 
-const conformancePresent = ({ files, all, settings }) =>
-  groupsIn(files, settings)
-    .filter((group) => !all.some((f) => sameModule(f, conformanceOf(group))))
+const conformancePresent = ({ files, all, settings }) => {
+  const present = new Set(all.map(stem));
+  return groupsIn(files, settings)
+    .filter((group) => !present.has(stem(conformanceOf(group))))
     .map((group) => ({
       file: anchorOf(group),
       message: `Group ${group.name} has no conformance suite.`,
       doThis: `Add ${conformanceOf(group)}, which exports the tests every implementation of ${group.port} must pass.`,
     }));
+};
 
 const kebab = (id) => id.toLowerCase().replaceAll(" ", "-");
 

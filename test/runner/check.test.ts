@@ -972,6 +972,33 @@ describe("a whole-tree Guardrail", () => {
     expect(failures.map((f) => [f.file, f.doThis])).toEqual([["a.ts", "Delete flag.ts."]]);
   });
 
+  it("changing a pack's settings and recompiling is loosening", async () => {
+    await write(".warden/config.yaml", config(["core", "local", "tree"]).replace('  - id: tree\n    paths: ["**/*.ts"]', '  - id: tree\n    paths: ["**/*.ts"]\n    settings: { flag: flag.ts }'));
+    await write(".warden/packs/tree/pack.yaml", `${treePack}settings:\n  type: object\n  properties:\n    flag: { type: string, default: flag.ts }\n`);
+    await write(".warden/packs/tree/fs.js", flagged);
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    git("add", "-A");
+    git("commit", "-q", "-m", "settings");
+    git("branch", "-f", "main", "HEAD");
+    expect((await check()).code).toBe(0);
+    await write(".warden/config.yaml", (await read(".warden/config.yaml")).replace("flag: flag.ts", "flag: none.ts"));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: ".warden/lock.json", detail: "loosened" });
+  });
+
+  it("editing a local pack's shipped code and recompiling is loosening", async () => {
+    await addTree();
+    git("add", "-A");
+    git("commit", "-q", "-m", "tree");
+    git("branch", "-f", "main", "HEAD");
+    expect((await check()).code).toBe(0);
+    await write(".warden/packs/tree/fs.js", "export default { flagged: () => [] };\n");
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: ".warden/lock.json", detail: "loosened" });
+  });
+
   it("compile baselines the violations a new whole-tree Guardrail finds, file by file", async () => {
     await write("flag.ts", "export const flag = 1;\n");
     await addTree();

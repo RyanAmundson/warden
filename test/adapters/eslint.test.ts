@@ -145,6 +145,13 @@ describe("eslint adapter", () => {
     ]);
   });
 
+  it("emit refuses a core-rule Guardrail whose id is a pack's ESLint namespace", () => {
+    const g = guardrail("core", "eslint:no-debugger");
+    expect(() => eslintAdapter.emit([g], setFor(g))).toThrow("Guardrail id core is also the ESLint namespace of a pack's rules. Next action: rename Guardrail core in packs/core/pack.yaml, then run warden compile.");
+    const w = guardrail("warden", "eslint:no-debugger");
+    expect(() => eslintAdapter.emit([w], setFor(w))).toThrow("Guardrail id warden is also the ESLint namespace");
+  });
+
   it("refuses a core rule ESLint does not have, with the next action", async () => {
     const g = { ...guardrail("x", "eslint:no-such-rule"), packDir: "/p/packs/core" };
     await expect(conformance(eslintAdapter, resolve(fixtures, "nested"), [g], setFor(g), ["src/a.ts"], [])).rejects.toThrow(

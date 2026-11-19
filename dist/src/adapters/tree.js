@@ -75,8 +75,10 @@ const treeAdapter = (id) => ({
             const begin = performance.now();
             const found = check({ files: files.filter((f) => enabledOn(f, entry.groups)), all: files, read, ...(imports === undefined ? {} : { imports }), settings: entry.settings ?? {}, options: g.options, terms });
             const violations = found.map((v) => {
-                if (!known.has(v.file))
-                    throw new Error(`${g.implementation} reported ${v.file}, which is not one of the files it was given`);
+                if (!known.has(v.file)) {
+                    const file = join(g.packDir, `${id}.js`);
+                    throw new RecordError(file, "", `${g.implementation} reported ${v.file}, which is not one of the files it was given. Next action: make ${g.implementation} in ${file} report only files from its input, then run warden compile.`);
+                }
                 return { guardrail: g.id, file: v.file, line: v.line ?? 1, message: v.message, ...(v.doThis === undefined ? {} : { doThis: v.doThis }) };
             });
             out.push({ guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms: graphMs + performance.now() - begin });

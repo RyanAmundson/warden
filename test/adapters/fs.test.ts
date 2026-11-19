@@ -44,7 +44,7 @@ describe("fs adapter", () => {
     const pack = await shippedPack("fs", check);
     try {
       const g = treeGuardrail("fs:local/stray", pack.dir);
-      await expect(conformance(fsAdapter, fixture, [g], treeSet(g), ["src/a.ts"], [])).rejects.toThrow("fs:local/stray reported src/none.ts, which is not one of the files it was given");
+      await expect(conformance(fsAdapter, fixture, [g], treeSet(g), ["src/a.ts"], [])).rejects.toThrow(`fs:local/stray reported src/none.ts, which is not one of the files it was given. Next action: make fs:local/stray in ${pack.dir}/fs.js report only files from its input, then run warden compile.`);
     } finally {
       await pack.remove();
     }

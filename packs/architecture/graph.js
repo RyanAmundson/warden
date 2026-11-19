@@ -3,14 +3,22 @@ import { conformanceOf, groupOf, inside, isCompositionRoot, isTest, sameModule, 
 
 const importsOf = (imports, file) => imports.get(file) ?? [];
 
-const runsConformance = ({ files, all, imports, settings }) =>
-  groupsIn(files, settings).flatMap((group) => {
+const dirOf = (file) => file.slice(0, file.lastIndexOf("/"));
+
+const runsConformance = ({ files, all, imports, settings }) => {
+  const tests = new Map();
+  for (const file of all) {
+    if (!isTest(file)) continue;
+    const list = tests.get(dirOf(file)) ?? [];
+    list.push(file);
+    tests.set(dirOf(file), list);
+  }
+  return groupsIn(files, settings).flatMap((group) => {
     const suite = conformanceOf(group);
     const factories = group.files.filter((f) => /^(adapters\/[^/]+\/)?create$/.test(stem(f).slice(group.dir.length + 1)));
     return factories.flatMap((create) => {
-      const dir = create.slice(0, create.lastIndexOf("/"));
-      const runs = all.some((test) => {
-        if (!isTest(test) || test.slice(0, test.lastIndexOf("/")) !== dir) return false;
+      const dir = dirOf(create);
+      const runs = (tests.get(dir) ?? []).some((test) => {
         const targets = importsOf(imports, test).map((e) => e.target);
         return targets.some((t) => sameModule(t, suite)) && targets.some((t) => sameModule(t, create));
       });
@@ -18,6 +26,7 @@ const runsConformance = ({ files, all, imports, settings }) =>
       return [{ file: create, message: `${create} has no test that runs ${suite}.`, doThis: `Add ${dir}/create.test.ts, which imports the conformance suite and create, and calls the suite with create.` }];
     });
   });
+};
 
 const itemOf = (file, collections) => {
   for (const collection of collections) {

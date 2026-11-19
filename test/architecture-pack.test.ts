@@ -130,6 +130,22 @@ describe("architecture pack world boundary", () => {
     expect(await check(globals, source, "src/g/a.ts")).toBe("fail");
   });
 
+  it.each([
+    ["a timer handle type", "let timer: ReturnType<typeof setTimeout> | undefined;\nexport const handle = (): typeof timer => timer;\n"],
+    ["a fetch type", "export type Fetch = typeof fetch;\n"],
+    ["a cast to a timer type", "export const id = (x: unknown): ReturnType<typeof setInterval> => x as ReturnType<typeof setInterval>;\n"],
+  ])("allows %s, which reads no clock or network", async (_name, source) => {
+    expect(await check(globals, source, "src/g/a.ts")).toBe("pass");
+  });
+
+  it.each([
+    ["globalThis.hasOwnProperty", "export const has = globalThis.hasOwnProperty(\"x\");\n"],
+    ["an unresolved toString call", "export const text = toString();\n"],
+    ["window.constructor", "export const c = window.constructor;\n"],
+  ])("passes %s without crashing the lint pass", async (_name, source) => {
+    expect(await check(globals, source, "src/g/a.ts")).toBe("pass");
+  });
+
   it("allows a date built from a value and a Date parameter", async () => {
     expect(await check(globals, "export const at = (ms: number): Date => new Date(ms);\nexport const id = (Date: number): number => Date;\n", "src/g/a.ts")).toBe("pass");
   });
@@ -263,6 +279,11 @@ describe("architecture pack source shape gaps", () => {
     expect(await check(shape, source, bad)).toBe("fail");
   });
 
+  it("fails an exported enum, which is a runtime value", async () => {
+    expect(await check(shape, "export enum Mode {\n  Fast,\n}\n", bad)).toBe("fail");
+    expect(await check(shape, "export declare enum Mode {\n  Fast,\n}\n", "src/g/sources/good.ts")).toBe("pass");
+  });
+
   it.each([
     ["an inline type export specifier", "type X = number;\nexport { type X };\n"],
     ["an export list naming an Observable function", "import { Observable } from \"rxjs\";\nfunction watch(): Observable<number> {\n  return new Observable<number>();\n}\nconst again = (): Observable<number> => watch();\nexport { watch, again };\n"],
@@ -319,6 +340,10 @@ describe("architecture pack groups", () => {
     ["a value import", "import { parse } from \"./parse\";\nexport type P = typeof parse;\n"],
   ])("ARCH-2 fails a port with %s", async (_name, source) => {
     expect(await check("architecture-port-shape", source, port)).toBe("fail");
+  });
+
+  it("ARCH-2 passes ambient declarations, which emit no code", async () => {
+    expect(await check("architecture-port-shape", `${portText}export declare function version(): string;\nexport declare const NAME: string;\ndeclare global {\n  interface Window {\n    git: GitService;\n  }\n}\n`, port)).toBe("pass");
   });
 
   it("ARCH-2 passes a types-only port and ignores files that are not ports", async () => {
@@ -395,5 +420,32 @@ describe("architecture pack tree checks", () => {
     };
     const result = await runOn("architecture-acyclic-groups", tree);
     expect(result?.violations.map((v) => `${v.file}:${v.line}`).sort()).toEqual(["src/[services]/a-service/a-service.ts:2", "src/[services]/b-service/b-service.ts:1"]);
+  });
+});
+
+describe("architecture pack tree checks stay linear", () => {
+  const counted = (files: string[]): { list: string[]; reads: () => number } => {
+    let reads = 0;
+    const list = new Proxy(files, {
+      get(target, key, receiver) {
+        if (typeof key === "string" && /^\d+$/.test(key)) reads += 1;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    return { list, reads: () => reads };
+  };
+  const tree = (n: number): string[] =>
+    Array.from({ length: n }, (_, i) => [`src/[services]/g${i}-service/g${i}-service.ts`, `src/[services]/g${i}-service/create.ts`, `src/[services]/g${i}-service/create.test.ts`]).flat();
+  const settings = { groupCollections: [{ collection: "[services]", suffix: "-service", port: "{name}/{name}.ts" }], technicalCollections: [], compositionRoots: [], world: [], sinkModules: [] };
+
+  it.each([
+    ["graph.js", "runs-conformance"],
+    ["fs.js", "conformance-present"],
+  ])("%s %s reads each file a bounded number of times however many groups there are", async (module, name) => {
+    const checks = ((await import(join(wardenRoot, "packs/architecture", module))) as { default: Record<string, (input: unknown) => unknown[]> }).default;
+    const files = tree(300);
+    const all = counted(files);
+    checks[name]?.({ files, all: all.list, read: () => "", imports: new Map(), settings, options: undefined, terms: [] });
+    expect(all.reads()).toBeLessThanOrEqual(2 * files.length);
   });
 });

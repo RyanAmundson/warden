@@ -1,9 +1,9 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import type { Adapter, RunResult } from "../adapters/types.js";
 import type { Finding } from "./consistency.js";
 import { examplePrefix, withExampleProject } from "./examples.js";
-import { canonicalJson, sha256 } from "./lock.js";
+import { canonicalJson, packFiles, sha256 } from "./lock.js";
 import { RecordError, exampleSet } from "../records/load.js";
 import { enabledOn, pathGroups } from "../records/paths.js";
 import { type BenchSettings, type Guardrail, type Pack, type RecordSet, benchSettings } from "../records/types.js";
@@ -139,12 +139,19 @@ const r1 = (n: number): number => Math.round(n * 10) / 10;
 
 export const pointsText = (m: Measurement): string => `${m.points.map(([n, ms]) => `${n} files ${r1(ms)}ms`).join(", ")}; fixed ${r1(m.f)}ms`;
 
+export async function benchKey(s: Subject, warden: string, cfg: BenchSettings): Promise<string> {
+  const dir = s.g.packDir;
+  const files = dir === undefined ? [] : (await packFiles(dirname(dir), basename(dir))).sort();
+  const code = await Promise.all(files.map(async (f) => [f, sha256(await readFile(join(dirname(dir as string), f)))]));
+  return sha256(canonicalJson(["bench", s.g.id, s.g.version, s.g.implementation, s.g.options ?? null, warden, cfg, s.groups, code]));
+}
+
 export async function admit(set: RecordSet, warden: string): Promise<Finding[]> {
   const cfg = benchSettings(set.config);
   const gs = set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.filter((g) => g.kind !== "instruction")));
   const findings: Finding[] = [];
   for (const s of subjectsOf(set, gs)) {
-    const key = sha256(canonicalJson(["bench", s.g.id, s.g.version, s.g.implementation, s.g.options ?? null, warden, cfg, s.groups]));
+    const key = await benchKey(s, warden, cfg);
     if (readBenchCache(key) !== undefined) continue;
     let m: Measurement;
     try {

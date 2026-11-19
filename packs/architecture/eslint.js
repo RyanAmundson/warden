@@ -55,9 +55,14 @@ const worldModules = {
   },
 };
 
-const REACHES = { setTimeout: "clock", setInterval: "clock", setImmediate: "clock", fetch: "network", XMLHttpRequest: "network", WebSocket: "network" };
+const REACHES = new Map([["setTimeout", "clock"], ["setInterval", "clock"], ["setImmediate", "clock"], ["fetch", "network"], ["XMLHttpRequest", "network"], ["WebSocket", "network"]]);
 const HOSTS = new Set(["globalThis", "window", "self", "global"]);
-const CLOCK_READERS = { Date: "now", performance: "now" };
+const CLOCK_READERS = new Map([["Date", "now"], ["performance", "now"]]);
+
+const inTypePosition = (node) => {
+  for (let at = node.parent; at !== undefined && at !== null; at = at.parent) if (at.type === "TSTypeQuery") return true;
+  return false;
+};
 
 const propertyName = (member) => {
   if (member.type !== "MemberExpression") return undefined;
@@ -79,11 +84,12 @@ const worldGlobals = {
         const implicit = scope.variables.filter((v) => v.defs.length === 0).flatMap((v) => v.references);
         for (const reference of [...scope.through, ...implicit]) {
           const id = reference.identifier;
+          if (inTypePosition(id)) continue;
           const parent = id.parent;
           const member = parent.type === "MemberExpression" && parent.object === id ? propertyName(parent) : undefined;
-          if (REACHES[id.name] !== undefined) report(id, id.name, REACHES[id.name]);
-          else if (HOSTS.has(id.name) && REACHES[member] !== undefined) report(parent, `${id.name}.${member}`, REACHES[member]);
-          else if (CLOCK_READERS[id.name] !== undefined && member === CLOCK_READERS[id.name]) report(parent, `${id.name}.${member}`);
+          if (REACHES.has(id.name)) report(id, id.name, REACHES.get(id.name));
+          else if (HOSTS.has(id.name) && REACHES.has(member)) report(parent, `${id.name}.${member}`, REACHES.get(member));
+          else if (CLOCK_READERS.has(id.name) && member === CLOCK_READERS.get(id.name)) report(parent, `${id.name}.${member}`);
           else if (id.name === "Date" && parent.type === "NewExpression" && parent.callee === id && parent.arguments.length === 0) report(parent, "new Date()");
           else if (id.name === "Date" && parent.type === "CallExpression" && parent.callee === id) report(parent, "Date()");
         }
@@ -128,6 +134,7 @@ const sourceShape = {
     object: "A source exports no object of functions or other values. Export each function at its declaration, with an Observable return type.",
     list: "A source exports no local value that is not a function returning an Observable. Export each function at its declaration, with an Observable return type.",
     class: "A source exports no class. Export a function that returns an Observable.",
+    enum: "A source exports no enum. Move the enum out of the sources folder, and import it from there.",
     returns: "Every function a source exports declares an Observable return type.",
   }),
   create(context) {
@@ -138,6 +145,8 @@ const sourceShape = {
         if (!returnsObservable(value)) context.report({ node: value, messageId: "returns" });
       } else if (value.type === "ClassDeclaration" || value.type === "ClassExpression") {
         context.report({ node, messageId: "class" });
+      } else if (value.type === "TSEnumDeclaration" && value.declare !== true) {
+        context.report({ node, messageId: "enum" });
       } else if (value.type === "Identifier" || value.type === "MemberExpression") {
         context.report({ node, messageId: "alias" });
       } else if ((value.type === "ObjectExpression" || value.type === "ArrayExpression") && !isData(value)) {
@@ -218,12 +227,13 @@ const portShape = {
     const file = fileOf(context);
     const group = groupOf(file, settingsOf(context));
     if (group === undefined || !sameModule(file, group.port)) return {};
+    const declared = (d) => TYPE_ONLY.has(d.type) || d.type === "TSDeclareFunction" || d.declare === true;
     const typed = (s) => {
-      if (TYPE_ONLY.has(s.type)) return true;
+      if (declared(s)) return true;
       if (s.type === "ImportDeclaration") return s.importKind === "type" || allTypes(s.specifiers, "importKind");
       if (s.type === "ExportAllDeclaration") return s.exportKind === "type";
       if (s.type !== "ExportNamedDeclaration") return false;
-      if (s.declaration !== null) return TYPE_ONLY.has(s.declaration.type);
+      if (s.declaration !== null) return declared(s.declaration);
       return s.exportKind === "type" || allTypes(s.specifiers, "exportKind");
     };
     return {
