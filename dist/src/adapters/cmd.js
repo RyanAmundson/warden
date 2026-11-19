@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { dirname, resolve as resolvePath } from "node:path";
+import { dirname, join } from "node:path";
 import { Worker } from "node:worker_threads";
-import { RecordError } from "../records/load.js";
+import { RecordError, findWardenRoot } from "../records/load.js";
 const killGroup = (pid) => {
     try {
         process.kill(-pid, "SIGKILL");
@@ -11,9 +11,9 @@ const killGroup = (pid) => {
             throw cause;
     }
 };
-export const spawnBudgeted = (file, args, cwd, budgetMs, shell = false, signal) => new Promise((resolve, reject) => {
+export const spawnBudgeted = (file, args, cwd, budgetMs, shell = false, env = {}, signal) => new Promise((resolve, reject) => {
     const start = performance.now();
-    const child = spawn(file, args, { cwd, shell, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(file, args, { cwd, shell, env: { ...process.env, ...env }, detached: true, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     let output = "";
@@ -51,28 +51,11 @@ const BOOT = [
     "process.argv[1] = workerData.script;",
     'import(require("node:url").pathToFileURL(workerData.script).href);',
 ].join("\n");
-const SEGMENT = /'((?:[^']|'\\'')*)'|([\w./=:@%+,-]+)|( )/y;
-export const nodeScript = (command) => {
-    if (!command.startsWith("node "))
-        return undefined;
-    const words = [""];
-    SEGMENT.lastIndex = 5;
-    while (SEGMENT.lastIndex < command.length) {
-        const m = SEGMENT.exec(command);
-        if (m === null)
-            return undefined;
-        if (m[3] !== undefined)
-            words.push("");
-        else
-            words[words.length - 1] += m[1] === undefined ? m[2] : m[1].replaceAll("'\\''", "'");
-    }
-    return words.every((w) => w !== "") && !words[0].startsWith("-") ? words : undefined;
-};
-export const runInProcess = (words, cwd, budgetMs, signal) => new Promise((resolve, reject) => {
+export const runInProcess = (words, cwd, budgetMs, signal, env = {}) => new Promise((resolve, reject) => {
     signal?.throwIfAborted();
     const start = performance.now();
     const [script, ...argv] = words;
-    const w = new Worker(BOOT, { eval: true, argv, stdout: true, stderr: true, workerData: { script: resolvePath(cwd, script), cwd } });
+    const w = new Worker(BOOT, { eval: true, argv, env: { ...process.env, ...env }, stdout: true, stderr: true, workerData: { script, cwd } });
     let output = "";
     let killed = false;
     const collect = (chunk) => {
@@ -104,24 +87,51 @@ export const runInProcess = (words, cwd, budgetMs, signal) => new Promise((resol
         void ended.then(() => resolve({ output, code, killed, ms: performance.now() - start }));
     });
 });
-export const OUTPUT_LINES = 20;
-const tail = (output) => output.trimEnd().split("\n").filter((l) => l !== "").slice(-OUTPUT_LINES);
-export const PACK_TOKEN = "{pack}";
-export const packDirs = (set) => new Map(set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.map((g) => [g.id, dirname(p.file)]))));
-const shellWord = (path) => (/^[\w./-]+$/.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`);
-export const commandOf = (g, packDir) => {
-    const command = g.implementation.slice(g.implementation.indexOf(":") + 1);
-    if (!command.includes(PACK_TOKEN))
-        return command;
-    if (packDir === undefined)
-        throw new Error(`Guardrail ${g.id} names ${PACK_TOKEN} but was run without its pack directory`);
-    return command.replaceAll(PACK_TOKEN, shellWord(packDir));
+const PACK_SCRIPT = /^node "\$WARDEN_PACK_DIR\/([\w.-]+)"((?: [\w./=:@%+,-]+)*)$/;
+export const bundledScript = (command, packDir) => {
+    const m = PACK_SCRIPT.exec(command);
+    if (m === null || packDir === undefined || dirname(packDir) !== join(findWardenRoot(), "packs"))
+        return undefined;
+    return [join(packDir, m[1]), ...m[2].split(" ").slice(1)];
 };
+export const OUTPUT_LINES = 20;
+export const PACK_DIR = "WARDEN_PACK_DIR";
+export const PACK_VAR = /\$(?:\{WARDEN_PACK_DIR\}|WARDEN_PACK_DIR(?![A-Za-z0-9_]))/g;
+const shellWord = (path) => (/^[\w./-]+$/.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`);
+export const withPackDir = (command, packDir) => {
+    if (packDir === undefined)
+        return command;
+    let out = "";
+    let quote;
+    for (let i = 0; i < command.length;) {
+        const rest = command.slice(i);
+        const found = quote === "'" ? null : new RegExp(`^${PACK_VAR.source}`).exec(rest);
+        if (found !== null) {
+            out += quote === '"' ? packDir.replace(/["\\$`]/g, "\\$&") : shellWord(packDir);
+            i += found[0].length;
+            continue;
+        }
+        const c = command[i];
+        if (c === "\\" && quote !== "'") {
+            out += rest.slice(0, 2);
+            i += 2;
+            continue;
+        }
+        if ((c === '"' || c === "'") && (quote === undefined || quote === c))
+            quote = quote === undefined ? c : undefined;
+        out += c;
+        i += 1;
+    }
+    return out;
+};
+const tail = (output) => output.trimEnd().split("\n").filter((l) => l !== "").slice(-OUTPUT_LINES);
 const runOne = async (g, ctx) => {
-    const command = commandOf(g, ctx.packDirs?.get(g.id));
+    const run = g.implementation.slice(g.implementation.indexOf(":") + 1);
+    const command = withPackDir(run, g.packDir);
     const budgetMs = ctx.unbudgeted === true ? undefined : g.budgetMs;
-    const words = nodeScript(command);
-    const { code, killed, ms, output } = await (words === undefined ? spawnBudgeted(command, [], ctx.root, budgetMs, true, ctx.signal) : runInProcess(words, ctx.root, budgetMs, ctx.signal));
+    const env = g.packDir === undefined ? {} : { [PACK_DIR]: g.packDir };
+    const words = bundledScript(run, g.packDir);
+    const { code, killed, ms, output } = await (words === undefined ? spawnBudgeted(run, [], ctx.root, budgetMs, true, env, ctx.signal) : runInProcess(words, ctx.root, budgetMs, ctx.signal, env));
     if (killed)
         return { guardrail: g.id, status: "killed", violations: [], ms, command };
     if (code === 0)
@@ -129,7 +139,7 @@ const runOne = async (g, ctx) => {
     if (code === 2) {
         const last = tail(output).at(-1) ?? "";
         const said = last.includes("Next action:") ? last : `${last === "" ? "it printed nothing" : last}. Next action: run \`${command}\` and fix what it reports.`;
-        throw new RecordError("", `/guardrails/${g.id}/implementation`, `${command} exited with 2, an error in its environment or usage, not a violation: ${said}`);
+        throw new RecordError(g.packDir === undefined ? "" : join(g.packDir, "pack.yaml"), `/guardrails/${g.id}/implementation`, `${command} exited with 2, an error in its environment or usage, not a violation: ${said}`);
     }
     return {
         guardrail: g.id,

@@ -10,10 +10,10 @@ import { checkConsistency } from "./consistency.js";
 import { stamp } from "./emit.js";
 import { runExamples } from "./examples.js";
 import { LOCK_PATH, computeLock, sha256 } from "./lock.js";
-const localPackFiles = async (projectRoot, id) => {
+const packFiles = async (base, dir) => {
     try {
-        const entries = await readdir(join(projectRoot, ".warden/packs", id), { recursive: true, withFileTypes: true });
-        return entries.filter((e) => e.isFile() && e.name !== ".DS_Store").map((e) => relative(projectRoot, join(e.parentPath, e.name)).split(sep).join("/"));
+        const entries = await readdir(join(base, dir), { recursive: true, withFileTypes: true });
+        return entries.filter((e) => e.isFile() && e.name !== ".DS_Store").map((e) => relative(base, join(e.parentPath, e.name)).split(sep).join("/"));
     }
     catch (cause) {
         if (cause.code === "ENOENT")
@@ -28,11 +28,10 @@ const sourceFiles = async (set, projectRoot, wardenRoot) => {
         throw new RecordError(join(projectRoot, ".warden/config.yaml"), "", "file not found");
     out[".warden/config.yaml"] = config;
     for (const { id } of set.config.packs) {
-        const bundled = await readText(join(wardenRoot, `packs/${id}/pack.yaml`));
-        if (bundled !== undefined)
-            out[`packs/${id}/pack.yaml`] = bundled;
-        for (const key of await localPackFiles(projectRoot, id))
-            out[key] = (await readText(join(projectRoot, key)));
+        for (const [dir, base] of [[`packs/${id}`, wardenRoot], [`.warden/packs/${id}`, projectRoot]]) {
+            for (const key of await packFiles(base, dir))
+                out[key] = (await readText(join(base, key)));
+        }
     }
     return out;
 };

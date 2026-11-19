@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { mkdirSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command, CommanderError } from "commander";
 import { refusal } from "../adapters/claude.js";
 import { compile, wardenVersion } from "../compiler/compile.js";
+import { findWardenRoot } from "../records/load.js";
 import { runBench } from "./bench.js";
 import { runCheck } from "./check.js";
 import { runExplain } from "./explain.js";
@@ -15,16 +16,6 @@ import { runReport } from "./report.js";
 import { runRuns } from "./runs.js";
 import { liveView, loadView, plainDeterminism, plainLayers, plainView, plainViolations } from "./view.js";
 import { wardenHome } from "../runner/evidence.js";
-const findWardenRoot = () => {
-    let dir = dirname(fileURLToPath(import.meta.url));
-    while (!existsSync(join(dir, "packs")) || !existsSync(join(dir, "package.json"))) {
-        const parent = dirname(dir);
-        if (parent === dir)
-            throw new Error("cannot locate the Warden package root");
-        dir = parent;
-    }
-    return dir;
-};
 const oneOf = (command, name, value, allowed) => {
     if (!allowed.includes(value))
         throw new Error(`--${name} must be one of ${allowed.join(", ")}. Next action: run warden ${command} --help`);

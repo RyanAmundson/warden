@@ -16,7 +16,7 @@ practices:
         runs: [edit, commit]
         budgetMs: 2000
         version: 1
-        implementation: "cmd:node {pack}/holds-only-folders.cjs"
+        implementation: 'cmd:node "$WARDEN_PACK_DIR/holds-only-folders.cjs"'
         mustFail:
           "src/[widgets]/button/index.ts": "export const button = 1;\n"
           "src/[widgets]/notes.ts": "export const notes = 1;\n"
@@ -34,7 +34,7 @@ practices:
         runs: [edit, commit]
         budgetMs: 2000
         version: 1
-        implementation: "cmd:node {pack}/do-not-nest.cjs"
+        implementation: 'cmd:node "$WARDEN_PACK_DIR/do-not-nest.cjs"'
         mustFail:
           "src/[widgets]/[parts]/knob/index.ts": "export const knob = 1;\n"
         mustPass:
@@ -50,7 +50,7 @@ practices:
         runs: [edit, commit]
         budgetMs: 2000
         version: 2
-        implementation: "cmd:node {pack}/plural-kebab-case.cjs"
+        implementation: 'cmd:node "$WARDEN_PACK_DIR/plural-kebab-case.cjs"'
         mustFail:
           "src/[Widget]/button/index.ts": "export const button = 1;\n"
         mustPass:
@@ -67,7 +67,7 @@ practices:
         runs: [edit, commit]
         budgetMs: 2000
         version: 1
-        implementation: "cmd:node {pack}/items-share-one-shape.cjs"
+        implementation: 'cmd:node "$WARDEN_PACK_DIR/items-share-one-shape.cjs"'
         mustFail:
           "src/[widgets]/button/index.ts": "export const button = 1;\n"
           "src/[widgets]/card/index.ts": "export const card = 1;\n"

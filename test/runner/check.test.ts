@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { chmod, cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -767,6 +767,21 @@ describe("unknown adapter at check time", () => {
     expect((await check()).code).toBe(0);
   });
 
+  it("an edit to a script shipped in a pack is tampering, and reverting it passes", async () => {
+    const SCRIPT = ".warden/packs/local/bin/no-broken.mjs";
+    await write(SCRIPT, "process.exit(1);\n");
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    git("add", "-A");
+    git("commit", "-q", "-m", "script");
+    await write(SCRIPT, "process.exit(0);\n");
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    expect(await tampered()).toEqual([{ file: SCRIPT, detail: "source-drift" }]);
+    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([`Next action: revert your change to ${SCRIPT}.`]);
+    git("checkout", "HEAD", "--", SCRIPT);
+    expect((await check()).code).toBe(0);
+  });
+
   describe("a lock edit cannot turn a locked pack's broken prefix into a compile action", () => {
     const PACK = ".warden/packs/local/pack.yaml";
     const breakPrefix = async (): Promise<void> => {
@@ -870,18 +885,30 @@ describe("final review: legacy feedback", () => {
       "Next action: run `test ! -e broken || { echo broken thing; exit 1; }` and fix what it reports.",
     ]);
   });
+
+  it("a cmd Guardrail runs a script shipped in its pack, passes its examples at compile, and on failure names the expanded command that reproduces it", async () => {
+    await write(".warden/packs/legacy/bin/no-broken.mjs", 'import { existsSync } from "node:fs";\nprocess.exit(existsSync("broken") ? 1 : 0);\n');
+    await addLegacy("commit", 'node "$WARDEN_PACK_DIR/bin/no-broken.mjs"', 5000);
+    await write("broken", "x\n");
+    await write("b.ts", "const b = 1;\n");
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    const next = /^Next action: run `(.+)` and fix what it reports\.$/m.exec(out)?.[1] as string;
+    expect(next).toBe(`node "${join(root, ".warden/packs/legacy/bin/no-broken.mjs")}"`);
+    expect(spawnSync("sh", ["-c", next], { cwd: root }).status).toBe(1);
+  });
 });
 
 describe("a cmd Guardrail that runs a script in its pack", () => {
-  it("runs {pack} as the pack folder, names the resolved command, and treats a script edit as tampering", async () => {
+  it("runs WARDEN_PACK_DIR as the pack folder, names the resolved command, and treats a script edit as tampering", async () => {
     await write(".warden/packs/legacy/check.sh", "test ! -e broken || { echo broken thing; exit 1; }\n");
-    await addLegacy("commit", "sh {pack}/check.sh", 5000);
+    await addLegacy("commit", 'sh "$WARDEN_PACK_DIR/check.sh"', 5000);
     const script = join(root, ".warden/packs/legacy/check.sh");
     await write("broken", "x\n");
     const { code, out } = await check();
     expect(code).toBe(1);
-    expect(out).toContain(`  Output:   sh ${script} exited with 1\n            broken thing`);
-    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([`Next action: run \`sh ${script}\` and fix what it reports.`]);
+    expect(out).toContain(`  Output:   sh "${script}" exited with 1\n            broken thing`);
+    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([`Next action: run \`sh "${script}"\` and fix what it reports.`]);
     await write(".warden/packs/legacy/check.sh", "true\n");
     expect((await check()).code).toBe(1);
     expect(await tampered()).toContainEqual({ file: ".warden/packs/legacy/check.sh", detail: "source-drift" });
@@ -889,12 +916,12 @@ describe("a cmd Guardrail that runs a script in its pack", () => {
 
   it("a script that exits 2 stops the check with exit 2 and the script's next action, not a Guardrail failure", async () => {
     await write(".warden/packs/legacy/check.sh", "test ! -e broken || exit 1; test ! -e nogit || { echo 'git is not on PATH. Next action: install git so that it is on PATH.'; exit 2; }\n");
-    await addLegacy("commit", "sh {pack}/check.sh", 5000);
+    await addLegacy("commit", 'sh "$WARDEN_PACK_DIR/check.sh"', 5000);
     await write("nogit", "x\n");
     const { code, out, err } = await check();
     expect(code).toBe(2);
     expect(out).toBe("");
-    expect(err).toBe(` /guardrails/legacy-script/implementation: sh ${join(root, ".warden/packs/legacy/check.sh")} exited with 2, an error in its environment or usage, not a violation: git is not on PATH. Next action: install git so that it is on PATH.\n`);
+    expect(err).toBe(`${join(root, ".warden/packs/legacy/pack.yaml")} /guardrails/legacy-script/implementation: sh "${join(root, ".warden/packs/legacy/check.sh")}" exited with 2, an error in its environment or usage, not a violation: git is not on PATH. Next action: install git so that it is on PATH.\n`);
   });
 
   it("moving a base-locked cmd Guardrail from lint to runtime, as compile asks, is not tampering", async () => {
@@ -1047,7 +1074,7 @@ describe("final review: lock records base and project", () => {
   it("a base lock from a newer Warden stops check and compile, and names the release to install", async () => {
     const working = await read(".warden/lock.json");
     await commitBaseLock((lock) => {
-      lock.format = 3;
+      lock.format = 4;
       lock.warden = "9.0.0";
     });
     git("checkout", "-q", "feature");
@@ -1127,7 +1154,7 @@ describe("bundled tool versions in the lock", () => {
     const working = await read(".warden/lock.json");
     git("checkout", "-q", "main");
     await editLock((lock) => {
-      lock.format = 3;
+      lock.format = 4;
       lock.warden = "9.0.0";
       delete lock.sources;
     });
@@ -1752,6 +1779,20 @@ describe("engine review: the Warden that wrote the lock", () => {
     expect((await check()).code).toBe(0);
   });
 
+  it("a lock in the previous format, hashing only each pack.yaml, says to recompile instead of reporting the pack's other files as tampering", async () => {
+    await editLock((lock) => {
+      lock.format = 2;
+      lock.sources = Object.fromEntries(Object.entries(lock.sources as Record<string, string>).filter(([key]) => !key.startsWith("packs/") || key.endsWith("/pack.yaml")));
+    });
+    const { code, err } = await check();
+    expect(code).toBe(2);
+    expect(err).toContain(`is in an older format than this Warden ${running} writes. Next action: run warden compile, stage .warden, and commit.`);
+    expect(err.match(/Next action:/g)).toHaveLength(1);
+    expect(await tampered()).toEqual([]);
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect((await check()).code).toBe(0);
+  });
+
   it("a lock that still records the old .claude/settings.json entry is an older lock, not tampering", async () => {
     await editLock((lock) => {
       (lock.generated as Record<string, string>)[".claude/settings.json#warden"] = "0".repeat(64);
@@ -1767,12 +1808,12 @@ describe("engine review: the Warden that wrote the lock", () => {
 
   it("a working lock in a newer format exits 2 and says to install the lock's release", async () => {
     await editLock((lock) => {
-      lock.format = 3;
+      lock.format = 4;
       lock.warden = "9.0.0";
     });
     const { code, err } = await check();
     expect(code).toBe(2);
-    expect(err).toContain("has format 3; this Warden reads formats up to 2. Next action: install Warden 9.0.0, the release that wrote the lock.");
+    expect(err).toContain("has format 4; this Warden reads formats up to 3. Next action: install Warden 9.0.0, the release that wrote the lock.");
     expect(await tampered()).toEqual([]);
   });
 });

@@ -274,16 +274,19 @@ adapter, and every adapter has the same three jobs:
 A Guardrail's `implementation` names its adapter and the tool's own rule:
 `eslint:no-debugger`, `eslint:warden/no-comments`, `tsc:strictNullChecks`,
 `cmd:npm run check:canon`. An `options` field passes the tool's rule options
-through unchanged. In a `cmd` command, `{pack}` stands for the folder of the
-Guardrail's pack, so a pack can ship a script and run it as
-`cmd:node {pack}/check.js`; failures, next actions, and `warden doctor` show
-the command with `{pack}` resolved, and every file in a local pack's folder but `.DS_Store` is
-hashed into the lock. A `cmd` command that is only `node <script>` and plain
-arguments runs the script in a worker thread inside Warden rather than a new
-Node process, and the budget stops the worker. The script sees the project
-root as `process.cwd()`, its arguments in `process.argv`, and its exit code
-as the verdict, but it cannot call `process.chdir`, so it resolves every
-relative path against `process.cwd()`. A `cmd` command that exits 2 reports
+through unchanged. A `cmd` command runs with `WARDEN_PACK_DIR` set to the
+folder of the Guardrail's pack, so a pack can ship a script and run it as
+`cmd:node "$WARDEN_PACK_DIR/check.js"`; failures and next actions show the
+command with the folder substituted and shell-quoted, `warden doctor` checks
+that each named pack file exists, and every file in a bundled or local pack's
+folder but `.DS_Store` is hashed into the lock. A `cmd` command that is
+only `node "$WARDEN_PACK_DIR/<script>"` and plain arguments, in a pack that
+Warden ships, runs the script in a worker thread inside Warden rather than a
+new Node process, and the budget stops the worker. The script sees the project
+root as `process.cwd()`, its arguments in `process.argv`, and its exit code as
+the verdict, but it cannot call `process.chdir`, so it resolves every relative
+path against `process.cwd()`. Every other command, including a local pack's
+script, runs in the shell. A `cmd` command that exits 2 reports
 an error in its environment or usage, not a violation: Warden exits 2 with the
 command's last output line as the next action, or tells you to run the command
 when that line has none. A `cmd` Guardrail reports one project-wide result, so

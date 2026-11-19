@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { RecordError, loadRecords } from "../../src/records/load.js";
 
@@ -20,6 +23,21 @@ describe("loadRecords", () => {
     expect(set.packs[0]?.id).toBe("core");
     expect(set.packs[0]?.layer).toBe(0);
     expect(set.packs[0]?.practices[0]?.pack).toBe("core");
+    expect(set.packs[0]?.practices[0]?.guardrails[0]?.packDir).toBe(resolve(wardenRoot, "packs/core"));
+  });
+
+  it("loads the bundled packs in layer order whatever order the config lists them, and each has its own layer", async () => {
+    const project = await mkdtemp(join(tmpdir(), "warden-load-"));
+    try {
+      const bundled = (await readdir("packs")).sort().reverse();
+      await mkdir(join(project, ".warden"));
+      await writeFile(join(project, ".warden/config.yaml"), ["project: p", "base: main", "packs:", ...bundled.map((id) => `  - { id: ${id}, paths: ["**"] }`), "tierBudgetMs: { edit: 1, commit: 1, boundary: 1 }", "loopBreakerRepeats: 3", ""].join("\n"));
+      const layers = (await loadRecords(project, ".")).packs.map((p) => p.layer);
+      expect(layers).toEqual([...new Set(layers)].sort((a, b) => a - b));
+      expect(layers).toHaveLength(bundled.length);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
   });
 
   it("rejects YAML syntax errors", async () => {
