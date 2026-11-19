@@ -3080,7 +3080,6 @@ describe("signed .warden changes", () => {
     commitSigned("ryan", "tidy");
     expect((await check()).code).toBe(1);
     expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
-    await fixes();
   });
 
   it.each(["openpgp", "x509"])("a %s program in the repository config cannot vouch for a change", async (format) => {
