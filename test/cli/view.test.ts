@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { LEAVE, type ViewModel, liveView, plainDeterminism, plainLayers, plainView, plainViolations, render, renderDeterminism, renderLayers, renderViolations } from "../../src/cli/view.js";
+import { columns, cut } from "../../src/cli/runs.js";
 import type { Evidence } from "../../src/runner/evidence.js";
 
 const watched = vi.hoisted(() => [] as string[]);
@@ -851,4 +852,116 @@ it("the determinism screen at 30 columns draws no line wider than 30", () => {
   for (const cols of [30, 25]) {
     for (const l of renderDeterminism(threeProjects(), { cols, rows: 24 })) expect(l.length, l).toBeLessThanOrEqual(cols);
   }
+});
+
+const LONG = "a-very-long-project-name-for-header-xyz";
+
+const headers = (project: string, cols: number): string[] => {
+  const s = { cols, rows: 30 };
+  const m = { ...model([]), project, base: "origin/main", version: "9.8.7" };
+  return [render(m, s, 0)[0], renderLayers({ ...layered(), project, base: "origin/main", version: "9.8.7" }, s)[0], renderViolations({ ...violated(), project, base: "origin/main", version: "9.8.7" }, s)[0], renderDeterminism({ ...threeProjects(), project, base: "origin/main", version: "9.8.7" }, s)[0]] as string[];
+};
+
+const hintOf = (line: string): string => (line.match(/(q quit.*)$/) ?? ["", ""])[1] as string;
+
+it("every screen header keeps q quit and r rerun, then the same project parts, at 80 columns with a long project name", () => {
+  for (const line of headers(LONG, 80)) {
+    expect(columns(line), line).toBeLessThanOrEqual(80);
+    expect(hintOf(line) as string, line).toMatch(/^q quit {2}r rerun/);
+    expect(line, line).toContain(LONG);
+  }
+});
+
+it("every screen header at 30 columns shows q quit and r rerun, with the project dropped before them", () => {
+  for (const project of ["context-manager", LONG]) {
+    for (const line of headers(project, 30)) {
+      expect(line.length, line).toBeLessThanOrEqual(30);
+      expect(line, line).toMatch(/q quit {2}r rerun( {2}([vd] back|l runs))?$/);
+    }
+  }
+});
+
+const NAMES = ["x", "context-manager", LONG, "日本語プロジェクト名前", "🚀🚀🚀🚀🚀-launch-pad-🚀🚀"];
+
+it("columns counts East Asian wide and fullwidth characters as two columns", () => {
+  expect(columns("abc")).toBe(3);
+  expect(columns("日本語")).toBe(6);
+  expect(columns("Ａ")).toBe(2);
+  expect(columns("🚀")).toBe(2);
+  expect(columns("e\u0301")).toBe(1);
+});
+
+it("every screen's own back key survives at every width where q quit does", () => {
+  for (const project of NAMES) {
+    for (let cols = 20; cols <= 160; cols++) {
+      const [runs, layers, violations, determinism] = headers(project, cols) as [string, string, string, string];
+      for (const [line, back] of [[layers, "l runs"], [violations, "v back"], [determinism, "d back"]] as const) {
+        expect(line, `${project} ${cols}`).toContain("q quit");
+        expect(line, `${project} ${cols}: ${line}`).toContain(back);
+      }
+      expect(runs, `${project} ${cols}`).toContain("q quit");
+    }
+  }
+});
+
+it("no header line exceeds the terminal width from 20 to 160 columns, for ASCII, long, CJK, and emoji names", () => {
+  for (const project of NAMES) {
+    for (let cols = 20; cols <= 160; cols++) {
+      for (const line of headers(project, cols)) expect(columns(line), `${project} ${cols}: ${line}`).toBeLessThanOrEqual(cols);
+    }
+  }
+});
+
+it("the screen navigation keys outrank the version in every header", () => {
+  for (const project of NAMES) {
+    for (let cols = 20; cols <= 160; cols++) {
+      const [runs] = headers(project, cols) as [string];
+      const shortest = columns(` WARDEN  ${project}`) + 1 + "q quit  r rerun  l layers  v viol  d det".length;
+      if (cols >= shortest) expect(runs, `${project} ${cols}: ${runs}`).toContain("l layers");
+    }
+  }
+});
+
+it("at 25 and 30 columns every header keeps q quit, r rerun, and its back key", () => {
+  for (const [i, back] of [[1, "l runs"], [2, "v back"], [3, "d back"]] as const) {
+    for (const cols of [25, 30]) expect(headers("context-manager", cols)[i], String(cols)).toMatch(new RegExp(`q quit {2}r rerun {2}${back}$`));
+  }
+});
+
+const FAMILY = "👨‍👩‍👧";
+const TONE = "👍🏽";
+const FLAG = "🏴\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}";
+
+it("columns measures emoji-presentation characters, joined sequences, and marks the way a terminal draws them", () => {
+  for (const [text, width] of [["⭐", 2], ["✅", 2], ["⌚", 2], ["\u{1FA70}", 2], [FAMILY, 2], [TONE, 2], [FLAG, 2], ["🇯🇵", 2], ["❤️", 2], ["กั", 1], ["e\u0301", 1], ["a日", 3]] as const) {
+    expect(columns(text), text).toBe(width);
+  }
+});
+
+it("cut never splits an emoji cluster", () => {
+  expect(cut(FAMILY, 1)).toBe("");
+  expect(cut(`a${FAMILY}`, 2)).toBe("a");
+  expect(cut(`${FAMILY}b`, 3)).toBe(`${FAMILY}b`);
+  expect(cut(`🇯🇵x`, 2)).toBe("🇯🇵");
+  expect(cut(FLAG, 1)).toBe("");
+});
+
+it("at 40 columns the runs header measures emoji names by what a terminal draws", () => {
+  const runs = (project: string): string => headers(project, 40)[0] as string;
+  for (const wide of ["⭐", "✅", "⌚", "\u{1FA70}"]) expect(runs(wide.repeat(8)), wide).not.toContain(wide);
+  for (const joined of [FAMILY, TONE, FLAG]) expect(runs(joined.repeat(4)), joined).toContain(joined.repeat(4));
+});
+
+it("each screen drops header parts in order: base, then version, then the name, and the three back-key screens drop the name together", () => {
+  for (const project of ["context-manager", LONG]) {
+    for (let cols = 20; cols <= 130; cols++) {
+      for (const l of headers(project, cols)) {
+        if (l.includes("base")) expect(l, `${project} ${cols}`).toContain(" · v9.8.7");
+        if (l.includes(" · v9.8.7")) expect(l, `${project} ${cols}`).toContain(project);
+      }
+    }
+  }
+  const forty = headers("context-manager", 40);
+  expect(forty[0]).toContain("context-manager");
+  for (const l of forty.slice(1)) expect(l).not.toContain("context-manager");
 });

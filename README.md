@@ -57,10 +57,13 @@ next action restores every path changed without an allowed signature, plus
 content with `git restore`, then commits only those paths with
 `git commit --only`. Files the branch added are removed, and files it deleted
 come back; a file the branch added that is no longer in the index is deleted
-from disk with `rm -rf`. Other staged and unstaged work stays where it is. An
+from disk with `git clean -ff`, which never follows a symbolic link and also
+removes a nested repository; when a folder on that path is a link, the link
+itself is removed, after it is unstaged if it was staged. Other staged and unstaged work stays where it is. An
 untracked file at a restored path is replaced by the merge-base content. When
-two restored paths differ only in case, `git commit --only` refuses them as
-aliases, so the action commits the whole index with a plain `git commit`
+two restored paths, or a restored path and a file in the index, differ only
+in case, `git commit --only` cannot commit them
+correctly, so the action commits the whole index with a plain `git commit`
 instead, and other staged work joins that commit. The commit uses
 `--allow-empty` so it is still made when a replace ref or a commit-graph file
 makes git's own view of `HEAD` already match the merge base. The restore also
@@ -218,6 +221,15 @@ sees the cause fixed. The daemon keeps its checkpoint in
 `$WARDEN_HOME/daemon/state.json`. At its first start, and when it first
 discovers a repository, it records the repository's current branch and
 worktree tips as the checkpoint, and it judges only commits made after that.
+A running daemon discovers a repository as soon as `warden init` or a check
+writes the repository's first Evidence, without waiting for its next
+10-second tick.
+
+A commit-tier check judges a skip-worktree file that is missing from disk,
+such as a file outside a sparse checkout, by its staged content: it copies
+the staged blob to a temporary folder outside the repository and runs the
+ESLint Guardrails on it. Whole-project Guardrails, such as `tsc` and
+commands, still see only the files on disk.
 If `state.json` is lost, the daemon rebuilds open alerts from git and
 Evidence. A commit made while the daemon was stopped and `state.json` was
 missing is not judged, because the daemon never recorded it.

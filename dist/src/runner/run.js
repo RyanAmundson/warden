@@ -1,10 +1,9 @@
 import { cmdAdapter } from "../adapters/cmd.js";
 import { eslintAdapter } from "../adapters/eslint.js";
+import { fsAdapter, graphAdapter } from "../adapters/tree.js";
 import { tscAdapter } from "../adapters/tsc.js";
-import { statSync } from "node:fs";
-import { join } from "node:path";
 import { RecordError } from "../records/load.js";
-export const adapters = new Map([eslintAdapter, tscAdapter, cmdAdapter].map((a) => [a.id, a]));
+export const adapters = new Map([eslintAdapter, tscAdapter, cmdAdapter, fsAdapter, graphAdapter].map((a) => [a.id, a]));
 export const prefixOf = (g) => g.implementation.slice(0, g.implementation.indexOf(":"));
 export const unknownAdapters = (set) => {
     const known = [...adapters.keys()];
@@ -18,6 +17,7 @@ export const unknownAdapters = (set) => {
         message: `Guardrail ${g.id} names adapter "${prefixOf(g)}", which is not registered; the known adapters are ${known.join(", ")}. Next action: set implementation to one of ${known.map((k) => `${k}:<...>`).join(", ")} in ${pack.file}, then run warden compile.`,
     })));
 };
+export const wholeTree = (g) => adapters.get(prefixOf(g))?.wholeTree === true;
 export const refuseUnknownAdapters = (set) => {
     const [unknown] = unknownAdapters(set);
     if (unknown !== undefined)
@@ -33,7 +33,6 @@ export async function runGuardrails(set, gs, files, ctx) {
     for (const g of gs)
         groups.set(prefixOf(g), [...(groups.get(prefixOf(g)) ?? []), g]);
     const out = [];
-    const size = { files: files.length, bytes: files.reduce((n, f) => n + statSync(join(ctx.root, f)).size, 0) };
     for (const [prefix, group] of groups) {
         ctx.onGroup?.(prefix, group.map((g) => g.id));
         const results = await adapters.get(prefix).run(group, files, ctx);
@@ -43,7 +42,7 @@ export async function runGuardrails(set, gs, files, ctx) {
         for (const r of results) {
             const g = group.find((x) => x.id === r.guardrail);
             const budget = shared === undefined ? g?.budgetMs : passBudget;
-            out.push({ ...size, ...r, ...(shared === undefined ? {} : { shared }), overBudget: ctx.unbudgeted !== true && r.status !== "killed" && g !== undefined && budget !== undefined && r.ms > budget });
+            out.push({ ...r, ...(shared === undefined ? {} : { shared }), overBudget: ctx.unbudgeted !== true && r.status !== "killed" && g !== undefined && budget !== undefined && r.ms > budget });
         }
     }
     return out;

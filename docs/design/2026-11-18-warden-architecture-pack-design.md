@@ -464,57 +464,116 @@ These are the author's calls, not Ryan's decisions:
 - Messages, which follow Warden's one-formatter rule: the compliant example and
   one next action.
 
-## Built in version 1
+## Built in version 2
 
-Version 1 ships two practices and three Guardrails.
+Version 2 ships every ARCH practice. The pack ships its own code beside
+`pack.yaml`: `eslint.js` holds ESLint rules, `fs.js` holds tree checks, and
+`graph.js` holds import-graph checks. A Guardrail names one as
+`<adapter>:architecture/<name>`, and Warden loads it from the pack's folder,
+the same folder `WARDEN_PACK_DIR` names for a `cmd` Guardrail. The lock hashes
+these files with the rest of the pack.
 
-- `architecture-world-only-in-sources` has two Guardrails.
-  `architecture-world-modules` bans importing the world modules `fs`,
-  `child_process`, `net`, `http`, `timers`, and similar outside a sources
-  folder. `architecture-world-globals` bans `setTimeout`, `setInterval`,
-  `setImmediate`, `fetch`, `XMLHttpRequest`, and `WebSocket` there. This
-  Guardrail was named `architecture-world-timers` before version 1 shipped.
-- `architecture-sources-only-emit` has one Guardrail,
-  `architecture-source-shape`. It bans a source from importing, re-exporting,
-  requiring, or dynamically loading a sink. A type-only import or re-export
-  from a sink passes. It also bans a source from re-exporting a world module,
-  exporting a constant whose value is a bare identifier
-  (`export const read = readFileSync`), default-exporting an identifier,
-  exporting a list of local values, or exporting a class. A source can still
-  export a world value through a member access
-  (`export const read = fs.readFile`) or an object literal
-  (`export const api = { readFile }`, `export default { readFile }`). A
-  `require()` of a sink written as a template literal also passes. Both gaps
-  are recorded in `cm-wkqedr.25`. The local-list ban also fails
-  `export { type X }`, and `export { watch }` for a function that returns an
-  Observable. Write `export type { X }` and `export function watch` instead.
-  Every function a source exports must declare an
-  `Observable` return type, either `Observable` or a qualified name such as
-  `rx.Observable`.
+Pack code runs in a sandbox: a child Node process under Node's permission
+model (`--permission`), which needs Node 25 or later, as `engines` in
+`package.json` states. Warden starts one such process for each pack and reuses
+it for that pack's checks in a run, so no pack's code shares a process with
+another pack's code or results.
 
-Limits of what version 1 covers:
+- It may read only the pack folders it runs and Warden's own install, its code
+  and its `node_modules`. It reads no project file directly. Warden sends the
+  file names, a tree check's `read` asks Warden for each file's text, and
+  ESLint rules receive each file's text. A tree check's `ts` is the
+  TypeScript compiler API that Warden ships, loaded on first use, so a check
+  can parse the text that `read` returns.
+- It has no write access, no child processes, no worker threads, no native
+  addons, no inspector, no WASI, no TCP, UDP, or DNS, and no `node:sqlite`
+  (`--no-experimental-sqlite`), which would read and write databases around
+  the permission model. A forbidden call fails, and Warden then refuses the
+  run with exit 2, names the pack file and the Guardrail, and gives one next
+  action with the whole cause.
+- Its environment is empty. A small guard process holds a pipe from Warden
+  and kills the child when that pipe closes, so the child stops even when
+  Warden is killed by SIGINT, SIGTERM, or SIGKILL in the middle of a check.
+  Warden also kills both when it exits normally.
+- A pack check that does not load, throws, or returns something other than a
+  list of `{ file, message, line?, endLine?, doThis? }` findings is refused the same
+  way. So is an ESLint rule that throws.
 
-- The merged practice covers ARCH-7 in one direction only. A source can't
-  import a sink, but nothing yet checks that a sink doesn't import a source.
-- It covers ARCH-9 by the declared return type, not the inferred one. A
-  function with no return type fails, even when TypeScript would infer an
-  `Observable`.
-- `architecture-world-modules` doesn't see `require("fs")` or a dynamic
-  `import("fs")`. The clock check covers timers only, not `Date.now()` or
-  `new Date()`. Both gaps are recorded in `cm-wkqedr.25`.
-- Member-access globals, such as `globalThis.setTimeout` and `window.fetch`,
-  pass the world boundary. So do third-party packages that reach the world,
-  such as `fs-extra`. Both gaps are recorded in `cm-wkqedr.25`.
-- `import type` from a world module still fails the world boundary, because
-  the core rule has no option for type-only imports.
-- Version 1 has no composition-root exemption, so a composition root that
-  reaches the world fails. Until per-pack settings exist (`cm-wkqedr.25`), a
-  project scopes the pack with the `paths` in its config to its group
-  collections, so composition roots fall outside the pack.
-- Only `*.test.*`, `*.spec.*`, and `*.config.*` files, and files under a
-  `test/`, `tests/`, or `__tests__/` folder, count as test or config files.
-  The world boundary skips them.
-- This pack owns the ESLint core rules `no-restricted-imports`,
-  `no-restricted-globals`, and `no-restricted-syntax`. No other pack can use
-  them until `cm-wkqedr.25` lets Guardrails share a rule.
-- Every other ARCH practice waits on `cm-wkqedr.25`.
+Two static checks remain, because they give a clearer error than a refused
+read. A pack folder holds no symbolic links, so the lock hashes every file it
+can load. Each literal relative `import` or `require` must resolve by Node's
+rules to a file inside the pack folder.
+
+Known limits:
+
+- Node's permission model does not cover Unix-domain sockets or
+  `process.kill`, so pack code can connect to a local socket and signal any
+  process the user owns. Local pack code reaches main only with a signature,
+  so these are tracked as follow-up work rather than closed here.
+- Pack code can still read every file in Warden's install. Those files are
+  Warden's own and are pinned by its version, not by the lock.
+- A pack check can spend CPU and memory without limit. No tree or ESLint
+  Guardrail has a time budget.
+- `cmd` Guardrails run outside the sandbox, because a command needs the
+  project and its tools.
+
+The project sets the pack's settings on its config entry. `pack.yaml`
+declares their JSON Schema, with defaults, and Warden refuses settings that do
+not match it:
+
+```yaml
+packs:
+  - id: architecture
+    paths: ["**/*.ts"]
+    settings:
+      groupCollections: [{ collection: "[services]", suffix: "-service", port: "{name}/{name}.ts" }]
+      technicalCollections: ["src/[hooks]", "src/[utils]"]
+      compositionRoots: ["[apps]/desktop/main.ts"]
+      world: [fs, fs/promises, child_process, net, http, https]
+      sinkModules: [rxdb]
+```
+
+Examples run with the schema's first `examples` entry, never with the
+project's settings, so a project's settings cannot break a bundled example.
+The lock records each Guardrail's resolved settings, so a change to them
+against the base branch is loosening, like a change to its options. An edit
+to a local pack's shipped code is loosening too. Bench admission is keyed on
+the hash of every file in the pack's folder, so an edit to the code benches
+its Guardrails again.
+
+| Practice | Guardrail | Adapter |
+|---|---|---|
+| ARCH-1 | `architecture-group-boundaries` | `eslint` |
+| ARCH-2 | `architecture-port-shape` | `eslint` |
+| ARCH-3 | `architecture-implements-port` | `eslint` |
+| ARCH-4 | `architecture-adapter-isolation` | `eslint` |
+| ARCH-5 | `architecture-conformance-present`, `architecture-runs-conformance` | `fs`, `graph` |
+| ARCH-6 | `architecture-world-modules`, `architecture-world-globals` | `eslint` |
+| ARCH-7 | `architecture-source-shape`, `architecture-sink-imports-no-source` | `eslint` |
+| ARCH-8 | `architecture-store-writes` | `eslint` |
+| ARCH-9 | `architecture-source-shape` | `eslint` |
+| ARCH-10 | `architecture-group-named-by-term` | `fs` |
+| ARCH-11 | `architecture-shared-by-two-groups` | `graph` |
+| ARCH-12 | `architecture-acyclic-groups` | `graph` |
+
+The `fs` and `graph` Guardrails read the whole tree, so `warden check` runs
+them at the commit and boundary tiers over every file in the config's pack
+paths, not only changed files. Each violation names a file, so `warden init`
+and `warden compile` baseline them file by file.
+
+Limits of what version 2 covers:
+
+- ARCH-1, ARCH-3, and ARCH-4 resolve only relative imports. An alias such as
+  `@/[services]/x` passes.
+- ARCH-2 checks that a port holds only types. It does not check where a
+  port's type imports come from; ARCH-1 covers imports from other groups.
+- ARCH-3 checks that `create` is declared with a type imported from the
+  port. The project's own type-check proves that `create` is assignable to it.
+- ARCH-5 counts an implementation as running its suite when a test file in
+  the implementation's folder imports both the suite and `create`. It does
+  not check the call.
+- ARCH-9 checks the declared return type, not the inferred one.
+- A source may still export a call result, such as
+  `export const read = promisify(readFile)`.
+- ESLint core rules no longer belong to one pack: each Guardrail runs its own
+  copy of the rule with its own options.

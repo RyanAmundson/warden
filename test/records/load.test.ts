@@ -2,7 +2,9 @@ import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { RecordError, loadRecords } from "../../src/records/load.js";
+import { examplePrefix } from "../../src/compiler/examples.js";
+import { RecordError, exampleSet, loadRecords } from "../../src/records/load.js";
+import { enabledOn } from "../../src/records/paths.js";
 
 const fixtures = "test/fixtures";
 const wardenRoot = `${fixtures}/warden-root`;
@@ -70,5 +72,68 @@ describe("loadRecords", () => {
     const error = await failure("project-duplicate-config-pack");
     expect(error.pointer).toBe("/packs");
     expect(error.file.endsWith(".warden/config.yaml")).toBe(true);
+  });
+});
+
+describe("pack settings", () => {
+  const withPack = async (settings: string | undefined, entry: string | undefined, run: (project: string) => Promise<void>): Promise<void> => {
+    const project = await mkdtemp(join(tmpdir(), "warden-settings-"));
+    try {
+      await mkdir(join(project, ".warden/packs/local"), { recursive: true });
+      const schema = settings === undefined ? [] : ["settings:", ...settings.split("\n").map((l) => `  ${l}`)];
+      await writeFile(join(project, ".warden/packs/local/pack.yaml"), ["id: local", "layer: 1", "terms: []", ...schema, "practices: []", ""].join("\n"));
+      const settingsLine = entry === undefined ? [] : [`    settings: ${entry}`];
+      await writeFile(join(project, ".warden/config.yaml"), ["project: p", "base: main", "packs:", "  - id: local", "    paths: []", ...settingsLine, "tierBudgetMs: { edit: 1, commit: 1, boundary: 1 }", "loopBreakerRepeats: 3", ""].join("\n"));
+      await run(project);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  };
+  const schema = "type: object\nadditionalProperties: false\nproperties:\n  words: { type: array, items: { type: string }, default: [a] }\n  max: { type: integer, default: 3 }\nexamples:\n  - { words: [x] }";
+
+  it("fills a pack's declared defaults into the config entry, keeping what the config sets", async () => {
+    await withPack(schema, "{ max: 5 }", async (project) => {
+      const set = await loadRecords(project, wardenRoot);
+      expect(set.config.packs[0]?.settings).toEqual({ words: ["a"], max: 5 });
+    });
+  });
+
+  it("refuses settings that break the pack's schema, naming the field and the next action", async () => {
+    await withPack(schema, "{ max: many }", async (project) => {
+      const error = await loadRecords(project, wardenRoot).catch((e: unknown) => e);
+      expect(error).toMatchObject({ pointer: "/packs/0/settings/max", message: expect.stringContaining("Next action: fix settings/max of pack local in") });
+    });
+  });
+
+  it("refuses an unknown settings key by name, with one next action", async () => {
+    await withPack(schema, "{ wrds: [b] }", async (project) => {
+      const error = await loadRecords(project, wardenRoot).catch((e: unknown) => e);
+      expect(error).toMatchObject({ name: "RecordError", pointer: "/packs/0/settings/wrds", message: expect.stringMatching(/^wrds is not a setting of pack local\. Next action: remove or rename wrds in the settings of pack local in .*, then run warden compile\.$/) });
+    });
+  });
+
+  it("refuses settings for a pack that declares none", async () => {
+    await withPack(undefined, "{ max: 5 }", async (project) => {
+      const error = await loadRecords(project, wardenRoot).catch((e: unknown) => e);
+      expect(error).toMatchObject({ pointer: "/packs/0/settings", message: expect.stringContaining("pack local declares no settings. Next action: remove settings from pack local in") });
+    });
+  });
+
+  it("runs examples with the pack's first example settings, never the project's", async () => {
+    await withPack(schema, "{ max: 5 }", async (project) => {
+      const set = await loadRecords(project, wardenRoot);
+      expect(exampleSet(set).config.packs[0]?.settings).toEqual({ words: ["x"], max: 3 });
+    });
+  });
+});
+
+describe("path globs", () => {
+  it("a negated glob enables every file it does not match", () => {
+    expect(enabledOn("src/a.ts", [["!**/sources/**", "**/*.ts"]])).toBe(true);
+    expect(enabledOn("src/sources/a.ts", [["!**/sources/**", "**/*.ts"]])).toBe(false);
+  });
+
+  it("an example under a negated Practice glob goes under the config's folder, not a file named !", () => {
+    expect(examplePrefix(["!**/sources/**", "src/**"])).toBe("src/");
   });
 });

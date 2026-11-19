@@ -1,11 +1,11 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import type { Adapter, RunResult } from "../adapters/types.js";
 import type { Finding } from "./consistency.js";
-import { enabledOn, examplePrefix, withExampleProject } from "./examples.js";
-import { canonicalJson, sha256 } from "./lock.js";
-import { RecordError } from "../records/load.js";
-import { pathGroups } from "../records/paths.js";
+import { examplePrefix, withExampleProject } from "./examples.js";
+import { canonicalJson, packFiles, sha256 } from "./lock.js";
+import { RecordError, exampleSet } from "../records/load.js";
+import { enabledOn, pathGroups } from "../records/paths.js";
 import { type BenchSettings, type Guardrail, type Pack, type RecordSet, benchSettings } from "../records/types.js";
 import { readBenchCache, writeBenchCache } from "../runner/cache.js";
 import type { Measurement, Verdict } from "../runner/evidence.js";
@@ -69,13 +69,14 @@ const writeTree = async (root: string, tree: Record<string, string>): Promise<vo
   }
 };
 
-const measure = (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string, signal?: AbortSignal): Promise<Measurement> =>
-  withExampleProject(async (project) => {
-    const ctx = { root: project, generatedDir: join(project, ".warden/generated"), unbudgeted: true, signal };
-    await writeTree(project, (adapters.get(prefixOf(s.g)) as Adapter).emit([s.g], set));
+const measure = (project: RecordSet, s: Subject, cfg: BenchSettings, rerun: string, signal?: AbortSignal): Promise<Measurement> =>
+  withExampleProject(async (root) => {
+    const set = exampleSet(project);
+    const ctx = { root, generatedDir: join(root, ".warden/generated"), unbudgeted: true, signal };
+    await writeTree(root, (adapters.get(prefixOf(s.g)) as Adapter).emit([s.g], set));
     const files: string[] = [];
     let copies = 0;
-    const sample = async (n: number, runs = RUNS): Promise<number> => {
+    const timed = async (n: number, count: number): Promise<number[]> => {
       signal?.throwIfAborted();
       const tree: Record<string, string> = {};
       for (; copies < n; copies++) {
@@ -84,9 +85,9 @@ const measure = (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string, 
           files.push(c.path);
         }
       }
-      await writeTree(project, tree);
+      await writeTree(root, tree);
       const times: number[] = [];
-      for (let i = 0; i < runs; i++) {
+      for (let i = 0; i < count; i++) {
         signal?.throwIfAborted();
         const results = await runGuardrails(set, [s.g], files, ctx);
         signal?.throwIfAborted();
@@ -102,29 +103,35 @@ const measure = (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string, 
         if (own === undefined) throw new Error(`no result for guardrail ${s.g.id}`);
         times.push(s.time(own));
       }
-      return Math.min(...times);
+      return times;
     };
-    const seen = new Map<number, number>();
+    const seen = new Map<number, number[]>();
     const at = async (n: number): Promise<number> => {
-      if (!seen.has(n)) seen.set(n, await sample(n));
-      return seen.get(n) as number;
+      if (!seen.has(n)) seen.set(n, await timed(n, RUNS));
+      return Math.min(...(seen.get(n) as number[]));
+    };
+    const sampled = async (n: number, reps: number): Promise<number> => {
+      const kept = seen.get(n) ?? [];
+      const all = [...kept, ...(await timed(n, RUNS * reps - kept.length))];
+      return Math.min(...Array.from({ length: RUNS }, (_, i) => mean(all.slice(i * reps, (i + 1) * reps))));
     };
     const sizes = async (base: number): Promise<[number, number][]> => {
       const points: [number, number][] = [];
       for (const m of [1, 2, 4, 8]) points.push([base * m, await at(base * m)]);
       return points;
     };
-    const f = await sample(1, FIXED_RUNS);
+    const f = Math.min(...(await timed(1, FIXED_RUNS)));
     let base = cfg.baseFiles;
     while ((await at(base)) - f < cfg.minMarginalMs) {
       if (base * 16 > cfg.maxFiles) return { verdict: "constant", points: await sizes(cfg.baseFiles), f };
       base *= 2;
     }
-    const points = await sizes(base);
+    const points: [number, number][] = [];
+    for (const m of [1, 2, 4, 8]) points.push([base * m, await sampled(base * m, Math.max(1, 4 / m))]);
     if ((points[3] as [number, number])[1] - f < cfg.constantMs) return { verdict: "constant", points, f };
     const k = slope(points, f);
     return { verdict: k > cfg.linearMax ? "superlinear" : k < cfg.sublinearMax ? "sublinear" : "linear", k, points, f };
-  }, true);
+  });
 
 export const benchSubject = async (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string, signal?: AbortSignal): Promise<Measurement & { previous?: Measurement }> => {
   refuseUnmatched(s, rerun);
@@ -147,12 +154,19 @@ const r1 = (n: number): number => Math.round(n * 10) / 10;
 
 export const pointsText = (m: Measurement): string => `${m.points.map(([n, ms]) => `${n} files ${r1(ms)}ms`).join(", ")}; fixed ${r1(m.f)}ms`;
 
+export async function benchKey(s: Subject, warden: string, cfg: BenchSettings): Promise<string> {
+  const dir = s.g.packDir;
+  const files = dir === undefined ? [] : (await packFiles(dirname(dir), basename(dir))).sort();
+  const code = await Promise.all(files.map(async (f) => [f, sha256(await readFile(join(dirname(dir as string), f)))]));
+  return sha256(canonicalJson(["bench", s.g.id, s.g.version, s.g.implementation, s.g.options ?? null, warden, cfg, s.groups, code]));
+}
+
 export async function admit(set: RecordSet, warden: string): Promise<Finding[]> {
   const cfg = benchSettings(set.config);
   const gs = set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.filter((g) => g.kind !== "instruction")));
   const findings: Finding[] = [];
   for (const s of subjectsOf(set, gs)) {
-    const key = sha256(canonicalJson(["bench", s.g.id, s.g.version, s.g.implementation, s.g.options ?? null, warden, cfg, s.groups]));
+    const key = await benchKey(s, warden, cfg);
     if (readBenchCache(key) !== undefined) continue;
     let m: Measurement;
     try {

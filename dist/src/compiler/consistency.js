@@ -15,7 +15,7 @@ const CODES = [
     "banned-synonym",
     "layer-order",
 ];
-const prefix = (glob) => glob.split("*", 1)[0] ?? "";
+const prefix = (glob) => (glob.startsWith("!") ? "" : (glob.split("*", 1)[0] ?? ""));
 const overlaps = (a, b) => prefix(a).startsWith(prefix(b)) || prefix(b).startsWith(prefix(a));
 const longer = (a, b) => (prefix(a).length >= prefix(b).length ? a : b);
 const effectiveGlobs = (set, practice) => {

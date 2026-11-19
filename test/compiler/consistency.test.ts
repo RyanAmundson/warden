@@ -94,10 +94,10 @@ describe("checkConsistency", () => {
   });
 
   it("flags a tsc Guardrail whose flag has no known diagnostic codes, with one next action", () => {
-    const set = build([pack("a", 1, [practice("p", "a", { guardrails: [{ ...guardrail("g-mapped"), implementation: "tsc:noUnusedLocals" }, { ...guardrail("g-unmapped"), implementation: "tsc:noUnusedParameters" }] })])]);
+    const set = build([pack("a", 1, [practice("p", "a", { guardrails: [{ ...guardrail("g-mapped"), implementation: "tsc:noUnusedLocals" }, { ...guardrail("g-unmapped"), implementation: "tsc:noUncheckedIndexedAccess" }] })])]);
     const found = checkConsistency(set).filter((f) => f.code === "unmapped-tsc-flag");
     expect(found.map((f) => f.record)).toEqual(["g-unmapped"]);
-    expect(found[0]?.message).toContain("Guardrail g-unmapped in packs/a/pack.yaml: tsc:noUnusedParameters has no known diagnostic codes");
+    expect(found[0]?.message).toContain("Guardrail g-unmapped in packs/a/pack.yaml: tsc:noUncheckedIndexedAccess has no known diagnostic codes");
     expect(found[0]?.message).toMatch(/Next action: change the implementation to one of [^.]*tsc:noUnusedLocals[^.]*, then run warden compile\.$/);
   });
 
@@ -143,6 +143,14 @@ describe("checkConsistency", () => {
       { a: ["src/**"], b: ["docs/**"] },
     );
     expect(codes(set)).toEqual([]);
+  });
+
+  it("a negated glob overlaps every path it does not exclude", () => {
+    const set = build(
+      [pack("a", 1, [practice("p1", "a", { conflictsWith: ["p2"] })]), pack("b", 2, [practice("p2", "b")])],
+      { a: ["!**/sources/**"], b: ["docs/**"] },
+    );
+    expect(codes(set)).toEqual(["conflict-overlap"]);
   });
 
   it("narrows conflict paths by a practice's own paths", () => {

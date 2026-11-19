@@ -122,9 +122,12 @@ export function readState(): State {
 
 export function openAlerts(root: string): Detection[] {
   const repo = commonDir(root);
+  const indexes = new Map<string, Index>();
+  const indexOf = (project: string): Index => indexes.get(project) ?? indexes.set(project, refresh(emptyIndex(), project)).get(project) as Index;
   return Object.values(readState().roots)
     .flatMap((r) => r.open)
-    .filter((d) => d.repo === repo);
+    .filter((d) => d.repo === repo)
+    .filter((d) => d.detail !== "unchecked-commit" || !commitsOf(root, [d.file]).some((c) => stamped(root, indexOf(d.project), c)));
 }
 
 export function discoverRoots(): string[] {
@@ -493,7 +496,9 @@ export function startWatching(opts: DaemonOptions): Daemon {
     if (file === null || !file.endsWith(".jsonl") || file.endsWith(".1.jsonl")) return;
     const project = file.slice(0, -".jsonl".length);
     opts.onEvidence?.(project);
-    for (const w of projects.values()) if (w.project === project) schedule(w);
+    const known = [...projects.values()].filter((w) => w.project === project);
+    for (const w of known) schedule(w);
+    if (known.length === 0 && !stopped) discover();
   });
   tick();
   const interval = setInterval(tick, opts.intervalMs ?? HEARTBEAT_MS);

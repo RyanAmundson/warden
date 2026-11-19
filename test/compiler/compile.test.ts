@@ -144,7 +144,7 @@ describe("compile", () => {
       {
         code: "unknown-adapter",
         record: "local-no-var",
-        message: `Guardrail local-no-var names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...> in ${file}, then run warden compile.`,
+        message: `Guardrail local-no-var names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd, fs, graph. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...>, fs:<...>, graph:<...> in ${file}, then run warden compile.`,
       },
     ]);
     expect(written).toEqual([]);
@@ -355,7 +355,7 @@ describe("compile", () => {
     await expect(expectedOutputs(await loadRecords(root, wardenRoot), root, wardenRoot)).rejects.toMatchObject({
       file,
       pointer: "/guardrails/local-script/implementation",
-      message: `Guardrail local-script names adapter "cmdd", which is not registered; the known adapters are eslint, tsc, cmd. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...> in ${file}, then run warden compile.`,
+      message: `Guardrail local-script names adapter "cmdd", which is not registered; the known adapters are eslint, tsc, cmd, fs, graph. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...>, fs:<...>, graph:<...> in ${file}, then run warden compile.`,
     });
   });
 
@@ -385,6 +385,20 @@ describe("compile", () => {
     const sources = Object.keys(JSON.parse(await read(".warden/lock.json")).sources as Record<string, string>);
     expect(sources).toContain(".warden/packs/local/check.sh");
     expect(sources).not.toContain(".warden/packs/local/.DS_Store");
+  });
+
+  it("keeps every OS junk file out of the lock, and still hashes a look-alike code file", async () => {
+    await usePack(localPack(legacyGuardrail("test -e ok.txt && test ! -e broken", PROVEN_TREES)));
+    const junk = [".DS_Store", ".localized", "Thumbs.db", "desktop.ini"];
+    for (const name of junk) await writeFile(join(root, ".warden/packs/local", name), "x");
+    await writeFile(join(root, ".warden/packs/local/Thumbs.db.js"), "x");
+    await mkdir(join(root, ".warden/packs/local/sub"), { recursive: true });
+    await writeFile(join(root, ".warden/packs/local/sub/.DS_Store"), "x");
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    const sources = Object.keys(JSON.parse(await read(".warden/lock.json")).sources as Record<string, string>);
+    for (const name of junk) expect(sources).not.toContain(`.warden/packs/local/${name}`);
+    expect(sources).not.toContain(".warden/packs/local/sub/.DS_Store");
+    expect(sources).toContain(".warden/packs/local/Thumbs.db.js");
   });
 
   it("a legacy Guardrail whose mustPass tree fails says to make the command pass on it", async () => {

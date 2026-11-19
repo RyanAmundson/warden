@@ -1,9 +1,9 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { enabledOn, examplePrefix, withExampleProject } from "./examples.js";
-import { canonicalJson, sha256 } from "./lock.js";
-import { RecordError } from "../records/load.js";
-import { pathGroups } from "../records/paths.js";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
+import { examplePrefix, withExampleProject } from "./examples.js";
+import { canonicalJson, packFiles, sha256 } from "./lock.js";
+import { RecordError, exampleSet } from "../records/load.js";
+import { enabledOn, pathGroups } from "../records/paths.js";
 import { benchSettings } from "../records/types.js";
 import { readBenchCache, writeBenchCache } from "../runner/cache.js";
 import { adapters, runGuardrails } from "../runner/run.js";
@@ -40,12 +40,13 @@ const writeTree = async (root, tree) => {
         }));
     }
 };
-const measure = (set, s, cfg, rerun, signal) => withExampleProject(async (project) => {
-    const ctx = { root: project, generatedDir: join(project, ".warden/generated"), unbudgeted: true, signal };
-    await writeTree(project, adapters.get(prefixOf(s.g)).emit([s.g], set));
+const measure = (project, s, cfg, rerun, signal) => withExampleProject(async (root) => {
+    const set = exampleSet(project);
+    const ctx = { root, generatedDir: join(root, ".warden/generated"), unbudgeted: true, signal };
+    await writeTree(root, adapters.get(prefixOf(s.g)).emit([s.g], set));
     const files = [];
     let copies = 0;
-    const sample = async (n, runs = RUNS) => {
+    const timed = async (n, count) => {
         signal?.throwIfAborted();
         const tree = {};
         for (; copies < n; copies++) {
@@ -54,9 +55,9 @@ const measure = (set, s, cfg, rerun, signal) => withExampleProject(async (projec
                 files.push(c.path);
             }
         }
-        await writeTree(project, tree);
+        await writeTree(root, tree);
         const times = [];
-        for (let i = 0; i < runs; i++) {
+        for (let i = 0; i < count; i++) {
             signal?.throwIfAborted();
             const results = await runGuardrails(set, [s.g], files, ctx);
             signal?.throwIfAborted();
@@ -69,13 +70,18 @@ const measure = (set, s, cfg, rerun, signal) => withExampleProject(async (projec
                 throw new Error(`no result for guardrail ${s.g.id}`);
             times.push(s.time(own));
         }
-        return Math.min(...times);
+        return times;
     };
     const seen = new Map();
     const at = async (n) => {
         if (!seen.has(n))
-            seen.set(n, await sample(n));
-        return seen.get(n);
+            seen.set(n, await timed(n, RUNS));
+        return Math.min(...seen.get(n));
+    };
+    const sampled = async (n, reps) => {
+        const kept = seen.get(n) ?? [];
+        const all = [...kept, ...(await timed(n, RUNS * reps - kept.length))];
+        return Math.min(...Array.from({ length: RUNS }, (_, i) => mean(all.slice(i * reps, (i + 1) * reps))));
     };
     const sizes = async (base) => {
         const points = [];
@@ -83,19 +89,21 @@ const measure = (set, s, cfg, rerun, signal) => withExampleProject(async (projec
             points.push([base * m, await at(base * m)]);
         return points;
     };
-    const f = await sample(1, FIXED_RUNS);
+    const f = Math.min(...(await timed(1, FIXED_RUNS)));
     let base = cfg.baseFiles;
     while ((await at(base)) - f < cfg.minMarginalMs) {
         if (base * 16 > cfg.maxFiles)
             return { verdict: "constant", points: await sizes(cfg.baseFiles), f };
         base *= 2;
     }
-    const points = await sizes(base);
+    const points = [];
+    for (const m of [1, 2, 4, 8])
+        points.push([base * m, await sampled(base * m, Math.max(1, 4 / m))]);
     if (points[3][1] - f < cfg.constantMs)
         return { verdict: "constant", points, f };
     const k = slope(points, f);
     return { verdict: k > cfg.linearMax ? "superlinear" : k < cfg.sublinearMax ? "sublinear" : "linear", k, points, f };
-}, true);
+});
 export const benchSubject = async (set, s, cfg, rerun, signal) => {
     refuseUnmatched(s, rerun);
     const first = await measure(set, s, cfg, rerun, signal);
@@ -110,12 +118,18 @@ export const subjectsOf = (set, gs) => set.packs.flatMap((pack) => pack.practice
 }));
 const r1 = (n) => Math.round(n * 10) / 10;
 export const pointsText = (m) => `${m.points.map(([n, ms]) => `${n} files ${r1(ms)}ms`).join(", ")}; fixed ${r1(m.f)}ms`;
+export async function benchKey(s, warden, cfg) {
+    const dir = s.g.packDir;
+    const files = dir === undefined ? [] : (await packFiles(dirname(dir), basename(dir))).sort();
+    const code = await Promise.all(files.map(async (f) => [f, sha256(await readFile(join(dirname(dir), f)))]));
+    return sha256(canonicalJson(["bench", s.g.id, s.g.version, s.g.implementation, s.g.options ?? null, warden, cfg, s.groups, code]));
+}
 export async function admit(set, warden) {
     const cfg = benchSettings(set.config);
     const gs = set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.filter((g) => g.kind !== "instruction")));
     const findings = [];
     for (const s of subjectsOf(set, gs)) {
-        const key = sha256(canonicalJson(["bench", s.g.id, s.g.version, s.g.implementation, s.g.options ?? null, warden, cfg, s.groups]));
+        const key = await benchKey(s, warden, cfg);
         if (readBenchCache(key) !== undefined)
             continue;
         let m;

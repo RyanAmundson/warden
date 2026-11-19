@@ -13,6 +13,48 @@ terms:
   - id: port
     definition: The one file through which code outside a group reaches it, declaring only the group's types and its factory type.
     bans: []
+  - id: group
+    definition: A folder in a group collection that owns one responsibility behind one port.
+    bans: []
+  - id: implementation
+    definition: The code inside a group that fulfills its port, built by a create factory.
+    bans: []
+  - id: adapter
+    definition: One of several swappable implementations of a port, in an adapters folder of its group.
+    bans: []
+  - id: conformance-suite
+    definition: The tests a port defines, which every implementation of that port must pass.
+    bans: []
+  - id: composition-root
+    definition: A file that chooses which implementation fills each port and connects sources to sinks.
+    bans: []
+settings:
+  type: object
+  additionalProperties: false
+  properties:
+    groupCollections:
+      type: array
+      default: []
+      items:
+        type: object
+        additionalProperties: false
+        required: [collection]
+        properties:
+          collection: { type: string, minLength: 1 }
+          suffix: { type: string, default: "" }
+          port: { type: string, pattern: "\\{name\\}", default: "{name}/{name}.ts" }
+    technicalCollections: { type: array, items: { type: string, minLength: 1 }, default: [] }
+    compositionRoots: { type: array, items: { type: string, minLength: 1 }, default: [] }
+    world:
+      type: array
+      items: { type: string, minLength: 1 }
+      default: [fs, fs/promises, child_process, net, http, https, http2, dgram, dns, dns/promises, tls, worker_threads, timers, timers/promises]
+    sinkModules: { type: array, items: { type: string, minLength: 1 }, default: [] }
+  examples:
+    - groupCollections: [{ collection: "[services]", suffix: "-service" }]
+      technicalCollections: ["src/[utils]"]
+      compositionRoots: ["**/main.ts"]
+      sinkModules: [rxdb]
 practices:
   - id: architecture-world-only-in-sources
     statement: Only a source reaches the world.
@@ -24,12 +66,8 @@ practices:
         kind: lint
         runs: [edit, commit]
         budgetMs: 5000
-        version: 1
-        implementation: "eslint:no-restricted-imports"
-        options:
-          patterns:
-            - regex: "^(node:)?(fs|fs/promises|child_process|net|http|https|http2|dgram|dns|dns/promises|tls|worker_threads|timers|timers/promises)$"
-              message: "Only a source reaches the world. Move this read into the sources folder of its group, and return its data as an Observable."
+        version: 2
+        implementation: "eslint:architecture/world-modules"
         mustFail:
           src/git/format.ts: "import { readFileSync } from \"node:fs\";\nexport const readConfig = (path: string): string => readFileSync(path, \"utf8\");\n"
         mustPass:
@@ -39,15 +77,8 @@ practices:
         kind: lint
         runs: [edit, commit]
         budgetMs: 5000
-        version: 1
-        implementation: "eslint:no-restricted-globals"
-        options:
-          - { name: setTimeout, message: "Only a source reaches the clock. Move this timer into the sources folder of its group." }
-          - { name: setInterval, message: "Only a source reaches the clock. Move this timer into the sources folder of its group." }
-          - { name: setImmediate, message: "Only a source reaches the clock. Move this timer into the sources folder of its group." }
-          - { name: fetch, message: "Only a source reaches the network. Move this call into the sources folder of its group." }
-          - { name: XMLHttpRequest, message: "Only a source reaches the network. Move this call into the sources folder of its group." }
-          - { name: WebSocket, message: "Only a source reaches the network. Move this call into the sources folder of its group." }
+        version: 2
+        implementation: "eslint:architecture/world-globals"
         mustFail:
           src/git/retry.ts: "export const later = (run: () => void): void => {\n  setTimeout(run, 1000);\n};\n"
         mustPass:
@@ -63,24 +94,198 @@ practices:
         kind: lint
         runs: [edit, commit]
         budgetMs: 5000
-        version: 1
-        implementation: "eslint:no-restricted-syntax"
-        options:
-          - selector: "ImportDeclaration[importKind!='type'][source.value=/(^|\\/)sinks(\\/|$)/]"
-            message: "A source imports no sink. Return an Observable, and let the composition root connect it to the sink."
-          - selector: "ExportAllDeclaration[exportKind!='type'][source.value=/(^|\\/)sinks(\\/|$)/], ExportNamedDeclaration[exportKind!='type'][source.value=/(^|\\/)sinks(\\/|$)/], ImportExpression[source.value=/(^|\\/)sinks(\\/|$)/], CallExpression[callee.name='require'] > Literal[value=/(^|\\/)sinks(\\/|$)/]"
-            message: "A source re-exports or loads no sink. Return an Observable, and let the composition root connect it to the sink."
-          - selector: "ExportAllDeclaration[exportKind!='type'][source.value=/^(node:)?(fs|fs\\/promises|child_process|net|http|https|http2|dgram|dns|dns\\/promises|tls|worker_threads|timers|timers\\/promises)$/], ExportNamedDeclaration[exportKind!='type'][source.value=/^(node:)?(fs|fs\\/promises|child_process|net|http|https|http2|dgram|dns|dns\\/promises|tls|worker_threads|timers|timers\\/promises)$/]"
-            message: "A source re-exports no world module. Read the world inside the source, and export a function that returns its data as an Observable."
-          - selector: "ExportNamedDeclaration > VariableDeclaration > VariableDeclarator[init.type='Identifier'], ExportDefaultDeclaration > Identifier"
-            message: "A source exports no alias of another value. Export a function that returns an Observable."
-          - selector: "ExportNamedDeclaration[source=null][exportKind='value'][specifiers.length>0]"
-            message: "A source exports no list of local values. Export each function at its declaration, with an Observable return type."
-          - selector: "ExportNamedDeclaration > ClassDeclaration, ExportDefaultDeclaration > ClassDeclaration"
-            message: "A source exports no class. Export a function that returns an Observable."
-          - selector: "ExportNamedDeclaration > FunctionDeclaration:not([returnType.typeAnnotation.typeName.name='Observable'], [returnType.typeAnnotation.typeName.right.name='Observable']), ExportDefaultDeclaration > FunctionDeclaration:not([returnType.typeAnnotation.typeName.name='Observable'], [returnType.typeAnnotation.typeName.right.name='Observable']), ExportNamedDeclaration > VariableDeclaration > VariableDeclarator > ArrowFunctionExpression:not([returnType.typeAnnotation.typeName.name='Observable'], [returnType.typeAnnotation.typeName.right.name='Observable']), ExportNamedDeclaration > VariableDeclaration > VariableDeclarator > FunctionExpression:not([returnType.typeAnnotation.typeName.name='Observable'], [returnType.typeAnnotation.typeName.right.name='Observable']), ExportDefaultDeclaration > ArrowFunctionExpression:not([returnType.typeAnnotation.typeName.name='Observable'], [returnType.typeAnnotation.typeName.right.name='Observable']), ExportDefaultDeclaration > FunctionExpression:not([returnType.typeAnnotation.typeName.name='Observable'], [returnType.typeAnnotation.typeName.right.name='Observable'])"
-            message: "Every function a source exports declares an Observable return type."
+        version: 2
+        implementation: "eslint:architecture/source-shape"
         mustFail:
           src/git/sources/status.ts: "import { writeStatus } from \"../sinks/status\";\nexport const readStatus = (): number => writeStatus(1);\n"
         mustPass:
           src/git/sources/status.ts: "import { Observable } from \"rxjs\";\nexport const watchStatus = (): Observable<number> => new Observable<number>((subscriber) => subscriber.next(1));\n"
+  - id: architecture-sinks-import-no-source
+    statement: A sink imports no source.
+    terms: [source, sink, composition-root]
+    paths: ["**/sinks/**"]
+    conflictsWith: []
+    guardrails:
+      - id: architecture-sink-imports-no-source
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:architecture/sink-imports-no-source"
+        mustFail:
+          src/git/sinks/status.ts: "import { watchStatus } from \"../sources/status\";\nexport const store = watchStatus;\n"
+        mustPass:
+          src/git/sinks/status.ts: "import type { Status } from \"../sources/status\";\nexport const store = (status: Status): Status => status;\n"
+  - id: architecture-store-writes-only-in-sinks
+    statement: Only a sink writes a store.
+    terms: [sink]
+    paths: ["!**/{sinks/**,test/**,tests/**,__tests__/**,*.test.*,*.spec.*,*.config.*}"]
+    conflictsWith: []
+    guardrails:
+      - id: architecture-store-writes
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:architecture/store-writes-only-in-sinks"
+        mustFail:
+          src/git/format.ts: "import { insert } from \"rxdb\";\nexport const save = insert;\n"
+        mustPass:
+          src/git/sinks/status.ts: "import { insert } from \"rxdb\";\nexport const save = insert;\n"
+          src/git/format.ts: "export const trimConfig = (text: string): string => text.trim();\n"
+  - id: architecture-group-boundaries
+    statement: Outside a group, code imports only the group's port.
+    terms: [group, port, composition-root]
+    paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"]
+    conflictsWith: []
+    guardrails:
+      - id: architecture-group-boundaries
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:architecture/group-boundaries"
+        mustFail:
+          "src/[services]/process-service/run.ts": "import { watch } from \"../git-service/sources/status-watcher\";\nexport const run = watch;\n"
+          "src/[services]/git-service/sources/status-watcher.ts": "export const watch = 1;\n"
+        mustPass:
+          "src/[services]/process-service/run.ts": "import type { GitService } from \"../git-service/git-service\";\nexport type Run = GitService;\n"
+          "src/[services]/git-service/git-service.ts": "export type GitService = { status: () => number };\n"
+          "src/[services]/git-service/create.ts": "export const create = (): number => 1;\n"
+          "src/main.ts": "import { create } from \"./[services]/git-service/create\";\nexport const git = create;\n"
+  - id: architecture-port-shape
+    statement: A port declares only types and imports only types.
+    terms: [port, group]
+    paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"]
+    conflictsWith: []
+    guardrails:
+      - id: architecture-port-shape
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:architecture/port-shape"
+        mustFail:
+          "src/[services]/git-service/git-service.ts": "export { create } from \"./create\";\n"
+          "src/[services]/git-service/create.ts": "export const create = (): number => 1;\n"
+        mustPass:
+          "src/[services]/git-service/git-service.ts": "import type { Clock } from \"../clock-service/clock-service\";\nexport type GitStatus = number;\nexport type CreateGitService = (clock: Clock) => { status: () => GitStatus };\n"
+          "src/[services]/clock-service/clock-service.ts": "export type Clock = { now: () => number };\n"
+  - id: architecture-implements-port
+    statement: Every implementation's create is typed by its port's factory type.
+    terms: [implementation, port]
+    paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"]
+    conflictsWith: []
+    guardrails:
+      - id: architecture-implements-port
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:architecture/implements-port"
+        mustFail:
+          "src/[services]/git-service/adapters/cli/create.ts": "export const create = () => ({ status: (): number => 1 });\n"
+          "src/[services]/git-service/git-service.ts": "export type CreateGitService = () => { status: () => number };\n"
+        mustPass:
+          "src/[services]/git-service/adapters/cli/create.ts": "import type { CreateGitService } from \"../../git-service\";\nexport const create: CreateGitService = () => ({ status: (): number => 1 });\n"
+          "src/[services]/git-service/git-service.ts": "export type CreateGitService = () => { status: () => number };\n"
+  - id: architecture-adapter-isolation
+    statement: An adapter never imports another adapter.
+    terms: [adapter]
+    paths: ["**/adapters/*/**"]
+    conflictsWith: []
+    guardrails:
+      - id: architecture-adapter-isolation
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:architecture/adapter-isolation"
+        mustFail:
+          "src/[services]/git-service/adapters/libgit2/parse.ts": "import { parse } from \"../cli/parse\";\nexport const read = parse;\n"
+        mustPass:
+          "src/[services]/git-service/adapters/libgit2/parse.ts": "import { parse } from \"../../parse\";\nimport { scan } from \"./scan\";\nexport const read = [parse, scan];\n"
+  - id: architecture-conformance
+    statement: Every port has a conformance suite, and every implementation runs it.
+    terms: [port, conformance-suite, implementation]
+    paths: ["**/*"]
+    conflictsWith: []
+    guardrails:
+      - id: architecture-conformance-present
+        kind: lint
+        runs: [commit, boundary]
+        budgetMs: 5000
+        version: 1
+        implementation: "fs:architecture/conformance-present"
+        mustFail:
+          "src/[services]/git-service/git-service.ts": "export type GitStatus = number;\n"
+        mustPass:
+          "src/[services]/git-service/git-service.ts": "export type GitStatus = number;\n"
+          "src/[services]/git-service/git-service.conformance.ts": "export const runGitConformance = (create: () => number): boolean => create() === 1;\n"
+      - id: architecture-runs-conformance
+        kind: lint
+        runs: [commit, boundary]
+        budgetMs: 5000
+        version: 1
+        implementation: "graph:architecture/runs-conformance"
+        mustFail:
+          "src/[services]/git-service/git-service.conformance.ts": "export const runGitConformance = (create: () => number): boolean => create() === 1;\n"
+          "src/[services]/git-service/create.ts": "export const create = (): number => 1;\n"
+          "src/[services]/git-service/create.test.ts": "import { create } from \"./create\";\nexport const ran = create() === 1;\n"
+        mustPass:
+          "src/[services]/git-service/git-service.conformance.ts": "export const runGitConformance = (create: () => number): boolean => create() === 1;\n"
+          "src/[services]/git-service/create.ts": "export const create = (): number => 1;\n"
+          "src/[services]/git-service/create.test.ts": "import { runGitConformance } from \"./git-service.conformance\";\nimport { create } from \"./create\";\nexport const ran = runGitConformance(create);\n"
+  - id: architecture-group-named-by-term
+    statement: A group is named for a defined Term.
+    terms: [group]
+    paths: ["**/*"]
+    conflictsWith: []
+    guardrails:
+      - id: architecture-group-named-by-term
+        kind: lint
+        runs: [commit, boundary]
+        budgetMs: 5000
+        version: 1
+        implementation: "fs:architecture/group-named-by-term"
+        mustFail:
+          "src/[services]/helpers-service/helpers-service.ts": "export type Helper = number;\n"
+        mustPass:
+          "src/[services]/source-service/source-service.ts": "export type Source = number;\n"
+  - id: architecture-shared-by-two-groups
+    statement: An item of a technical collection serves at least two groups.
+    terms: [group]
+    paths: ["**/*"]
+    conflictsWith: []
+    guardrails:
+      - id: architecture-shared-by-two-groups
+        kind: lint
+        runs: [commit, boundary]
+        budgetMs: 5000
+        version: 1
+        implementation: "graph:architecture/shared-by-two-groups"
+        mustFail:
+          "src/[utils]/canonical-json.ts": "export const canonical = (value: unknown): string => JSON.stringify(value);\n"
+          "src/[services]/git-service/format.ts": "import { canonical } from \"../../[utils]/canonical-json\";\nexport const format = canonical;\n"
+        mustPass:
+          "src/[utils]/canonical-json.ts": "export const canonical = (value: unknown): string => JSON.stringify(value);\n"
+          "src/[services]/git-service/format.ts": "import { canonical } from \"../../[utils]/canonical-json\";\nexport const format = canonical;\n"
+          "src/[services]/process-service/format.ts": "import { canonical } from \"../../[utils]/canonical-json\";\nexport const format = canonical;\n"
+  - id: architecture-acyclic-groups
+    statement: Groups depend on each other without cycles.
+    terms: [group]
+    paths: ["**/*"]
+    conflictsWith: []
+    guardrails:
+      - id: architecture-acyclic-groups
+        kind: lint
+        runs: [commit, boundary]
+        budgetMs: 5000
+        version: 1
+        implementation: "graph:architecture/acyclic-groups"
+        mustFail:
+          "src/[services]/git-service/git-service.ts": "import type { Run } from \"../process-service/process-service\";\nexport type Git = Run;\n"
+          "src/[services]/process-service/process-service.ts": "import type { Git } from \"../git-service/git-service\";\nexport type Run = Git;\n"
+        mustPass:
+          "src/[services]/git-service/git-service.ts": "export type Git = number;\n"
+          "src/[services]/process-service/process-service.ts": "import type { Git } from \"../git-service/git-service\";\nexport type Run = Git;\n"

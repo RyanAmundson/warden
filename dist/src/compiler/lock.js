@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { readdir } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { RecordError } from "../records/load.js";
 import { pathGroups } from "../records/paths.js";
 import { benchSettings } from "../records/types.js";
@@ -18,6 +19,24 @@ const versionOf = (name) => {
     }
 };
 export const bundledTools = () => Object.fromEntries(TOOLS.map((name) => [name, versionOf(name)]));
+const OS_JUNK = new Set([".DS_Store", ".localized", "Thumbs.db", "desktop.ini"].map((n) => n.toLowerCase()));
+export const isOsJunk = (name) => OS_JUNK.has(name.normalize("NFKC").toLowerCase());
+export const packFiles = async (base, dir) => {
+    try {
+        const entries = await readdir(join(base, dir), { recursive: true, withFileTypes: true });
+        const link = entries.find((e) => e.isSymbolicLink());
+        if (link !== undefined) {
+            const path = join(link.parentPath, link.name);
+            throw new RecordError(path, "", `is a symbolic link in a pack folder, so the lock cannot hash what it points to. Next action: replace ${path} with a copy of what it points to, then run warden compile.`);
+        }
+        return entries.filter((e) => e.isFile() && !isOsJunk(e.name)).map((e) => relative(base, join(e.parentPath, e.name)).split(sep).join("/"));
+    }
+    catch (cause) {
+        if (cause.code === "ENOENT")
+            return [];
+        throw cause;
+    }
+};
 export const LOCK_PATH = ".warden/lock.json";
 export const sha256 = (content) => createHash("sha256").update(content).digest("hex");
 export function canonicalJson(value) {
@@ -35,7 +54,8 @@ const hashed = (files) => Object.fromEntries(Object.entries(files)
 export function computeLock(set, generated, sources, warden) {
     const guardrails = set.packs
         .flatMap((pack) => pack.practices.flatMap((practice) => {
-        const paths = pathGroups(practice.paths, set.config.packs.find((p) => p.id === pack.id)?.paths ?? []).map((g) => g.join(" & "));
+        const entry = set.config.packs.find((p) => p.id === pack.id);
+        const paths = pathGroups(practice.paths, entry?.paths ?? []).map((g) => g.join(" & "));
         return practice.guardrails.map((g) => [
             g.id,
             {
@@ -46,6 +66,7 @@ export function computeLock(set, generated, sources, warden) {
                 options: g.options ?? null,
                 runs: [...g.runs].sort(),
                 paths: [...paths].sort(),
+                ...(entry?.settings === undefined ? {} : { settings: entry.settings }),
             },
         ]);
     }))

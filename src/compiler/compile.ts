@@ -1,5 +1,5 @@
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join, relative, sep } from "node:path";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import type { Adapter } from "../adapters/types.js";
 import { RecordError, loadRecords, readText } from "../records/load.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
@@ -11,17 +11,7 @@ import { admit } from "./bench.js";
 import { checkConsistency, type Finding } from "./consistency.js";
 import { COMMIT_HOOK, commitHook, stamp } from "./emit.js";
 import { runExamples } from "./examples.js";
-import { LOCK_PATH, type Lock, computeLock, sha256 } from "./lock.js";
-
-const packFiles = async (base: string, dir: string): Promise<string[]> => {
-  try {
-    const entries = await readdir(join(base, dir), { recursive: true, withFileTypes: true });
-    return entries.filter((e) => e.isFile() && e.name !== ".DS_Store").map((e) => relative(base, join(e.parentPath, e.name)).split(sep).join("/"));
-  } catch (cause) {
-    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw cause;
-  }
-};
+import { LOCK_PATH, type Lock, computeLock, packFiles, sha256 } from "./lock.js";
 
 const sourceFiles = async (set: RecordSet, projectRoot: string, wardenRoot: string): Promise<Record<string, string>> => {
   const out: Record<string, string> = {};

@@ -106,6 +106,43 @@ export async function readPack(projectRoot, wardenRoot, id, configFile) {
     }
     return { pack, source: inBundled !== undefined ? "bundled" : "local" };
 }
+const settingsAjv = new Ajv({ useDefaults: true });
+export function resolveSettings(pack, value, file, pointer) {
+    if (pack.settings === undefined) {
+        if (value === undefined)
+            return undefined;
+        throw new RecordError(file, pointer, `pack ${pack.id} declares no settings. Next action: remove settings from pack ${pack.id} in ${file}, then run warden compile.`);
+    }
+    let validate;
+    try {
+        validate = settingsAjv.compile(pack.settings);
+    }
+    catch (cause) {
+        throw new RecordError(pack.file, "/settings", `is not a valid JSON Schema: ${cause.message}. Next action: fix settings in ${pack.file}, then run warden compile.`);
+    }
+    const resolved = structuredClone(value ?? {});
+    if (validate(resolved))
+        return resolved;
+    const error = validate.errors?.[0];
+    const extra = error?.keyword === "additionalProperties" ? error.params.additionalProperty : undefined;
+    if (extra !== undefined) {
+        throw new RecordError(file, `${pointer}${error?.instancePath ?? ""}/${extra}`, `${extra} is not a setting of pack ${pack.id}. Next action: remove or rename ${extra} in the settings${error?.instancePath ?? ""} of pack ${pack.id} in ${file} to a setting the schema in ${pack.file} declares, then run warden compile.`);
+    }
+    throw new RecordError(file, `${pointer}${error?.instancePath ?? ""}`, `${error?.message ?? "invalid"} for pack ${pack.id}. Next action: fix settings${error?.instancePath ?? ""} of pack ${pack.id} in ${file} to match the settings schema in ${pack.file}, then run warden compile.`);
+}
+export const exampleSet = (set) => ({
+    ...set,
+    config: {
+        ...set.config,
+        packs: set.config.packs.map((entry) => {
+            const pack = set.packs.find((p) => p.id === entry.id);
+            if (pack?.settings === undefined)
+                return entry;
+            const examples = pack.settings.examples;
+            return { ...entry, settings: resolveSettings(pack, examples?.[0], pack.file, "/settings/examples/0") };
+        }),
+    },
+});
 export async function loadRecords(projectRoot, wardenRoot) {
     const configFile = join(projectRoot, ".warden", "config.yaml");
     const configText = await readText(configFile);
@@ -119,7 +156,11 @@ export async function loadRecords(projectRoot, wardenRoot) {
             throw new RecordError(configFile, "/packs", `pack ${entry.id} is listed more than once`);
         }
         seen.add(entry.id);
-        packs.push((await readPack(projectRoot, wardenRoot, entry.id, configFile)).pack);
+        const { pack } = await readPack(projectRoot, wardenRoot, entry.id, configFile);
+        const settings = resolveSettings(pack, entry.settings, configFile, `/packs/${config.packs.indexOf(entry)}/settings`);
+        if (settings !== undefined)
+            entry.settings = settings;
+        packs.push(pack);
     }
     return { config, packs: packs.sort((a, b) => a.layer - b.layer), root: projectRoot };
 }

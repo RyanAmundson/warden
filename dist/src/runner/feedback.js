@@ -1,4 +1,5 @@
-import { withPackDir } from "../adapters/cmd.js";
+import { dirname } from "node:path";
+import { runIt } from "../adapters/cmd.js";
 import { PARSE_ERROR } from "../adapters/types.js";
 const EXAMPLE_LINES = 15;
 const ownerOf = (set, id) => {
@@ -11,6 +12,10 @@ const ownerOf = (set, id) => {
 };
 const byLocation = (a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line);
 const shellWords = (words) => words.map((f) => `'${f.replaceAll("'", "'\\''")}'`).join(" ");
+const patternOf = (dir) => dir
+    .replace(/[*?[\]\\]/g, "\\$&")
+    .replace(/^[!#]/, "\\$&")
+    .replace(/ +$/, (spaces) => spaces.replaceAll(" ", "\\ "));
 const nextAction = (failures, set, notes) => {
     if (notes.tampered?.some((t) => t.detail === "no-allowed-signers") === true) {
         return "reinstall Warden from a release that ships its allowed_signers file, then run warden check again.";
@@ -18,7 +23,8 @@ const nextAction = (failures, set, notes) => {
     const restore = notes.tampered?.find((t) => t.restore !== undefined)?.restore;
     const others = (notes.tampered ?? []).filter((t) => t.restore === undefined);
     if (restore !== undefined && others.every((t) => [t.file, ...(t.sources ?? [])].every((f) => restore.paths.includes(f)))) {
-        const stray = restore.stray.length === 0 ? "" : `rm -rf -- ${shellWords(restore.stray)} && `;
+        const unstage = restore.unstage.length === 0 ? "" : `git --literal-pathspecs rm -q -f --cached --ignore-unmatch -- ${shellWords(restore.unstage)} && `;
+        const stray = restore.stray.length === 0 ? "" : `${unstage}git --literal-pathspecs clean -ff -x -- ${shellWords(restore.stray)} && `;
         const back = restore.known.length === 0 ? "" : `git --literal-pathspecs restore --source=${restore.base} --staged --worktree -- ${shellWords(restore.known)} && `;
         const commit = restore.aliased ? "git commit --allow-empty -m 'Restore .warden files changed without an allowed signature'" : `git --literal-pathspecs commit --only --allow-empty -m 'Restore .warden files changed without an allowed signature' -- ${shellWords(restore.paths)}`;
         return `run ${stray}${back}${commit} to restore the .warden/ files changed without an allowed signature to the merge base, then run warden check again.`;
@@ -48,7 +54,7 @@ const nextAction = (failures, set, notes) => {
     if ((notes.unstaged ?? []).length > 0) {
         if (notes.base === undefined)
             throw new Error("an unstaged note needs the base to name the next command");
-        return `run git add -- ${shellWords(notes.unstaged ?? [])}, then run warden check --base ${notes.base}.`;
+        return `run git add${(notes.sparse ?? "off") === "off" ? "" : " --sparse"} -- ${shellWords(notes.unstaged ?? [])}, then run warden check --base ${notes.base}.`;
     }
     const parse = failures.filter((v) => v.guardrail === PARSE_ERROR).sort(byLocation)[0];
     if (parse !== undefined)
@@ -60,7 +66,18 @@ const nextAction = (failures, set, notes) => {
     const legacy = failures.find((v) => v.file === "" && ownerOf(set, v.guardrail)?.guardrail.implementation.startsWith("cmd:") === true);
     if (located.length === 0 && legacy !== undefined) {
         const { guardrail } = ownerOf(set, legacy.guardrail);
-        return `run \`${withPackDir(guardrail.implementation.slice(guardrail.implementation.indexOf(":") + 1), guardrail.packDir)}\` and fix what it reports.`;
+        return runIt(guardrail);
+    }
+    const outside = [...new Set(failures.map((v) => v.file).filter((f) => notes.outside?.includes(f) === true))].sort();
+    if (outside.length > 0) {
+        const dirs = [...new Set(outside.map((f) => (dirname(f) === "." ? f : dirname(f))))];
+        const sparse = notes.sparse ?? "off";
+        const bring = sparse === "cone" && dirs.every((d) => d === d.trim())
+            ? `git sparse-checkout add --skip-checks -- ${shellWords(dirs)}`
+            : sparse === "patterns"
+                ? `git sparse-checkout add -- ${shellWords(dirs.map(patternOf))}`
+                : `git update-index --no-skip-worktree -- ${shellWords(outside)}, then git checkout -- ${shellWords(outside)}`;
+        return `run ${bring} to bring ${outside.join(", ")} onto disk, then change the code at the lines above to match "Do this".`;
     }
     if (failures.length > 0) {
         return 'change the code at the lines above to match "Do this". Do not edit .warden/ or generated config; that is recorded as tampering.';
@@ -111,7 +128,7 @@ export function formatFeedback(failures, set, format, notes = {}) {
     if (format === "json") {
         return JSON.stringify({ failures: items, tampered, unstaged: notes.unstaged, repeated: notes.repeated, overBudget: notes.overBudget, killed: notes.killed, next });
     }
-    const lines = tampered.map((t) => `TAMPERED ${t.file}  ${t.detail}`);
+    const lines = tampered.map((t) => `TAMPERED ${t.file}  ${t.detail}${t.guardrail === undefined ? "" : ` ${t.guardrail}`}`);
     lines.push(...(notes.unstaged ?? []).map((f) => `UNSTAGED ${f}  the commit tier judges what you stage; this working copy differs from the index`));
     for (const item of items) {
         lines.push(`FAIL ${item.file === "" ? "project" : `${item.file}:${item.line}`}  ${item.practice}`);

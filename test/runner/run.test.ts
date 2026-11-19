@@ -16,7 +16,7 @@ describe("runGuardrails", () => {
     await expect(runGuardrails(set, [g], [], { root: ".", generatedDir: "" })).rejects.toMatchObject({
       file: "/w/.warden/packs/p/pack.yaml",
       pointer: "/guardrails/g/implementation",
-      message: 'Guardrail g names adapter "nope", which is not registered; the known adapters are eslint, tsc, cmd. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...> in /w/.warden/packs/p/pack.yaml, then run warden compile.',
+      message: 'Guardrail g names adapter "nope", which is not registered; the known adapters are eslint, tsc, cmd, fs, graph. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...>, fs:<...>, graph:<...> in /w/.warden/packs/p/pack.yaml, then run warden compile.',
     });
   });
 

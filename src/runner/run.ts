@@ -1,14 +1,13 @@
 import { cmdAdapter } from "../adapters/cmd.js";
 import { eslintAdapter } from "../adapters/eslint.js";
+import { fsAdapter, graphAdapter } from "../adapters/tree.js";
 import { tscAdapter } from "../adapters/tsc.js";
 import type { Adapter, RunContext, RunResult } from "../adapters/types.js";
-import { statSync } from "node:fs";
-import { join } from "node:path";
 import { RecordError } from "../records/load.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
 import type { Finding } from "../compiler/consistency.js";
 
-export const adapters = new Map<string, Adapter>([eslintAdapter, tscAdapter, cmdAdapter].map((a) => [a.id, a]));
+export const adapters = new Map<string, Adapter>([eslintAdapter, tscAdapter, cmdAdapter, fsAdapter, graphAdapter].map((a) => [a.id, a]));
 
 export const prefixOf = (g: Guardrail): string => g.implementation.slice(0, g.implementation.indexOf(":"));
 
@@ -27,6 +26,8 @@ export const unknownAdapters = (set: RecordSet): (Finding & { file: string })[] 
   );
 };
 
+export const wholeTree = (g: Guardrail): boolean => adapters.get(prefixOf(g))?.wholeTree === true;
+
 export const refuseUnknownAdapters = (set: RecordSet): void => {
   const [unknown] = unknownAdapters(set);
   if (unknown !== undefined) throw new RecordError(unknown.file, `/guardrails/${unknown.record}/implementation`, unknown.message);
@@ -40,7 +41,6 @@ export async function runGuardrails(set: RecordSet, gs: Guardrail[], files: stri
   const groups = new Map<string, Guardrail[]>();
   for (const g of gs) groups.set(prefixOf(g), [...(groups.get(prefixOf(g)) ?? []), g]);
   const out: RunResult[] = [];
-  const size = { files: files.length, bytes: files.reduce((n, f) => n + statSync(join(ctx.root, f)).size, 0) };
   for (const [prefix, group] of groups) {
     ctx.onGroup?.(prefix, group.map((g) => g.id));
     const results = await (adapters.get(prefix) as Adapter).run(group, files, ctx);
@@ -50,7 +50,7 @@ export async function runGuardrails(set: RecordSet, gs: Guardrail[], files: stri
     for (const r of results) {
       const g = group.find((x) => x.id === r.guardrail);
       const budget = shared === undefined ? g?.budgetMs : passBudget;
-      out.push({ ...size, ...r, ...(shared === undefined ? {} : { shared }), overBudget: ctx.unbudgeted !== true && r.status !== "killed" && g !== undefined && budget !== undefined && r.ms > budget });
+      out.push({ ...r, ...(shared === undefined ? {} : { shared }), overBudget: ctx.unbudgeted !== true && r.status !== "killed" && g !== undefined && budget !== undefined && r.ms > budget });
     }
   }
   return out;

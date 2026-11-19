@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ESLint } from "eslint";
+import { COMMAND_CHARS, runIt } from "../../src/adapters/cmd.js";
 import { eslintAdapter } from "../../src/adapters/eslint.js";
 import { PARSE_ERROR, type RunResult } from "../../src/adapters/types.js";
 import { runCheck } from "../../src/cli/check.js";
@@ -882,7 +883,7 @@ describe("unknown adapter at check time", () => {
     const { code, err } = await check();
     expect(code).toBe(2);
     expect(err).toBe(
-      `${file} /guardrails/extra-no-debugger/implementation: Guardrail extra-no-debugger names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...> in ${file}, then run warden compile.\n`,
+      `${file} /guardrails/extra-no-debugger/implementation: Guardrail extra-no-debugger names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd, fs, graph. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...>, fs:<...>, graph:<...> in ${file}, then run warden compile.\n`,
     );
     await write(".warden/packs/extra/pack.yaml", (await read(".warden/packs/extra/pack.yaml")).replace("eslnt:", "eslint:"));
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
@@ -924,8 +925,9 @@ describe("a cmd Guardrail that runs a script in its pack", () => {
     await write("broken", "x\n");
     const { code, out } = await check();
     expect(code).toBe(1);
-    expect(out).toContain(`  Output:   sh "${script}" exited with 1\n            broken thing`);
-    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([`Next action: run \`sh "${script}"\` and fix what it reports.`]);
+    expect(out).toContain(`  Output:   ${`sh "${script}"`.slice(0, COMMAND_CHARS)}`);
+    expect(out).toContain(` exited with 1\n            broken thing`);
+    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([`Next action: ${runIt({ id: "legacy-script", kind: "legacy", runs: ["commit"], budgetMs: 5000, version: 1, implementation: 'cmd:sh "$WARDEN_PACK_DIR/check.sh"', packDir: join(root, ".warden/packs/legacy") })}`]);
     await write(".warden/packs/legacy/check.sh", "true\n");
     expect((await check()).code).toBe(1);
     expect(await tampered()).toContainEqual({ file: ".warden/packs/legacy/check.sh", detail: "source-drift" });
@@ -954,6 +956,98 @@ describe("a cmd Guardrail that runs a script in its pack", () => {
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
     expect((await check()).code).toBe(0);
     expect(await tampered()).toEqual([]);
+  });
+});
+
+describe("a whole-tree Guardrail", () => {
+  const treePack = [
+    "id: tree",
+    "layer: 2",
+    "terms: []",
+    "practices:",
+    "  - id: no-flag",
+    "    statement: No flag file sits beside the code.",
+    "    terms: []",
+    "    paths: []",
+    "    conflictsWith: []",
+    "    guardrails:",
+    "      - id: tree-flagged",
+    "        kind: lint",
+    "        runs: [commit]",
+    "        budgetMs: 5000",
+    "        version: 1",
+    "        implementation: \"fs:tree/flagged\"",
+    "        mustFail:",
+    "          flag.ts: \"export const flag = 1;\\n\"",
+    "          a.ts: \"export const a = 1;\\n\"",
+    "        mustPass:",
+    "          a.ts: \"export const a = 1;\\n\"",
+    "",
+  ].join("\n");
+  const flagged = 'export default {\n  flagged: ({ files, all }) => (all.includes("flag.ts") ? files.filter((f) => f !== "flag.ts").map((file) => ({ file, message: "flag.ts is present.", doThis: "Delete flag.ts." })) : []),\n};\n';
+  const addTree = async (): Promise<void> => {
+    await write(".warden/config.yaml", config(["core", "local", "tree"]));
+    await write(".warden/packs/tree/pack.yaml", treePack);
+    await write(".warden/packs/tree/fs.js", flagged);
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+  };
+
+  it("fails at the commit tier on a file the change did not touch, with the check's next action", async () => {
+    await addTree();
+    await write("flag.ts", "export const flag = 1;\n");
+    const { code, out } = await check({ format: "json" });
+    expect(code).toBe(1);
+    const { failures } = JSON.parse(out) as { failures: { file: string; doThis: string }[] };
+    expect(failures.map((f) => [f.file, f.doThis])).toEqual([["a.ts", "Delete flag.ts."]]);
+  });
+
+  it("at the commit tier judges only staged files, so an untracked file does not block an unrelated commit", async () => {
+    await addTree();
+    git("add", "-A");
+    git("commit", "-q", "-m", "tree");
+    git("branch", "-f", "main", "HEAD");
+    await write("flag.ts", "export const flag = 1;\n");
+    await write("a.ts", "export const a = 2;\n");
+    git("add", "a.ts");
+    expect((await check({}, false)).code).toBe(0);
+    git("add", "flag.ts");
+    expect((await check({}, false)).code).toBe(1);
+  });
+
+  it("changing a pack's settings and recompiling is loosening", async () => {
+    await write(".warden/config.yaml", config(["core", "local", "tree"]).replace('  - id: tree\n    paths: ["**/*.ts"]', '  - id: tree\n    paths: ["**/*.ts"]\n    settings: { flag: flag.ts }'));
+    await write(".warden/packs/tree/pack.yaml", `${treePack}settings:\n  type: object\n  properties:\n    flag: { type: string, default: flag.ts }\n`);
+    await write(".warden/packs/tree/fs.js", flagged);
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    git("add", "-A");
+    git("commit", "-q", "-m", "settings");
+    git("branch", "-f", "main", "HEAD");
+    expect((await check()).code).toBe(0);
+    await write(".warden/config.yaml", (await read(".warden/config.yaml")).replace("flag: flag.ts", "flag: none.ts"));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    const loosened = await check();
+    expect(loosened.code).toBe(1);
+    expect(loosened.out.split("\n").filter((l) => l.startsWith("TAMPERED"))).toEqual(["TAMPERED .warden/lock.json  loosened tree-flagged"]);
+    expect(await tampered()).toContainEqual({ file: ".warden/lock.json", detail: "loosened" });
+  });
+
+  it("editing a local pack's shipped code and recompiling is loosening", async () => {
+    await addTree();
+    git("add", "-A");
+    git("commit", "-q", "-m", "tree");
+    git("branch", "-f", "main", "HEAD");
+    expect((await check()).code).toBe(0);
+    await write(".warden/packs/tree/fs.js", "export default { flagged: () => [] };\n");
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: ".warden/lock.json", detail: "loosened" });
+  });
+
+  it("compile baselines the violations a new whole-tree Guardrail finds, file by file", async () => {
+    await write("flag.ts", "export const flag = 1;\n");
+    await addTree();
+    expect(JSON.parse(await read(".warden/baseline.json"))).toEqual({ "warden-no-comments": { "a.ts": 1 }, "tree-flagged": { "a.ts": 1 } });
+    expect((await check()).code).toBe(0);
   });
 });
 
@@ -2349,6 +2443,225 @@ describe("signed .warden changes", () => {
     await follow(out);
     expect(git("diff", "--name-only", "HEAD~1", "HEAD").trim()).toBe(".warden/b.txt");
     expect((await check({}, false)).code).toBe(0);
+  });
+
+  const outside = async (): Promise<string> => {
+    const dir = await realpath(await mkdtemp(join(tmpdir(), "warden-outside-")));
+    await writeFile(join(dir, "file"), "precious\n");
+    await writeFile(join(dir, "-rf x"), "precious\n");
+    return dir;
+  };
+
+  it("the restore never deletes a file outside .warden through a symlinked parent folder", async () => {
+    await write(".warden/sub/file", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "add sub/file unsigned");
+    git("rm", "-r", "-q", "--cached", ".warden/sub");
+    await rm(join(root, ".warden/sub"), { recursive: true });
+    const dir = await outside();
+    try {
+      await symlink(dir, join(root, ".warden/sub"));
+      const { code, out } = await check({}, false);
+      expect(code).toBe(1);
+      expect(out).toContain("Next action: run git --literal-pathspecs clean -ff -x -- '.warden/sub' && ");
+      await follow(out);
+      expect((await readdir(dir)).sort()).toEqual(["-rf x", "file"]);
+      expect(existsSync(join(root, ".warden/sub"))).toBe(false);
+      expect((await check({}, false)).code).toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("the printed restore deletes nothing outside .warden when a symlink replaces the folder after the check prints it", async () => {
+    await write(".warden/sub/file", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "add sub/file unsigned");
+    git("rm", "-r", "-q", "--cached", ".warden/sub");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    expect(out).toContain("Next action: run git --literal-pathspecs clean -ff -x -- '.warden/sub/file' && ");
+    const dir = await outside();
+    try {
+      await rm(join(root, ".warden/sub"), { recursive: true });
+      await symlink(dir, join(root, ".warden/sub"));
+      const action = /Next action: run (.*) to restore the \.warden\/ files/s.exec(out)?.[1] as string;
+      spawnSync("sh", ["-c", action], { cwd: root, env: await commitEnv(), encoding: "utf8" });
+      expect((await readdir(dir)).sort()).toEqual(["-rf x", "file"]);
+      expect(await readFile(join(dir, "file"), "utf8")).toBe("precious\n");
+      await fixes(false);
+      expect((await readdir(dir)).sort()).toEqual(["-rf x", "file"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  const caseAlias = async (): Promise<void> => {
+    await write(".warden/sub/keep", "keep\n");
+    git("add", "-A");
+    commitSigned("ryan", "signed keep");
+    git("branch", "-f", "main", "HEAD");
+    await write(".warden/sub/file", "evil\n");
+    const blob = git("hash-object", "-w", ".warden/sub/file").trim();
+    git("update-index", "--add", "--cacheinfo", `100644,${blob},.warden/Sub/file`);
+    git("commit", "-q", "-m", "unsigned case alias");
+    git("--literal-pathspecs", "rm", "-q", "--cached", ".warden/Sub/file");
+  };
+
+  it("a stray path whose case differs from its real folder on disk is removed and the check converges", async (ctx) => {
+    if (!existsSync(join(root, ".WARDEN"))) ctx.skip();
+    git("config", "core.ignorecase", "true");
+    await caseAlias();
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    expect(out).toContain("Next action: run git --literal-pathspecs clean -ff -x -- '.warden/sub/file' && ");
+    await fixes(false);
+    expect(await readdir(join(root, ".warden/sub"))).toEqual(["keep"]);
+  });
+
+  it("a stray path whose case differs from a symlinked folder on disk removes only the link and the check converges", async (ctx) => {
+    if (!existsSync(join(root, ".WARDEN"))) ctx.skip();
+    git("config", "core.ignorecase", "true");
+    await write(".warden/Sub/file", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "add Sub/file unsigned");
+    git("rm", "-r", "-q", "--cached", ".warden/Sub");
+    await rm(join(root, ".warden/Sub"), { recursive: true });
+    const dir = await outside();
+    try {
+      await symlink(dir, join(root, ".warden/sub"));
+      const { code, out } = await check({}, false);
+      expect(code).toBe(1);
+      expect(out).toContain("Next action: run git --literal-pathspecs clean -ff -x -- '.warden/sub' && ");
+      await fixes(false);
+      expect((await readdir(dir)).sort()).toEqual(["-rf x", "file"]);
+      expect(existsSync(join(root, ".warden/sub"))).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a symlinked parent folder that is staged in the index is unstaged and removed, and the check converges", async () => {
+    await write(".warden/sub/file", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "add sub/file unsigned");
+    git("rm", "-r", "-q", "--cached", ".warden/sub");
+    await rm(join(root, ".warden/sub"), { recursive: true });
+    const dir = await outside();
+    try {
+      await symlink(dir, join(root, ".warden/sub"));
+      git("add", ".warden/sub");
+      const { code, out } = await check({}, false);
+      expect(code).toBe(1);
+      expect(out).toContain("Next action: run git --literal-pathspecs rm -q -f --cached --ignore-unmatch -- '.warden/sub' && git --literal-pathspecs clean -ff -x -- '.warden/sub' && ");
+      await fixes(false);
+      expect((await readdir(dir)).sort()).toEqual(["-rf x", "file"]);
+      expect(existsSync(join(root, ".warden/sub"))).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a staged symlinked parent pointed at a new target after staging is unstaged and removed, and the check converges", async () => {
+    await write(".warden/sub/file", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "add sub/file unsigned");
+    git("rm", "-r", "-q", "--cached", ".warden/sub");
+    await rm(join(root, ".warden/sub"), { recursive: true });
+    const first = await outside();
+    const second = await outside();
+    try {
+      await symlink(first, join(root, ".warden/sub"));
+      git("add", ".warden/sub");
+      await rm(join(root, ".warden/sub"));
+      await symlink(second, join(root, ".warden/sub"));
+      const { code, out } = await check({}, false);
+      expect(code).toBe(1);
+      expect(out).toContain("Next action: run git --literal-pathspecs rm -q -f --cached --ignore-unmatch -- '.warden/sub' && ");
+      await fixes(false);
+      for (const dir of [first, second]) expect((await readdir(dir)).sort()).toEqual(["-rf x", "file"]);
+      expect(existsSync(join(root, ".warden/sub"))).toBe(false);
+    } finally {
+      await rm(first, { recursive: true, force: true });
+      await rm(second, { recursive: true, force: true });
+    }
+  });
+
+  it("a staged symlinked parent whose index spelling differs in case from the disk is unstaged by its index spelling, and the check converges", async (ctx) => {
+    if (!existsSync(join(root, ".WARDEN"))) ctx.skip();
+    git("config", "core.ignorecase", "true");
+    await write(".warden/Sub/file", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "add Sub/file unsigned");
+    git("rm", "-r", "-q", "--cached", ".warden/Sub");
+    await rm(join(root, ".warden/Sub"), { recursive: true });
+    const dir = await outside();
+    try {
+      await symlink(dir, join(root, ".warden/sub"));
+      const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: root, input: dir, encoding: "utf8" }).trim();
+      git("update-index", "--add", "--cacheinfo", `120000,${blob},.warden/Sub`);
+      const { code, out } = await check({}, false);
+      expect(code).toBe(1);
+      expect(out).toContain("Next action: run git --literal-pathspecs rm -q -f --cached --ignore-unmatch -- '.warden/Sub' && git --literal-pathspecs clean -ff -x -- '.warden/sub' && ");
+      await fixes(false);
+      expect((await readdir(dir)).sort()).toEqual(["-rf x", "file"]);
+      expect(existsSync(join(root, ".warden/sub"))).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a nested git repository at a stray path is removed and the check converges", async () => {
+    await write(".warden/x", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "add x unsigned");
+    git("rm", "-q", "--cached", ".warden/x");
+    await rm(join(root, ".warden/x"));
+    await mkdir(join(root, ".warden/x"));
+    execFileSync("git", ["init", "-q"], { cwd: join(root, ".warden/x") });
+    await writeFile(join(root, ".warden/x/a"), "a\n");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    expect(out).toContain("Next action: run git --literal-pathspecs clean -ff -x -- '.warden/x' && ");
+    await fixes(false);
+    expect(existsSync(join(root, ".warden/x"))).toBe(false);
+  });
+
+  it("a stray path that differs only in case from a tracked file commits the index and the check converges", async (ctx) => {
+    if (!existsSync(join(root, ".WARDEN"))) ctx.skip();
+    git("config", "core.ignorecase", "true");
+    await write(".warden/sub/file", "signed\n");
+    git("add", "-A");
+    commitSigned("ryan", "signed file");
+    git("branch", "-f", "main", "HEAD");
+    await write("evil.txt", "evil\n");
+    const blob = git("hash-object", "-w", "evil.txt").trim();
+    await rm(join(root, "evil.txt"));
+    git("update-index", "--add", "--cacheinfo", `100644,${blob},.warden/Sub/file`);
+    git("commit", "-q", "-m", "unsigned case alias of a tracked file");
+    git("--literal-pathspecs", "rm", "-q", "--cached", ".warden/Sub/file");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    expect(out).toContain("&& git commit --allow-empty -m 'Restore .warden files changed without an allowed signature' to restore");
+    await fixes(false);
+    expect(await read(".warden/sub/file")).toBe("signed\n");
+    expect(git("ls-tree", "-r", "--name-only", "HEAD", ".warden").split("\n")).not.toContain(".warden/Sub/file");
+  });
+
+  it("the restore removes hostile untracked names literally and touches nothing else", async () => {
+    const names = [".warden/-rf x", ".warden/a b", ".warden/$(touch PWNED)", ".warden/q'uote", ".warden/..dots", ".warden/-", ".warden/*"];
+    for (const n of names) await write(n, "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "hostile unsigned");
+    git("--literal-pathspecs", "rm", "-q", "--cached", "--", ...names);
+    await write("keep.txt", "keep\n");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    await follow(out);
+    expect((await check({}, false)).code).toBe(0);
+    expect(existsSync(join(root, "PWNED")) || existsSync(join(root, ".warden/PWNED"))).toBe(false);
+    expect(await read("keep.txt")).toBe("keep\n");
+    expect((await readdir(join(root, ".warden"))).filter((n) => names.includes(`.warden/${n}`))).toEqual([]);
   });
 
   it("the hook still refuses a plain partial commit whose unstaged files would fail a commit-tier guardrail", async () => {

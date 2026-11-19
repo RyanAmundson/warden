@@ -113,16 +113,17 @@ The baseline absorbs these at adoption, so the ratchet never blocks work.
   Guardrail, so its `mustFail` example never fails. That mapping is part of
   the second release's engine needs.
 - **A `cmd` Guardrail can't be baselined** and must not use kind `lint`
-  (sibling note from the collection-folders session). Both apply to the
-  second release.
+  (sibling note from the collection-folders session). The second release
+  therefore runs its cross-file checks through the `fs` adapter, whose
+  findings are per file.
 - **The YAGNI single-implementation proxy needs a port exception.** The
   architecture pack requires each port to have one implementation at first,
   so that proxy's statement must exclude a `port`.
 
 ## Second release (`cm-wkqedr.27`)
 
-Cross-file checks as tested `.mjs` scripts under `packs/principles/bin/`,
-each a `cmd` Guardrail of kind `runtime` at `boundary`:
+Cross-file checks as tree checks shipped in the pack, each an `fs` or
+`graph` Guardrail of kind `lint` at `boundary`:
 
 - Duplicate blocks of 8 or more significant lines (DRY). A spike measured
   1.4 s across all of Context Manager and found 679 duplicates.
@@ -132,8 +133,76 @@ each a `cmd` Guardrail of kind `runtime` at `boundary`:
 - Unused parameters through `tsc`, once the adapter maps their codes.
 - Practice `composition-and-narrow-interfaces` (Liskov and interface
   segregation): no class extends anything except `Error`, and an interface
-  has at most 7 members. It uses `no-restricted-syntax` once
-  `cm-wkqedr.25` lets packs share a rule, or a `warden/*` rule.
+  has at most 7 members. It uses `no-restricted-syntax` or a `warden/*`
+  rule.
+
+### What shipped
+
+- Practices `no-repeated-code` (`principles-duplicate-blocks`),
+  `no-speculative-code` (`principles-unused-exports`,
+  `principles-single-implementation`), and `one-home-per-name`
+  (`principles-duplicate-exports`). Each is a check that runs in the pack's
+  sandbox: `graph:principles/unused-exports` in `packs/principles/graph.js`,
+  and the other three as `fs:principles/<name>` in `packs/principles/fs.js`.
+- The unused-export check uses the `graph` adapter's import graph to skip
+  each file that no other file imports. Such a file is an entry point, such
+  as a script, a package's main file, or a page a framework loads, and its
+  exports are its interface. This also keeps a one-file example of another
+  Guardrail from failing the check.
+- The checks share `packs/principles/code.js`. They read the files Warden
+  gives them through `read`, never the disk, and parse them with the `ts`
+  compiler API Warden passes in. Each finding names one file and line, and
+  a duplicate block also its last line, so the baseline counts it per file.
+  Each finding's Do this names the exact edit for that finding.
+- Test, spec, and story files are read as users: their imports and
+  implementing classes count. Violations are never reported in them, and
+  the duplicate-block check does not read them. Declaration files are not
+  read.
+- The unused-export check reads users from every code file Warden lists for
+  the project, including files outside the Practice's paths, such as
+  `.jsx`, and reports only in files on those paths.
+- `import()` counts as a use: of each name destructured from it or read from
+  its awaited result or its `then` callback, and otherwise of every export
+  of the file it names. A type `import("./x").Name` counts as a use of
+  `Name`.
+- A single-implementation finding names a class outside test files. An
+  interface also counts as implemented by each function outside test files
+  whose return type it is, each variable it types that holds an object
+  literal, and each object literal that `satisfies` it, so a factory that
+  returns an object is a second implementation.
+- A project lists names that a host contract requires every such file to
+  export, such as a plugin's `start`, in the pack's `contractExports`
+  setting on its entry in `.warden/config.yaml`. Both name checks skip
+  them. A change to the setting is recorded as loosening, like any other
+  setting. The SSOT check's Do this names the setting.
+- `export * from` and `export * as` with a relative specifier count as a use
+  of every export of the file they name.
+- Import lists and export lists are not significant lines for the
+  duplicate-block check.
+- Both name checks skip export names that a framework requires by name:
+  Next.js page, layout, and route exports (`metadata`, `generateMetadata`,
+  `viewport`, `generateViewport`, `generateStaticParams`,
+  `generateImageMetadata`, `generateSitemaps`, `dynamic`, `dynamicParams`,
+  `revalidate`, `fetchCache`, `runtime`, `preferredRegion`, `maxDuration`,
+  the HTTP method handlers, `config`, `middleware`); React Router and Remix
+  route exports (`loader`, `action`, `clientLoader`, `clientAction`,
+  `meta`, `links`, `headers`, `handle`, `shouldRevalidate`,
+  `ErrorBoundary`, `HydrateFallback`, `Layout`); and SvelteKit (`load`,
+  `prerender`, `ssr`, `csr`, `trailingSlash`, `entries`). The list is
+  `FRAMEWORK_EXPORTS` in `code.js`.
+- A port is the file named after its group folder inside a bracketed
+  collection. Files named `create` are skipped by the SSOT check, because the
+  architecture layout gives every group one.
+- `principles-unused-parameters` is `tsc:noUnusedParameters` in Practice
+  `no-unused-code`. TS6133 and TS6198 come from both `noUnusedParameters`
+  and `noUnusedLocals`, so the `tsc` worker marks each one that starts inside
+  a parameter name or a type parameter list, and the adapter gives those to
+  the `noUnusedParameters` Guardrail and the rest to `noUnusedLocals`. TS6205
+  belongs to `noUnusedParameters`, and TS6138 to `noUnusedLocals`. Unused
+  locals stay with the ESLint Guardrail `principles-unused-locals`, so the
+  pack adds no `tsc:noUnusedLocals` Guardrail.
+- `composition-and-narrow-interfaces` is not built yet. Its engine
+  dependency, `cm-wkqedr.25`, is closed.
 
 ## Left to the builder
 

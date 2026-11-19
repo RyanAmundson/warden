@@ -39,6 +39,7 @@ export interface RunContext {
 
 export interface Adapter {
   id: string;
+  wholeTree?: boolean;
   emit(gs: Guardrail[], set: RecordSet): Record<string, string>;
   run(gs: Guardrail[], files: string[], ctx: RunContext): Promise<RunResult[]>;
 }

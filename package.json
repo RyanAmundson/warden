@@ -1,10 +1,10 @@
 {
   "name": "warden",
-  "version": "0.1.9",
+  "version": "0.1.11",
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20.12"
+    "node": ">=25"
   },
   "scripts": {
     "build:dist": "tsc",
@@ -25,9 +25,10 @@
     "vitest": "4.1.12"
   },
   "bin": {
-    "warden": "dist/src/cli/main.js"
+    "warden": "bin/warden.js"
   },
   "files": [
+    "bin",
     "dist/src",
     "dist/eslint-plugin",
     "dist/schema",

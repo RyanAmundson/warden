@@ -1,12 +1,13 @@
-import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { type Served, serve } from "../../src/cli/daemon.js";
-import { STALE_MS, heartbeatFile, heartbeatProblem, stateFile } from "../../src/runner/daemon.js";
+import { STALE_MS, heartbeatFile, heartbeatProblem, openAlerts, stateFile } from "../../src/runner/daemon.js";
 import { type Evidence, appendEvidence, readEvidence } from "../../src/runner/evidence.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
@@ -415,6 +416,298 @@ it("a commit-tier check in a sparse checkout ignores files an earlier branch com
   expect(warden(root, {}, "check", "--base", "main").code).toBe(0);
 });
 
+it("a conflict-resolution merge in a sparse checkout passes when the other parent changed a file outside the sparse set", async () => {
+  await mkdir(join(root, "docs"), { recursive: true });
+  await writeFile(join(root, "docs/x.md"), "hi\n");
+  git(root, "add", "-A");
+  commitUnhooked("docs");
+  git(root, "switch", "-q", "-c", "feat");
+  await writeFile(join(root, "src/a.ts"), "export const a = 2;\n");
+  git(root, "add", "-A");
+  commitUnhooked("feat a");
+  git(root, "switch", "-q", "main");
+  await writeFile(join(root, "src/a.ts"), "export const a = 3;\n");
+  await writeFile(join(root, "docs/x.md"), "hi\nmore\n");
+  git(root, "add", "-A");
+  commitUnhooked("main a and docs");
+  git(root, "switch", "-q", "feat");
+  git(root, "sparse-checkout", "set", "--no-cone", "/*", "!/docs/");
+  expect(() => git(root, "-c", "core.hooksPath=/dev/null", "merge", "-q", "--no-edit", "main")).toThrow();
+  expect(existsSync(join(root, "docs/x.md"))).toBe(false);
+  await writeFile(join(root, "src/a.ts"), "export const a = 4;\n");
+  git(root, "add", "src/a.ts");
+  expect(warden(root, {}, "check", "--base", "main").code).toBe(0);
+});
+
+it("a skip-worktree file with clean content on disk does not hide a bad blob committed without the hook", async () => {
+  git(root, "switch", "-q", "-c", "feat");
+  await writeFile(join(root, "src/a.ts"), "// bad comment\nexport const a = 1;\n");
+  git(root, "add", "-A");
+  commitUnhooked("bad");
+  await writeFile(join(root, "src/a.ts"), "export const a = 1;\n");
+  git(root, "update-index", "--skip-worktree", "src/a.ts");
+  const r = warden(root, {}, "check", "--base", "main");
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("Next action: run git update-index --no-skip-worktree -- 'src/a.ts'");
+});
+
+const SIX = "export const l1 = 1;\nexport const l2 = 2;\nexport const l3 = 3;\nexport const l4 = 4;\nexport const l5 = 5;\nexport const l6 = 6;\n";
+
+const hooked = async (...args: string[]): Promise<{ status: number | null; out: string }> => {
+  const bin = join(scratch, "bin");
+  await mkdir(bin, { recursive: true });
+  await writeFile(join(bin, "warden"), `#!/bin/sh\nexec node '${main}' "$@"\n`, { mode: 0o755 });
+  const r = spawnSync("git", ["-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: root, encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, GIT_EDITOR: "true" } });
+  return { status: r.status, out: `${r.stdout}${r.stderr}` };
+};
+
+const sparseOut = (cone: boolean): void => {
+  if (cone) git(root, "sparse-checkout", "set", "--cone", "src", ".warden");
+  else git(root, "sparse-checkout", "set", "--no-cone", "/*", "!/docs/");
+};
+
+const seedDocs = async (): Promise<void> => {
+  await mkdir(join(root, "docs"), { recursive: true });
+  await writeFile(join(root, "docs/x.ts"), SIX);
+  git(root, "add", "-A");
+  commitUnhooked("docs");
+};
+
+it.each([false, true])("a merge in a sparse checkout (cone %s) commits when both sides changed a file outside the sparse set", async (cone) => {
+  await seedDocs();
+  git(root, "switch", "-q", "-c", "feat");
+  await writeFile(join(root, "src/a.ts"), "export const a = 2;\n");
+  await writeFile(join(root, "docs/x.ts"), SIX.replace("l1 = 1", "l1 = 10"));
+  git(root, "add", "-A");
+  commitUnhooked("feat");
+  git(root, "switch", "-q", "main");
+  await writeFile(join(root, "src/a.ts"), "export const a = 3;\n");
+  await writeFile(join(root, "docs/x.ts"), SIX.replace("l6 = 6", "l6 = 60"));
+  git(root, "add", "-A");
+  commitUnhooked("main");
+  git(root, "switch", "-q", "feat");
+  sparseOut(cone);
+  expect(() => git(root, "-c", "core.hooksPath=/dev/null", "merge", "-q", "--no-edit", "main")).toThrow();
+  expect(existsSync(join(root, "docs/x.ts"))).toBe(false);
+  await writeFile(join(root, "src/a.ts"), "export const a = 4;\n");
+  git(root, "add", "src/a.ts");
+  expect(await hooked("commit", "-q", "--no-edit")).toMatchObject({ status: 0 });
+  expect(git(root, "show", "HEAD:docs/x.ts")).toBe(SIX.replace("l1 = 1", "l1 = 10").replace("l6 = 6", "l6 = 60"));
+});
+
+it.each(["commit", "continue"])("a cherry-pick conflict in a sparse checkout commits with git %s", async (how) => {
+  await seedDocs();
+  git(root, "switch", "-q", "-c", "other");
+  await writeFile(join(root, "src/a.ts"), "export const a = 3;\n");
+  await writeFile(join(root, "docs/x.ts"), SIX.replace("l6 = 6", "l6 = 60"));
+  git(root, "add", "-A");
+  commitUnhooked("other");
+  git(root, "switch", "-q", "-c", "feat", "main");
+  await writeFile(join(root, "src/a.ts"), "export const a = 2;\n");
+  await writeFile(join(root, "docs/x.ts"), SIX.replace("l1 = 1", "l1 = 10"));
+  git(root, "add", "-A");
+  commitUnhooked("feat");
+  sparseOut(false);
+  expect(() => git(root, "-c", "core.hooksPath=/dev/null", "cherry-pick", "other")).toThrow();
+  await writeFile(join(root, "src/a.ts"), "export const a = 4;\n");
+  git(root, "add", "src/a.ts");
+  const r = how === "commit" ? await hooked("commit", "-q", "--no-edit") : await hooked("cherry-pick", "--continue");
+  expect(r).toMatchObject({ status: 0 });
+});
+
+it("a revert conflict in a sparse checkout commits", async () => {
+  await seedDocs();
+  git(root, "switch", "-q", "-c", "feat");
+  await writeFile(join(root, "docs/x.ts"), SIX.replace("l1 = 1", "l1 = 10"));
+  git(root, "add", "-A");
+  commitUnhooked("docs v2");
+  await writeFile(join(root, "src/a.ts"), "export const a = 2;\n");
+  await writeFile(join(root, "docs/x.ts"), SIX.replace("l1 = 1", "l1 = 10").replace("l6 = 6", "l6 = 60"));
+  git(root, "add", "-A");
+  commitUnhooked("to revert");
+  const reverted = git(root, "rev-parse", "HEAD").trim();
+  await writeFile(join(root, "src/a.ts"), "export const a = 3;\n");
+  git(root, "add", "-A");
+  commitUnhooked("after");
+  sparseOut(false);
+  expect(() => git(root, "-c", "core.hooksPath=/dev/null", "revert", "--no-edit", reverted)).toThrow();
+  await writeFile(join(root, "src/a.ts"), "export const a = 4;\n");
+  git(root, "add", "src/a.ts");
+  expect(await hooked("commit", "-q", "--no-edit")).toMatchObject({ status: 0 });
+});
+
+it("a skip-worktree file deleted from disk does not hide a bad blob committed without the hook", async () => {
+  git(root, "switch", "-q", "-c", "feat");
+  await writeFile(join(root, "src/a.ts"), "// bad comment\nexport const a = 1;\n");
+  git(root, "add", "-A");
+  commitUnhooked("bad");
+  git(root, "update-index", "--skip-worktree", "src/a.ts");
+  await rm(join(root, "src/a.ts"));
+  const r = warden(root, {}, "check", "--base", "main");
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("src/a.ts:1");
+  expect(readEvidence(PROJECT).filter((e) => e.kind === "fired" && e.file === "src/a.ts").map((e) => e.detail)).toEqual([createHash("sha256").update("// bad comment\nexport const a = 1;\n").digest("hex")]);
+  expect(r.out).toContain("Next action: run git update-index --no-skip-worktree -- 'src/a.ts', then git checkout -- 'src/a.ts' to bring src/a.ts onto disk, then change the code at the lines above");
+  git(root, "update-index", "--no-skip-worktree", "--", "src/a.ts");
+  git(root, "checkout", "--", "src/a.ts");
+  expect(readFileSync(join(root, "src/a.ts"), "utf8")).toContain("// bad comment");
+  await writeFile(join(root, "src/a.ts"), "export const a = 1;\n");
+  git(root, "add", "src/a.ts");
+  expect(warden(root, {}, "check", "--base", "main").code).toBe(0);
+});
+
+it("a violation in a file outside the sparse set names the sparse-checkout step first, and that step works", async () => {
+  await seedDocs();
+  git(root, "switch", "-q", "-c", "feat");
+  await writeFile(join(root, "src/a.ts"), "export const a = 2;\n");
+  git(root, "add", "-A");
+  commitUnhooked("feat");
+  git(root, "switch", "-q", "main");
+  await writeFile(join(root, "src/a.ts"), "export const a = 3;\n");
+  await writeFile(join(root, "docs/x.ts"), `// bad comment\n${SIX}`);
+  git(root, "add", "-A");
+  commitUnhooked("main");
+  git(root, "switch", "-q", "feat");
+  sparseOut(false);
+  expect(() => git(root, "-c", "core.hooksPath=/dev/null", "merge", "-q", "--no-edit", "main")).toThrow();
+  await writeFile(join(root, "src/a.ts"), "export const a = 4;\n");
+  git(root, "add", "src/a.ts");
+  const r = warden(root, {}, "check", "--base", "main");
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("Next action: run git sparse-checkout add -- 'docs' to bring docs/x.ts onto disk, then change the code at the lines above");
+  git(root, "sparse-checkout", "add", "--", "docs");
+  expect(existsSync(join(root, "docs/x.ts"))).toBe(true);
+  await writeFile(join(root, "docs/x.ts"), SIX);
+  git(root, "add", "docs/x.ts");
+  expect(warden(root, {}, "check", "--base", "main").code).toBe(0);
+});
+
+const between = (text: string, start: string, end: string): string => {
+  const from = text.indexOf(start);
+  expect(from).toBeGreaterThanOrEqual(0);
+  return text.slice(from + start.length, text.indexOf(end, from + start.length));
+};
+
+const follow = (step: string): void => {
+  execFileSync("sh", ["-c", step.replaceAll(", then ", " && ")], { cwd: root, stdio: "ignore" });
+};
+
+it.each([
+  { dir: "docs/[id]", cone: false, step: "git sparse-checkout add -- 'docs/\\[id\\]'" },
+  { dir: "docs/[id]", cone: true, step: "git sparse-checkout add --skip-checks -- 'docs/[id]'" },
+  { dir: "!x", cone: false, step: "git sparse-checkout add -- '\\!x'" },
+  { dir: "#x", cone: false, step: "git sparse-checkout add -- '\\#x'" },
+  { dir: "x ", cone: false, step: "git sparse-checkout add -- 'x\\ '" },
+  { dir: "x ", cone: true, step: "git update-index --no-skip-worktree -- 'x /k.ts', then git checkout -- 'x /k.ts'" },
+])("the printed steps bring $dir onto disk and stage it (cone $cone)", async ({ dir, cone, step }) => {
+  const file = `${dir}/k.ts`;
+  await mkdir(join(root, dir), { recursive: true });
+  await writeFile(join(root, file), "export const k = 1;\n");
+  git(root, "add", "-A");
+  commitUnhooked("k");
+  git(root, "switch", "-q", "-c", "feat");
+  await writeFile(join(root, file), "// bad\nexport const k = 1;\n");
+  git(root, "add", "-A");
+  commitUnhooked("bad");
+  if (cone) git(root, "sparse-checkout", "set", "--cone", "src", ".warden");
+  else git(root, "sparse-checkout", "set", "--no-cone", "/src/", "/.warden/");
+  expect(existsSync(join(root, file))).toBe(false);
+  await writeFile(join(root, "src/a.ts"), "export const a = 2;\n");
+  git(root, "add", "src/a.ts");
+  const r = warden(root, {}, "check", "--base", "main");
+  expect(r.code).toBe(1);
+  expect(between(r.out, "Next action: run ", ` to bring ${file} onto disk`)).toBe(step);
+  follow(step);
+  expect(readFileSync(join(root, file), "utf8")).toContain("// bad");
+  await writeFile(join(root, file), "export const k = 1;\n");
+  const unstaged = warden(root, {}, "check", "--base", "main");
+  expect(unstaged.code).toBe(1);
+  follow(between(unstaged.out, "Next action: run ", ", then run warden check"));
+  expect(warden(root, {}, "check", "--base", "main").code).toBe(0);
+});
+
+const countingGit = async (extra = ""): Promise<{ bin: string; log: string }> => {
+  const bin = join(scratch, "gitbin");
+  const log = join(scratch, "git.log");
+  const real = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  await mkdir(bin, { recursive: true });
+  await writeFile(join(bin, "git"), `#!/bin/sh\necho "$*" >> '${log}'\n"${real}" "$@"\nrc=$?\n${extra}\nexit $rc\n`, { mode: 0o755 });
+  return { bin, log };
+};
+
+it("judging files missing from disk runs the same number of git processes for 2 files as for 30", async () => {
+  git(root, "switch", "-q", "-c", "feat");
+  await mkdir(join(root, "lib"), { recursive: true });
+  const files = Array.from({ length: 30 }, (_, i) => `lib/f${i}.ts`);
+  for (const f of files) await writeFile(join(root, f), `export const v = ${files.indexOf(f)};\n`);
+  git(root, "add", "-A");
+  commitUnhooked("many");
+  const { bin, log } = await countingGit();
+  const hide = async (some: string[]): Promise<void> => {
+    git(root, "update-index", "--skip-worktree", "--", ...some);
+    for (const f of some) await rm(join(root, f));
+  };
+  const spawns = async (): Promise<number> => {
+    await rm(log, { force: true });
+    expect(warden(root, { PATH: `${bin}:${process.env.PATH}` }, "check", "--base", "main").code).toBe(0);
+    return readFileSync(log, "utf8").trim().split("\n").length;
+  };
+  await hide(files.slice(0, 2));
+  const few = await spawns();
+  await hide(files.slice(2));
+  expect(await spawns()).toBeLessThanOrEqual(few);
+});
+
+it.each(["SIGINT", "SIGHUP"] as const)("a check interrupted by %s removes its folder of copied blobs", async (signal) => {
+  git(root, "switch", "-q", "-c", "feat");
+  await writeFile(join(root, "src/a.ts"), "export const a = 5;\n");
+  git(root, "add", "-A");
+  commitUnhooked("feat");
+  git(root, "update-index", "--skip-worktree", "src/a.ts");
+  await rm(join(root, "src/a.ts"));
+  const marker = join(scratch, "copied");
+  const { bin } = await countingGit(`case "$*" in *checkout-index*) touch '${marker}'; sleep 1;; esac`);
+  const temp = join(scratch, "tmp");
+  await mkdir(temp, { recursive: true });
+  const child = spawn("node", [main, "check", "--base", "main"], { cwd: root, env: { ...process.env, WARDEN_HOME: home, HOME: userHome, CLAUDE_CONFIG_DIR: claude, PATH: `${bin}:${process.env.PATH}`, TMPDIR: temp }, stdio: "ignore" });
+  const exited = new Promise<NodeJS.Signals | null>((done) => child.on("exit", (_code, signal) => done(signal)));
+  await until("the blobs are copied", () => existsSync(marker));
+  child.kill(signal);
+  expect(await exited).toBe(signal);
+  expect(readdirSync(temp).filter((f) => f.startsWith("warden-blobs-"))).toEqual([]);
+});
+
+it("a check that a passing run's stamp already covers does not refuse for that commit before the daemon rescans", async () => {
+  const s = await start();
+  git(root, "switch", "-q", "-c", "feat");
+  await writeFile(join(root, "src/b.ts"), "export const b = 2;\n");
+  git(root, "add", "-A");
+  commitUnhooked("skipped the hook");
+  const skipped = git(root, "rev-parse", "HEAD").trim();
+  await until("the unchecked commit is flagged", () => unchecked(s).includes(skipped));
+  await s.close();
+  served = undefined;
+  await beat({});
+  expect(openAlerts(root).map((d) => d.file)).toEqual([skipped]);
+  expect(warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", "main").code).toBe(0);
+  await writeFile(join(root, "src/c.ts"), "export const c = 3;\n");
+  git(root, "add", "-A");
+  expect(warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", "main").code).toBe(0);
+});
+
+it("a repository registered while the daemon runs is watched without waiting for the next tick", async () => {
+  served = await serve(wardenRoot, 0, { intervalMs: 60_000, debounceMs: 20 });
+  await served.daemon.settled();
+  const other = join(scratch, "late");
+  await mkdir(join(other, "src"), { recursive: true });
+  await writeFile(join(other, "src/a.ts"), "export const a = 1;\n");
+  git(scratch, "init", "-q", "-b", "main", other);
+  git(other, "add", "-A");
+  git(other, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "seed");
+  expect(warden(other, {}, "init").code).toBe(0);
+  await until("the late repository is watched", () => served?.daemon.projects.has(other) === true);
+});
+
 it("a commit-tier check judges a skip-worktree or assume-unchanged blob, not the file on disk", async () => {
   const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: root, input: "// bad comment\nexport const a = 1;\n", encoding: "utf8" }).trim();
   git(root, "update-index", "--cacheinfo", `100644,${blob},src/a.ts`);
@@ -566,7 +859,7 @@ it("WARDEN_DAEMON=off skips the gate but records it, and the daemon raises it un
   const blocked = warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", "main");
   expect(blocked).toMatchObject({ code: 1, err: expect.stringContaining(`gate-off run `) });
   await until("the gated check closes the alert", () => [...(s.daemon.projects.get(root)?.open.values() ?? [])].every((d) => d.detail !== "gate-off"));
-  expect(warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", "main").code).toBe(0);
+  await until("the closed alert reaches state.json", () => openAlerts(root).length === 0);
   expect(warden(root, { WARDEN_DAEMON: "off" }, "check", "--tier", "edit", "--base", "main").code).toBe(0);
   expect(readEvidence(PROJECT).filter((e) => e.kind === "gate-off")).toHaveLength(1);
 });
