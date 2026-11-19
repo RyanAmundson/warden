@@ -627,7 +627,8 @@ it("a record without kinds counts its recorded failures as unknown kind, in a co
   expect(lines).toContain(" █ deterministic   ▒ judgment   ░ prose   · unknown");
   const narrow = renderDeterminism({ ...threeProjects(), projects: [...threeProjects().projects, { project: "older", run: old }] }, { cols: 60, rows: 24 });
   for (const l of narrow) expect(l.length, l).toBeLessThanOrEqual(60);
-  expect(narrow[2]).toMatch(/^ DETERMINISM BY PROJECT +deter {2}judgm {2}prose {2}unkno$/);
+  expect(narrow[2]).toMatch(/^ DETERMINISM +deterministic {2}judgment {2}prose {2}unknown$/);
+  expect(narrow[3]).toMatch(/^ ▸ contex… █+▒+░+ +11 +2 +1 +0$/);
   expect(renderDeterminism(threeProjects(), { cols: 120, rows: 40 }).join("\n")).not.toContain("unknown");
 });
 
@@ -706,4 +707,31 @@ it("a very short terminal still shows the current project above the hidden-proje
   const lines = renderDeterminism(withOlder(), { cols: 120, rows: 6 });
   expect(lines).toContainEqual(expect.stringMatching(/^ ▸ context-manager /));
   expect(lines).toContain(" 3 projects hidden. Next action: run warden --determinism | cat");
+});
+
+it("at 40x10 the hidden-projects line wraps so its whole next action shows, and the screen fits the terminal", () => {
+  const lines = renderDeterminism({ ...withOlder(), projects: [...withOlder().projects, { project: "fresh" }] }, { cols: 40, rows: 10 });
+  expect(lines.length).toBeLessThanOrEqual(10);
+  for (const l of lines) expect(l.length, l).toBeLessThanOrEqual(40);
+  expect(lines[3]).toMatch(/^ ▸ conte/);
+  expect(lines.join(" ").replace(/ +/g, " ")).toContain(" 4 projects hidden. Next action: run warden --determinism | cat");
+});
+
+it("every terminal height down to 10 rows at 40 columns and 9 rows at 60 columns fits, with the current project shown", () => {
+  for (const [cols, least] of [[40, 10], [60, 9]] as const) {
+    for (let rows = least; rows <= 14; rows += 1) {
+      const lines = renderDeterminism({ ...withOlder(), projects: [...withOlder().projects, { project: "fresh" }] }, { cols, rows });
+      expect(lines.length, `${cols}x${rows}`).toBeLessThanOrEqual(rows);
+      expect(lines[3]).toMatch(/^ ▸ /);
+    }
+  }
+});
+
+it("at 40 columns seven-digit counts shorten so the last column still shows", () => {
+  const big = { ...withOlder(), projects: withOlder().projects.map((p) => (p.project === "trq-berry" ? { project: "trq-berry", run: ranWith({ runtime: 1234567, model: 300000, legacy: 4 }) } : p)) };
+  const lines = renderDeterminism(big, { cols: 40, rows: 24 });
+  for (const l of lines) expect(l.length, l).toBeLessThanOrEqual(40);
+  expect(lines).toContainEqual(expect.stringMatching(/^ {3}trq-b\S* +[█▒░]+ +1\.2M +300k +4 +0$/));
+  expect(lines).toContainEqual(expect.stringMatching(/^ {3}older +· +0 +0 +0 +1$/));
+  expect(renderDeterminism(big, { cols: 120, rows: 24 })).toContainEqual(expect.stringMatching(/ 1,234,567 +300,000 +4 +0 +80%$/));
 });

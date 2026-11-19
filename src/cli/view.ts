@@ -418,14 +418,17 @@ export function renderDeterminism(model: ViewModel, size: Size): string[] {
   const shareText = (c: number[] | undefined): string => (c === undefined || known(c) === 0 ? "–" : `${Math.min(Math.round((det(c) / known(c)) * 100), det(c) === known(c) ? 100 : 99)}%`);
   const SHARE = "det. share";
   const labelW = Math.max(0, ...rows.map((r) => r.label.length));
-  const layout = (short: boolean, share: boolean) => {
+  const layout = (short: boolean, share: boolean, compact = false) => {
     const heads = short ? names.map((n) => n.slice(0, 5)) : names;
-    const colW = heads.map((name, i) => Math.max(name.length, ...rows.map((r) => (r.counts === undefined ? 0 : count(r.counts[i] ?? 0).length))));
+    const shown = (n: number): string => (!compact || n < 10000 ? count(n) : n < 1000000 ? `${Math.floor(n / 1000)}k` : `${(Math.floor(n / 100000) / 10).toFixed(1)}M`);
+    const colW = heads.map((name, i) => Math.max(name.length, ...rows.map((r) => (r.counts === undefined ? 0 : shown(r.counts[i] ?? 0).length))));
     const right = (cells: string[], shareCell: string | undefined): string => `${cells.map((c, i) => `  ${c.padStart(colW[i] as number)}`).join("")}${share ? `  ${(shareCell ?? "").padStart(SHARE.length)}` : ""}`;
-    return { heads, share, right, rightW: right(heads.map(() => ""), "").length };
+    return { heads, shown, right, rightW: right(heads.map(() => ""), "").length };
   };
-  const options = [layout(false, true), layout(false, false), layout(true, false)];
-  const { heads, share: withShare, right, rightW } = options.find((o) => width - 2 - labelW - o.rightW >= MIN_BAR) ?? options.find((o) => width - 2 - Math.min(labelW, MIN_LABEL) - o.rightW >= MIN_BAR) ?? (options[2] as (typeof options)[number]);
+  const minLabel = Math.min(labelW, MIN_LABEL);
+  const [full, bare, short, compact] = [layout(false, true), layout(false, false), layout(true, false), layout(true, false, true)];
+  const candidates: [ReturnType<typeof layout>, number][] = [[full, labelW], [bare, labelW], [bare, minLabel], [short, labelW], [short, minLabel], [compact, minLabel]];
+  const { heads, shown: cell, right, rightW } = (candidates.find(([o, l]) => width - 2 - l - o.rightW >= MIN_BAR) ?? [compact])[0];
   const shownLabelW = Math.max(Math.min(labelW, MIN_LABEL), Math.min(labelW, width - 2 - rightW - MIN_BAR));
   const barW = Math.max(1, width - 2 - shownLabelW - rightW);
   const most = Math.max(0, ...rows.map((r) => (r.counts === undefined ? 0 : r.counts.reduce((a, b) => a + b, 0))));
@@ -435,7 +438,7 @@ export function renderDeterminism(model: ViewModel, size: Size): string[] {
     if (r.counts === undefined) return clip(`${lead}no completed run yet`, width);
     const n = segments(r.counts.slice(0, names.length), scale, barW);
     const bar = n.every((x) => x === 0) ? "▏" : n.map((x, i) => (marks[i] as string).repeat(x)).join("");
-    return clip(`${`${lead}${bar}`.padEnd(width - rightW)}${right(names.map((_, i) => count(r.counts?.[i] ?? 0)), shareText(r.counts))}`, width);
+    return clip(`${`${lead}${bar}`.padEnd(width - rightW)}${right(names.map((_, i) => cell(r.counts?.[i] ?? 0)), shareText(r.counts))}`, width);
   });
   const nonDet = rows.flatMap((r) => (r.counts === undefined ? [] : [{ label: r.label.slice(2), n: known(r.counts) - det(r.counts), total: r.counts.reduce((a, b) => a + b, 0) }])).sort((a, b) => b.n - a.n)[0];
   const ran = rows.some((r) => r.counts !== undefined);
@@ -448,12 +451,16 @@ export function renderDeterminism(model: ViewModel, size: Size): string[] {
     const last = lines.at(-1);
     return last !== undefined && last.length + 3 + item.length <= width ? [...lines.slice(0, -1), `${last}   ${item}`] : [...lines, ` ${item}`];
   }, []);
-  const bottom = [rule, ...legend.map((l) => clip(l, width)), ...wrap(verdict, width, Math.min(3, Math.max(1, size.rows - 7)))];
+  const fixed = 4 + legend.length;
+  const hiddenText = (n: number): string => ` ${n} project${n === 1 ? "" : "s"} hidden. Next action: run warden --determinism | cat`;
+  const fits = fixed + wrap(verdict, width, 3).length + body.length <= size.rows;
+  const hiddenLines = fits ? 0 : wrap(hiddenText(body.length), width, 3).length;
+  const verdictLines = wrap(verdict, width, fits ? 3 : Math.min(3, Math.max(1, size.rows - fixed - 1 - hiddenLines)));
+  const bottom = [rule, ...legend.map((l) => clip(l, width)), ...verdictLines];
   const top = [spread(` WARDEN  ${model.project} · base ${model.base} · v${model.version}`, "q quit  r rerun  d back", width), rule, clip(`${(width - rightW > " DETERMINISM BY PROJECT".length ? " DETERMINISM BY PROJECT" : " DETERMINISM").padEnd(width - rightW)}${right(heads, SHARE)}`, width)];
-  const room = Math.max(0, size.rows - top.length - bottom.length);
-  const kept = body.length > room ? Math.max(1, room - 1) : body.length;
+  const kept = fits ? body.length : Math.max(1, size.rows - top.length - bottom.length - hiddenLines);
   const hidden = body.length - kept;
-  const shown = hidden > 0 ? [...body.slice(0, kept), clip(` ${hidden} project${hidden === 1 ? "" : "s"} hidden. Next action: run warden --determinism | cat`, width)] : body;
+  const shown = hidden > 0 ? [...body.slice(0, kept), ...wrap(hiddenText(hidden), width, 3)] : body;
   return [...top, ...shown, ...bottom].map((l) => visible(l).trimEnd());
 }
 
