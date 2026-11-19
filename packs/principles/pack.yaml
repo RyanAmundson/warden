@@ -131,7 +131,7 @@ practices:
           src/a.ts: "export default (n: number): number => n + 1;\n"
           src/b.ts: "import step from \"./a\";\nconsole.log(step(1));\n"
   - id: no-speculative-code
-    statement: Code builds nothing ahead of need. Every export of a file that another file imports is imported by another file, since a file nothing imports is an entry point whose exports are its interface, and an interface has more than one implementing class unless it sits in a port, the file named after its group folder inside a bracketed collection. Test, spec, and story files count as users but are not checked, export-star barrels count as uses, and names a framework requires, such as metadata, GET, and loader, are exempt.
+    statement: Code builds nothing ahead of need. Every export of a file that another file imports is imported by another file, since a file nothing imports is an entry point whose exports are its interface, and an interface has more than one implementing class unless it sits in a port, the file named after its group folder inside a bracketed collection. Test, spec, and story files count as users but are not checked. Export-star barrels count as uses. Framework names such as metadata, GET, and loader, and names listed in the contractExports setting, are exempt.
     terms: []
     paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"]
     conflictsWith: []
@@ -140,7 +140,7 @@ practices:
         kind: lint
         runs: [boundary]
         budgetMs: 5000
-        version: 1
+        version: 2
         implementation: "graph:principles/unused-exports"
         mustFail:
           src/a.ts: "export const step = (n: number): number => n + 1;\nexport const twice = (n: number): number => n * 2;\n"

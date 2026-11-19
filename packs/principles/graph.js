@@ -11,6 +11,11 @@ const unusedExports = (input) => {
   const stems = new Map(files.map(({ file }) => [stemOf(file), file]));
   const starred = new Set();
   const star = (from, spec) => {
+    const resolved = input.imports.get(from)?.find(({ specifier }) => specifier === spec);
+    if (resolved !== undefined) {
+      starred.add(resolved.target);
+      return;
+    }
     if (!spec.startsWith(".")) return;
     const target = stems.get(stemOf(posix.normalize(posix.join(posix.dirname(from), spec))));
     if (target !== undefined) starred.add(target);
@@ -20,7 +25,7 @@ const unusedExports = (input) => {
   const bound = (pattern, file, spec) => {
     for (const e of pattern.elements) {
       const name = e.propertyName ?? e.name;
-      if (ts.isIdentifier(name) || ts.isStringLiteral(name)) use(name.text, file);
+      if (e.dotDotDotToken === undefined && (ts.isIdentifier(name) || ts.isStringLiteral(name))) use(name.text, file);
       else star(file, spec);
     }
   };
