@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { symlink } from "node:fs/promises";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -84,6 +85,18 @@ describe("collection-folders pack", () => {
     for (const g of guardrails.slice(1)) statuses.push((await run(g.id))?.status);
     expect(statuses).toEqual(["pass", "pass", "pass"]);
     expect((await run("warden-collection-holds-only-folders"))?.violations[0]?.message).toContain("src/[widgets]/stray.ts is a file directly inside a collection");
+  });
+
+  it("without git on PATH fails with one next action instead of a stack trace", async () => {
+    const bin = join(root, ".bin");
+    await mkdir(bin);
+    await symlink(process.execPath, join(bin, "node"));
+    vi.stubEnv("PATH", bin);
+    await write("src/[widgets]/button/index.ts");
+    for (const g of guardrails) {
+      const lines = (await run(g.id))?.violations[0]?.message.split("\n") ?? [];
+      expect(lines.slice(1)).toEqual(["git is not on PATH, so the files cannot be listed. Next action: install git so that it is on PATH."]);
+    }
   });
 
   it("names what an item lacks and what it has extra", async () => {

@@ -20,7 +20,7 @@ practices:
           cmd:node -e '
           const cp=require("node:child_process"),fs=require("node:fs");
           const ls=cp.spawnSync("git",["ls-files","-z","--cached","--others","--exclude-standard"],{encoding:"utf8",maxBuffer:1<<28,env:{...process.env,LC_ALL:"C"}});
-          if(ls.status!==0&&!/not a git repository/.test(ls.stderr??""))throw ls.error??new Error(ls.stderr);
+          if(ls.status!==0&&!/not a git repository/.test(ls.stderr??"")){console.log(ls.error?.code==="ENOENT"?"git is not on PATH, so the files cannot be listed. Next action: install git so that it is on PATH.":`git ls-files failed: ${(ls.error?.message??ls.stderr).trim()}. Next action: fix this git error so that git ls-files succeeds in this folder.`);process.exit(2)}
           const files=ls.status===0?ls.stdout.split("\0").filter(f=>f!==""&&fs.existsSync(f)):fs.readdirSync(".",{recursive:true}).filter(f=>!f.split("/").some(s=>s==="node_modules"||s===".git")&&fs.lstatSync(f).isFile());
           const b=s=>/^\[.*\]$/.test(s);
           const bad=files.filter(f=>{const s=f.split("/");return s.length>1&&b(s[s.length-2])});
@@ -47,7 +47,7 @@ practices:
           cmd:node -e '
           const cp=require("node:child_process"),fs=require("node:fs");
           const ls=cp.spawnSync("git",["ls-files","-z","--cached","--others","--exclude-standard"],{encoding:"utf8",maxBuffer:1<<28,env:{...process.env,LC_ALL:"C"}});
-          if(ls.status!==0&&!/not a git repository/.test(ls.stderr??""))throw ls.error??new Error(ls.stderr);
+          if(ls.status!==0&&!/not a git repository/.test(ls.stderr??"")){console.log(ls.error?.code==="ENOENT"?"git is not on PATH, so the files cannot be listed. Next action: install git so that it is on PATH.":`git ls-files failed: ${(ls.error?.message??ls.stderr).trim()}. Next action: fix this git error so that git ls-files succeeds in this folder.`);process.exit(2)}
           const files=ls.status===0?ls.stdout.split("\0").filter(f=>f!==""&&fs.existsSync(f)):fs.readdirSync(".",{recursive:true}).filter(f=>!f.split("/").some(s=>s==="node_modules"||s===".git")&&fs.lstatSync(f).isFile());
           const b=s=>/^\[.*\]$/.test(s);
           const bad=new Set();
@@ -73,7 +73,7 @@ practices:
           cmd:node -e '
           const cp=require("node:child_process"),fs=require("node:fs");
           const ls=cp.spawnSync("git",["ls-files","-z","--cached","--others","--exclude-standard"],{encoding:"utf8",maxBuffer:1<<28,env:{...process.env,LC_ALL:"C"}});
-          if(ls.status!==0&&!/not a git repository/.test(ls.stderr??""))throw ls.error??new Error(ls.stderr);
+          if(ls.status!==0&&!/not a git repository/.test(ls.stderr??"")){console.log(ls.error?.code==="ENOENT"?"git is not on PATH, so the files cannot be listed. Next action: install git so that it is on PATH.":`git ls-files failed: ${(ls.error?.message??ls.stderr).trim()}. Next action: fix this git error so that git ls-files succeeds in this folder.`);process.exit(2)}
           const files=ls.status===0?ls.stdout.split("\0").filter(f=>f!==""&&fs.existsSync(f)):fs.readdirSync(".",{recursive:true}).filter(f=>!f.split("/").some(s=>s==="node_modules"||s===".git")&&fs.lstatSync(f).isFile());
           const b=s=>/^\[.*\]$/.test(s);
           const bad=new Set();
@@ -100,7 +100,7 @@ practices:
           cmd:node -e '
           const cp=require("node:child_process"),fs=require("node:fs");
           const ls=cp.spawnSync("git",["ls-files","-z","--cached","--others","--exclude-standard"],{encoding:"utf8",maxBuffer:1<<28,env:{...process.env,LC_ALL:"C"}});
-          if(ls.status!==0&&!/not a git repository/.test(ls.stderr??""))throw ls.error??new Error(ls.stderr);
+          if(ls.status!==0&&!/not a git repository/.test(ls.stderr??"")){console.log(ls.error?.code==="ENOENT"?"git is not on PATH, so the files cannot be listed. Next action: install git so that it is on PATH.":`git ls-files failed: ${(ls.error?.message??ls.stderr).trim()}. Next action: fix this git error so that git ls-files succeeds in this folder.`);process.exit(2)}
           const files=ls.status===0?ls.stdout.split("\0").filter(f=>f!==""&&fs.existsSync(f)):fs.readdirSync(".",{recursive:true}).filter(f=>!f.split("/").some(s=>s==="node_modules"||s===".git")&&fs.lstatSync(f).isFile());
           const b=s=>/^\[.*\]$/.test(s);
           const items=new Map();
