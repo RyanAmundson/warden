@@ -13,8 +13,6 @@ import { compile } from "../../src/compiler/compile.js";
 import { readLock, sha256 } from "../../src/compiler/lock.js";
 import { applyBaseline } from "../../src/runner/baseline.js";
 
-vi.mock("../../src/compiler/bench.js", async (original) => ({ ...(await original<typeof import("../../src/compiler/bench.js")>()), admit: () => Promise.resolve([]) }));
-
 const wardenRoot = resolve(import.meta.dirname, "../..");
 
 const config = (packs: string[], repeats = 3): string =>
@@ -179,6 +177,7 @@ beforeEach(async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "warden-check-")));
   home = await mkdtemp(join(tmpdir(), "warden-home-"));
   vi.stubEnv("WARDEN_HOME", home);
+  await cp(join(templateHome, "bench"), join(home, "bench"), { recursive: true });
   await cp(template, root, { recursive: true });
   await write("a.ts", "// one\nconst a = 1;\n");
   await write(".warden/baseline.json", `${JSON.stringify({ "warden-no-comments": { "a.ts": 1 } }, null, 2)}\n`);
