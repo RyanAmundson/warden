@@ -364,6 +364,25 @@ describe("runCheck", () => {
     expect((await evidence()).some((e) => e.kind === "cost" && typeof e.ms === "number")).toBe(true);
   });
 
+  it("records a resolved lint failure once when the same Guardrail judges the changed file clean", async () => {
+    await write("b.ts", "// remove me\nconst b = 1;\n");
+    expect((await check({ rule: "no-comments" })).code).toBe(1);
+    const [fired] = (await evidence()).filter((event) => event.kind === "fired");
+    expect(fired).toMatchObject({ root, tier: "commit", pack: "core", run: expect.any(String), policy: expect.any(String) });
+
+    await write("b.ts", "const b = 1;\n");
+    expect((await check({ paths: ["a.ts"], rule: "no-comments" })).code).toBe(0);
+    expect((await check({ paths: ["b.ts"], rule: "local-no-var" })).code).toBe(0);
+    expect((await check({ paths: ["b.ts"], rule: "no-comments", tier: "edit" })).code).toBe(0);
+    expect((await evidence()).filter((event) => event.kind === "resolved")).toEqual([]);
+
+    expect((await check({ paths: ["b.ts"], rule: "no-comments" })).code).toBe(0);
+    expect((await check({ paths: ["b.ts"], rule: "no-comments" })).code).toBe(0);
+    expect((await evidence()).filter((event) => event.kind === "resolved")).toEqual([
+      expect.objectContaining({ guardrail: "warden-no-comments", file: "b.ts", pack: "core", root, status: "pass", detail: sha256("const b = 1;\n"), sourceRun: fired?.run, policy: fired?.policy }),
+    ]);
+  });
+
   it("hook format blocks with reason", async () => {
     await write("b.ts", "// two\nconst b = 1;\n");
     const failing = await check({ format: "agent", hook: "claude" });

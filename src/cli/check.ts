@@ -170,6 +170,29 @@ const mergeResults = (results: RunResult[]): RunResult[] =>
     return { ...(all[0] as RunResult), status, violations, ms: all.reduce((n, r) => n + r.ms, 0) };
   });
 
+const recordResolutions = (
+  project: string,
+  previous: Evidence[],
+  results: RunResult[],
+  shas: Map<string, string>,
+  context: { root: string; tier: Tier; run: string; policy: string; at: string },
+): void => {
+  const passing = new Set(results.filter((r) => r.guardrail !== PARSE_ERROR && r.status === "pass" && r.overBudget !== true).map((r) => r.guardrail));
+  const seen = new Set<string>();
+  for (let i = previous.length - 1; i >= 0; i--) {
+    const event = previous[i] as Evidence;
+    const { kind, root, tier, guardrail, file, detail, run, policy, pack } = event;
+    if ((kind !== "fired" && kind !== "resolved") || root !== context.root || tier !== context.tier || guardrail === undefined || file === undefined || !passing.has(guardrail)) continue;
+    const changed = shas.get(file);
+    if (changed === undefined) continue;
+    const key = `${guardrail}\0${file}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (kind !== "fired" || event.status !== "fail" || run === undefined || detail === undefined || changed === detail || policy !== context.policy) continue;
+    appendEvidence(project, { ...context, kind: "resolved", guardrail, file, status: "pass", detail: changed, sourceRun: run, ...(pack === undefined ? {} : { pack }) });
+  }
+};
+
 const failedOf = (failures: Violation[], notes: Notes): boolean =>
   failures.length > 0 || [notes.tampered, notes.killed, notes.unstaged].some((list) => (list ?? []).length > 0);
 
@@ -481,6 +504,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
     }
   }
   const prior = readEvidenceTail(project, LOOP_TAIL_BYTES);
+  const policy = sha256(canonicalJson([lockSha, running]));
   const trigger = new Set(
     opts.hook === "claude" ? (opts.hookInput === undefined ? [] : hookTriggers(root, opts.hookInput)) : opts.paths === undefined ? [] : scanned,
   );
@@ -489,7 +513,8 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
     const [guardrail, file] = key.split("\0") as [string, string];
     const detail = shas.get(file) ?? (file !== "" && existsSync(join(root, file)) ? sha256(readFileSync(join(root, file))) : "");
     const triggered = trigger.has(file);
-    appendEvidence(project, { at, kind: "fired", guardrail, file, status: "fail", detail, triggered });
+    const pack = packOf.get(guardrail);
+    appendEvidence(project, { at, kind: "fired", guardrail, file, status: "fail", detail, triggered, root, tier, run, policy, ...(pack === undefined ? {} : { pack }) });
     if (!triggered) continue;
     const same = (e: Evidence): boolean =>
       e.kind === "fired" && e.status === "fail" && e.triggered === true && e.guardrail === guardrail && e.file === file && e.detail === detail;
@@ -502,6 +527,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const tree = tier === "commit" && scope === "full" && !failedOf(failures, notes) ? indexTree(root) : undefined;
   const coveredHere = (d: Detection): boolean => d.detail === "unchecked-commit" && tree !== undefined && commitsOf(root, [d.file]).some((c) => covers(root, { tree, mergeBase: live.base?.mergeBase }, c));
   const alert = failedOf(failures, notes) ? undefined : alerts.find((d) => !coveredHere(d));
+  if (alert === undefined && !failedOf(failures, notes)) recordResolutions(project, prior, perFile, shas, { at, root, tier, run, policy });
   const code = alert === undefined ? report(failures, set, opts, notes) : refuseForAlert(alert, opts);
   return finish(project, scanned.length === 0 && ran.ran.length === 0 ? "empty" : "ran", scanned, code, { set, failures, notes, extra: { scope, ...(alert === undefined ? {} : { alert: alert.detail, next: alert.next }), guardrails: chosen.length, cached: ran.cached, rules: ruleTimes, passes: passTimes, cachedRules: chosen.filter((g) => ruleTimes[g.id] === undefined).map((g) => g.id), ratchet: [baselineTotal(baseline), baselineTotal(wide.next)], ratchetFrom } });
 };
