@@ -53,6 +53,8 @@ beforeAll(async () => {
       "    review: { adapter: superpowers-review, model: opus }",
       "  - id: simplify", "    kind: skill", "    serves: review", "    purpose: Find removable complexity.", "    when: Before landing.", "    upholds: [small]", "    commands: [warden review]", "    replaces: []",
       "    review: { adapter: ponytail-review, model: opus }",
+      "  - id: visual-gate", "    kind: skill", "    serves: review", "    purpose: Verify the rendered interface.", "    when: Before landing UI changes.", "    upholds: [small]", "    commands: [warden review]", "    replaces: []",
+      "    review: { adapter: ui-qa, model: opus }",
       "  - id: plain", "    kind: tool", "    serves: other", "    purpose: Nothing.", "    when: Never.", "    upholds: []", "    commands: [warden review]", "    replaces: []", "",
     ].join("\n"),
   );
@@ -136,6 +138,25 @@ describe("warden review", () => {
         err: expect.stringContaining("does not contain a completed review"),
       });
     }
+  });
+
+  it("routes the visual gate checklist through the packaged CLI", async () => {
+    const scope = ["--capability", "visual-gate", "--base", base, "--head", head, "--requirements", REQ];
+    const brief = run("review", "brief", ...scope);
+    expect(brief.code, brief.err).toBe(0);
+    const prompt = (JSON.parse(brief.out) as { input: { prompt: string } }).input.prompt;
+    expect(prompt).toContain("Use the ui-qa skill");
+    expect(prompt).toContain(head);
+    const checklist = readFileSync(new URL("../fixtures/review/ui-qa/report.txt", import.meta.url), "utf8")
+      .replace(/^Reviewed head: .*$/m, `Reviewed head: ${head}`);
+    const filename = "visual-gate.txt";
+    await writeFile(join(root, filename), checklist);
+    const result = run("review", "triage", ...scope, "--report", filename, "--format", "json");
+    expect(result.code, result.err).toBe(1);
+    expect(JSON.parse(result.out)).toMatchObject({
+      verdict: "fail",
+      findings: [{ kind: "spec-unmet", blocks: true, title: "Runs · Overflow and clipping", evidence: ["shots/runs-narrow.png"] }],
+    });
   });
 
   it("triage of a passing report exits 0 with no next action", async () => {

@@ -2,6 +2,7 @@ import type { ReviewRule } from "../records/types.js";
 import type { RawFinding } from "./findings.js";
 import { ponytailReview } from "./ponytail.js";
 import { superpowersReview } from "./superpowers.js";
+import { uiQaReview } from "./ui-qa.js";
 
 export interface ReviewScope {
   base: string;
@@ -26,4 +27,4 @@ export interface ReviewAdapter {
   normalize(report: string, scope: ReviewScope): Normalized;
 }
 
-export const reviewAdapters = new Map<string, ReviewAdapter>([superpowersReview, ponytailReview].map((adapter) => [adapter.id, adapter]));
+export const reviewAdapters = new Map<string, ReviewAdapter>([superpowersReview, ponytailReview, uiQaReview].map((adapter) => [adapter.id, adapter]));

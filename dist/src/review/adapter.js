@@ -1,3 +1,4 @@
 import { ponytailReview } from "./ponytail.js";
 import { superpowersReview } from "./superpowers.js";
-export const reviewAdapters = new Map([superpowersReview, ponytailReview].map((adapter) => [adapter.id, adapter]));
+import { uiQaReview } from "./ui-qa.js";
+export const reviewAdapters = new Map([superpowersReview, ponytailReview, uiQaReview].map((adapter) => [adapter.id, adapter]));

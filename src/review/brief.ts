@@ -2,14 +2,14 @@ import type { Normalized, ReviewScope } from "./adapter.js";
 
 const located = (f: { file?: string; line?: number }): string => (f.file === undefined ? "" : ` (${f.file}${f.line === undefined ? "" : `:${f.line}`})`);
 
-export const reviewPrompt = (scope: ReviewScope, shape: string, instructions?: string): string => {
+export const reviewPrompt = (scope: ReviewScope, shape: string, instructions?: string, review: "change" | "full" = "change"): string => {
   const later = scope.previousHead !== undefined;
   const parts = [
     "You are an independent reviewer. Do not edit any file, commit, or push; report findings only.",
     `Head: ${scope.head}\nBase: ${scope.base}`,
-    later
+    later && review === "change"
       ? `This is a later round. Review only each previous finding below and the fix diff ${scope.previousHead}..${scope.head}.`
-      : `This is round 1. Review the whole change ${scope.base}..${scope.head}.`,
+      : `${later ? "This is a later round." : "This is round 1."} Review the whole change ${scope.base}..${scope.head}.`,
     `Requirements:\n${scope.requirements.map((r) => `- ${r}`).join("\n")}`,
     `Upheld Practices:\n${scope.upholds.map((u) => `- ${u.id}: ${u.statement}`).join("\n")}`,
   ];

@@ -1,0 +1,16 @@
+Reviewed head: 1111111111111111111111111111111111111111
+| Screen | Check | Result | Screenshot | Source | Correction |
+| --- | --- | --- | --- | --- | --- |
+| Runs | Backgrounds and surfaces | PASS | shots/runs-wide.png | web/app.css:29 | - |
+| Runs | Overflow and clipping | FAIL | shots/runs-narrow.png | web/app.css:44 | Give the file path more width at 390 px. |
+| Runs | Alignment and fill | PASS | shots/runs-wide.png | web/app.css:32 | - |
+| Runs | Spacing tokens | PASS | shots/runs-wide.png | web/app.css:34 | - |
+| Runs | Shared controls | PASS | shots/runs-wide.png | web/app.css:64 | - |
+| Runs | Selection and toggle controls | PASS | shots/runs-wide.png | web/render.js:321 | - |
+| Runs | Nested navigation | PASS | shots/runs-wide.png | web/render.js:163 | - |
+| Runs | Interaction states | PASS | shots/runs-focus.png | web/app.css:7 | - |
+| Runs | Motion and reduced motion | PASS | shots/runs-wide.png | web/app.css:154 | - |
+| Runs | Empty, loading, and error states | PASS | shots/runs-error.png | web/render.js:202 | - |
+| Runs | Working controls | PASS | shots/runs-copied.png | web/app.js:240 | - |
+| Runs | Data shown | PASS | shots/runs-wide.png | web/render.js:300 | - |
+| Runs | Visual encodings | PASS | shots/runs-wide.png | web/render.js:106 | - |

@@ -16,6 +16,7 @@ export interface RawFinding {
   earlier?: number;
   flaky: boolean;
   correction: string;
+  evidence?: string[];
 }
 export type Kind = "env" | "flake" | "unfixed" | "spec-unmet" | "pre-existing" | "regression" | "touched" | "untouched";
 export type Action = "fix-environment" | "rerun-alone" | "back-to-builder" | "file-task";
