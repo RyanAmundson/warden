@@ -68,7 +68,7 @@ practices:
         kind: runtime
         runs: [edit, commit]
         budgetMs: 2000
-        version: 1
+        version: 2
         implementation: >-
           cmd:node -e '
           const cp=require("node:child_process"),fs=require("node:fs");
