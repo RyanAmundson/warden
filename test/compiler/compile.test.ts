@@ -77,30 +77,16 @@ afterEach(async () => {
 });
 
 describe("compile", () => {
-  it("the deny rules stop -n and --no-verify anywhere in a git commit command", async () => {
-    expect((await compile(root, wardenRoot)).findings).toEqual([]);
-    const deny = (JSON.parse(await read(".claude/settings.json")) as { permissions: { deny: string[] } }).permissions.deny;
-    const bash = deny.filter((d) => d.startsWith("Bash(")).map((d) => new RegExp(`^${d.slice(5, -1).split("*").map((p) => p.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`));
-    for (const command of ["git commit -n", "git commit -n -m x", "git commit -m x -n", "git commit --no-verify", "git commit -m x --no-verify"]) {
-      expect(bash.some((r) => r.test(command)), command).toBe(true);
-    }
-  });
-
-  it("compile writes config, deny rules, and lock", async () => {
+  it("compile writes only under .warden", async () => {
     const { findings, written } = await compile(root, wardenRoot);
     expect(findings).toEqual([]);
-    expect(written.sort()).toEqual([".claude/settings.json", ".warden/generated/eslint.rules.json", ".warden/lock.json"]);
+    expect(written.sort()).toEqual([".warden/generated/eslint.rules.json", ".warden/lock.json"]);
     const rules = JSON.parse(await read(".warden/generated/eslint.rules.json"));
     expect(rules["@generated"]).toMatch(HEADER);
     expect(Object.keys(rules)[0]).toBe("@generated");
     expect(Array.isArray(rules.entries)).toBe(true);
-    const settings = JSON.parse(await read(".claude/settings.json"));
-    expect(settings.permissions.deny).toEqual(["Edit(.warden/**)", "Write(.warden/**)", "Bash(git commit*--no-verify*)", "Bash(git commit* -n*)"]);
     const lock = readLock(root);
-    expect(Object.keys(lock.generated).sort()).toEqual([
-      ".claude/settings.json#warden",
-      ".warden/generated/eslint.rules.json",
-    ]);
+    expect(Object.keys(lock.generated)).toEqual([".warden/generated/eslint.rules.json"]);
     expect(Object.keys(lock.sources).sort()).toEqual([".warden/config.yaml", "packs/core/pack.yaml"]);
     expect(lock.guardrails["warden-no-comments"]).toEqual({
       kind: "lint",
@@ -134,43 +120,13 @@ describe("compile", () => {
     expect(lock.generated[".warden/generated/eslint.rules.json"]).toBe(createHash("sha256").update(bytes).digest("hex"));
   });
 
-  it("deny merge keeps other settings", async () => {
+  it("compile leaves .claude/settings.json and package.json byte for byte, even when they are not JSON", async () => {
     await mkdir(join(root, ".claude"), { recursive: true });
-    await writeFile(join(root, ".claude/settings.json"), JSON.stringify({ model: "x", permissions: { allow: ["Read"], deny: ["Bash(rm*)"] } }));
-    await compile(root, wardenRoot);
-    const settings = JSON.parse(await read(".claude/settings.json"));
-    expect(settings.model).toBe("x");
-    expect(settings.permissions.allow).toEqual(["Read"]);
-    expect(settings.permissions.deny).toEqual(["Bash(rm*)", "Edit(.warden/**)", "Write(.warden/**)", "Bash(git commit*--no-verify*)", "Bash(git commit* -n*)"]);
-  });
-
-  it("compile registers the edit-tier hook once", async () => {
-    const other = { matcher: "Bash", hooks: [{ type: "command", command: "echo hi" }] };
-    await mkdir(join(root, ".claude"), { recursive: true });
-    await writeFile(join(root, ".claude/settings.json"), JSON.stringify({ hooks: { PostToolUse: [other] } }));
-    await compile(root, wardenRoot);
-    const first = await read(".claude/settings.json");
-    const lockFirst = readLock(root);
-    await compile(root, wardenRoot);
-    expect(await read(".claude/settings.json")).toBe(first);
-    expect(readLock(root).generated[".claude/settings.json#warden"]).toBe(lockFirst.generated[".claude/settings.json#warden"]);
-    const entries = JSON.parse(first).hooks.PostToolUse as { matcher: string; hooks: { command: string }[] }[];
-    expect(entries).toHaveLength(2);
-    expect(entries[0]).toEqual(other);
-    expect(entries[1]).toEqual({
-      matcher: "Edit|Write|MultiEdit",
-      hooks: [{ type: "command", command: "npx --no -- warden check --format agent --hook claude --base 'main'" }],
-    });
-    expect(first.endsWith("}\n")).toBe(true);
-  });
-
-  it("settings edits outside Warden entries do not change the settings lock hash", async () => {
-    await compile(root, wardenRoot);
-    const before = readLock(root).generated[".claude/settings.json#warden"];
-    const settings = JSON.parse(await read(".claude/settings.json"));
-    await writeFile(join(root, ".claude/settings.json"), JSON.stringify({ ...settings, model: "y" }));
-    await compile(root, wardenRoot);
-    expect(readLock(root).generated[".claude/settings.json#warden"]).toBe(before);
+    await writeFile(join(root, ".claude/settings.json"), "{ not json");
+    await writeFile(join(root, "package.json"), '{"name":"x"}\n');
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect(await read(".claude/settings.json")).toBe("{ not json");
+    expect(await read("package.json")).toBe('{"name":"x"}\n');
   });
 
   it("an unknown adapter fails compile, writes no lock, and its next action compiles", async () => {
@@ -224,7 +180,6 @@ describe("compile", () => {
     expect(findings.map((f) => f.code)).toEqual(["prose-only"]);
     expect(written).toEqual([]);
     await expect(readFile(join(root, ".warden/lock.json"))).rejects.toThrow();
-    await expect(readFile(join(root, ".claude/settings.json"))).rejects.toThrow();
   });
 
   it("slow examples are rejected", async () => {
@@ -557,15 +512,6 @@ describe("compile", () => {
       ),
     );
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
-  });
-
-  it("invalid settings JSON leaves no generated file, no settings change, and no lock", async () => {
-    await mkdir(join(root, ".claude"), { recursive: true });
-    await writeFile(join(root, ".claude/settings.json"), "{ not json");
-    await expect(compile(root, wardenRoot)).rejects.toThrow(".claude/settings.json is not valid JSON");
-    expect(await read(".claude/settings.json")).toBe("{ not json");
-    await expect(readFile(join(root, ".warden/generated/eslint.rules.json"))).rejects.toThrow();
-    await expect(readFile(join(root, ".warden/lock.json"))).rejects.toThrow();
   });
 });
 

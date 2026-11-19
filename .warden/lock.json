@@ -1,6 +1,6 @@
 {
   "format": 2,
-  "warden": "0.1.7",
+  "warden": "0.1.8",
   "sources": {
     ".warden/config.yaml": "2280033b1777f6de504790f367247cbd9d99df3dc4f7605b396435ce60a48b77",
     "packs/core/pack.yaml": "0549826a521623ac0bb0ac890e361048df6c7c8c5060ed9a21dcc3edaa3dae91"
@@ -11,8 +11,7 @@
     "typescript": "5.9.3"
   },
   "generated": {
-    ".claude/settings.json#warden": "811df2812e9f3917eba9b1b617fc2196afa68003466bbc1ed7c343904741dcb7",
-    ".warden/generated/eslint.rules.json": "cc349c9d2157824e39050e2695e4da6916d74cd64790661dab823e01d1c72ce1"
+    ".warden/generated/eslint.rules.json": "682fd2781e2bf47c6a9eed187f5120a2ed2291d93d1928faa894f6dcd194f809"
   },
   "guardrails": {
     "warden-no-comments": {

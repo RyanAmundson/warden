@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { compile } from "../compiler/compile.js";
 import { RecordError, loadRecords } from "../records/load.js";
@@ -19,7 +19,6 @@ const configText = (project, packs, base) => [
     "loopBreakerRepeats: 3",
     "",
 ].join("\n");
-const SETTINGS = ".claude/settings.json";
 const selectPacks = async (root, wardenRoot, requested) => {
     const available = await listPacks(root, wardenRoot);
     const known = available.map((r) => r.id);
@@ -46,8 +45,6 @@ export async function runInit(root, wardenRoot, requested = ["core"], base = "ma
     const extra = wardenExisted ? readdirSync(warden).filter((e) => e !== "packs").map((e) => `.warden/${e}`) : [];
     if (extra.length > 0)
         throw new Error(`.warden already holds ${extra.join(", ")}, and init must not delete files it did not create. Next action: move or delete ${extra.join(", ")}, then run warden init again.`);
-    const claudeExisted = existsSync(join(root, ".claude"));
-    const settings = existsSync(join(root, SETTINGS)) ? readFileSync(join(root, SETTINGS), "utf8") : undefined;
     try {
         await initialize(root, wardenRoot, packs, base);
     }
@@ -58,10 +55,6 @@ export async function runInit(root, wardenRoot, requested = ["core"], base = "ma
                     rmSync(join(warden, entry), { recursive: true, force: true });
         if (!wardenExisted)
             rmSync(warden, { recursive: true, force: true });
-        if (settings !== undefined)
-            writeFileSync(join(root, SETTINGS), settings);
-        else
-            rmSync(join(root, claudeExisted ? SETTINGS : ".claude"), { recursive: true, force: true });
         throw cause;
     }
     return runDoctor(root, wardenRoot);

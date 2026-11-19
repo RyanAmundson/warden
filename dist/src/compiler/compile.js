@@ -1,16 +1,14 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { claudeSettingsAdapter } from "../adapters/claude.js";
 import { RecordError, loadRecords, readText } from "../records/load.js";
 import { BASELINE_PATH, measureBaseline, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { isRepository } from "../runner/changed.js";
 import { adapters, prefixOf, refuseUnknownAdapters } from "../runner/run.js";
 import { admit } from "./bench.js";
 import { checkConsistency } from "./consistency.js";
-import { mergeSettings, stamp } from "./emit.js";
+import { stamp } from "./emit.js";
 import { runExamples } from "./examples.js";
-import { LOCK_PATH, canonicalJson, computeLock, sha256 } from "./lock.js";
-const SETTINGS_KEY = "#";
+import { LOCK_PATH, computeLock, sha256 } from "./lock.js";
 const sourceFiles = async (set, projectRoot, wardenRoot) => {
     const out = {};
     const config = await readText(join(projectRoot, ".warden/config.yaml"));
@@ -37,7 +35,6 @@ const emitAll = (set) => {
     }
     const emitted = {};
     const pairs = [...groups].map(([prefix, gs]) => [adapters.get(prefix), gs]);
-    pairs.push([claudeSettingsAdapter, []]);
     for (const [adapter, gs] of pairs) {
         for (const [path, content] of Object.entries(adapter.emit(gs, set))) {
             if (path in emitted)
@@ -73,24 +70,8 @@ export async function expectedOutputs(set, projectRoot, wardenRoot) {
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
         .map(([path, content]) => `${path}\0${content}\0`)
         .join(""));
-    const files = {};
-    const owned = {};
-    for (const [key, content] of Object.entries(emitAll(set))) {
-        const at = key.indexOf(SETTINGS_KEY);
-        if (at === -1) {
-            files[key] = stamp(key, content, version, sourceHash);
-            continue;
-        }
-        const entries = JSON.parse(content);
-        if (!Array.isArray(entries))
-            throw new Error(`${key} must emit a JSON array`);
-        const file = key.slice(0, at);
-        owned[file] = { ...owned[file], [key.slice(at + 1)]: entries };
-    }
-    const generated = { ...files };
-    for (const [file, entries] of Object.entries(owned))
-        generated[`${file}#warden`] = canonicalJson(entries);
-    return { lock: computeLock(set, generated, sources, version), files, owned };
+    const files = Object.fromEntries(Object.entries(emitAll(set)).map(([key, content]) => [key, stamp(key, content, version, sourceHash)]));
+    return { lock: computeLock(set, files, sources, version), files };
 }
 const previousGuardrails = (text) => {
     if (text === undefined)
@@ -110,11 +91,7 @@ export async function compile(projectRoot, wardenRoot) {
     const slow = await admit(set, await wardenVersion(wardenRoot));
     if (slow.length > 0)
         return { findings: slow, written: [] };
-    const { lock, files, owned } = await expectedOutputs(set, projectRoot, wardenRoot);
-    const outputs = { ...files };
-    for (const [file, entries] of Object.entries(owned)) {
-        outputs[file] = mergeSettings(file, await readText(join(projectRoot, file)), entries);
-    }
+    const { lock, files: outputs } = await expectedOutputs(set, projectRoot, wardenRoot);
     const previous = previousGuardrails(await readText(join(projectRoot, LOCK_PATH)));
     await writeAll(projectRoot, outputs);
     await writeAll(projectRoot, { [LOCK_PATH]: `${JSON.stringify(lock, null, 2)}\n` });

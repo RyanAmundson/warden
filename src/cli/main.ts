@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command, CommanderError } from "commander";
+import { refusal } from "../adapters/claude.js";
 import { compile, wardenVersion } from "../compiler/compile.js";
 import type { Tier } from "../records/types.js";
 import type { Format } from "../runner/feedback.js";
@@ -14,7 +15,7 @@ import { runDoctor, runInit } from "./init.js";
 import { runPacks } from "./packs.js";
 import { runReport } from "./report.js";
 import { runRuns } from "./runs.js";
-import { liveView, loadView, plainLayers, plainView } from "./view.js";
+import { type Screen, liveView, loadView, plainLayers, plainView, plainViolations } from "./view.js";
 import { wardenHome } from "../runner/evidence.js";
 
 const findWardenRoot = (): string => {
@@ -89,6 +90,11 @@ program
     });
   });
 
+program.command("guard").description("refuse a Claude Code tool call that edits .warden or skips the pre-commit hook; reads the PreToolUse input on stdin").action(() => {
+  const reason = refusal(root(), readFileSync(0, "utf8"));
+  if (reason !== undefined) process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } })}\n`);
+});
+
 program
   .command("bench")
   .description("measure how each Guardrail's time grows with input size, and fail on a superlinear one")
@@ -125,28 +131,34 @@ program
     });
   });
 
-program.option("--layers", "show the layers screen: every rule by strength, and the packs").action(async (options: { layers?: boolean }, command: Command) => {
-  if (command.args.length > 0) throw new Error(`unknown command ${command.args[0] as string}. Next action: run warden --help`);
-  const project = root();
-  const wardenRoot = findWardenRoot();
-  const model = await loadView(project, wardenRoot);
-  if (process.stdout.isTTY !== true || process.stdin.isTTY !== true) {
-    process.stdout.write(options.layers === true ? plainLayers(model) : plainView(model));
-    return;
-  }
-  const watchDir = join(wardenHome(), "evidence");
-  mkdirSync(watchDir, { recursive: true });
-  let child: ChildProcess | undefined;
-  const rerun = (): void => {
-    if (child !== undefined && child.exitCode === null) return;
-    child = spawn(process.execPath, [fileURLToPath(import.meta.url), "check", "--base", model.base, "--trigger", "manual"], { cwd: project, stdio: "ignore" });
-  };
-  try {
-    process.exitCode = await liveView({ input: process.stdin, output: process.stdout, watchDir, file: `${model.project}.jsonl`, layers: options.layers === true, rerun, load: () => loadView(project, wardenRoot) });
-  } finally {
-    if (child !== undefined && child.exitCode === null) child.kill();
-  }
-});
+program
+  .option("--layers", "show the layers screen: every rule by strength, and the packs")
+  .option("--violations", "show the violations screen: baselined and new violations for each pack and Guardrail")
+  .action(async (options: { layers?: boolean; violations?: boolean }, command: Command) => {
+    if (command.args.length > 0) throw new Error(`unknown command ${command.args[0] as string}. Next action: run warden --help`);
+    const project = root();
+    const wardenRoot = findWardenRoot();
+    if (options.layers === true && options.violations === true) throw new Error("--layers and --violations each open one screen. Next action: run warden with only one of them");
+    const screen: Screen = options.violations === true ? "violations" : options.layers === true ? "layers" : "runs";
+    const model = await loadView(project, wardenRoot);
+    if (process.stdout.isTTY !== true || process.stdin.isTTY !== true) {
+      const cols = Number(process.env.COLUMNS) || 80;
+      process.stdout.write(screen === "violations" ? plainViolations(model, cols) : screen === "layers" ? plainLayers(model, cols) : plainView(model, cols));
+      return;
+    }
+    const watchDir = join(wardenHome(), "evidence");
+    mkdirSync(watchDir, { recursive: true });
+    let child: ChildProcess | undefined;
+    const rerun = (): void => {
+      if (child !== undefined && child.exitCode === null) return;
+      child = spawn(process.execPath, [fileURLToPath(import.meta.url), "check", "--base", model.base, "--trigger", "manual"], { cwd: project, stdio: "ignore" });
+    };
+    try {
+      process.exitCode = await liveView({ input: process.stdin, output: process.stdout, watchDir, file: `${model.project}.jsonl`, screen, rerun, load: () => loadView(project, wardenRoot) });
+    } finally {
+      if (child !== undefined && child.exitCode === null) child.kill();
+    }
+  });
 
 try {
   program.version(await wardenVersion(findWardenRoot()));

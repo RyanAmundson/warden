@@ -1,6 +1,5 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { claudeSettingsAdapter } from "../adapters/claude.js";
 import type { Adapter } from "../adapters/types.js";
 import { RecordError, loadRecords, readText } from "../records/load.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
@@ -9,11 +8,9 @@ import { isRepository } from "../runner/changed.js";
 import { adapters, prefixOf, refuseUnknownAdapters } from "../runner/run.js";
 import { admit } from "./bench.js";
 import { checkConsistency, type Finding } from "./consistency.js";
-import { mergeSettings, stamp } from "./emit.js";
+import { stamp } from "./emit.js";
 import { runExamples } from "./examples.js";
-import { LOCK_PATH, type Lock, canonicalJson, computeLock, sha256 } from "./lock.js";
-
-const SETTINGS_KEY = "#";
+import { LOCK_PATH, type Lock, computeLock, sha256 } from "./lock.js";
 
 const sourceFiles = async (set: RecordSet, projectRoot: string, wardenRoot: string): Promise<Record<string, string>> => {
   const out: Record<string, string> = {};
@@ -39,7 +36,6 @@ const emitAll = (set: RecordSet): Record<string, string> => {
   }
   const emitted: Record<string, string> = {};
   const pairs: [Adapter, Guardrail[]][] = [...groups].map(([prefix, gs]) => [adapters.get(prefix) as Adapter, gs]);
-  pairs.push([claudeSettingsAdapter, []]);
   for (const [adapter, gs] of pairs) {
     for (const [path, content] of Object.entries(adapter.emit(gs, set))) {
       if (path in emitted) throw new Error(`more than one adapter emits ${path}`);
@@ -68,7 +64,6 @@ const writeAll = async (root: string, outputs: Record<string, string>): Promise<
 export interface Expected {
   lock: Lock;
   files: Record<string, string>;
-  owned: Record<string, Record<string, unknown[]>>;
 }
 
 export const wardenVersion = async (wardenRoot: string): Promise<string> =>
@@ -84,23 +79,8 @@ export async function expectedOutputs(set: RecordSet, projectRoot: string, warde
       .join(""),
   );
 
-  const files: Record<string, string> = {};
-  const owned: Record<string, Record<string, unknown[]>> = {};
-  for (const [key, content] of Object.entries(emitAll(set))) {
-    const at = key.indexOf(SETTINGS_KEY);
-    if (at === -1) {
-      files[key] = stamp(key, content, version, sourceHash);
-      continue;
-    }
-    const entries: unknown = JSON.parse(content);
-    if (!Array.isArray(entries)) throw new Error(`${key} must emit a JSON array`);
-    const file = key.slice(0, at);
-    owned[file] = { ...owned[file], [key.slice(at + 1)]: entries };
-  }
-
-  const generated = { ...files };
-  for (const [file, entries] of Object.entries(owned)) generated[`${file}#warden`] = canonicalJson(entries);
-  return { lock: computeLock(set, generated, sources, version), files, owned };
+  const files = Object.fromEntries(Object.entries(emitAll(set)).map(([key, content]) => [key, stamp(key, content, version, sourceHash)]));
+  return { lock: computeLock(set, files, sources, version), files };
 }
 
 const previousGuardrails = (text: string | undefined): Lock["guardrails"] | undefined => {
@@ -119,11 +99,7 @@ export async function compile(projectRoot: string, wardenRoot: string): Promise<
   const slow = await admit(set, await wardenVersion(wardenRoot));
   if (slow.length > 0) return { findings: slow, written: [] };
 
-  const { lock, files, owned } = await expectedOutputs(set, projectRoot, wardenRoot);
-  const outputs: Record<string, string> = { ...files };
-  for (const [file, entries] of Object.entries(owned)) {
-    outputs[file] = mergeSettings(file, await readText(join(projectRoot, file)), entries);
-  }
+  const { lock, files: outputs } = await expectedOutputs(set, projectRoot, wardenRoot);
 
   const previous = previousGuardrails(await readText(join(projectRoot, LOCK_PATH)));
   await writeAll(projectRoot, outputs);

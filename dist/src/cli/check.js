@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
+import { hookTrigger } from "../adapters/claude.js";
 import { PARSE_ERROR } from "../adapters/types.js";
 import { wardenVersion } from "../compiler/compile.js";
 import { LOCK_PATH, bundledTools, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
@@ -23,6 +24,16 @@ const requireBase = (base, configured) => {
     if (base !== undefined)
         return base;
     throw new RecordError("", "/base", `--base is missing; Warden takes the base branch from the command, never from the editable config. Next action: run warden check --base ${configured}`);
+};
+const olderThan = (a, b) => {
+    const [x, y] = [a, b].map((v) => v.split(".").map(Number));
+    const i = x.findIndex((n, j) => n !== y[j]);
+    return i !== -1 && x[i] < (y[i] ?? 0);
+};
+const hookBase = (root) => {
+    if (!existsSync(join(root, LOCK_PATH)))
+        throw new RecordError(LOCK_PATH, "", "is missing, so the edit hook has no base branch. Next action: run warden compile");
+    return readLock(root).config.base;
 };
 const refuseOwnBranch = (root, base) => {
     if (!containsHead(root, base))
@@ -64,20 +75,6 @@ const scannedFiles = (root, base, paths) => {
         }
         return file;
     });
-};
-const hookTrigger = (root, input) => {
-    let parsed;
-    try {
-        parsed = JSON.parse(input);
-    }
-    catch {
-        throw new RecordError("hook input", "", "is not JSON");
-    }
-    const file = parsed?.tool_input?.file_path;
-    if (typeof file !== "string")
-        throw new RecordError("hook input", "/tool_input/file_path", "is missing");
-    const absolute = resolve(root, file);
-    return relative(root, existsSync(absolute) ? realpathSync(absolute) : absolute);
 };
 const runCached = async (set, gs, scanned, shas, ctx, project, run) => {
     const lint = scanned.length === 0 ? [] : gs.filter((g) => g.kind === "lint");
@@ -127,7 +124,7 @@ const report = (failures, set, opts, notes) => {
     }
     return failed ? 1 : 0;
 };
-const MAX_RECORDED_FAILURES = 10;
+export const MAX_RECORDED_FAILURES = 10;
 const closeStep = (live, state, extra = {}) => {
     if (live.open === undefined || live.project === undefined)
         return;
@@ -194,7 +191,7 @@ const check = async (opts, live) => {
     const set = await loadRecords(root, opts.wardenRoot);
     const { project, loopBreakerRepeats } = set.config;
     live.project = project;
-    const base = requireBase(opts.base, set.config.base);
+    const base = requireBase(opts.base ?? (opts.hook === "claude" ? hookBase(root) : undefined), set.config.base);
     verifyBase(root, base, CHECK_BASE_ACTION);
     refuseOwnBranch(root, base);
     openStep(live, "rules-intact");
@@ -202,9 +199,13 @@ const check = async (opts, live) => {
         throw new RecordError(LOCK_PATH, "", "not found; this project was never compiled. Next action: run warden compile.");
     }
     const running = await wardenVersion(opts.wardenRoot);
-    const lockedBy = existsSync(join(root, LOCK_PATH)) ? readLock(root).warden : running;
-    if (lockedBy !== running) {
+    const working = existsSync(join(root, LOCK_PATH)) ? readLock(root) : undefined;
+    const lockedBy = working?.warden ?? running;
+    if (lockedBy !== running && !olderThan(lockedBy, running)) {
         throw new RecordError(LOCK_PATH, "/warden", `was written by Warden ${lockedBy}; this is Warden ${running}. Next action: install Warden ${lockedBy}, the release that wrote the lock, then run warden check --base ${base} again.`);
+    }
+    if (lockedBy !== running || Object.keys(working?.generated ?? {}).some((key) => key.includes("#"))) {
+        throw new RecordError(LOCK_PATH, "/warden", `was written by Warden ${lockedBy}, an older release than this Warden ${running}. Next action: run warden compile, stage .warden, and commit.`);
     }
     const unknown = unknownAdapters(set);
     if (unknown.length > 0) {

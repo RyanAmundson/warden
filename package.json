@@ -1,12 +1,13 @@
 {
   "name": "warden",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "type": "module",
   "scripts": {
     "build:dist": "tsc",
     "test": "tsc && vitest run --maxWorkers=2",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "release": "sh scripts/release.sh"
   },
   "dependencies": {
     "ajv": "8.20.0",
