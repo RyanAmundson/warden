@@ -6,7 +6,7 @@ import { LOCK_FORMAT, LOCK_PATH, PROJECT_SOURCE, canonicalJson, readLock, sha256
 import { RecordError, readText } from "../records/load.js";
 import { kindRank } from "../records/types.js";
 import { BASELINE_PATH, carryRenames, projectWideEntries, readBaseline } from "./baseline.js";
-import { changeSignatures, trackedFiles, changesSinceMergeBase, containsHead, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
+import { changeSignatures, trackedFiles, renamesSinceMergeBase, containsHead, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
 const SETTINGS_FILES = [".claude/settings.json", ".claude/settings.local.json"];
 export const SIGNERS_FILE = "allowed_signers";
 const isObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -131,7 +131,7 @@ const loosened = (set, wardenRoot, base, lock) => {
     const editedCode = Object.keys(before.sources ?? {}).filter((k) => ((/^\.warden\/packs\/[^/]+\/./.test(k) && !k.endsWith("/pack.yaml")) || k.startsWith(PROJECT_SOURCE)) && before.sources[k] !== lock.sources[k]);
     if (editedCode.length > 0)
         found.push({ file: LOCK_PATH, detail: "loosened" });
-    const { renames } = changesSinceMergeBase(root, base);
+    const renames = renamesSinceMergeBase(root, base);
     const baseBaseline = carryRenames(JSON.parse(showAtMergeBase(root, base, BASELINE_PATH) ?? "{}"), renames);
     for (const [id, entries] of Object.entries(carryRenames(readBaseline(root), renames))) {
         if (id in lock.guardrails && !(id in before.guardrails))

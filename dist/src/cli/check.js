@@ -398,7 +398,7 @@ const check = async (opts, live) => {
         .filter((r) => r.status === "killed")
         .map((r) => ({ guardrail: r.guardrail, ms: r.ms, command: r.command }));
     const exists = (f) => existsSync(join(root, f)) || blobPaths.includes(f);
-    const changes = changesSinceMergeBase(root, base);
+    const changes = await changesSinceMergeBase(root, base);
     const touched = (v) => {
         const lines = changes.lines.get(v.file);
         if (lines === "all")

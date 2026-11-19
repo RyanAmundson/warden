@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { existsSync, lstatSync, readdirSync } from "node:fs";
@@ -114,28 +114,63 @@ export const mergeBase = (root, base) => {
     throw new RecordError("", "/base", `${base} and HEAD share no history. Next action: run warden check --base <the branch this work merges into>.`);
 };
 const HUNK = /^@@ -\S+ \+(\d+)(?:,(\d+))? @@/;
-export function changesSinceMergeBase(root, base) {
+async function patchLines(root, at, receive) {
+    const child = spawn("git", ["-c", "core.quotePath=false", "diff", "-U0", "-M", "--no-color", "--no-ext-diff", "--relative", "--src-prefix=a/", "--dst-prefix=b/", at, "--"], { cwd: root, env: env(), stdio: ["ignore", "pipe", "pipe"] });
+    let error = "";
+    child.stderr.setEncoding("utf8").on("data", (chunk) => {
+        if (error.length < 4096)
+            error += chunk.slice(0, 4096 - error.length);
+    });
+    const completed = new Promise((done) => {
+        child.once("error", (cause) => done(cause.message));
+        child.once("close", (code, signal) => done(code === 0 ? undefined : error.trim() || `git stopped with ${signal ?? `exit ${code}`}`));
+    });
+    try {
+        let remainder = "";
+        for await (const chunk of child.stdout.setEncoding("utf8")) {
+            const rows = (remainder + chunk).split("\n");
+            remainder = rows.pop();
+            for (const line of rows)
+                receive(line);
+        }
+        if (remainder !== "")
+            receive(remainder);
+    }
+    catch (cause) {
+        child.kill();
+        await completed;
+        throw cause;
+    }
+    const failure = await completed;
+    if (failure !== undefined) {
+        throw new RecordError(root, "", `Git could not read the changed lines: ${failure}. Next action: run git diff from the project root to diagnose the Git error.`);
+    }
+}
+export async function changesSinceMergeBase(root, base) {
     const at = mergeBase(root, base);
     const lines = new Map();
     let current;
-    const patch = must(root, ["-c", "core.quotePath=false", "diff", "-U0", "-M", "--no-color", "--no-ext-diff", "--relative", "--src-prefix=a/", "--dst-prefix=b/", at]);
-    for (const line of patch.split("\n")) {
+    await patchLines(root, at, (line) => {
         if (line.startsWith("+++ ")) {
             current = line.startsWith("+++ b/") ? new Set() : undefined;
             if (current !== undefined)
                 lines.set(line.slice("+++ b/".length).replace(/\t$/, ""), current);
-            continue;
+            return;
         }
         const hunk = HUNK.exec(line);
         if (hunk === null || current === undefined)
-            continue;
+            return;
         const start = Number(hunk[1]);
         const count = hunk[2] === undefined ? 1 : Number(hunk[2]);
         for (let n = start; n < start + count; n++)
             current.add(n);
-    }
+    });
     for (const file of names(must(root, ["ls-files", "-z", "--others", "--exclude-standard"])))
         lines.set(file, "all");
+    return { lines, renames: renamesAt(root, at) };
+}
+export const renamesSinceMergeBase = (root, base) => renamesAt(root, mergeBase(root, base));
+function renamesAt(root, at) {
     const renames = new Map();
     const status = names(must(root, ["diff", "-z", "-M", "--name-status", "--relative", at]));
     for (let i = 0; i < status.length; i++) {
@@ -144,7 +179,7 @@ export function changesSinceMergeBase(root, base) {
             renames.set(status[i + 1], status[i + 2]);
         i += kind.startsWith("R") || kind.startsWith("C") ? 2 : 1;
     }
-    return { lines, renames };
+    return renames;
 }
 export function showAtMergeBase(root, base, path) {
     const spec = `${mergeBase(root, base)}:./${path}`;

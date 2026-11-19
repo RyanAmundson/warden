@@ -430,7 +430,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
     .map((r) => ({ guardrail: r.guardrail, ms: r.ms, command: r.command as string }));
 
   const exists = (f: string): boolean => existsSync(join(root, f)) || blobPaths.includes(f);
-  const changes = changesSinceMergeBase(root, base);
+  const changes = await changesSinceMergeBase(root, base);
   const touched = (v: Violation): boolean => {
     const lines = changes.lines.get(v.file);
     if (lines === "all") return true;
