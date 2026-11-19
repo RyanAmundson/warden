@@ -52,7 +52,13 @@ export function readBaseLock(root, base) {
     const text = showAtMergeBase(root, base, LOCK_PATH);
     if (text === undefined)
         return undefined;
-    const before = JSON.parse(text);
+    let before;
+    try {
+        before = JSON.parse(text);
+    }
+    catch (cause) {
+        throw new RecordError(LOCK_PATH, "", `at the merge base with ${base} is not valid JSON (${cause.message}). Next action: run warden compile on ${base} and commit the lock there, merge ${base} into this branch, then run warden check --base ${base} again.`);
+    }
     if ((before.format ?? 0) > LOCK_FORMAT) {
         throw new RecordError(LOCK_PATH, "/format", `the lock at the merge base with ${base} has format ${before.format}; this Warden reads formats up to ${LOCK_FORMAT}. Next action: install Warden ${before.warden}, the release that wrote the lock on ${base}, then run warden check --base ${base} again.`);
     }

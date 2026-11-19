@@ -122,6 +122,7 @@ const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<R
       { plugins: { warden: plugin } },
       { files: ["**/*.{ts,tsx,mts,cts}"], languageOptions: { parser: tseslint.parser } },
       { linterOptions: { noInlineConfig: true } },
+      { ignores: ["!**/node_modules/"] },
       ...entries,
     ],
     allowInlineConfig: false,

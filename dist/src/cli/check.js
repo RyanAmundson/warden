@@ -8,7 +8,7 @@ import { LOCK_PATH, bundledTools, canonicalJson, readLock, sha256 } from "../com
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { CHECK_BASE_ACTION, changedFiles, changesSinceMergeBase, containsHead, headCommit, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
+import { checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { RUN_TOTAL, appendEvidence, readEvidence } from "../runner/evidence.js";
 import { formatFeedback } from "../runner/feedback.js";
@@ -59,7 +59,7 @@ const removedWarden = (root, given) => {
         return undefined;
     const config = parseConfig(".warden/config.yaml", text);
     const base = requireBase(given, config.base);
-    verifyBase(root, base, CHECK_BASE_ACTION);
+    verifyBase(root, base, checkBaseAction);
     refuseOwnBranch(root, base);
     if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined)
         return undefined;
@@ -171,6 +171,7 @@ const check = async (opts, live) => {
             ...(files.length === 1 ? { file: files[0] } : {}),
             bytes,
             ...(commit === undefined ? {} : { commit }),
+            ...live.base,
             ...(recorded.length === 0 ? {} : { failures: recorded }),
             ...(feedback?.next == null ? {} : { next: feedback.next.replace(/\.$/, "") }),
             ...judged?.extra,
@@ -193,8 +194,9 @@ const check = async (opts, live) => {
     const { project, loopBreakerRepeats } = set.config;
     live.project = project;
     const base = requireBase(opts.base ?? (opts.hook === "claude" ? hookBase(root) : undefined), set.config.base);
-    verifyBase(root, base, CHECK_BASE_ACTION);
+    verifyBase(root, base, checkBaseAction);
     refuseOwnBranch(root, base);
+    live.base = { base, mergeBase: mergeBase(root, base) };
     openStep(live, "rules-intact");
     if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined) {
         throw new RecordError(LOCK_PATH, "", "not found; this project was never compiled. Next action: run warden compile.");
@@ -244,7 +246,7 @@ const check = async (opts, live) => {
     openStep(live, "tools-ready");
     const fileSha = (file) => (existsSync(join(root, file)) ? sha256(readFileSync(join(root, file))) : "");
     const doctorKey = sha256(canonicalJson(["doctor", fileSha(LOCK_PATH), fileSha("package.json")]));
-    const doctorCached = readCache(project, doctorKey) !== undefined;
+    const doctorCached = tier === "edit" && readCache(project, doctorKey) !== undefined;
     if (!doctorCached) {
         const health = await doctor(set);
         if (health.next !== undefined) {
@@ -395,7 +397,7 @@ export async function runCheck(opts) {
         if (live.project !== undefined) {
             const commit = headCommit(resolve(opts.root));
             const next = known ? nextOf(cause.message) : `run warden check again; it stopped with: ${cause.message}`;
-            appendEvidence(live.project, { at: live.at, kind: "cost", guardrail: RUN_TOTAL, run: live.run, tier: live.tier, trigger: live.trigger, outcome: "error", exit: 2, ms: performance.now() - live.started, steps: live.steps, files: 0, bytes: 0, next, ...(commit === undefined ? {} : { commit }) });
+            appendEvidence(live.project, { at: live.at, kind: "cost", guardrail: RUN_TOTAL, run: live.run, tier: live.tier, trigger: live.trigger, outcome: "error", exit: 2, ms: performance.now() - live.started, steps: live.steps, files: 0, bytes: 0, next, ...(commit === undefined ? {} : { commit }), ...live.base });
         }
         if (!known)
             throw cause;

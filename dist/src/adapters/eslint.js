@@ -114,6 +114,7 @@ const run = async (gs, files, ctx) => {
             { plugins: { warden: plugin } },
             { files: ["**/*.{ts,tsx,mts,cts}"], languageOptions: { parser: tseslint.parser } },
             { linterOptions: { noInlineConfig: true } },
+            { ignores: ["!**/node_modules/"] },
             ...entries,
         ],
         allowInlineConfig: false,

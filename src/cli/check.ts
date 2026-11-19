@@ -9,7 +9,7 @@ import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import type { Guardrail, RecordSet, Tier } from "../records/types.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { CHECK_BASE_ACTION, changedFiles, changesSinceMergeBase, containsHead, headCommit, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
+import { checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { type Evidence, type Outcome, RUN_TOTAL, type RunFailure, type Step, type Trigger, appendEvidence, readEvidence } from "../runner/evidence.js";
 import { type Format, type Notes, type Repeated, formatFeedback } from "../runner/feedback.js";
@@ -75,7 +75,7 @@ const removedWarden = (root: string, given: string | undefined): { set: RecordSe
   if (text === undefined) return undefined;
   const config = parseConfig(".warden/config.yaml", text);
   const base = requireBase(given, config.base);
-  verifyBase(root, base, CHECK_BASE_ACTION);
+  verifyBase(root, base, checkBaseAction);
   refuseOwnBranch(root, base);
   if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined) return undefined;
   const file = existsSync(join(root, ".warden")) ? ".warden/config.yaml" : ".warden";
@@ -156,6 +156,7 @@ interface Live {
   trigger: Trigger;
   started: number;
   project?: string;
+  base?: { base: string; mergeBase: string };
   open?: { step: Step; at: number };
   steps: Partial<Record<Step, number>>;
 }
@@ -207,6 +208,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
       ...(files.length === 1 ? { file: files[0] } : {}),
       bytes,
       ...(commit === undefined ? {} : { commit }),
+      ...live.base,
       ...(recorded.length === 0 ? {} : { failures: recorded }),
       ...(feedback?.next == null ? {} : { next: feedback.next.replace(/\.$/, "") }),
       ...judged?.extra,
@@ -229,8 +231,9 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const { project, loopBreakerRepeats } = set.config;
   live.project = project;
   const base = requireBase(opts.base ?? (opts.hook === "claude" ? hookBase(root) : undefined), set.config.base);
-  verifyBase(root, base, CHECK_BASE_ACTION);
+  verifyBase(root, base, checkBaseAction);
   refuseOwnBranch(root, base);
+  live.base = { base, mergeBase: mergeBase(root, base) };
   openStep(live, "rules-intact");
   if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined) {
     throw new RecordError(LOCK_PATH, "", "not found; this project was never compiled. Next action: run warden compile.");
@@ -277,7 +280,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   openStep(live, "tools-ready");
   const fileSha = (file: string): string => (existsSync(join(root, file)) ? sha256(readFileSync(join(root, file))) : "");
   const doctorKey = sha256(canonicalJson(["doctor", fileSha(LOCK_PATH), fileSha("package.json")]));
-  const doctorCached = readCache(project, doctorKey) !== undefined;
+  const doctorCached = tier === "edit" && readCache(project, doctorKey) !== undefined;
   if (!doctorCached) {
     const health = await doctor(set);
     if (health.next !== undefined) {
@@ -423,7 +426,7 @@ export async function runCheck(opts: CheckOptions): Promise<number> {
     if (live.project !== undefined) {
       const commit = headCommit(resolve(opts.root));
       const next = known ? nextOf(cause.message) : `run warden check again; it stopped with: ${(cause as Error).message}`;
-      appendEvidence(live.project, { at: live.at, kind: "cost", guardrail: RUN_TOTAL, run: live.run, tier: live.tier, trigger: live.trigger, outcome: "error", exit: 2, ms: performance.now() - live.started, steps: live.steps, files: 0, bytes: 0, next, ...(commit === undefined ? {} : { commit }) });
+      appendEvidence(live.project, { at: live.at, kind: "cost", guardrail: RUN_TOTAL, run: live.run, tier: live.tier, trigger: live.trigger, outcome: "error", exit: 2, ms: performance.now() - live.started, steps: live.steps, files: 0, bytes: 0, next, ...(commit === undefined ? {} : { commit }), ...live.base });
     }
     if (!known) throw cause;
     return 2;

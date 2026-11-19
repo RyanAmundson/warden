@@ -272,7 +272,7 @@ describe("warden CLI", () => {
     git("branch", "-D", "main");
     const r = warden("init");
     expect(r.code).toBe(2);
-    expect(r.err).toContain("Next action: run warden init --base <an existing branch>");
+    expect(r.err).toContain("Next action: run warden init --base origin/main");
     expect(warden("init", "--base", "origin/main").code).toBe(0);
     await adoptedBase("origin/main");
     expect(execFileSync("git", ["branch", "--list"], { cwd: root, encoding: "utf8" }).replace(/[* ]/g, "").split("\n").filter(Boolean)).toEqual(["feat"]);
@@ -681,6 +681,30 @@ describe("warden CLI", () => {
       expect(doctor.stdout).not.toContain("Require stack");
     } finally {
       await rm(copy, { recursive: true, force: true });
+    }
+  });
+
+  it("a base that exists only on the remote names the git command that creates it, and following it passes", async () => {
+    init();
+    git("add", "-A");
+    git("commit", "-q", "-m", "adopt");
+    git("checkout", "-q", "-b", "feature");
+    const clones = await mkdtemp(join(tmpdir(), "warden-clones-"));
+    try {
+      for (const [name, extra, action] of [
+        ["tracking", [], "git branch main origin/main"],
+        ["single", ["--single-branch"], "git fetch origin main:main"],
+      ] as const) {
+        const clone = join(clones, name);
+        execFileSync("git", ["clone", "-q", ...extra, "-b", "feature", root, clone], { stdio: "ignore" });
+        const r = wardenIn(clone, "", "check", "--base", "main");
+        expect(r.code).toBe(2);
+        expect(r.err).toContain(`base ref "main" does not exist. Next action: run ${action}, then run the same warden command again`);
+        execFileSync("git", action.split(" ").slice(1), { cwd: clone, stdio: "ignore" });
+        expect(wardenIn(clone, "", "check", "--base", "main").code).toBe(0);
+      }
+    } finally {
+      await rm(clones, { recursive: true, force: true });
     }
   });
 

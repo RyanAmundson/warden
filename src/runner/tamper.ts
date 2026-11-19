@@ -65,7 +65,16 @@ export function recordedBases(root: string): string[] {
 export function readBaseLock(root: string, base: string): Lock | undefined {
   const text = showAtMergeBase(root, base, LOCK_PATH);
   if (text === undefined) return undefined;
-  const before = JSON.parse(text) as Lock;
+  let before: Lock;
+  try {
+    before = JSON.parse(text) as Lock;
+  } catch (cause) {
+    throw new RecordError(
+      LOCK_PATH,
+      "",
+      `at the merge base with ${base} is not valid JSON (${(cause as Error).message}). Next action: run warden compile on ${base} and commit the lock there, merge ${base} into this branch, then run warden check --base ${base} again.`,
+    );
+  }
   if ((before.format ?? 0) > LOCK_FORMAT) {
     throw new RecordError(
       LOCK_PATH,

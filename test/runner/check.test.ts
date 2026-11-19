@@ -970,14 +970,36 @@ describe("final review: lock records base and project", () => {
     expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "loosened" }]);
   });
 
-  it("a base lock from a newer Warden exits 2 and names the release to install", async () => {
+  it("a base lock that does not parse exits 2 with one next action, and following it passes", async () => {
+    const working = await read(".warden/lock.json");
+    git("checkout", "-q", "main");
+    await write(".warden/lock.json", "{");
+    git("commit", "-q", "-am", "corrupt base lock");
+    git("checkout", "-q", "feature");
+    git("merge", "-q", "--no-edit", "main");
+    await write(".warden/lock.json", working);
+    git("commit", "-q", "-am", "keep the working lock");
+    const { code, err } = await check();
+    expect(code).toBe(2);
+    expect(err).toContain("Next action: run warden compile on main and commit the lock there, merge main into this branch, then run warden check --base main again.");
+    git("checkout", "-q", "main");
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    git("commit", "-q", "-am", "recompile");
+    git("checkout", "-q", "feature");
+    git("merge", "-q", "--no-edit", "main");
+    expect((await check()).code).toBe(0);
+  });
+
+  it("a base lock from a newer Warden stops check and compile, and names the release to install", async () => {
+    const working = await read(".warden/lock.json");
     await commitBaseLock((lock) => {
       lock.format = 3;
       lock.warden = "9.0.0";
     });
     git("checkout", "-q", "feature");
     git("merge", "-q", "--no-edit", "main");
-    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    await write(".warden/lock.json", working);
+    await expect(compile(root, wardenRoot)).rejects.toThrow("Next action: install Warden 9.0.0, the release that wrote the lock on main");
     const { code, err } = await check();
     expect(code).toBe(2);
     expect(err).toContain("Next action: install Warden 9.0.0, the release that wrote the lock on main, then run warden check --base main again.");
@@ -1089,13 +1111,21 @@ describe("doctor at check", () => {
     expect(err).toContain("Next action: install mytool so it is on PATH, then run warden doctor");
   });
 
-  it("a repeat check with the same lock and package.json skips the doctor, and a package.json change runs it again", async () => {
+  it("a repeat edit-tier check with the same lock and package.json skips the doctor, and a package.json change runs it again", async () => {
     const bin = await withTool();
     await addLegacy("boundary", "mytool", 5000);
-    expect((await check()).code).toBe(0);
+    expect((await check({ tier: "edit" })).code).toBe(0);
     await rm(bin, { recursive: true, force: true });
-    expect((await check()).code).toBe(0);
+    expect((await check({ tier: "edit" })).code).toBe(0);
     await write("package.json", "{}\n");
+    expect((await check({ tier: "edit" })).code).toBe(2);
+  });
+
+  it("the commit tier runs the doctor even when the cache holds a pass", async () => {
+    const bin = await withTool();
+    await addLegacy("boundary", "mytool", 5000);
+    expect((await check({ tier: "edit" })).code).toBe(0);
+    await rm(bin, { recursive: true, force: true });
     expect((await check()).code).toBe(2);
   });
 });
@@ -1366,6 +1396,32 @@ describe("deferred residual-bypass minors", () => {
     git("checkout", "-q", "feature");
     git("merge", "-q", "--no-ff", "--no-edit", "side");
     expect(recordedBases(root)).toContain("dev");
+  });
+});
+
+describe("deferred engine review minors", () => {
+  it("compile does not baseline a Guardrail that the merge-base lock already holds", async () => {
+    await write(".warden/config.yaml", config(["core"]));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    await write("b.ts", "var b = 1;\n");
+    await write(".warden/config.yaml", config(["core", "local"]));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect(JSON.parse(await read(".warden/baseline.json"))).toEqual({ "warden-no-comments": { "a.ts": 1 } });
+    expect((await check()).code).toBe(1);
+  });
+
+  it("the run row records the base and the merge-base commit it compared with", async () => {
+    await check({ base: "main" });
+    const row = (await evidence()).find((e) => e.kind === "cost" && e.guardrail === "run");
+    expect(row).toMatchObject({ base: "main", mergeBase: git("merge-base", "main", "HEAD").trim() });
+  });
+
+  it("a tracked source under a node_modules folder is linted", async () => {
+    await write("src/node_modules/x/index.ts", "// vendored note\nexport const x = 1;\n");
+    git("add", "-f", "src/node_modules/x/index.ts");
+    const { code, out } = await check({ format: "json" });
+    expect(code).toBe(1);
+    expect(failedFiles(out)).toEqual(["src/node_modules/x/index.ts"]);
   });
 });
 

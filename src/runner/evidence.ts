@@ -36,6 +36,8 @@ export interface Evidence {
   next?: string;
   failures?: RunFailure[];
   ratchet?: [number, number];
+  base?: string;
+  mergeBase?: string;
   step?: Step;
   state?: "start" | "done" | "fail";
   passes?: Record<string, number>;
