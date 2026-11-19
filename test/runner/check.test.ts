@@ -983,7 +983,9 @@ describe("a whole-tree Guardrail", () => {
     expect((await check()).code).toBe(0);
     await write(".warden/config.yaml", (await read(".warden/config.yaml")).replace("flag: flag.ts", "flag: none.ts"));
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
-    expect((await check()).code).toBe(1);
+    const loosened = await check();
+    expect(loosened.code).toBe(1);
+    expect(loosened.out.split("\n").filter((l) => l.startsWith("TAMPERED"))).toEqual(["TAMPERED .warden/lock.json  loosened tree-flagged"]);
     expect(await tampered()).toContainEqual({ file: ".warden/lock.json", detail: "loosened" });
   });
 

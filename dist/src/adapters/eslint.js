@@ -111,12 +111,17 @@ const rewrite = (source, m, id) => {
     }
     return `${joined(before, after).trimEnd()}\n${hint(removed)}`;
 };
+const shippedDoThis = (shipped, id, message) => {
+    const at = message.indexOf(". ");
+    return shipped.has(id.slice(0, id.indexOf("/"))) && at !== -1 ? message.slice(at + 2) : undefined;
+};
 const doThisFor = (doThis) => (doThis === undefined ? {} : { doThis });
 const run = async (gs, files, ctx) => {
     const owned = new Set(gs.map(ruleId));
     const entries = JSON.parse(await readFile(join(ctx.generatedDir, "eslint.rules.json"), "utf8")).entries.filter((e) => Object.keys(e.rules ?? {}).every((r) => owned.has(r)));
     const [{ ESLint: Linting }, { default: tseslint }, { plugin }, { builtinRules }] = await Promise.all([import("eslint"), import("typescript-eslint"), import("../../eslint-plugin/index.js"), import("eslint/use-at-your-own-risk")]);
     const plugins = { warden: plugin };
+    const shippedNamespaces = new Set();
     for (const g of gs) {
         const target = targetOf(g);
         const [namespace, name] = target.split("/", 2);
@@ -129,6 +134,7 @@ const run = async (gs, files, ctx) => {
             plugins[g.id] = { rules: { [target]: core } };
         }
         else if (namespace !== "warden") {
+            shippedNamespaces.add(namespace);
             const shipped = (plugins[namespace] ??= { meta: { name: namespace }, rules: {} });
             shipped.rules[name] = await packCode(g, "eslint");
         }
@@ -187,7 +193,7 @@ const run = async (gs, files, ctx) => {
                 line: m.line,
                 endLine: m.endLine ?? m.line,
                 message: m.message,
-                ...doThisFor(rewrite(source, m, id)),
+                ...doThisFor(rewrite(source, m, id) ?? shippedDoThis(shippedNamespaces, id, m.message)),
             });
         }
     }

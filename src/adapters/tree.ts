@@ -39,7 +39,21 @@ interface Entry {
 
 const CODE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 
-const lineAt = (text: string, pos: number): number => text.slice(0, pos).split("\n").length;
+const lineStarts = (text: string): number[] => {
+  const starts = [0];
+  for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) starts.push(i + 1);
+  return starts;
+};
+
+const lineAt = (starts: number[], pos: number): number => {
+  let [low, high] = [0, starts.length - 1];
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if ((starts[mid] as number) <= pos) low = mid;
+    else high = mid - 1;
+  }
+  return low + 1;
+};
 
 const compilerOptions = async (root: string): Promise<import("typescript").CompilerOptions> => {
   const { default: ts } = await import("typescript");
@@ -60,12 +74,13 @@ export async function importGraph(root: string, files: string[], read: (file: st
   const graph = new Map<string, Edge[]>();
   for (const file of files.filter((f) => CODE.test(f))) {
     const text = read(file);
+    const starts = lineStarts(text);
     const edges: Edge[] = [];
     for (const imported of ts.preProcessFile(text, true, true).importedFiles) {
       const resolved = ts.resolveModuleName(imported.fileName, join(root, file), options, ts.sys, cache).resolvedModule;
       if (resolved === undefined || resolved.isExternalLibraryImport === true) continue;
       const target = relative(root, resolved.resolvedFileName).split(sep).join("/");
-      if (!target.startsWith("../")) edges.push({ target, line: lineAt(text, imported.pos) });
+      if (!target.startsWith("../")) edges.push({ target, line: lineAt(starts, imported.pos) });
     }
     graph.set(file, edges);
   }

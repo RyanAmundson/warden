@@ -7,6 +7,7 @@ import { runExamples } from "../src/compiler/examples.js";
 import type { Adapter } from "../src/adapters/types.js";
 import { loadRecords } from "../src/records/load.js";
 import type { Guardrail, RecordSet } from "../src/records/types.js";
+import { matchesPath } from "../src/records/paths.js";
 import { adapters, prefixOf, runGuardrails } from "../src/runner/run.js";
 
 const wardenRoot = resolve(import.meta.dirname, "..");
@@ -134,6 +135,11 @@ describe("architecture pack world boundary", () => {
     ["a timer handle type", "let timer: ReturnType<typeof setTimeout> | undefined;\nexport const handle = (): typeof timer => timer;\n"],
     ["a fetch type", "export type Fetch = typeof fetch;\n"],
     ["a cast to a timer type", "export const id = (x: unknown): ReturnType<typeof setInterval> => x as ReturnType<typeof setInterval>;\n"],
+    ["a variable annotated with WebSocket", "let ws: WebSocket | undefined;\nexport const socket = (): WebSocket | undefined => ws;\n"],
+    ["a WebSocket parameter", "export const open = (s: WebSocket): void => s.close();\n"],
+    ["an interface member typed WebSocket", "export interface Holder {\n  socket?: WebSocket;\n}\n"],
+    ["a type alias of XMLHttpRequest", "export type Req = XMLHttpRequest;\n"],
+    ["an instanceof test against WebSocket", "export const isSocket = (x: unknown): boolean => x instanceof WebSocket;\n"],
   ])("allows %s, which reads no clock or network", async (_name, source) => {
     expect(await check(globals, source, "src/g/a.ts")).toBe("pass");
   });
@@ -194,6 +200,11 @@ describe("architecture pack sources only emit", () => {
   const sinkMessage = "A source imports no sink.";
   const reexportMessage = "A source imports no sink.";
   const returnMessage = "Every function a source exports declares an Observable return type.";
+
+  it("gives a pack rule's fix as its Do this line", async () => {
+    const result = await lint(shape, "export const read = (): number => 1;\n", bad);
+    expect(result?.violations.map((v) => v.doThis)).toEqual(["Declare this function's return type as Observable<...>, and return the data through it."]);
+  });
   const worldMessage = "A source re-exports no world module.";
   const aliasMessage = "A source exports no alias of another value.";
   const listMessage = "A source exports no local value that is not a function returning an Observable.";
@@ -447,5 +458,13 @@ describe("architecture pack tree checks stay linear", () => {
     const all = counted(files);
     checks[name]?.({ files, all: all.list, read: () => "", imports: new Map(), settings, options: undefined, terms: [] });
     expect(all.reads()).toBeLessThanOrEqual(2 * files.length);
+  });
+});
+
+describe("architecture pack helpers", () => {
+  it("match globs exactly as Warden's own matcher does, negation included", async () => {
+    const groups = (await import(join(wardenRoot, "packs/architecture/groups.js"))) as { matchesPath: (file: string, glob: string) => boolean };
+    const cases: [string, string][] = [["src/main.ts", "**/main.ts"], ["src/main.ts", "!**/main.ts"], ["src/a/b.ts", "!src/x/**"], ["src/[s]/a.ts", "src/*/a.ts"], ["a.ts", "*.ts"]];
+    for (const [file, glob] of cases) expect([file, glob, groups.matchesPath(file, glob)]).toEqual([file, glob, matchesPath(file, glob)]);
   });
 });

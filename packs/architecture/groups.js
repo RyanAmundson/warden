@@ -29,7 +29,7 @@ export const groupOf = (file, settings) => {
 
 export const conformanceOf = (group) => `${stem(group.port)}.conformance.ts`;
 
-const matchesPath = (file, glob) => (glob.startsWith("!") ? !matchesGlob(file, glob.slice(1)) : matchesGlob(file, glob));
+export const matchesPath = (file, glob) => (glob.startsWith("!") ? !matchesGlob(file, glob.slice(1)) : matchesGlob(file, glob));
 
 export const isCompositionRoot = (file, settings) => settings.compositionRoots.some((glob) => matchesPath(file, glob));
 

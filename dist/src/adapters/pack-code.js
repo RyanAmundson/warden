@@ -1,8 +1,39 @@
-import { existsSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { builtinModules } from "node:module";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { RecordError } from "../records/load.js";
 export const targetOf = (g) => g.implementation.slice(g.implementation.indexOf(":") + 1);
+const confined = new Set();
+const BUILTINS = new Set(builtinModules);
+async function refuseEscapes(packDir, entry, packFile, pointer) {
+    const { default: ts } = await import("typescript");
+    if (confined.has(entry))
+        return;
+    if (!entry.startsWith(`${packDir}${sep}`)) {
+        throw new RecordError(packFile, pointer, `${entry} is outside the pack folder ${packDir}, so the lock cannot see it. Next action: replace the link with the file itself inside ${packDir}, then run warden compile.`);
+    }
+    const seen = new Set();
+    const pending = [entry];
+    while (pending.length > 0) {
+        const file = pending.pop();
+        if (seen.has(file))
+            continue;
+        seen.add(file);
+        for (const { fileName } of ts.preProcessFile(readFileSync(file, "utf8"), true, true).importedFiles) {
+            if (fileName.startsWith("node:") || BUILTINS.has(fileName))
+                continue;
+            const named = resolve(dirname(file), fileName);
+            const target = existsSync(named) ? realpathSync(named) : named;
+            if (!fileName.startsWith(".") || !target.startsWith(`${packDir}${sep}`)) {
+                throw new RecordError(packFile, pointer, `${file} imports ${fileName}, which is outside the pack folder ${packDir}, so the lock cannot see it. Next action: move what ${fileName} provides into ${packDir} and import it by a relative path inside that folder, then run warden compile.`);
+            }
+            if (existsSync(target))
+                pending.push(target);
+        }
+    }
+    confined.add(entry);
+}
 export async function packCode(g, adapter) {
     const target = targetOf(g);
     const [namespace, name] = target.split("/", 2);
@@ -16,8 +47,9 @@ export async function packCode(g, adapter) {
     if (!existsSync(file)) {
         throw new RecordError(packFile, pointer, `pack ${pack} ships no ${adapter}.js. Next action: add ${file} whose default export maps ${name} to its implementation, then run warden compile.`);
     }
+    await refuseEscapes(realpathSync(g.packDir), realpathSync(file), packFile, pointer);
     const shipped = (await import(pathToFileURL(file).href)).default ?? {};
-    if (!(name in shipped)) {
+    if (!Object.hasOwn(shipped, name)) {
         throw new RecordError(packFile, pointer, `${file} exports no ${name}. Next action: add ${name} to the default export of ${file}, then run warden compile.`);
     }
     return shipped[name];

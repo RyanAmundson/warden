@@ -471,7 +471,10 @@ Version 2 ships every ARCH practice. The pack ships its own code beside
 `graph.js` holds import-graph checks. A Guardrail names one as
 `<adapter>:architecture/<name>`, and Warden loads it from the pack's folder,
 the same folder `WARDEN_PACK_DIR` names for a `cmd` Guardrail. The lock hashes
-these files with the rest of the pack.
+these files with the rest of the pack. Pack code may import only Node
+built-in modules and files inside its own pack folder, so everything it runs
+is hashed. Warden refuses any other import, and any link that points outside
+the folder. A non-literal `import()` is not checked.
 
 The project sets the pack's settings on its config entry. `pack.yaml`
 declares their JSON Schema, with defaults, and Warden refuses settings that do

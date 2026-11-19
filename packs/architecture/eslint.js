@@ -84,7 +84,8 @@ const worldGlobals = {
         const implicit = scope.variables.filter((v) => v.defs.length === 0).flatMap((v) => v.references);
         for (const reference of [...scope.through, ...implicit]) {
           const id = reference.identifier;
-          if (inTypePosition(id)) continue;
+          if (reference.isTypeReference || inTypePosition(id)) continue;
+          if (id.parent.type === "BinaryExpression" && id.parent.operator === "instanceof" && id.parent.right === id) continue;
           const parent = id.parent;
           const member = parent.type === "MemberExpression" && parent.object === id ? propertyName(parent) : undefined;
           if (REACHES.has(id.name)) report(id, id.name, REACHES.get(id.name));
@@ -135,7 +136,7 @@ const sourceShape = {
     list: "A source exports no local value that is not a function returning an Observable. Export each function at its declaration, with an Observable return type.",
     class: "A source exports no class. Export a function that returns an Observable.",
     enum: "A source exports no enum. Move the enum out of the sources folder, and import it from there.",
-    returns: "Every function a source exports declares an Observable return type.",
+    returns: "Every function a source exports declares an Observable return type. Declare this function's return type as Observable<...>, and return the data through it.",
   }),
   create(context) {
     const settings = settingsOf(context);

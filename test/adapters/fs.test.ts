@@ -1,4 +1,5 @@
-import { resolve } from "node:path";
+import { realpath, rename, symlink, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { fsAdapter } from "../../src/adapters/tree.js";
 import { conformance } from "./conformance.js";
@@ -15,6 +16,43 @@ const check = [
 ].join("\n");
 
 describe("fs adapter", () => {
+  it.each([
+    ["a relative import that leaves the pack folder", "export { default } from \"../../../tools/impl.js\";\n", "../../../tools/impl.js"],
+    ["a package import", "import x from \"left-pad\";\nexport default { mentions: () => x };\n", "left-pad"],
+    ["a nested file that leaves the folder", "export { default } from \"./inner.js\";\n", "../outside.js"],
+  ])("refuses pack code with %s, because the lock hashes only the pack folder", async (_name, code, escape) => {
+    const pack = await shippedPack("fs", code);
+    try {
+      await writeFile(join(pack.dir, "inner.js"), "export { default } from \"../outside.js\";\n");
+      const g = treeGuardrail("fs:local/mentions", pack.dir);
+      await expect(conformance(fsAdapter, fixture, [g], treeSet(g), ["src/a.ts"], [])).rejects.toThrow(`imports ${escape}, which is outside the pack folder ${await realpath(pack.dir)}, so the lock cannot see it. Next action: move what ${escape} provides into`);
+    } finally {
+      await pack.remove();
+    }
+  });
+
+  it("refuses pack code that is a link to a file outside the pack folder", async () => {
+    const pack = await shippedPack("fs", check);
+    try {
+      await rename(join(pack.dir, "fs.js"), join(pack.dir, "../real.js"));
+      await symlink("../real.js", join(pack.dir, "fs.js"));
+      const g = treeGuardrail("fs:local/mentions", pack.dir);
+      await expect(conformance(fsAdapter, fixture, [g], treeSet(g), ["src/a.ts"], [])).rejects.toThrow("is outside the pack folder");
+    } finally {
+      await pack.remove();
+    }
+  });
+
+  it("names a check that only the object prototype has as missing", async () => {
+    const pack = await shippedPack("fs", check);
+    try {
+      const g = treeGuardrail("fs:local/toString", pack.dir);
+      await expect(conformance(fsAdapter, fixture, [g], treeSet(g), ["src/a.ts"], [])).rejects.toThrow("exports no toString. Next action: add toString to the default export");
+    } finally {
+      await pack.remove();
+    }
+  });
+
   it("fs conformance: a pack check reports each file it finds, with the pack's settings, the Terms, and its next action", async () => {
     const pack = await shippedPack("fs", check);
     try {

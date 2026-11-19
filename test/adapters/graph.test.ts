@@ -1,6 +1,8 @@
-import { resolve } from "node:path";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { graphAdapter } from "../../src/adapters/tree.js";
+import { graphAdapter, importGraph } from "../../src/adapters/tree.js";
 import { conformance } from "./conformance.js";
 import { shippedPack, treeGuardrail, treeSet } from "./tree-pack.js";
 
@@ -14,6 +16,21 @@ const check = [
 ].join("\n");
 
 describe("graph adapter", () => {
+  it("places each import on its own line in a file", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "warden-graph-lines-"));
+    try {
+      await mkdir(join(dir, "src"));
+      await writeFile(join(dir, "src/b.ts"), "export const b = 1;\n");
+      await writeFile(join(dir, "src/c.ts"), "export const c = 1;\n");
+      const text = `import { b } from "./b";\n${"\n".repeat(40)}export const x = 1;\nimport { c } from "./c";\n`;
+      await writeFile(join(dir, "src/a.ts"), text);
+      const graph = await importGraph(dir, ["src/a.ts"], (f) => (f === "src/a.ts" ? text : ""));
+      expect(graph.get("src/a.ts")).toEqual([{ target: "src/b.ts", line: 1 }, { target: "src/c.ts", line: 43 }]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("graph conformance: a pack check sees each resolved project import at its line, and no package import", async () => {
     const pack = await shippedPack("graph", check);
     try {

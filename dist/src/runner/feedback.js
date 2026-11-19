@@ -90,7 +90,7 @@ export function formatFeedback(failures, set, format, notes = {}) {
     if (format === "json") {
         return JSON.stringify({ failures: items, tampered, unstaged: notes.unstaged, repeated: notes.repeated, overBudget: notes.overBudget, killed: notes.killed, next });
     }
-    const lines = tampered.map((t) => `TAMPERED ${t.file}  ${t.detail}`);
+    const lines = tampered.map((t) => `TAMPERED ${t.file}  ${t.detail}${t.guardrail === undefined ? "" : ` ${t.guardrail}`}`);
     lines.push(...(notes.unstaged ?? []).map((f) => `UNSTAGED ${f}  the commit tier judges what you stage; this working copy differs from the index`));
     for (const item of items) {
         lines.push(`FAIL ${item.file === "" ? "project" : `${item.file}:${item.line}`}  ${item.practice}`);

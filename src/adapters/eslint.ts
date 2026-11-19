@@ -119,6 +119,11 @@ const rewrite = (source: string, m: Linter.LintMessage, id: string): string | un
   return `${joined(before, after).trimEnd()}\n${hint(removed)}`;
 };
 
+const shippedDoThis = (shipped: Set<string>, id: string, message: string): string | undefined => {
+  const at = message.indexOf(". ");
+  return shipped.has(id.slice(0, id.indexOf("/"))) && at !== -1 ? message.slice(at + 2) : undefined;
+};
+
 const doThisFor = (doThis: string | undefined): { doThis?: string } => (doThis === undefined ? {} : { doThis });
 
 const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<RunResult[]> => {
@@ -126,6 +131,7 @@ const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<R
   const entries = (JSON.parse(await readFile(join(ctx.generatedDir, "eslint.rules.json"), "utf8")) as { entries: Linter.Config[] }).entries.filter((e) => Object.keys(e.rules ?? {}).every((r) => owned.has(r)));
   const [{ ESLint: Linting }, { default: tseslint }, { plugin }, { builtinRules }] = await Promise.all([import("eslint"), import("typescript-eslint"), import("../../eslint-plugin/index.js"), import("eslint/use-at-your-own-risk")]);
   const plugins: Record<string, ESLint.Plugin> = { warden: plugin };
+  const shippedNamespaces = new Set<string>();
   for (const g of gs) {
     const target = targetOf(g);
     const [namespace, name] = target.split("/", 2) as [string, string];
@@ -137,6 +143,7 @@ const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<R
       }
       plugins[g.id] = { rules: { [target]: core } };
     } else if (namespace !== "warden") {
+      shippedNamespaces.add(namespace);
       const shipped = (plugins[namespace] ??= { meta: { name: namespace }, rules: {} });
       (shipped.rules as Record<string, Rule.RuleModule>)[name] = await packCode<Rule.RuleModule>(g, "eslint");
     }
@@ -191,7 +198,7 @@ const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<R
         line: m.line,
         endLine: m.endLine ?? m.line,
         message: m.message,
-        ...doThisFor(rewrite(source, m, id as string)),
+        ...doThisFor(rewrite(source, m, id as string) ?? shippedDoThis(shippedNamespaces, id as string, m.message)),
       });
     }
   }

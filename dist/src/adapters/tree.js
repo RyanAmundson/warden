@@ -5,7 +5,23 @@ import { RecordError } from "../records/load.js";
 import { enabledOn, pathGroups } from "../records/paths.js";
 import { packCode } from "./pack-code.js";
 const CODE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
-const lineAt = (text, pos) => text.slice(0, pos).split("\n").length;
+const lineStarts = (text) => {
+    const starts = [0];
+    for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1))
+        starts.push(i + 1);
+    return starts;
+};
+const lineAt = (starts, pos) => {
+    let [low, high] = [0, starts.length - 1];
+    while (low < high) {
+        const mid = Math.ceil((low + high) / 2);
+        if (starts[mid] <= pos)
+            low = mid;
+        else
+            high = mid - 1;
+    }
+    return low + 1;
+};
 const compilerOptions = async (root) => {
     const { default: ts } = await import("typescript");
     const base = { allowJs: true, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler };
@@ -25,6 +41,7 @@ export async function importGraph(root, files, read) {
     const graph = new Map();
     for (const file of files.filter((f) => CODE.test(f))) {
         const text = read(file);
+        const starts = lineStarts(text);
         const edges = [];
         for (const imported of ts.preProcessFile(text, true, true).importedFiles) {
             const resolved = ts.resolveModuleName(imported.fileName, join(root, file), options, ts.sys, cache).resolvedModule;
@@ -32,7 +49,7 @@ export async function importGraph(root, files, read) {
                 continue;
             const target = relative(root, resolved.resolvedFileName).split(sep).join("/");
             if (!target.startsWith("../"))
-                edges.push({ target, line: lineAt(text, imported.pos) });
+                edges.push({ target, line: lineAt(starts, imported.pos) });
         }
         graph.set(file, edges);
     }
