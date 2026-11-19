@@ -1,6 +1,6 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -333,6 +333,37 @@ describe("warden CLI", () => {
     expect(r.err).toContain("not a git repository");
     expect(existsSync(join(root, ".warden"))).toBe(false);
     expect(existsSync(join(root, ".claude"))).toBe(false);
+  });
+
+  it("bench prints a superlinear verdict, then names the example projects it could not remove, and exits 2", async () => {
+    await mkdir(join(root, ".warden/packs/local"), { recursive: true });
+    await writeFile(
+      join(root, ".warden/config.yaml"),
+      'warden: "0.1.0"\nproject: p\nbase: main\npacks:\n  - id: local\n    paths: ["src/**"]\ntierBudgetMs: { edit: 1, commit: 1, boundary: 1 }\nloopBreakerRepeats: 3\nbench:\n  minMarginalMs: 5\n  linearMax: 0.5\n',
+    );
+    await writeFile(
+      join(root, ".warden/packs/local/pack.yaml"),
+      [
+        "id: local", "layer: 1", "terms: []", "practices:", "  - id: locks", "    statement: Leaves a locked folder.", "    terms: []", "    paths: []", "    conflictsWith: []", "    guardrails:",
+        "      - id: local-locker", "        kind: runtime", "        runs: [boundary]", "        budgetMs: 5000", "        version: 1",
+        "        implementation: \"cmd:mkdir -p locked/inner && chmod 500 locked && sleep $(ls src | awk 'END{print NR/2000}')\"",
+        '        mustFail: "bad\\n"', '        mustPass: "const a = 1;\\n"', "",
+      ].join("\n"),
+    );
+    const r = warden("bench", "--rule", "local-locker");
+    const projects = [...new Set(r.err.match(/\/\S*?warden-examples-[A-Za-z0-9]{6}/g) ?? [])];
+    try {
+      expect(r.out).toMatch(/local-locker +superlinear .*DEFECT/);
+      expect(projects).toHaveLength(2);
+      expect(r.err).toContain("Warden could not remove 2 example projects:");
+      expect(r.err.match(/Next action:/g)).toHaveLength(1);
+      expect(r.code).toBe(2);
+    } finally {
+      for (const project of projects) {
+        await chmod(join(project, "locked"), 0o700);
+        await rm(project, { recursive: true, force: true });
+      }
+    }
   });
 
   it("compile exits 2 when records have findings", async () => {

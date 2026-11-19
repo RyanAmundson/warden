@@ -174,12 +174,15 @@ so the cache never answers. It also runs unbudgeted (`ctx.unbudgeted`), so a
 slow size is measured instead of killed. Runs go one at a time, which follows
 the shared-compute rule and keeps them from competing for the CPU.
 
-**Removal.** A measurement returns before its temporary project is removed.
-The project is removed in the background, and every `warden` command waits for
-those removals before it exits. When removals fail, the command exits 2 with
-one message that names every folder it could not remove and one next action:
-delete those folders, then run the command again. A command that already
-failed reports its own error first, then the removal error.
+**Removal.** A measurement, and the example runs in `warden compile`, return
+before their temporary project is removed. The project is removed in the
+background, and every `warden` command waits for those removals before it
+exits. When removals fail, the command exits 2 with one message that names
+every folder it could not remove and one next action: delete those folders,
+then run the command again. A command that already failed reports its own
+error first, then the removal error. Exit 2 takes precedence over exit 1: a
+bench that finds a superlinear Guardrail and then cannot remove a folder
+prints both results and exits 2.
 
 **Test timeout (Ryan, 2026-11-18).** Only the `scaling` vitest project raises
 the test timeout, to 10 s; every other test keeps the 5 s default. The limit
@@ -206,8 +209,14 @@ results are kept in the `scaling` Evidence, so a Guardrail that flips often
 shows up in review. A real defect repeats; a burst of machine noise usually
 doesn't.
 
-**Measurement.** Each size runs 3 times, and the benchmark keeps the fastest
-run. It measures fixed cost `f` with a single file, as the fastest of 9 runs. The exponent `k` is the
+**Measurement.** Each size takes 3 samples, and the benchmark keeps the
+fastest. A sample times at least `4 × base` files of work: the 1x size runs 4
+times in a row, the 2x size twice, and the 4x and 8x sizes once, and the
+sample is the mean time of one run. On a loaded machine a short run can
+finish inside a gap that a long run cannot, so timing one run per size made
+small sizes look fast and a linear Guardrail look superlinear. Equal work per
+sample gives every size the same exposure to load. It measures fixed cost `f`
+with a single file, as the fastest of 9 runs. The exponent `k` is the
 least-squares slope of `log(ms − f)` against `log(files)` over the four sizes.
 Subtracting `f` stops startup time, such as ESLint or `tsc` launching, from
 making a linear Guardrail look sublinear.

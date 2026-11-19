@@ -46,7 +46,7 @@ const measure = (project, s, cfg, rerun, signal) => withExampleProject(async (ro
     await writeTree(root, adapters.get(prefixOf(s.g)).emit([s.g], set));
     const files = [];
     let copies = 0;
-    const sample = async (n, runs = RUNS) => {
+    const sample = async (n, runs = RUNS, reps = 1) => {
         signal?.throwIfAborted();
         const tree = {};
         for (; copies < n; copies++) {
@@ -58,17 +58,21 @@ const measure = (project, s, cfg, rerun, signal) => withExampleProject(async (ro
         await writeTree(root, tree);
         const times = [];
         for (let i = 0; i < runs; i++) {
-            signal?.throwIfAborted();
-            const results = await runGuardrails(set, [s.g], files, ctx);
-            signal?.throwIfAborted();
-            const bad = results.find((r) => r.status !== "pass");
-            if (bad !== undefined) {
-                throw new RecordError(s.pack.file, `/guardrails/${s.g.id}/mustPass`, `Guardrail ${s.g.id} failed on a copy of its mustPass example at ${bad.violations[0]?.file || files[0]}. Next action: change the mustPass example of Guardrail ${s.g.id} in ${s.pack.file} so every copy of it passes, then run ${rerun}.`);
+            let ms = 0;
+            for (let j = 0; j < reps; j++) {
+                signal?.throwIfAborted();
+                const results = await runGuardrails(set, [s.g], files, ctx);
+                signal?.throwIfAborted();
+                const bad = results.find((r) => r.status !== "pass");
+                if (bad !== undefined) {
+                    throw new RecordError(s.pack.file, `/guardrails/${s.g.id}/mustPass`, `Guardrail ${s.g.id} failed on a copy of its mustPass example at ${bad.violations[0]?.file || files[0]}. Next action: change the mustPass example of Guardrail ${s.g.id} in ${s.pack.file} so every copy of it passes, then run ${rerun}.`);
+                }
+                const own = results.find((r) => r.guardrail === s.g.id);
+                if (own === undefined)
+                    throw new Error(`no result for guardrail ${s.g.id}`);
+                ms += s.time(own);
             }
-            const own = results.find((r) => r.guardrail === s.g.id);
-            if (own === undefined)
-                throw new Error(`no result for guardrail ${s.g.id}`);
-            times.push(s.time(own));
+            times.push(ms / reps);
         }
         return Math.min(...times);
     };
@@ -91,12 +95,14 @@ const measure = (project, s, cfg, rerun, signal) => withExampleProject(async (ro
             return { verdict: "constant", points: await sizes(cfg.baseFiles), f };
         base *= 2;
     }
-    const points = await sizes(base);
+    const points = [];
+    for (const m of [1, 2, 4, 8])
+        points.push([base * m, await sample(base * m, RUNS, Math.max(1, 4 / m))]);
     if (points[3][1] - f < cfg.constantMs)
         return { verdict: "constant", points, f };
     const k = slope(points, f);
     return { verdict: k > cfg.linearMax ? "superlinear" : k < cfg.sublinearMax ? "sublinear" : "linear", k, points, f };
-}, true);
+});
 export const benchSubject = async (set, s, cfg, rerun, signal) => {
     refuseUnmatched(s, rerun);
     const first = await measure(set, s, cfg, rerun, signal);

@@ -18,6 +18,7 @@ let roots: string[];
 let checked: number;
 let spikes: number;
 let fixedRuns: number;
+let units: number;
 
 const models: Record<string, (n: number, root: string) => number> = {
   linear: (n) => 2 + n,
@@ -26,6 +27,11 @@ const models: Record<string, (n: number, root: string) => number> = {
   spiky: (n) => 2 + n + (n === 200 && (spikes = (spikes + 1) % 3) !== 0 ? (n * n) / 10 : 0),
   jittery: (n) => (n === 1 ? 12.5 - ((fixedRuns += 1) > 3 ? 10 : 0) : 2 + n / 2),
   flaky: (n, r) => (r === roots[0] ? 2 + (n * n) / 10 : 2 + n),
+  loaded: (n) => {
+    let ms = 2;
+    for (const end = units + n; units < end; units++) ms += units % 100 < 40 ? 1 : 2;
+    return ms;
+  },
 };
 
 const fake: Adapter = {
@@ -97,6 +103,7 @@ beforeEach(async () => {
   checked = 0;
   spikes = 0;
   fixedRuns = 0;
+  units = 0;
   vi.stubEnv("WARDEN_HOME", home);
   adapters.set("fake", fake);
 });
@@ -199,6 +206,14 @@ it("a size where two of three runs are slowed by noise keeps its fastest run, so
   const noisy = (await scaling()).find((e) => e.guardrail === "noisy");
   expect(noisy).toMatchObject({ verdict: "linear", points: [[25, 27], [50, 52], [100, 102], [200, 202]] });
   expect(noisy).not.toHaveProperty("previous");
+});
+
+it("a load that slows 60 of every 100 files stays linear, because each size is timed over the same number of files", async () => {
+  await setup({ local: [guardrail("busy", "loaded")] });
+  const { code, out } = await bench();
+  expect(code, out).toBe(0);
+  expect(roots).toHaveLength(1);
+  expect((await scaling()).find((e) => e.guardrail === "busy")).toMatchObject({ verdict: "linear", f: 3, points: [[25, 42], [50, 82], [100, 162], [200, 322]] });
 });
 
 it("a fixed time slowed on its first three runs still starts the doubling at the size its fastest run implies", async () => {
