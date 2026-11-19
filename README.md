@@ -237,6 +237,12 @@ next action:
   `.warden/generated/hooks/pre-commit` and exit with its status, for example
   with the line `.warden/generated/hooks/pre-commit || exit $?`.
 
+Use `warden where <term>` to find the Capability whose `serves` field names
+that Term. Warden prints its ID, kind, and purpose. Use
+`warden where --capability <term>` if the Term also names a Unit or looks
+like a path. An explicit path such as `./change` searches Units only. Exact
+Unit IDs and Terms take precedence over folder ownership.
+
 For a pack with skill Capabilities, `warden compile` writes a single locked
 `SKILL.md` per skill under `.warden/generated/skills/`. Run `warden doctor`
 for Claude Code or `warden doctor --harness codex` for Codex to check the

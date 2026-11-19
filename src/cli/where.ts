@@ -29,10 +29,25 @@ const unitPath = (root: string, query: string): string | undefined => {
   }
 };
 
-export async function runWhere(root: string, wardenRoot: string, query: string): Promise<number> {
+export async function runWhere(root: string, wardenRoot: string, query: string, capabilityOnly = false): Promise<number> {
   const records = await loadRecords(root, wardenRoot);
-  const units = await loadUnits(records, wardenRoot);
+  const explicitPath = query === "." || query === ".." || query.includes("/") || query.includes(sep);
+  const capabilities = explicitPath && !capabilityOnly ? [] : records.packs.flatMap((pack) => pack.capabilities.filter((capability) => capability.serves === query));
+  if (capabilities.length > 1) {
+    process.stderr.write(`More than one Capability serves ${query}: ${capabilities.map(({ id }) => id).join(", ")}. Next action: run warden compile to locate the conflicting records.\n`);
+    return 2;
+  }
+  const units = capabilityOnly ? [] : await loadUnits(records, wardenRoot);
   const named = units.filter((unit) => unit.id === query || unit.term === query);
+  const capability = capabilities[0];
+  if (capability !== undefined && named.length > 0) {
+    process.stderr.write(`${query} identifies a Unit and a Capability purpose. Next action: rerun with --capability for the Capability, or pass a project path for the Unit.\n`);
+    return 2;
+  }
+  if (capability !== undefined || capabilityOnly) {
+    process.stdout.write(capability === undefined ? `No Capability serves ${query}.\n` : `${capability.id}\t${capability.kind}\t${capability.purpose}\n`);
+    return 0;
+  }
   if (named.length > 1) {
     process.stderr.write(`More than one Unit matches ${query}. Next action: run warden where with a path under one of these folders: ${named.map(({ folder }) => folder).sort().join(", ")}.\n`);
     return 2;

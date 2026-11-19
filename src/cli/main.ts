@@ -119,9 +119,12 @@ program
     process.exitCode = await runBench(root(), findWardenRoot(), o);
   });
 
-program.command("where <term-unit-or-path>").description("locate a Unit and its document").action(async (query: string) => {
-  process.exitCode = await runWhere(root(), findWardenRoot(), query);
-});
+program.command("where <term-unit-or-path>")
+  .description("locate a Unit document or the Capability that serves a Term")
+  .option("--capability", "search only for a Capability serving this Term")
+  .action(async (query: string, options: { capability?: boolean }) => {
+    process.exitCode = await runWhere(root(), findWardenRoot(), query, options.capability === true);
+  });
 
 program.command("new").description("scaffold Warden records")
   .command("unit <id> <folder>")

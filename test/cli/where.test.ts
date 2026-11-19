@@ -183,3 +183,55 @@ it("preserves architecture lookup until the project opts into declared Units", (
   expect(result.stderr).toContain("Declare the project Units");
   expect(where("Git").stdout).toBe("git-service\tsrc/[services]/git-service/CONTRACT.md\n");
 });
+
+it("looks up a Capability by the Term it serves and distinguishes a Unit with the same Term", async () => {
+  const file = ".warden/packs/project/pack.yaml";
+  await write(file, `${await readFile(join(root, file), "utf8")}
+capabilities:
+  - id: vcs-summary
+    kind: tool
+    serves: Git
+    purpose: Summarize repository changes.
+    when: Preparing the daily inventory.
+    upholds: []
+    commands: [git status]
+    replaces: []
+`);
+  const ambiguous = where("Git");
+  expect(ambiguous).toMatchObject({ status: 2, stderr: expect.stringContaining("identifies a Unit and a Capability purpose") });
+  const found = warden("where", "--capability", "Git");
+  expect(found).toMatchObject({ status: 0, stdout: "vcs-summary\ttool\tSummarize repository changes.\n" });
+  expect(warden("where", "--capability", "Unknown").stdout).toBe("No Capability serves Unknown.\n");
+  expect(where("src/[services]/git-service").stdout).toBe("git-service\tsrc/[services]/git-service/CONTRACT.md\n");
+  await withUnits("[]");
+  expect(where("Git").stdout).toBe(found.stdout);
+});
+
+it("keeps path lookups and existing Unit aliases distinct from Capability purposes", async () => {
+  await withUnits(`
+  - { id: project, kind: contract, folder: "." }
+  - { id: inventory, kind: feature, folder: "src/inventory", term: inventory/summary }
+`);
+  const file = ".warden/packs/project/pack.yaml";
+  const pack = await readFile(join(root, file), "utf8");
+  await write(file, pack.replace("practices: []", `  - id: ./change
+    definition: A proposed update.
+    bans: []
+  - id: inventory/summary
+    definition: An inventory overview.
+    bans: []
+practices: []
+capabilities:
+  - id: describe-change
+    kind: tool
+    serves: ./change
+    purpose: Describe the proposed update.
+    when: Preparing a review.
+    upholds: []
+    commands: [git status]
+    replaces: []
+`));
+  expect(where("./change")).toMatchObject({ status: 0, stdout: "project\tCONTRACT.md\n" });
+  expect(where("inventory/summary")).toMatchObject({ status: 0, stdout: "inventory\tsrc/inventory/FEATURE.md\n" });
+  expect(warden("where", "--capability", "./change")).toMatchObject({ status: 0, stdout: "describe-change\ttool\tDescribe the proposed update.\n" });
+});
