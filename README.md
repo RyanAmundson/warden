@@ -44,25 +44,27 @@ agent edits under `.warden`:
 
 ## Sign changes to .warden
 
-When `.warden/allowed_signers` exists on the base branch, every commit since
-the merge base that changed a file under `.warden/` must carry a git SSH
-signature from a key in that base-branch list. A file whose working copy
-matches the base again needs no signature. `warden check` verifies it with
-`ssh-keygen`, whatever the repository's own `gpg.ssh` settings say. An
-unsigned change is reported as `unsigned`, and a signature from any other key
-as `untrusted-signature`. `.warden/baseline.json` is exempt, because a check
-only ever lowers it and a raised count is already reported as loosening.
+Every commit since the merge base that changed a file under `.warden/` must
+carry a git SSH signature from a key in the `allowed_signers` file at the root
+of the installed Warden package. The list ships with Warden, so no file in the
+consuming repository, `.warden/allowed_signers` included, can add a key. The
+lock records the list's hash as a source, so a changed list shows up as source
+drift. `warden check` verifies signatures with `ssh-keygen`, whatever the
+repository's own `gpg.ssh` settings say. An unsigned change is reported as
+`unsigned`, and a signature from any other key as `untrusted-signature`. If
+the package's list is missing or empty, every `.warden/` change is reported
+as `no-allowed-signers`. A file that matches the base again at `HEAD` needs no
+signature; an uncommitted revert does not count. `.warden/baseline.json` is
+exempt, because a check only ever lowers it and a raised count is already
+reported as loosening.
 
-1. Add `.warden/allowed_signers` on the base branch, one line per key in the
-   `ssh-keygen` allowed-signers format, for example
-   `ryan ssh-ed25519 AAAA...`.
-2. Sign your commits that change `.warden/`:
+Sign your commits that change `.warden/`:
 
-   ```bash
-   git config gpg.format ssh
-   git config user.signingkey ~/.ssh/id_ed25519.pub
-   git commit -S
-   ```
+```bash
+git config gpg.format ssh
+git config user.signingkey ~/.ssh/id_ed25519.pub
+git commit -S
+```
 
 ## Claude Code plugin
 

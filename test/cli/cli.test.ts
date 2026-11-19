@@ -274,7 +274,13 @@ describe("warden CLI", () => {
     expect(r.code).toBe(2);
     expect(r.err).toContain("Next action: run warden init --base origin/main");
     expect(warden("init", "--base", "origin/main").code).toBe(0);
-    await adoptedBase("origin/main");
+    expect(await readFile(join(root, ".warden/config.yaml"), "utf8")).toContain('base: "origin/main"');
+    git("add", "-A");
+    git("commit", "-q", "-m", "adopt");
+    const adopted = warden("check", "--base", "origin/main");
+    expect(adopted.err).toBe("");
+    expect(adopted.code).toBe(1);
+    expect(adopted.out).toContain("Next action: revert your change to .warden/");
     expect(execFileSync("git", ["branch", "--list"], { cwd: root, encoding: "utf8" }).replace(/[* ]/g, "").split("\n").filter(Boolean)).toEqual(["feat"]);
   });
 

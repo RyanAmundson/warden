@@ -1,6 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { expectedOutputs } from "../compiler/compile.js";
 import { LOCK_FORMAT, LOCK_PATH, type Lock, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
@@ -11,7 +10,7 @@ import { changeSignatures, changesSinceMergeBase, containsHead, historyOf, lastC
 
 export interface Tamper {
   file: string;
-  detail: "missing-lock" | "leftover-temp" | "hooks-disabled" | "generated-drift" | "source-drift" | "lock-drift" | "loosened" | "removed" | "base-moved" | "weakened-kind" | "unsigned" | "untrusted-signature";
+  detail: "missing-lock" | "leftover-temp" | "hooks-disabled" | "generated-drift" | "source-drift" | "lock-drift" | "loosened" | "removed" | "base-moved" | "weakened-kind" | "unsigned" | "untrusted-signature" | "no-allowed-signers";
   guardrail?: string;
   was?: string;
   sources?: string[];
@@ -19,7 +18,7 @@ export interface Tamper {
 
 const SETTINGS_FILES = [".claude/settings.json", ".claude/settings.local.json"];
 
-const SIGNERS_PATH = ".warden/allowed_signers";
+export const SIGNERS_FILE = "allowed_signers";
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -151,20 +150,15 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
   return sources.length === 0 ? found : found.map((t) => (t.file === LOCK_PATH && t.detail === "loosened" ? { ...t, sources } : t));
 };
 
-const unsignedChanges = (root: string, base: string): Tamper[] => {
-  const signers = showAtMergeBase(root, base, SIGNERS_PATH);
-  if (signers === undefined) return [];
-  const dir = mkdtempSync(join(tmpdir(), "warden-signers-"));
-  try {
-    writeFileSync(join(dir, "allowed_signers"), signers);
-    const failed = [...changeSignatures(root, base, ".warden", join(dir, "allowed_signers"))].filter(([file, status]) => file !== BASELINE_PATH && status !== "G");
-    if (failed.some(([, status]) => status !== "N") && spawnSync("ssh-keygen", ["-?"]).error !== undefined) {
-      throw new RecordError("", "", "ssh-keygen is not on PATH, so signatures on .warden changes cannot be checked. Next action: install OpenSSH so ssh-keygen is on PATH, then run warden check again.");
-    }
-    return failed.map(([file, status]): Tamper => ({ file, detail: status === "N" ? "unsigned" : "untrusted-signature" }));
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
+const unsignedChanges = (root: string, base: string, wardenRoot: string): Tamper[] => {
+  const signers = join(wardenRoot, SIGNERS_FILE);
+  const listed = existsSync(signers) && readFileSync(signers, "utf8").trim() !== "";
+  const failed = [...changeSignatures(root, base, ".warden", signers)].filter(([file, status]) => file !== BASELINE_PATH && status !== "G");
+  if (!listed) return failed.map(([file]): Tamper => ({ file, detail: "no-allowed-signers" }));
+  if (failed.some(([, status]) => status !== "N") && spawnSync("ssh-keygen", ["-?"]).error !== undefined) {
+    throw new RecordError("", "", "ssh-keygen is not on PATH, so signatures on .warden changes cannot be checked. Next action: install OpenSSH so ssh-keygen is on PATH, then run warden check again.");
   }
+  return failed.map(([file, status]): Tamper => ({ file, detail: status === "N" ? "unsigned" : "untrusted-signature" }));
 };
 
 export async function findTampering(set: RecordSet, wardenRoot: string, base: string): Promise<Tamper[]> {
@@ -191,5 +185,5 @@ export async function findTampering(set: RecordSet, wardenRoot: string, base: st
   }
 
   found.push(...projectWideEntries(readBaseline(root)).map((guardrail): Tamper => ({ file: BASELINE_PATH, detail: "loosened", guardrail })));
-  return [...found, ...loosened(root, base, lock), ...unsignedChanges(root, base)];
+  return [...found, ...loosened(root, base, lock), ...unsignedChanges(root, base, wardenRoot)];
 }

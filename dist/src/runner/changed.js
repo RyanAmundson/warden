@@ -139,9 +139,7 @@ export function showAtMergeBase(root, base, path) {
 }
 export function changeSignatures(root, base, dir, allowedSignersFile) {
     const at = mergeBase(root, base);
-    const listed = (args) => names(must(root, ["--literal-pathspecs", "diff", "-z", "--name-only", "--no-renames", "--relative", ...args, "--", dir]));
-    const remaining = new Set(listed([at]));
-    const paths = listed([at, "HEAD"]).filter((p) => remaining.has(p));
+    const paths = names(must(root, ["--literal-pathspecs", "diff", "-z", "--name-only", "--no-renames", "--relative", at, "HEAD", "--", dir]));
     const status = new Map();
     if (paths.length === 0)
         return status;

@@ -152,9 +152,7 @@ export function showAtMergeBase(root: string, base: string, path: string): strin
 
 export function changeSignatures(root: string, base: string, dir: string, allowedSignersFile: string): Map<string, string> {
   const at = mergeBase(root, base);
-  const listed = (args: string[]): string[] => names(must(root, ["--literal-pathspecs", "diff", "-z", "--name-only", "--no-renames", "--relative", ...args, "--", dir]));
-  const remaining = new Set(listed([at]));
-  const paths = listed([at, "HEAD"]).filter((p) => remaining.has(p));
+  const paths = names(must(root, ["--literal-pathspecs", "diff", "-z", "--name-only", "--no-renames", "--relative", at, "HEAD", "--", dir]));
   const status = new Map<string, string>();
   if (paths.length === 0) return status;
   const verify = ["--no-replace-objects", "-c", "gpg.ssh.program=ssh-keygen", "-c", "gpg.program=false", "-c", "gpg.x509.program=false", "-c", `gpg.ssh.allowedSignersFile=${allowedSignersFile}`, "--literal-pathspecs"];

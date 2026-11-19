@@ -14,6 +14,9 @@ const nextAction = (failures, set, notes) => {
     if (notes.tampered?.some((t) => t.detail === "base-moved") === true) {
         return "revert the base change in .warden/config.yaml and run warden compile.";
     }
+    if (notes.tampered?.some((t) => t.detail === "no-allowed-signers") === true) {
+        return "reinstall Warden from a release that ships its allowed_signers file, then run warden check again.";
+    }
     const weakened = notes.tampered?.find((t) => t.detail === "weakened-kind");
     if (weakened !== undefined)
         return `restore kind ${weakened.was} on ${weakened.guardrail} and run warden compile.`;

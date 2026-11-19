@@ -1,6 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { expectedOutputs } from "../compiler/compile.js";
 import { LOCK_FORMAT, LOCK_PATH, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
@@ -9,7 +8,7 @@ import { kindRank } from "../records/types.js";
 import { BASELINE_PATH, carryRenames, projectWideEntries, readBaseline } from "./baseline.js";
 import { changeSignatures, changesSinceMergeBase, containsHead, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
 const SETTINGS_FILES = [".claude/settings.json", ".claude/settings.local.json"];
-const SIGNERS_PATH = ".warden/allowed_signers";
+export const SIGNERS_FILE = "allowed_signers";
 const isObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const tempsIn = (root, dir, recursive) => {
     if (!existsSync(join(root, dir)))
@@ -133,22 +132,16 @@ const loosened = (root, base, lock) => {
     const sources = Object.keys({ ...before.sources, ...lock.sources }).filter((k) => k.startsWith(".warden/") && before.sources?.[k] !== lock.sources[k]);
     return sources.length === 0 ? found : found.map((t) => (t.file === LOCK_PATH && t.detail === "loosened" ? { ...t, sources } : t));
 };
-const unsignedChanges = (root, base) => {
-    const signers = showAtMergeBase(root, base, SIGNERS_PATH);
-    if (signers === undefined)
-        return [];
-    const dir = mkdtempSync(join(tmpdir(), "warden-signers-"));
-    try {
-        writeFileSync(join(dir, "allowed_signers"), signers);
-        const failed = [...changeSignatures(root, base, ".warden", join(dir, "allowed_signers"))].filter(([file, status]) => file !== BASELINE_PATH && status !== "G");
-        if (failed.some(([, status]) => status !== "N") && spawnSync("ssh-keygen", ["-?"]).error !== undefined) {
-            throw new RecordError("", "", "ssh-keygen is not on PATH, so signatures on .warden changes cannot be checked. Next action: install OpenSSH so ssh-keygen is on PATH, then run warden check again.");
-        }
-        return failed.map(([file, status]) => ({ file, detail: status === "N" ? "unsigned" : "untrusted-signature" }));
+const unsignedChanges = (root, base, wardenRoot) => {
+    const signers = join(wardenRoot, SIGNERS_FILE);
+    const listed = existsSync(signers) && readFileSync(signers, "utf8").trim() !== "";
+    const failed = [...changeSignatures(root, base, ".warden", signers)].filter(([file, status]) => file !== BASELINE_PATH && status !== "G");
+    if (!listed)
+        return failed.map(([file]) => ({ file, detail: "no-allowed-signers" }));
+    if (failed.some(([, status]) => status !== "N") && spawnSync("ssh-keygen", ["-?"]).error !== undefined) {
+        throw new RecordError("", "", "ssh-keygen is not on PATH, so signatures on .warden changes cannot be checked. Next action: install OpenSSH so ssh-keygen is on PATH, then run warden check again.");
     }
-    finally {
-        rmSync(dir, { recursive: true, force: true });
-    }
+    return failed.map(([file, status]) => ({ file, detail: status === "N" ? "unsigned" : "untrusted-signature" }));
 };
 export async function findTampering(set, wardenRoot, base) {
     const root = set.root;
@@ -174,5 +167,5 @@ export async function findTampering(set, wardenRoot, base) {
             found.push({ file, detail: "generated-drift" });
     }
     found.push(...projectWideEntries(readBaseline(root)).map((guardrail) => ({ file: BASELINE_PATH, detail: "loosened", guardrail })));
-    return [...found, ...loosened(root, base, lock), ...unsignedChanges(root, base)];
+    return [...found, ...loosened(root, base, lock), ...unsignedChanges(root, base, wardenRoot)];
 }
