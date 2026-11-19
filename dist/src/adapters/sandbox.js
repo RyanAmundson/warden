@@ -50,7 +50,7 @@ const start = (packDir) => {
     guard.unref();
     guard.stdin.unref();
     guard.stdin.on("error", () => undefined);
-    const b = { proc, guard, packDir, stderr: [], queue: Promise.resolve() };
+    const b = { proc, guard, packDir, stderr: [], exited: false, queue: Promise.resolve() };
     createInterface({ input: proc.stdout }).on("line", (line) => {
         let reply;
         try {
@@ -70,6 +70,7 @@ const start = (packDir) => {
     proc.on("exit", () => {
         if (boxes.get(packDir) === b)
             boxes.delete(packDir);
+        b.exited = true;
         guard.kill("SIGKILL");
         b.onExit?.();
     });
@@ -84,6 +85,10 @@ export function inSandbox(blamed, job, read, signal) {
     const b = boxFor(realpathSync(blamed.packDir));
     const run = () => new Promise((resolve, reject) => {
         signal?.throwIfAborted();
+        if (b.exited) {
+            reject(crashed(blamed, b.stderr.at(-1) ?? "it exited"));
+            return;
+        }
         const finish = () => {
             b.onReply = undefined;
             b.onExit = undefined;

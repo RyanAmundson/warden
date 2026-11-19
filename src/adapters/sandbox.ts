@@ -23,6 +23,7 @@ interface Box {
   guard: ChildProcess;
   packDir: string;
   stderr: string[];
+  exited: boolean;
   onReply?: (reply: Reply) => void;
   onExit?: () => void;
   queue: Promise<unknown>;
@@ -75,7 +76,7 @@ const start = (packDir: string): Box => {
   guard.unref();
   (guard.stdin as unknown as { unref(): void }).unref();
   guard.stdin.on("error", () => undefined);
-  const b: Box = { proc, guard, packDir, stderr: [], queue: Promise.resolve() };
+  const b: Box = { proc, guard, packDir, stderr: [], exited: false, queue: Promise.resolve() };
   createInterface({ input: proc.stdout }).on("line", (line) => {
     let reply: Reply;
     try {
@@ -92,6 +93,7 @@ const start = (packDir: string): Box => {
   proc.stdin.on("error", () => undefined);
   proc.on("exit", () => {
     if (boxes.get(packDir) === b) boxes.delete(packDir);
+    b.exited = true;
     guard.kill("SIGKILL");
     b.onExit?.();
   });
@@ -112,6 +114,10 @@ export function inSandbox<T>(blamed: PackEntry, job: object, read: (file: string
   const run = (): Promise<T> =>
     new Promise<T>((resolve, reject) => {
       signal?.throwIfAborted();
+      if (b.exited) {
+        reject(crashed(blamed, b.stderr.at(-1) ?? "it exited"));
+        return;
+      }
       const finish = (): void => {
         b.onReply = undefined;
         b.onExit = undefined;
