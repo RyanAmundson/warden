@@ -278,7 +278,12 @@ through unchanged. In a `cmd` command, `{pack}` stands for the folder of the
 Guardrail's pack, so a pack can ship a script and run it as
 `cmd:node {pack}/check.js`; failures, next actions, and `warden doctor` show
 the command with `{pack}` resolved, and every file in a local pack's folder but `.DS_Store` is
-hashed into the lock. A `cmd` Guardrail reports one project-wide result, so
+hashed into the lock. A `cmd` command that is only `node <script>` and plain
+arguments runs the script in a worker thread inside Warden rather than a new
+Node process, and the budget stops the worker. The script sees the project
+root as `process.cwd()`, its arguments in `process.argv`, and its exit code
+as the verdict, but it cannot call `process.chdir`, so it resolves every
+relative path against `process.cwd()`. A `cmd` Guardrail reports one project-wide result, so
 compile refuses one whose kind is `lint`; moving such a Guardrail from `lint`
 to `runtime` is not weakening, since its `lint` result never failed. Because every adapter normalizes to the same Violation, the
 baseline, cache, budgets, Evidence, and report work the same for every tool.
@@ -287,7 +292,7 @@ baseline, cache, budgets, Evidence, and report work the same for every tool.
 |---|---|---|
 | `eslint` | `.warden/generated/eslint.config.mjs` | ESLint API |
 | `tsc` | `.warden/generated/tsconfig.json`, extending the project's own and adding flags | `tsc --noEmit -p`, diagnostics parsed per file |
-| `cmd` | nothing | a shell command; exit status is the verdict |
+| `cmd` | nothing | a shell command, or a worker thread for `node <script>`; exit status is the verdict |
 | `claude-settings` | `permissions.deny` entries | nothing; it is a harness control |
 | later: `codex-config`, `git-hooks`, `skills`, `tla` | | |
 

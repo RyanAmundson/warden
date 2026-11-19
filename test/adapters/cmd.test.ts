@@ -1,7 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { resolve } from "node:path";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { cmdAdapter, commandOf } from "../../src/adapters/cmd.js";
+import { cmdAdapter, commandOf, nodeScript, runInProcess } from "../../src/adapters/cmd.js";
 import { runGuardrails } from "../../src/runner/run.js";
 import type { Guardrail, RecordSet } from "../../src/records/types.js";
 import { conformance } from "./conformance.js";
@@ -66,6 +68,43 @@ describe("cmd adapter", () => {
   it("quotes a pack folder that the shell would split, and refuses {pack} without one", () => {
     expect(commandOf(legacy("cmd:sh {pack}/a.sh"), "/w/it's here")).toBe("sh '/w/it'\\''s here'/a.sh");
     expect(() => commandOf(legacy("cmd:sh {pack}/a.sh"), undefined)).toThrow("Guardrail g names {pack} but was run without its pack directory");
+  });
+
+  it("runs a node script inside Warden's process, in the project root, with its arguments, output, and exit code", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "warden-it's here-"));
+    try {
+      await writeFile(join(dir, "s.cjs"), 'console.log(process.pid, process.cwd(), process.argv.slice(2).join(","));\nconsole.error("to stderr");\nprocess.exit(3);\n');
+      const g = legacy("cmd:node {pack}/s.cjs a b");
+      const [r] = await cmdAdapter.run([g], [], { ...ctx, root: dir, packDirs: new Map([["g", dir]]) });
+      expect(r?.violations[0]?.message.split("\n")).toEqual([`${commandOf(g, dir)} exited with 3`, `${process.pid} ${dir} a,b`, "to stderr"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("stops a node script at its budget and when the run is aborted", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "warden-node-"));
+    try {
+      await writeFile(join(dir, "spin.cjs"), "setInterval(() => {}, 1000);\n");
+      const g = legacy(`cmd:node ${join(dir, "spin.cjs")}`, 200);
+      const [r] = await cmdAdapter.run([g], [], ctx);
+      expect(r?.status).toBe("killed");
+      expect(r?.ms).toBeLessThan(1000);
+      const controller = new AbortController();
+      const run = runInProcess([join(dir, "spin.cjs")], dir, undefined, controller.signal);
+      controller.abort();
+      await expect(run).rejects.toMatchObject({ name: "AbortError" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("runs in a worker only a node command made of a script and plain or quoted words", () => {
+    expect(nodeScript("node '/w/it'\\''s here'/a.cjs x --y=1")).toEqual(["/w/it's here/a.cjs", "x", "--y=1"]);
+    expect(nodeScript("node -e 1")).toBeUndefined();
+    expect(nodeScript("node a.cjs; rm -rf b")).toBeUndefined();
+    expect(nodeScript("node a.cjs  b")).toBeUndefined();
+    expect(nodeScript("nodemon a.cjs")).toBeUndefined();
   });
 
   it("emits nothing", () => {

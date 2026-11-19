@@ -16,16 +16,7 @@ practices:
         runs: [edit, commit]
         budgetMs: 2000
         version: 1
-        implementation: >-
-          cmd:node -e '
-          const cp=require("node:child_process"),fs=require("node:fs");
-          const ls=cp.spawnSync("git",["ls-files","-z","--cached","--others","--exclude-standard"],{encoding:"utf8",maxBuffer:1<<28,env:{...process.env,LC_ALL:"C"}});
-          if(ls.status!==0&&!/not a git repository/.test(ls.stderr??"")){console.log(ls.error?.code==="ENOENT"?"git is not on PATH, so the files cannot be listed. Next action: install git so that it is on PATH.":`git ls-files failed: ${(ls.error?.message??ls.stderr).trim()}. Next action: fix this git error so that git ls-files succeeds in this folder.`);process.exit(2)}
-          const files=ls.status===0?ls.stdout.split("\0").filter(f=>f!==""&&fs.existsSync(f)):fs.readdirSync(".",{recursive:true}).filter(f=>!f.split("/").some(s=>s==="node_modules"||s===".git")&&fs.lstatSync(f).isFile());
-          const b=s=>/^\[.*\]$/.test(s);
-          const bad=files.filter(f=>{const s=f.split("/");return s.length>1&&b(s[s.length-2])});
-          if(bad.length>0){console.log(bad.map(f=>`${f} is a file directly inside a collection`).join("\n"));console.log(`${bad.length} loose file(s) in collections, which hold only item folders. Next action: move each listed file into an item folder of its collection.`);process.exit(1)}
-          '
+        implementation: "cmd:node {pack}/holds-only-folders.cjs"
         mustFail:
           "src/[widgets]/button/index.ts": "export const button = 1;\n"
           "src/[widgets]/notes.ts": "export const notes = 1;\n"
@@ -43,17 +34,7 @@ practices:
         runs: [edit, commit]
         budgetMs: 2000
         version: 1
-        implementation: >-
-          cmd:node -e '
-          const cp=require("node:child_process"),fs=require("node:fs");
-          const ls=cp.spawnSync("git",["ls-files","-z","--cached","--others","--exclude-standard"],{encoding:"utf8",maxBuffer:1<<28,env:{...process.env,LC_ALL:"C"}});
-          if(ls.status!==0&&!/not a git repository/.test(ls.stderr??"")){console.log(ls.error?.code==="ENOENT"?"git is not on PATH, so the files cannot be listed. Next action: install git so that it is on PATH.":`git ls-files failed: ${(ls.error?.message??ls.stderr).trim()}. Next action: fix this git error so that git ls-files succeeds in this folder.`);process.exit(2)}
-          const files=ls.status===0?ls.stdout.split("\0").filter(f=>f!==""&&fs.existsSync(f)):fs.readdirSync(".",{recursive:true}).filter(f=>!f.split("/").some(s=>s==="node_modules"||s===".git")&&fs.lstatSync(f).isFile());
-          const b=s=>/^\[.*\]$/.test(s);
-          const bad=new Set();
-          for(const f of files){const s=f.split("/");for(let i=1;i<s.length-1;i++)if(b(s[i])&&b(s[i-1]))bad.add(s.slice(0,i+1).join("/"))}
-          if(bad.size>0){console.log([...bad].map(d=>`${d} is a collection directly inside a collection`).join("\n"));console.log(`${bad.size} nested collection(s). Next action: remove the brackets from each listed inner collection so it becomes an item folder.`);process.exit(1)}
-          '
+        implementation: "cmd:node {pack}/do-not-nest.cjs"
         mustFail:
           "src/[widgets]/[parts]/knob/index.ts": "export const knob = 1;\n"
         mustPass:
@@ -69,17 +50,7 @@ practices:
         runs: [edit, commit]
         budgetMs: 2000
         version: 2
-        implementation: >-
-          cmd:node -e '
-          const cp=require("node:child_process"),fs=require("node:fs");
-          const ls=cp.spawnSync("git",["ls-files","-z","--cached","--others","--exclude-standard"],{encoding:"utf8",maxBuffer:1<<28,env:{...process.env,LC_ALL:"C"}});
-          if(ls.status!==0&&!/not a git repository/.test(ls.stderr??"")){console.log(ls.error?.code==="ENOENT"?"git is not on PATH, so the files cannot be listed. Next action: install git so that it is on PATH.":`git ls-files failed: ${(ls.error?.message??ls.stderr).trim()}. Next action: fix this git error so that git ls-files succeeds in this folder.`);process.exit(2)}
-          const files=ls.status===0?ls.stdout.split("\0").filter(f=>f!==""&&fs.existsSync(f)):fs.readdirSync(".",{recursive:true}).filter(f=>!f.split("/").some(s=>s==="node_modules"||s===".git")&&fs.lstatSync(f).isFile());
-          const b=s=>/^\[.*\]$/.test(s);
-          const bad=new Set();
-          for(const f of files){const s=f.split("/");for(let i=0;i<s.length-1;i++)if(b(s[i])&&!/^\[[a-z0-9]+(-[a-z0-9]+)*s\]$/.test(s[i]))bad.add(s.slice(0,i+1).join("/"))}
-          if(bad.size>0){console.log([...bad].map(d=>`${d} is not a plural lowercase kebab-case collection name`).join("\n"));console.log(`${bad.size} misnamed collection(s). Next action: rename each listed collection to lowercase kebab-case ending in s, such as [quality-gates].`);process.exit(1)}
-          '
+        implementation: "cmd:node {pack}/plural-kebab-case.cjs"
         mustFail:
           "src/[Widget]/button/index.ts": "export const button = 1;\n"
         mustPass:
@@ -96,19 +67,7 @@ practices:
         runs: [edit, commit]
         budgetMs: 2000
         version: 1
-        implementation: >-
-          cmd:node -e '
-          const cp=require("node:child_process"),fs=require("node:fs");
-          const ls=cp.spawnSync("git",["ls-files","-z","--cached","--others","--exclude-standard"],{encoding:"utf8",maxBuffer:1<<28,env:{...process.env,LC_ALL:"C"}});
-          if(ls.status!==0&&!/not a git repository/.test(ls.stderr??"")){console.log(ls.error?.code==="ENOENT"?"git is not on PATH, so the files cannot be listed. Next action: install git so that it is on PATH.":`git ls-files failed: ${(ls.error?.message??ls.stderr).trim()}. Next action: fix this git error so that git ls-files succeeds in this folder.`);process.exit(2)}
-          const files=ls.status===0?ls.stdout.split("\0").filter(f=>f!==""&&fs.existsSync(f)):fs.readdirSync(".",{recursive:true}).filter(f=>!f.split("/").some(s=>s==="node_modules"||s===".git")&&fs.lstatSync(f).isFile());
-          const b=s=>/^\[.*\]$/.test(s);
-          const items=new Map();
-          for(const f of files){const s=f.split("/");for(let i=0;i<s.length-2;i++)if(b(s[i])){const c=s.slice(0,i+1).join("/"),m=items.get(c)??new Map(),k=m.get(s[i+1])??new Map();const e=s[i+2],n=s[i+1];k.set(e,e===n||e.startsWith(n+".")?"<item>"+e.slice(n.length):e);m.set(s[i+1],k);items.set(c,m)}}
-          const bad=[];
-          for(const[c,m]of items){if(m.size<2)continue;const shape=k=>[...new Set(k.values())].sort().join("/"),count=new Map();for(const k of m.values())count.set(shape(k),(count.get(shape(k))??0)+1);const ranked=[...count].sort((x,y)=>y[1]-x[1]);if(ranked.length>1&&ranked[0][1]===ranked[1][1])continue;const top=ranked[0][0],want=new Set(top.split("/"));for(const[n,k]of m){const lacks=[...want].filter(x=>![...k].some(([r,t])=>r===x||t===x)).map(x=>x.replace("<item>",n)),extra=[...k].filter(([r,t])=>!want.has(r)&&!want.has(t)).map(([r])=>r);if(lacks.length+extra.length>0)bad.push(`${c}/${n} differs from the shape most items in ${c} share: ${[lacks.length>0?`lacks [${lacks.join(", ")}]`:"",extra.length>0?`has extra [${extra.join(", ")}]`:""].filter(x=>x!=="").join(", ")}`)}}
-          if(bad.length>0){console.log(bad.join("\n"));console.log(`${bad.length} item(s) differ in shape from their collection. Next action: give each listed item the top-level files and folders its collection expects, as listed.`);process.exit(1)}
-          '
+        implementation: "cmd:node {pack}/items-share-one-shape.cjs"
         mustFail:
           "src/[widgets]/button/index.ts": "export const button = 1;\n"
           "src/[widgets]/card/index.ts": "export const card = 1;\n"
