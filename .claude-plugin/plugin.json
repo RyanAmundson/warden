@@ -1,6 +1,6 @@
 {
   "name": "warden",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Runs Warden's edit check after each edit, and refuses edits to .warden/ and git commits that skip the pre-commit hook. Requires the global warden command.",
   "author": {
     "name": "Ryan Amundson"
