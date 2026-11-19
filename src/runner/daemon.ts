@@ -343,7 +343,7 @@ export function startWatching(opts: DaemonOptions): Daemon {
       try {
         const set = await loadRecords(w.root, opts.wardenRoot);
         w.base = existsSync(join(w.root, LOCK_PATH)) ? readLock(w.root).config.base : set.config.base;
-        for (const t of await findTampering(set, opts.wardenRoot, w.base)) {
+        for (const t of await findTampering(set, opts.wardenRoot, w.base, false)) {
           const next = (JSON.parse(formatFeedback([], set, "json", { tampered: [t] })) as { next: string }).next.replace(/\.$/, "");
           w.recordFound.push(at({ file: t.file, detail: t.guardrail === undefined ? t.detail : `${t.detail} ${t.guardrail}`, next }));
         }

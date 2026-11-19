@@ -552,8 +552,10 @@ An independent builder read this design and asked six questions. Answers:
    `permissions.deny` list only, and the drift check covers that key.
 2. **Everything under `.warden/` is framework source.** A commit that changes
    `.warden/` must be signed by a key in an allowed-signers list that ships
-   inside the pinned Warden package, not in the consuming repo.
-   `warden check` verifies this with git's signature verification. Warden
+   inside the pinned Warden package, not in the consuming repo: the
+   `allowed_signers` file at the package root, which the lock hashes like a
+   bundled pack file. `warden check` verifies this with git's signature
+   verification. A missing or empty list fails every `.warden/` change. Warden
    covers `.warden/` only; the existing `Ryan-Approved:` and protected-paths
    mechanism keeps the files it covers until they migrate.
 3. **Existing scripts register as `legacy` Guardrails.** A `legacy` Guardrail
