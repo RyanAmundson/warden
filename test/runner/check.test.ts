@@ -13,8 +13,6 @@ import { compile } from "../../src/compiler/compile.js";
 import { readLock, sha256 } from "../../src/compiler/lock.js";
 import { applyBaseline } from "../../src/runner/baseline.js";
 
-vi.mock("../../src/compiler/bench.js", async (original) => ({ ...(await original<typeof import("../../src/compiler/bench.js")>()), admit: () => Promise.resolve([]) }));
-
 const wardenRoot = resolve(import.meta.dirname, "../..");
 
 const config = (packs: string[], repeats = 3): string =>
@@ -179,6 +177,7 @@ beforeEach(async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "warden-check-")));
   home = await mkdtemp(join(tmpdir(), "warden-home-"));
   vi.stubEnv("WARDEN_HOME", home);
+  await cp(join(templateHome, "bench"), join(home, "bench"), { recursive: true });
   await cp(template, root, { recursive: true });
   await write("a.ts", "// one\nconst a = 1;\n");
   await write(".warden/baseline.json", `${JSON.stringify({ "warden-no-comments": { "a.ts": 1 } }, null, 2)}\n`);
@@ -986,7 +985,7 @@ describe("bench settings in the lock", () => {
   }
 
   it("tightening the bench settings is not loosening", async () => {
-    await write(".warden/config.yaml", withBench("linearMax: 1.05\n  maxFiles: 6400\n  constantMs: 2"));
+    await write(".warden/config.yaml", withBench("linearMax: 1.05\n  maxFiles: 3300\n  constantMs: 2"));
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
     expect((await check()).code).toBe(0);
     expect(await tampered()).toEqual([]);
