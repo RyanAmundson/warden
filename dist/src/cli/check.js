@@ -10,7 +10,7 @@ import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
 import { CHECK_BASE_ACTION, changedFiles, changesSinceMergeBase, containsHead, headCommit, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
-import { RUN_TOTAL, appendEvidence, readEvidence } from "../runner/evidence.js";
+import { LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
 import { formatFeedback } from "../runner/feedback.js";
 import { runGuardrails, unknownAdapters } from "../runner/run.js";
 import { findTampering, readBaseLock, recordedBases } from "../runner/tamper.js";
@@ -346,7 +346,7 @@ const check = async (opts, live) => {
             appendEvidence(project, { at, kind: "cost", shared: r.shared.id, guardrails: r.shared.guardrails, members: r.shared.members, status: over ? "over-budget" : "pass", ms: r.ms, ...size, rules });
         }
     }
-    const prior = readEvidence(project);
+    const prior = readEvidenceTail(project, LOOP_TAIL_BYTES);
     const trigger = new Set(opts.hook === "claude" ? (opts.hookInput === undefined ? [] : [hookTrigger(root, opts.hookInput)]) : opts.paths === undefined ? [] : scanned);
     let repeated;
     for (const key of new Set(failures.map((v) => `${v.guardrail}\0${v.file}`))) {

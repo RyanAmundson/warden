@@ -12,6 +12,7 @@ import { runInit } from "../../src/cli/init.js";
 import { compile } from "../../src/compiler/compile.js";
 import { readLock, sha256 } from "../../src/compiler/lock.js";
 import { applyBaseline } from "../../src/runner/baseline.js";
+import { LOOP_TAIL_BYTES } from "../../src/runner/evidence.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
 
@@ -299,6 +300,19 @@ describe("runCheck", () => {
       "Next action: stop editing this file; in your reply, name the rule and file, quote its Do this line, and say why it does not fit; then continue with other work.",
     ]);
     expect(runs[2]?.out).not.toContain("dispute");
+  });
+
+  it("the loop breaker counts only repeats in the last LOOP_TAIL_BYTES of Evidence, so an old failure does not count and check never reads the whole history", async () => {
+    const source = "// two\nconst b = 1;\n";
+    await write("b.ts", source);
+    const old = { at: "t", kind: "fired", guardrail: "warden-no-comments", file: "b.ts", status: "fail", detail: sha256(source), triggered: true };
+    const step = `${JSON.stringify({ at: "t", kind: "step" })}\n`;
+    const filler = step.repeat(Math.ceil(LOOP_TAIL_BYTES / step.length));
+    await mkdir(join(home, "evidence"), { recursive: true });
+    await writeFile(join(home, "evidence/fixture.jsonl"), `${JSON.stringify(old)}\n${JSON.stringify(old)}\n${filler}`);
+    expect((await check({ paths: ["b.ts"] })).out).not.toContain("Same failure");
+    expect((await check({ paths: ["b.ts"] })).out).not.toContain("Same failure");
+    expect((await check({ paths: ["b.ts"] })).out).toContain("Same failure 3 times: warden-no-comments in b.ts.");
   });
 
   it("feedback names rule, example, and one next action", async () => {

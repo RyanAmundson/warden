@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, closeSync, fstatSync, mkdirSync, openSync, readSync, renameSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Tier } from "../records/types.js";
@@ -74,24 +74,69 @@ export const wardenHome = (): string => process.env.WARDEN_HOME ?? join(homedir(
 
 export const evidenceFile = (project: string): string => join(wardenHome(), "evidence", `${project}.jsonl`);
 
+export const previousEvidenceFile = (project: string): string => join(wardenHome(), "evidence", `${project}.1.jsonl`);
+
+export const ROTATE_BYTES = 16 * 1024 * 1024;
+
+export const LOOP_TAIL_BYTES = 1024 * 1024;
+
+const sizeOf = (file: string): number => {
+  try {
+    return statSync(file).size;
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    throw cause;
+  }
+};
+
+const rotate = (project: string): void => {
+  try {
+    renameSync(evidenceFile(project), previousEvidenceFile(project));
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+  }
+};
+
 export function appendEvidence(project: string, e: Evidence): void {
   mkdirSync(join(wardenHome(), "evidence"), { recursive: true });
+  if (sizeOf(evidenceFile(project)) >= ROTATE_BYTES) rotate(project);
   appendFileSync(evidenceFile(project), `${JSON.stringify(e)}\n`);
 }
 
-export function readEvidence(project: string): Evidence[] {
-  let text: string;
+const tailOf = (file: string, bytes: number): Buffer => {
+  let fd: number;
   try {
-    text = readFileSync(evidenceFile(project), "utf8");
+    fd = openSync(file, "r");
   } catch (cause) {
-    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return [];
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return Buffer.alloc(0);
     throw cause;
   }
-  return text.split("\n").flatMap((l) => {
+  try {
+    const size = fstatSync(fd).size;
+    const length = Math.min(size, bytes);
+    const buffer = Buffer.alloc(length);
+    readSync(fd, buffer, 0, length, size - length);
+    return buffer;
+  } finally {
+    closeSync(fd);
+  }
+};
+
+const parse = (text: string): Evidence[] =>
+  text.split("\n").flatMap((l) => {
     try {
       return l === "" ? [] : [JSON.parse(l) as Evidence];
     } catch {
       return [];
     }
   });
+
+export function readEvidenceTail(project: string, bytes: number): Evidence[] {
+  const current = tailOf(evidenceFile(project), bytes + 1);
+  const tail = Buffer.concat([tailOf(previousEvidenceFile(project), bytes + 1 - current.length), current]);
+  return parse((tail.length <= bytes ? tail : tail.subarray(tail.indexOf("\n") + 1)).toString("utf8"));
+}
+
+export function readEvidence(project: string): Evidence[] {
+  return readEvidenceTail(project, Number.POSITIVE_INFINITY);
 }

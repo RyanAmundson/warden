@@ -11,7 +11,7 @@ import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
 import { CHECK_BASE_ACTION, changedFiles, changesSinceMergeBase, containsHead, headCommit, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
-import { type Evidence, type Outcome, RUN_TOTAL, type RunFailure, type Step, type Trigger, appendEvidence, readEvidence } from "../runner/evidence.js";
+import { type Evidence, LOOP_TAIL_BYTES, type Outcome, RUN_TOTAL, type RunFailure, type Step, type Trigger, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
 import { type Format, type Notes, type Repeated, formatFeedback } from "../runner/feedback.js";
 import { runGuardrails, unknownAdapters } from "../runner/run.js";
 import { type Tamper, findTampering, readBaseLock, recordedBases } from "../runner/tamper.js";
@@ -376,7 +376,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
       appendEvidence(project, { at, kind: "cost", shared: r.shared.id, guardrails: r.shared.guardrails, members: r.shared.members, status: over ? "over-budget" : "pass", ms: r.ms, ...size, rules });
     }
   }
-  const prior = readEvidence(project);
+  const prior = readEvidenceTail(project, LOOP_TAIL_BYTES);
   const trigger = new Set(
     opts.hook === "claude" ? (opts.hookInput === undefined ? [] : [hookTrigger(root, opts.hookInput)]) : opts.paths === undefined ? [] : scanned,
   );
