@@ -15,19 +15,13 @@ const nextAction = (failures, set, notes) => {
     if (notes.tampered?.some((t) => t.detail === "no-allowed-signers") === true) {
         return "reinstall Warden from a release that ships its allowed_signers file, then run warden check again.";
     }
-    const signed = notes.tampered?.find((t) => (t.commits ?? []).length > 0);
-    if (signed !== undefined) {
-        const stash = (signed.dirty ?? []).length === 0 ? "" : `git stash push -u -- ${shellWords(signed.dirty ?? [])} && `;
-        const groups = [];
-        for (const { commit, parent } of signed.commits ?? []) {
-            const last = groups[groups.length - 1];
-            if (last?.parent === parent)
-                last.commits.push(commit);
-            else
-                groups.push({ parent, commits: [commit] });
-        }
-        const revert = groups.map((g) => `git revert --no-edit -X ours -m ${g.parent} ${g.commits.join(" ")}`).join(" && ");
-        return `run ${stash}${revert} to undo the commits that changed .warden/ without an allowed signature, then run warden check again.`;
+    const signed = notes.tampered?.filter((t) => t.mergeBase !== undefined) ?? [];
+    const first = signed[0];
+    if (first !== undefined) {
+        const stash = (first.dirty ?? []).length === 0 ? "" : `git --literal-pathspecs stash push -u -- ${shellWords(first.dirty ?? [])} && `;
+        const restore = `git --literal-pathspecs restore --source=${first.mergeBase} --staged --worktree -- ${shellWords([...new Set(signed.map((t) => t.file))].sort())}`;
+        const commit = `git update-ref HEAD "$(git commit-tree "$(git write-tree)" -p HEAD -m 'Restore .warden files changed without an allowed signature')"`;
+        return `run ${stash}${restore} && ${commit} to restore the .warden/ files changed without an allowed signature to the merge base, then run warden check again.`;
     }
     if (notes.tampered?.some((t) => t.detail === "base-moved") === true) {
         return "revert the base change in .warden/config.yaml and run warden compile.";

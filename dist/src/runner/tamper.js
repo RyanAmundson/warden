@@ -135,14 +135,14 @@ const loosened = (root, base, lock) => {
 const unsignedChanges = (root, base, wardenRoot) => {
     const signers = join(wardenRoot, SIGNERS_FILE);
     const listed = existsSync(signers) && readFileSync(signers, "utf8").trim() !== "";
-    const { files, commits, dirty } = changeSignatures(root, base, ".warden", signers);
+    const { files, base: mergeBase, dirty } = changeSignatures(root, base, ".warden", signers);
     const failed = [...files].filter(([file]) => file !== BASELINE_PATH);
     if (!listed)
         return failed.map(([file]) => ({ file, detail: "no-allowed-signers" }));
     if (failed.some(([, status]) => status !== "N") && spawnSync("ssh-keygen", ["-?"]).error !== undefined) {
         throw new RecordError("", "", "ssh-keygen is not on PATH, so signatures on .warden changes cannot be checked. Next action: install OpenSSH so ssh-keygen is on PATH, then run warden check again.");
     }
-    return failed.map(([file, status]) => ({ file, detail: status === "N" ? "unsigned" : "untrusted-signature", commits, dirty }));
+    return failed.map(([file, status]) => ({ file, detail: status === "N" ? "unsigned" : "untrusted-signature", mergeBase, dirty }));
 };
 export async function findTampering(set, wardenRoot, base) {
     const root = set.root;

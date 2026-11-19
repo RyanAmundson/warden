@@ -6,7 +6,7 @@ import { LOCK_FORMAT, LOCK_PATH, type Lock, canonicalJson, readLock, sha256 } fr
 import { RecordError, readText } from "../records/load.js";
 import { type BenchSettings, type Kind, type RecordSet, kindRank } from "../records/types.js";
 import { BASELINE_PATH, type Baseline, carryRenames, projectWideEntries, readBaseline } from "./baseline.js";
-import { type Revert, changeSignatures, changesSinceMergeBase, containsHead, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
+import { changeSignatures, changesSinceMergeBase, containsHead, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
 
 export interface Tamper {
   file: string;
@@ -14,7 +14,7 @@ export interface Tamper {
   guardrail?: string;
   was?: string;
   sources?: string[];
-  commits?: Revert[];
+  mergeBase?: string;
   dirty?: string[];
 }
 
@@ -155,13 +155,13 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
 const unsignedChanges = (root: string, base: string, wardenRoot: string): Tamper[] => {
   const signers = join(wardenRoot, SIGNERS_FILE);
   const listed = existsSync(signers) && readFileSync(signers, "utf8").trim() !== "";
-  const { files, commits, dirty } = changeSignatures(root, base, ".warden", signers);
+  const { files, base: mergeBase, dirty } = changeSignatures(root, base, ".warden", signers);
   const failed = [...files].filter(([file]) => file !== BASELINE_PATH);
   if (!listed) return failed.map(([file]): Tamper => ({ file, detail: "no-allowed-signers" }));
   if (failed.some(([, status]) => status !== "N") && spawnSync("ssh-keygen", ["-?"]).error !== undefined) {
     throw new RecordError("", "", "ssh-keygen is not on PATH, so signatures on .warden changes cannot be checked. Next action: install OpenSSH so ssh-keygen is on PATH, then run warden check again.");
   }
-  return failed.map(([file, status]): Tamper => ({ file, detail: status === "N" ? "unsigned" : "untrusted-signature", commits, dirty }));
+  return failed.map(([file, status]): Tamper => ({ file, detail: status === "N" ? "unsigned" : "untrusted-signature", mergeBase, dirty }));
 };
 
 export async function findTampering(set: RecordSet, wardenRoot: string, base: string): Promise<Tamper[]> {

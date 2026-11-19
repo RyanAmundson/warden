@@ -52,17 +52,16 @@ lock records the list's hash as a source, so a changed list shows up as source
 drift. `warden check` verifies signatures with `ssh-keygen`, whatever the
 repository's own `gpg.ssh` settings say. An unsigned change is reported as
 `unsigned`, and a signature from any other key as `untrusted-signature`. The
-next action names the first-parent commits to `git revert -X ours -m 1`,
-newest first, and first stashes uncommitted and untracked changes in the paths
-they touch; the pre-commit hook does not block `git revert`. `-X ours` keeps a
-later commit's version of a line that both commits changed, so the revert
-finishes without a conflict stop. A revert still stops when a later commit
-deleted a file the unsigned commit changed. `git revert --continue` then runs
-the pre-commit hook, which refuses it, and the named command does not work.
-That history needs a commit made without the hook, such as a cherry-pick or a
-rebase, and a person must undo it by hand. When the first-parent
-chain ends in a root commit instead of the merge base, the next action reverts
-the merge that joined the base with `-m` naming the parent that holds it.
+next action restores every reported path to its merge-base content in one
+commit: files the branch added are removed, and files it deleted come back.
+It first stashes uncommitted and untracked changes in those paths, and every
+staged change, so the new commit holds only the restored content. It makes
+that commit with `git commit-tree` and `git update-ref`, which run no hooks,
+so the pre-commit hook does not block it. The restore also drops any signed
+edit to those paths made since the merge base; sign that edit again after the
+restore. A path needs a signature only while its content differs from the
+merge base, so unsigned commits that leave a path as it was at the merge base
+are not reported, and the restore commit passes.
 
 The check ignores replace refs, grafts, the commit-graph file, and submodule
 `ignore` settings. It trusts its own process and the installed package. It

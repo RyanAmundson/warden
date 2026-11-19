@@ -164,36 +164,17 @@ export function showAtMergeBase(root: string, base: string, path: string): strin
   return must(root, ["show", spec]);
 }
 
-export interface Revert {
-  commit: string;
-  parent: number;
-}
-
 export interface Signatures {
   files: Map<string, string>;
-  commits: Revert[];
+  base: string;
   dirty: string[];
 }
-
-const firstParentUndo = (root: string, at: string, bad: Set<string>): Revert[] => {
-  const chain = must(root, ["rev-list", "--first-parent", "--parents", `${at}..HEAD`]).split("\n").filter((l) => l !== "").map((l) => l.split(" "));
-  const brings = (commit: string, parent: string): boolean => bad.has(commit) || must(root, ["rev-list", `${parent}..${commit}`]).split("\n").some((c) => bad.has(c));
-  const reaches = (commit: string): boolean => git(root, ["merge-base", "--is-ancestor", at, commit]).ok;
-  let stop = chain.length;
-  if (chain[chain.length - 1]?.[1] === undefined) while (stop > 0 && !reaches(chain[stop - 1]?.[0] as string)) stop--;
-  const orphaned = stop < chain.length;
-  const undo = chain.slice(0, orphaned ? stop - 1 : stop).flatMap(([commit, first]): Revert[] => (brings(commit as string, first as string) ? [{ commit: commit as string, parent: 1 }] : []));
-  if (!orphaned) return undo;
-  const [commit, ...parents] = chain[stop - 1] as string[];
-  const parent = parents.findIndex(reaches);
-  return brings(commit as string, parents[parent] as string) ? [...undo, { commit: commit as string, parent: parent + 1 }] : undo;
-};
 
 export function changeSignatures(root: string, base: string, dir: string, allowedSignersFile: string): Signatures {
   const at = mergeBase(root, base);
   const paths = names(must(root, ["--literal-pathspecs", "diff", "-z", "--name-only", "--no-renames", "--ignore-submodules=none", "--relative", at, "HEAD", "--", dir]));
   const files = new Map<string, string>();
-  if (paths.length === 0) return { files, commits: [], dirty: [] };
+  if (paths.length === 0) return { files, base: at, dirty: [] };
   const verify = ["-c", "gpg.ssh.program=ssh-keygen", "-c", "gpg.program=false", "-c", "gpg.x509.program=false", "-c", `gpg.ssh.allowedSignersFile=${allowedSignersFile}`, "--literal-pathspecs"];
   const mark = `\x01${randomUUID()}`;
   const log = must(root, [...verify, "log", "-z", "--topo-order", "--diff-merges=dense-combined", "--no-renames", "--ignore-submodules=none", "--relative", "--name-only", `--format=${mark}%G?%H`, `${at}..HEAD`, "--", ...paths]);
@@ -210,9 +191,8 @@ export function changeSignatures(root: string, base: string, dir: string, allowe
     }
   }
   for (const path of paths) if (!seen.has(path)) files.set(path, "N");
-  const commits = firstParentUndo(root, at, bad);
-  const touched = new Set(commits.flatMap(({ commit, parent }) => names(must(root, ["diff", "-z", "--name-only", "--no-renames", "--ignore-submodules=none", `${commit}^${parent}`, commit]))));
   const local = [...names(must(root, ["diff", "-z", "--name-only", "--no-renames", "--ignore-submodules=none", "HEAD"])), ...names(must(root, ["ls-files", "-z", "--others", "--exclude-standard"]))];
-  const dirty = [...new Set(local)].filter((p) => touched.has(p));
-  return { files, commits, dirty };
+  const staged = names(must(root, ["diff", "-z", "--name-only", "--no-renames", "--ignore-submodules=none", "--cached", "HEAD"]));
+  const dirty = [...new Set([...local.filter((p) => files.has(p)), ...staged])];
+  return { files, base: at, dirty };
 }

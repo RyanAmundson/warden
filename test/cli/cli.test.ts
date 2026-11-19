@@ -280,7 +280,7 @@ describe("warden CLI", () => {
     const adopted = warden("check", "--base", "origin/main");
     expect(adopted.err).toBe("");
     expect(adopted.code).toBe(1);
-    expect(adopted.out).toContain("Next action: run git revert --no-edit ");
+    expect(adopted.out).toContain("Next action: run git --literal-pathspecs restore --source=");
     expect(execFileSync("git", ["branch", "--list"], { cwd: root, encoding: "utf8" }).replace(/[* ]/g, "").split("\n").filter(Boolean)).toEqual(["feat"]);
   });
 
