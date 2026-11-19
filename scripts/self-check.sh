@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
+unset GIT_DIR GIT_WORK_TREE
 if [ $# -ne 1 ]; then
   echo "usage: self-check.sh <release-tag>" >&2
   exit 2

@@ -39,6 +39,33 @@ afterEach(async () => {
   await rm(home, { recursive: true, force: true });
 });
 
+const releaseFixture = async (): Promise<void> => {
+  const bin = [
+    "#!/usr/bin/env node",
+    "const { readFileSync, realpathSync } = require(\"node:fs\");",
+    "const { dirname, join } = require(\"node:path\");",
+    "const here = dirname(realpathSync(process.argv[1]));",
+    "process.stdout.write(`release ${readFileSync(join(here, \"release.txt\"), \"utf8\")}`);",
+    "process.stdout.write(`pack ${readFileSync(join(here, \"packs/core/pack.yaml\"), \"utf8\")}`);",
+    "process.stdout.write(`args ${process.argv.slice(2).join(\" \")}\\n`);",
+    "process.stdout.write(`home ${process.env.WARDEN_HOME}\\n`);",
+    "",
+  ].join("\n");
+  const manifest = { name: "warden", version: "0.0.0", bin: { warden: "bin.js" }, scripts: { build: "exit 1", prepare: "true", prepack: "test -f .warden-self-check" }, files: ["bin.js", "release.txt", "packs"] };
+  await writeFile(join(repo, "package.json"), JSON.stringify(manifest));
+  await writeFile(join(repo, "bin.js"), bin);
+  await chmod(join(repo, "bin.js"), 0o755);
+  await writeFile(join(repo, "release.txt"), "old\n");
+  await mkdir(join(repo, "packs/core"), { recursive: true });
+  await writeFile(join(repo, "packs/core/pack.yaml"), "old\n");
+  git("add", "-A");
+  git("commit", "-q", "-m", "release");
+  git("tag", "t1");
+  await writeFile(join(repo, "release.txt"), "new\n");
+  await writeFile(join(repo, "packs/core/pack.yaml"), "new\n");
+  git("add", "-A");
+};
+
 describe("self-check.sh", () => {
   it("refuses unstaged changes to tracked files", async () => {
     await writeFile(join(repo, "a.txt"), "two\n");
@@ -55,30 +82,7 @@ describe("self-check.sh", () => {
   });
 
   it("judges with the tagged release's code over the working copy's packs, from a worktree marked as the self-check's, and names the base", async () => {
-    const bin = [
-      "#!/usr/bin/env node",
-      "const { readFileSync, realpathSync } = require(\"node:fs\");",
-      "const { dirname, join } = require(\"node:path\");",
-      "const here = dirname(realpathSync(process.argv[1]));",
-      "process.stdout.write(`release ${readFileSync(join(here, \"release.txt\"), \"utf8\")}`);",
-      "process.stdout.write(`pack ${readFileSync(join(here, \"packs/core/pack.yaml\"), \"utf8\")}`);",
-      "process.stdout.write(`args ${process.argv.slice(2).join(\" \")}\\n`);",
-      "process.stdout.write(`home ${process.env.WARDEN_HOME}\\n`);",
-      "",
-    ].join("\n");
-    const manifest = { name: "warden", version: "0.0.0", bin: { warden: "bin.js" }, scripts: { build: "exit 1", prepare: "true", prepack: "test -f .warden-self-check" }, files: ["bin.js", "release.txt", "packs"] };
-    await writeFile(join(repo, "package.json"), JSON.stringify(manifest));
-    await writeFile(join(repo, "bin.js"), bin);
-    await chmod(join(repo, "bin.js"), 0o755);
-    await writeFile(join(repo, "release.txt"), "old\n");
-    await mkdir(join(repo, "packs/core"), { recursive: true });
-    await writeFile(join(repo, "packs/core/pack.yaml"), "old\n");
-    git("add", "-A");
-    git("commit", "-q", "-m", "release");
-    git("tag", "t1");
-    await writeFile(join(repo, "release.txt"), "new\n");
-    await writeFile(join(repo, "packs/core/pack.yaml"), "new\n");
-    git("add", "-A");
+    await releaseFixture();
     const r = sh("scripts/self-check.sh", "t1");
     expect(r.code, r.err).toBe(0);
     expect(r.out).toBe(`release old\npack new\nargs check --base main --trigger git-commit\nhome ${home}\n`);
@@ -142,6 +146,23 @@ describe("self-check.sh", () => {
     const r = sh("scripts/self-check.sh", "t1");
     expect(r.code).toBe(1);
     expect(r.err).toContain("staged dist/src differs from a fresh compile of the source. Next action: run npm run build:dist, stage dist, then commit.");
+  });
+
+  it("leaves a linked worktree's staged merge in place when the hook hands it GIT_DIR and GIT_INDEX_FILE", async () => {
+    await releaseFixture();
+    git("commit", "-q", "-m", "next");
+    git("worktree", "add", "-q", "-b", "side", join(repo, "..", `${repo.split("/").pop()}-side`), "t1");
+    const side = join(repo, "..", `${repo.split("/").pop()}-side`);
+    const gitDir = execFileSync("git", ["rev-parse", "--absolute-git-dir"], { cwd: side, encoding: "utf8" }).trim();
+    execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "user.name=t", "-c", "user.email=t@t", "merge", "--no-ff", "--no-commit", "main"], { cwd: side, stdio: "ignore" });
+    const r = spawnSync("scripts/self-check.sh", ["t1"], { cwd: side, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home, GIT_DIR: gitDir, GIT_INDEX_FILE: join(gitDir, "index") } });
+    const merging = spawnSync("git", ["rev-parse", "-q", "--verify", "MERGE_HEAD"], { cwd: side }).status;
+    const staged = execFileSync("git", ["diff", "--cached", "--name-only"], { cwd: side, encoding: "utf8" });
+    await rm(side, { recursive: true, force: true });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.split("\n")[0]).toBe("release old");
+    expect(merging).toBe(0);
+    expect(staged).toBe("packs/core/pack.yaml\nrelease.txt\n");
   });
 
   it("requires the pinned tag as an argument", () => {
