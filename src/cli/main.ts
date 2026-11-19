@@ -9,7 +9,7 @@ import { refusal } from "../adapters/claude.js";
 import { compile, wardenVersion } from "../compiler/compile.js";
 import { thenRemoveExampleProjects } from "../compiler/examples.js";
 import { COMMAND_PROBE, UNKNOWN_COMMAND } from "../compiler/skills.js";
-import { findWardenRoot } from "../records/load.js";
+import { RecordError, findWardenRoot } from "../records/load.js";
 import type { Tier } from "../records/types.js";
 import type { Format } from "../runner/feedback.js";
 import { runBench } from "./bench.js";
@@ -263,7 +263,8 @@ await thenRemoveExampleProjects(
     if (cause instanceof CommanderError) {
       process.exitCode = cause.exitCode === 0 ? 0 : 2;
     } else {
-      process.stderr.write(`${(cause as Error).message}\n`);
+      const location = cause instanceof RecordError ? [cause.file, cause.pointer].filter(Boolean).join(" ") : "";
+      process.stderr.write(`${location === "" ? "" : `${location}: `}${(cause as Error).message}\n`);
       process.exitCode = 2;
     }
   },
