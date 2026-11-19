@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { LEAVE, type ViewModel, liveView, plainDeterminism, plainLayers, plainView, plainViolations, render, renderDeterminism, renderLayers, renderViolations } from "../../src/cli/view.js";
+import { columns } from "../../src/cli/runs.js";
 import type { Evidence } from "../../src/runner/evidence.js";
 
 const watched = vi.hoisted(() => [] as string[]);
@@ -865,9 +866,9 @@ const hintOf = (line: string): string => (line.match(/(q quit.*)$/) ?? ["", ""])
 
 it("every screen header keeps q quit and r rerun, then the same project parts, at 80 columns with a long project name", () => {
   for (const line of headers(LONG, 80)) {
-    expect(line.length, line).toBeLessThanOrEqual(80);
+    expect(columns(line), line).toBeLessThanOrEqual(80);
     expect(hintOf(line) as string, line).toMatch(/^q quit {2}r rerun/);
-    expect(line, line).toContain(`${LONG} · v`);
+    expect(line, line).toContain(LONG);
   }
 });
 
@@ -875,16 +876,54 @@ it("every screen header at 30 columns shows q quit and r rerun, with the project
   for (const project of ["context-manager", LONG]) {
     for (const line of headers(project, 30)) {
       expect(line.length, line).toBeLessThanOrEqual(30);
-      expect(line, line).toMatch(/q quit {2}r rerun$/);
+      expect(line, line).toMatch(/q quit {2}r rerun( {2}([vd] back|l runs))?$/);
     }
   }
 });
 
-it("all screens drop the same header parts at the same width", () => {
-  for (const project of ["context-manager", LONG]) {
-    for (let cols = 30; cols <= 130; cols += 5) {
-      const shape = headers(project, cols).map((l) => [l.includes(project), l.includes("base"), l.includes(" · v"), l.includes("q quit"), l.includes("r rerun")].join());
-      expect(new Set(shape).size, `${project} ${cols}: ${shape.join(" | ")}`).toBe(1);
+const NAMES = ["x", "context-manager", LONG, "日本語プロジェクト名前", "🚀🚀🚀🚀🚀-launch-pad-🚀🚀"];
+
+it("columns counts East Asian wide and fullwidth characters as two columns", () => {
+  expect(columns("abc")).toBe(3);
+  expect(columns("日本語")).toBe(6);
+  expect(columns("Ａ")).toBe(2);
+  expect(columns("🚀")).toBe(2);
+  expect(columns("e\u0301")).toBe(1);
+});
+
+it("every screen's own back key survives at every width where q quit does", () => {
+  for (const project of NAMES) {
+    for (let cols = 20; cols <= 160; cols++) {
+      const [runs, layers, violations, determinism] = headers(project, cols) as [string, string, string, string];
+      for (const [line, back] of [[layers, "l runs"], [violations, "v back"], [determinism, "d back"]] as const) {
+        expect(line, `${project} ${cols}`).toContain("q quit");
+        expect(line, `${project} ${cols}: ${line}`).toContain(back);
+      }
+      expect(runs, `${project} ${cols}`).toContain("q quit");
     }
+  }
+});
+
+it("no header line exceeds the terminal width from 20 to 160 columns, for ASCII, long, CJK, and emoji names", () => {
+  for (const project of NAMES) {
+    for (let cols = 20; cols <= 160; cols++) {
+      for (const line of headers(project, cols)) expect(columns(line), `${project} ${cols}: ${line}`).toBeLessThanOrEqual(cols);
+    }
+  }
+});
+
+it("the screen navigation keys outrank the version in every header", () => {
+  for (const project of NAMES) {
+    for (let cols = 20; cols <= 160; cols++) {
+      const [runs] = headers(project, cols) as [string];
+      const shortest = columns(` WARDEN  ${project}`) + 1 + "q quit  r rerun  l layers  v viol  d det".length;
+      if (cols >= shortest) expect(runs, `${project} ${cols}: ${runs}`).toContain("l layers");
+    }
+  }
+});
+
+it("at 25 and 30 columns every header keeps q quit, r rerun, and its back key", () => {
+  for (const [i, back] of [[1, "l runs"], [2, "v back"], [3, "d back"]] as const) {
+    for (const cols of [25, 30]) expect(headers("context-manager", cols)[i], String(cols)).toMatch(new RegExp(`q quit {2}r rerun {2}${back}$`));
   }
 });
