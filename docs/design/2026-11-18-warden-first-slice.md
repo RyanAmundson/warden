@@ -92,7 +92,7 @@ interface ProjectConfig {
 interface RecordSet { config: ProjectConfig; packs: Pack[]; root: string }
 ```
 
-`implementation` is `<adapter>:<tool rule>`: `eslint:<rule>` for `lint`, `tsc:<compiler flag>` for `type`, `cmd:<shell command>` for `legacy`. `options` passes the tool's rule options through unchanged. `mustFail` and `mustPass` are required for every kind, `legacy` included, and must run. The schema has no field that disables, excludes, or overrides a lower pack's Practice, so "higher layers only tighten" holds by construction.
+`implementation` is `<adapter>:<tool rule>`: `eslint:<rule>` for `lint`, `tsc:<compiler flag>` for `type`, `cmd:<shell command>` for `legacy`. A `cmd` command runs in the project root with `WARDEN_PACK_DIR` set to the absolute folder of the pack that owns the Guardrail, bundled or local, so it can run a script shipped in the pack: `cmd:node "$WARDEN_PACK_DIR/bin/clones.mjs"`. Failures and next actions print the command with the folder substituted and shell-quoted, so it runs as printed. `warden doctor` resolves the variable and checks that each named pack file exists. Every file in a bundled or local pack's folder but `.DS_Store` is hashed into the lock. `options` passes the tool's rule options through unchanged. `mustFail` and `mustPass` are required for every kind, `legacy` included, and must run. The schema has no field that disables, excludes, or overrides a lower pack's Practice, so "higher layers only tighten" holds by construction.
 
 ---
 
@@ -126,7 +126,7 @@ interface RecordSet { config: ProjectConfig; packs: Pack[]; root: string }
 - Consumes: `RecordSet`.
 - Produces: `interface Finding { code: string; record: string; message: string }`; `checkConsistency(set: RecordSet): Finding[]`.
 
-Finding codes, exactly: `duplicate-term`, `duplicate-practice`, `duplicate-guardrail`, `prose-only` (no Guardrail of kind other than `instruction`), `conflict-overlap` (two Practices in `conflictsWith` share a path glob prefix in the config), `undefined-term` (Practice `terms` names a missing Term), `banned-synonym` (a statement contains a Term's banned word, whole-word, case-insensitive), `layer-order` (a pack's `layer` is not greater than every pack before it in `config.packs`).
+Finding codes, exactly: `duplicate-term`, `duplicate-practice`, `duplicate-guardrail`, `prose-only` (no Guardrail of kind other than `instruction`), `conflict-overlap` (two Practices in `conflictsWith` share a path glob prefix in the config), `undefined-term` (Practice `terms` names a missing Term), `banned-synonym` (a statement contains a Term's banned word, whole-word, case-insensitive), `layer-order` (two configured packs share a `layer`). Packs load in `layer` order, whatever order `config.packs` lists them in.
 
 - [ ] **Step 1: Write one failing test per code**, each building a minimal `RecordSet` in the test and asserting `checkConsistency(set).map(f => f.code)` equals `[<code>]`; plus `clean set has no findings` asserting `[]`.
 - [ ] **Step 2:** Run `npx vitest run test/compiler/consistency.test.ts --maxWorkers=2`. Expected: FAIL.

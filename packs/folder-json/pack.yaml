@@ -1,0 +1,37 @@
+id: folder-json
+layer: 4
+terms:
+  - id: leaf-folder
+    definition: A folder with no subfolders, such as a component folder; the only folder below a collection that holds more than one file.
+    bans: []
+practices:
+  - id: folders-hold-one-file-until-the-leaf
+    statement: Below a collection, a folder is shaped like JSON. A file is a property, a folder is an object, and a collection is an array, so a folder with subfolders holds at most one file and only a leaf-folder holds many.
+    terms: [collection, leaf-folder]
+    paths: ["**/*"]
+    conflictsWith: []
+    guardrails:
+      - id: warden-folders-hold-one-file-until-the-leaf
+        kind: runtime
+        runs: [edit, commit]
+        budgetMs: 2000
+        version: 1
+        implementation: >-
+          cmd:node -e '
+          const cp=require("node:child_process"),fs=require("node:fs");
+          const git=cp.spawnSync("git",["rev-parse","--is-inside-work-tree"],{encoding:"utf8"}).stdout.trim()==="true";
+          const files=git?cp.execFileSync("git",["ls-files","-z","--cached","--others","--exclude-standard"],{encoding:"utf8",maxBuffer:1<<28}).split("\0").filter(f=>f!==""&&fs.existsSync(f)):fs.readdirSync(".",{recursive:true}).filter(f=>!f.split("/").some(s=>s==="node_modules"||s===".git")&&fs.lstatSync(f).isFile());
+          const b=s=>/^\[.*\]$/.test(s);
+          const held=new Map(),subs=new Set();
+          for(const f of files){const s=f.split("/");for(let i=1;i<s.length-1;i++)subs.add(s.slice(0,i).join("/"));const d=s.slice(0,-1);if(!b(d[d.length-1])&&d.slice(0,-1).some(b)){const k=d.join("/");held.set(k,[...(held.get(k)??[]),s[s.length-1]])}}
+          const bad=[...held].filter(([d,n])=>n.length>1&&subs.has(d));
+          if(bad.length>0){console.log(bad.map(([d,n])=>`${d} has subfolders and ${n.length} files, where at most one is allowed: ${n.sort().join(", ")}`).join("\n"));console.log(`${bad.length} folder(s) with subfolders hold more than one file. Next action: in each listed folder, keep at most one file and move the others into a subfolder that has no subfolders of its own.`);process.exitCode=1}
+          '
+        mustFail:
+          "src/[widgets]/button/index.ts": "export const button = 1;\n"
+          "src/[widgets]/button/styles.ts": "export const styles = 1;\n"
+          "src/[widgets]/button/parts/knob/index.ts": "export const knob = 1;\n"
+        mustPass:
+          "src/[widgets]/button/index.ts": "export const button = 1;\n"
+          "src/[widgets]/button/parts/knob/index.ts": "export const knob = 1;\n"
+          "src/[widgets]/button/parts/knob/styles.ts": "export const styles = 1;\n"

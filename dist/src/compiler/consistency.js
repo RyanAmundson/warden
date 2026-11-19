@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { unmappedFlag } from "../adapters/tsc.js";
 import { ESLINT_PASS, RUN_TOTAL } from "../runner/evidence.js";
 const CODES = [
@@ -85,7 +86,7 @@ export function checkConsistency(set) {
     for (const p of practices) {
         for (const t of p.terms) {
             if (!termIds.has(t))
-                add("undefined-term", p.id, `Practice ${p.id} names Term ${t}, which is not defined.`);
+                add("undefined-term", p.id, `Practice ${p.id} names Term ${t}, which is not defined. Next action: enable the pack that defines Term ${t} before pack ${p.pack} in .warden/config.yaml, then run warden compile.`);
         }
     }
     for (const p of practices) {
@@ -97,12 +98,14 @@ export function checkConsistency(set) {
             }
         }
     }
-    let highest = -Infinity;
+    let free = Math.max(...set.packs.map((p) => p.layer));
     for (const pack of set.packs) {
-        if (pack.layer <= highest) {
-            add("layer-order", pack.id, `Pack ${pack.id} layer ${pack.layer} is not above the packs before it.`);
-        }
-        highest = Math.max(highest, pack.layer);
+        const first = set.packs.find((p) => p.layer === pack.layer);
+        if (first === pack)
+            continue;
+        const local = (p) => p.file.startsWith(join(set.root, ".warden"));
+        const [keep, move] = local(first) && !local(pack) ? [pack, first] : [first, pack];
+        add("layer-order", move.id, `Packs ${keep.id} and ${move.id} both have layer ${pack.layer}. Next action: set layer to ${++free} in ${move.file}, then run warden compile.`);
     }
     return findings.sort((a, b) => CODES.indexOf(a.code) - CODES.indexOf(b.code) || (a.record < b.record ? -1 : a.record > b.record ? 1 : 0));
 }

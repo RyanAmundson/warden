@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
-import { commandOf, packDirs } from "../adapters/cmd.js";
+import { PACK_VAR } from "../adapters/cmd.js";
 import { COMMIT_HOOK } from "../compiler/emit.js";
 import { TOOLS, firstLine } from "../compiler/lock.js";
 const wardenRequire = createRequire(import.meta.url);
@@ -24,9 +24,16 @@ const scriptsOf = (root) => {
 const SHELL_WORDS = new Set([
     "!", "{", "}", "[[", ".", ":", "[", "alias", "bg", "break", "case", "cd", "command", "continue", "declare", "do", "done", "echo", "elif", "else", "esac", "eval", "exec", "exit", "export", "false", "fg", "fi", "for", "function", "getopts", "hash", "if", "jobs", "kill", "let", "local", "printf", "pwd", "read", "readonly", "return", "select", "set", "shift", "source", "test", "then", "time", "times", "trap", "true", "type", "typeset", "ulimit", "umask", "unalias", "unset", "until", "wait", "while",
 ]);
-const commandItem = (id, command, root, scripts) => {
+const commandItem = (id, command, root, scripts, packDir) => {
     const name = `cmd ${id}: ${command}`;
-    const words = command.trim().split(/\s+/);
+    const raw = command.trim().split(/\s+/);
+    const words = raw.map((w) => {
+        const expanded = packDir === undefined ? w : w.replace(PACK_VAR, () => packDir);
+        return expanded === w ? w : expanded.slice(expanded.indexOf(packDir)).replace(/["']/g, "").replace(/;+$/, "");
+    });
+    const absent = words.find((w, i) => w !== raw[i] && !existsSync(w));
+    if (absent !== undefined)
+        return { name, problem: `${absent} does not exist in the pack`, fix: `create ${absent}` };
     while (words.length > 1 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]))
         words.shift();
     const word = words[0];
@@ -82,10 +89,9 @@ export async function doctor(set, withCommitHook = false) {
         items.push(await toolItem(tool, () => wardenRequire.resolve(tool)));
     items.push(await toolItem("warden eslint plugin", () => import("../../eslint-plugin/index.js")));
     const scripts = scriptsOf(set.root);
-    const dirs = packDirs(set);
     for (const g of set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails))) {
         if (g.implementation.startsWith("cmd:"))
-            items.push(commandItem(g.id, commandOf(g, dirs.get(g.id)), set.root, scripts));
+            items.push(commandItem(g.id, g.implementation.slice(4), set.root, scripts, g.packDir));
     }
     if (withCommitHook)
         items.push(commitHookItem(set.root));

@@ -23,6 +23,7 @@ export interface Guardrail {
   options?: unknown;
   mustFail?: Example;
   mustPass?: Example;
+  packDir?: string;
 }
 
 export interface Practice {

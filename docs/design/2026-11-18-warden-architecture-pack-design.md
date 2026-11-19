@@ -325,7 +325,7 @@ A project declares its group collections once. Groups, roles, and Units are
 derived from the tree.
 
 ```yaml
-packs: [core, principles, collection-folders, architecture]
+packs: [core, architecture, principles, collection-folders]
 architecture:
   groupCollections:
     - collection: "[services]"
@@ -429,8 +429,8 @@ higher pack may never loosen a lower one, this pack can't carve an exception.
 The principles pack's statement must name the exception itself: "no interface
 with a single implementation, except a `port`."
 
-Warden requires each pack's layer to be above every pack loaded before it
-(`src/compiler/consistency.ts:98`), and the design spec says a lower layer
+Warden loads packs in layer order and refuses two packs on one layer
+(`src/compiler/consistency.ts`), and the design spec says a lower layer
 never depends on a higher one. For `principles` to use the `port` Term, the
 architecture pack takes layer 1, directly above `core`, and `principles`
 takes layer 2.

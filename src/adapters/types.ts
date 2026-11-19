@@ -33,7 +33,6 @@ export interface RunContext {
   root: string;
   generatedDir: string;
   unbudgeted?: boolean;
-  packDirs?: ReadonlyMap<string, string>;
   onGroup?: (adapter: string, guardrails: string[]) => void;
 }
 

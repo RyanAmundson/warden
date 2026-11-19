@@ -4,11 +4,11 @@ import { join, relative, resolve, sep } from "node:path";
 import { hookTriggers } from "../adapters/claude.js";
 import { PARSE_ERROR } from "../adapters/types.js";
 import { wardenVersion } from "../compiler/compile.js";
-import { LOCK_PATH, bundledTools, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
+import { LOCK_FORMAT, LOCK_PATH, bundledTools, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
+import { checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
 import { formatFeedback } from "../runner/feedback.js";
@@ -217,8 +217,8 @@ const check = async (opts, live) => {
     if (lockedBy !== running && !olderThan(lockedBy, running)) {
         throw new RecordError(LOCK_PATH, "/warden", `was written by Warden ${lockedBy}; this is Warden ${running}. Next action: install Warden ${lockedBy}, the release that wrote the lock, then run warden check --base ${base} again.`);
     }
-    if (lockedBy !== running || Object.keys(working?.generated ?? {}).some((key) => key.includes("#"))) {
-        throw new RecordError(LOCK_PATH, "/warden", `was written by Warden ${lockedBy}, an older release than this Warden ${running}. Next action: run warden compile, stage .warden, and commit.`);
+    if (lockedBy !== running || (working?.format ?? LOCK_FORMAT) < LOCK_FORMAT || Object.keys(working?.generated ?? {}).some((key) => key.includes("#"))) {
+        throw new RecordError(LOCK_PATH, "/warden", `${lockedBy === running ? `is in an older format than this Warden ${running} writes` : `was written by Warden ${lockedBy}, an older release than this Warden ${running}`}. Next action: run warden compile, stage .warden, and commit.`);
     }
     const unknown = unknownAdapters(set);
     if (unknown.length > 0) {
@@ -325,6 +325,7 @@ const check = async (opts, live) => {
         return false;
     };
     const baseline = readBaseline(root);
+    const ratchetFrom = matchesHead(root, BASELINE_PATH) ? "head" : "uncommitted";
     const narrow = applyBaseline(perFile, carryRenames(baseline, changes.renames), scanned, exists, touched);
     const judged = tier === "edit"
         ? scanned
@@ -385,7 +386,7 @@ const check = async (opts, live) => {
     const notes = { repeated, overBudget, killed };
     closeStep(live, failedOf(failures, notes) ? "fail" : "done");
     const code = report(failures, set, opts, notes);
-    return finish(project, scanned.length === 0 && ran.ran.length === 0 ? "empty" : "ran", scanned, code, { set, failures, notes, extra: { guardrails: chosen.length, cached: ran.cached, rules: ruleTimes, passes: passTimes, cachedRules: chosen.filter((g) => ruleTimes[g.id] === undefined).map((g) => g.id), ratchet: [baselineTotal(baseline), baselineTotal(wide.next)] } });
+    return finish(project, scanned.length === 0 && ran.ran.length === 0 ? "empty" : "ran", scanned, code, { set, failures, notes, extra: { guardrails: chosen.length, cached: ran.cached, rules: ruleTimes, passes: passTimes, cachedRules: chosen.filter((g) => ruleTimes[g.id] === undefined).map((g) => g.id), ratchet: [baselineTotal(baseline), baselineTotal(wide.next)], ratchetFrom } });
 };
 export async function runCheck(opts) {
     const live = {
