@@ -19,6 +19,7 @@ const versionOf = (name) => {
     }
 };
 export const bundledTools = () => Object.fromEntries(TOOLS.map((name) => [name, versionOf(name)]));
+export const OS_JUNK = new Set([".DS_Store", ".localized", "Thumbs.db", "desktop.ini"]);
 export const packFiles = async (base, dir) => {
     try {
         const entries = await readdir(join(base, dir), { recursive: true, withFileTypes: true });
@@ -27,7 +28,7 @@ export const packFiles = async (base, dir) => {
             const path = join(link.parentPath, link.name);
             throw new RecordError(path, "", `is a symbolic link in a pack folder, so the lock cannot hash what it points to. Next action: replace ${path} with a copy of what it points to, then run warden compile.`);
         }
-        return entries.filter((e) => e.isFile() && e.name !== ".DS_Store").map((e) => relative(base, join(e.parentPath, e.name)).split(sep).join("/"));
+        return entries.filter((e) => e.isFile() && !OS_JUNK.has(e.name)).map((e) => relative(base, join(e.parentPath, e.name)).split(sep).join("/"));
     }
     catch (cause) {
         if (cause.code === "ENOENT")
