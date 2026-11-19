@@ -16,6 +16,21 @@ warden --version
 Replace `v0.1.8` with the release you want. Then run `warden init` in a
 project's git checkout.
 
+## Upgrade a project from Warden 0.1.7 or earlier
+
+Warden 0.1.7 and earlier wrote Claude Code hooks and deny rules into the
+project's `.claude/settings.json`. The plugin replaces them. After you
+install a newer `warden`:
+
+1. Run `warden compile`, stage `.warden`, and commit. Until then,
+   `warden check` stops with that one next action.
+2. Remove the old project-local Warden entries from `.claude/settings.json`:
+   the `PostToolUse` hook that runs `npx --no -- warden check`, and the
+   `permissions.deny` entries `Edit(.warden/**)`, `Write(.warden/**)`,
+   `Bash(git commit*--no-verify*)`, and `Bash(git commit* -n*)`. Commit the
+   change.
+3. Install the plugin, as described next.
+
 ## Claude Code plugin
 
 This repository is also a Claude Code plugin marketplace named `warden`, with
@@ -41,8 +56,12 @@ In a project that has one:
 - Before a tool call, the hook runs `warden guard`. It refuses an Edit, Write,
   or MultiEdit under `.warden/`, and a `git commit` that carries `-n`, a short
   flag cluster that holds `n` such as `-an`, or `--no-verify`.
-- If `warden` is not on `PATH`, or exits with a code other than 0 or 2, the
-  hook blocks the tool call and names one next action.
+- If `warden` is not on `PATH`, or is older than the plugin's `version`, the
+  hook blocks Edit, Write, MultiEdit, and `git commit` with one next action:
+  the `npm install -g` command for the plugin's release. Other Bash calls go
+  through, so that install can run.
+- If `warden` exits with a code other than 0 or 2, the hook blocks the tool
+  call and names one next action.
 
 The hooks set `onFailure` to `block`, which requires Claude Code v2.1.295 or
 later.
@@ -57,7 +76,8 @@ Codex hooks are not shipped. They would go in this repository beside
 npm run release -- 0.1.9
 ```
 
-On `main` with a clean tree, the release script bumps the version and commits,
+On `main` with a clean tree, the release script bumps the version in
+`package.json` and `.claude-plugin/plugin.json` and commits,
 tags `v<version>` and pushes `main` and the tag, reinstalls the global
 `warden` from the tag, pins Warden's pre-commit hook to the tag with
 `scripts/install-hooks.sh`, recompiles Warden's own lock and commits and

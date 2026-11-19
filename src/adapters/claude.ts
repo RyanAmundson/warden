@@ -2,6 +2,8 @@ import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { RecordError } from "../records/load.js";
 
+const NEXT = ". Next action: update Claude Code, then retry the tool call";
+
 interface HookInput {
   tool_name?: unknown;
   tool_input?: { file_path?: unknown; command?: unknown };
@@ -11,7 +13,7 @@ const parseInput = (input: string): HookInput => {
   try {
     return (JSON.parse(input) ?? {}) as HookInput;
   } catch {
-    throw new RecordError("hook input", "", "is not JSON");
+    throw new RecordError("hook input", "", `is not JSON${NEXT}`);
   }
 };
 
@@ -19,7 +21,7 @@ const real = (path: string): string => (existsSync(path) ? realpathSync(path) : 
 
 export const hookTrigger = (root: string, input: string): string => {
   const file = parseInput(input).tool_input?.file_path;
-  if (typeof file !== "string") throw new RecordError("hook input", "/tool_input/file_path", "is missing");
+  if (typeof file !== "string") throw new RecordError("hook input", "/tool_input/file_path", `is missing${NEXT}`);
   return relative(root, real(resolve(root, file)));
 };
 
@@ -100,6 +102,7 @@ export function skipsCommitHook(words: string[]): string | undefined {
     } else if (w.startsWith("-")) {
       for (let j = 1; j < w.length; j++) {
         if (w[j] === "n") return w;
+        if (w[j] === "u" || w[j] === "S") break;
         if (COMMIT_VALUE_SHORT.has(w[j] as string)) {
           if (j === w.length - 1) i++;
           break;
@@ -117,7 +120,7 @@ export function refusal(root: string, input: string): string | undefined {
   const parsed = parseInput(input);
   if (parsed.tool_name === "Bash") {
     const command = parsed.tool_input?.command;
-    if (typeof command !== "string") throw new RecordError("hook input", "/tool_input/command", "is missing");
+    if (typeof command !== "string") throw new RecordError("hook input", "/tool_input/command", `is missing${NEXT}`);
     for (const words of shellCommands(command)) {
       const flag = skipsCommitHook(words);
       if (flag !== undefined) return `${flag} skips the pre-commit hook that runs Warden's commit check. Next action: run the git commit again ${withoutFlag(flag)}.`;

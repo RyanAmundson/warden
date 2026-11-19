@@ -31,7 +31,7 @@ const readJson = async (root, file) => {
         return JSON.parse(text);
     }
     catch (cause) {
-        throw new RecordError(file, "", `not valid JSON: ${cause.message}`);
+        throw new RecordError(file, "", `not valid JSON: ${cause.message}. Next action: fix the JSON in ${file}, then run warden check again`);
     }
 };
 const parsedOrSkipped = (text) => {
