@@ -9,7 +9,7 @@ tag=v$version
 again="run npm run release -- $version again"
 fail() {
   echo "release: $1 Next action: $2." >&2
-  exit 1
+  exit 2
 }
 root=$(git rev-parse --show-toplevel) || fail "this is not a git checkout." "run the release from the Warden checkout"
 cd "$root" || exit 1
@@ -25,8 +25,9 @@ if [ "$current" != "$version" ]; then
     fail "tag $tag already exists, and package.json says $current." "choose a version that has no tag, then run npm run release -- <that version>"
   fi
   npm version --no-git-tag-version "$version" >/dev/null || fail "npm version $version failed." "fix what npm names, then $again"
-  if ! git commit -q -m "Warden $version" package.json package-lock.json; then
-    git checkout -- package.json package-lock.json
+  node -e 'const fs = require("fs"); const p = ".claude-plugin/plugin.json"; const m = JSON.parse(fs.readFileSync(p, "utf8")); m.version = process.argv[1]; fs.writeFileSync(p, JSON.stringify(m, null, 2) + "\n");' "$version" || fail "node could not write the version into .claude-plugin/plugin.json." "fix what node names, then $again"
+  if ! git commit -q -m "Warden $version" package.json package-lock.json .claude-plugin/plugin.json; then
+    git checkout -- package.json package-lock.json .claude-plugin/plugin.json
     fail "the pre-commit hook refused the version commit." "fix what the hook names, then $again"
   fi
 fi

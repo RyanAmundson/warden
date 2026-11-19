@@ -683,6 +683,26 @@ describe("warden CLI", () => {
     expect(shown.filter((id) => !bundled.includes(id as string))).toEqual([]);
     expect(r.out).not.toContain("\x1b");
   });
+
+  it("warden --violations outside a terminal prints the violations screen once, from the baseline, before and without any Evidence", async () => {
+    init();
+    const r = warden("--violations");
+    expect(r.code, r.err).toBe(0);
+    expect(r.out).toMatch(/^ WARDEN .* v back\n/);
+    expect(r.out).toMatch(/\n VIOLATIONS BY PACK +baselined +new +last run\n/);
+    expect(r.out).toMatch(/\n core +█+ +1 +– *\n/);
+    expect(r.out).toMatch(/\n {3}warden-no-comments +█+ +1 +– *\n/);
+    expect(r.out).toContain(" Next action: press r to run warden check");
+    expect(r.out).not.toContain("\x1b");
+    await rm(join(root, ".warden/baseline.json"));
+    const bare = warden("--violations");
+    expect(bare.code, bare.err).toBe(0);
+    expect(bare.out).toMatch(/\n core +▏ +0 +– *\n/);
+    const narrow = spawnSync("node", [main, "--violations"], { cwd: root, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home, COLUMNS: "60" } });
+    expect(narrow.stdout.split("\n").every((l) => l.length <= 60)).toBe(true);
+    expect(narrow.stdout).toContain(`${"─".repeat(60)}\n`);
+    expect(warden("--violations", "--layers").err).toBe("--layers and --violations each open one screen. Next action: run warden with only one of them\n");
+  });
 });
 
 describe("the Claude Code plugin hook", () => {
@@ -714,15 +734,39 @@ describe("the Claude Code plugin hook", () => {
     for (const event of ["guard", "check"]) expect(hook(event, bash("git commit -n -m x"), system)).toEqual({ code: 0, out: "", err: "" });
   });
 
-  it("blocks with the install command when warden is not on PATH", () => {
+  const pluginVersion = (): string => (JSON.parse(readFileSync(join(wardenRoot, ".claude-plugin/plugin.json"), "utf8")) as { version: string }).version;
+
+  const versionShim = async (version: string): Promise<void> => {
+    await writeFile(join(shims, "warden"), `#!/bin/sh\n[ "$1" = --version ] && echo ${version} && exit 0\nexec "${process.execPath}" "${main}" "$@"\n`, { mode: 0o755 });
+  };
+
+  it("the plugin's version is the package's version", () => {
+    expect(pluginVersion()).toBe((JSON.parse(readFileSync(join(wardenRoot, "package.json"), "utf8")) as { version: string }).version);
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["older", "0.0.1"],
+  ])("with warden %s, blocks edits and commits with the install command and lets the install run", async (_case, version) => {
     init();
-    const version = (JSON.parse(readFileSync(join(wardenRoot, "package.json"), "utf8")) as { version: string }).version;
-    for (const event of ["guard", "check"]) {
-      const r = hook(event, edit("src/a.ts"), system);
+    if (version !== undefined) await versionShim(version);
+    const path = version === undefined ? system : `${shims}:${system}`;
+    const install = `npm install -g git+https://github.com/RyanAmundson/warden.git#v${pluginVersion()}`;
+    for (const [event, input] of [["guard", edit("src/a.ts")], ["guard", bash("git add -A && git commit -m x")], ["check", edit("src/a.ts")]] as const) {
+      const r = hook(event, input, path);
       expect(r.code).toBe(2);
-      expect(r.err).toContain(`Next action: run npm install -g git+https://github.com/RyanAmundson/warden.git#v${version}, then retry.`);
+      expect(r.err).toContain(`Next action: run ${install}.`);
       expect(r.err.match(/Next action/g)).toHaveLength(1);
     }
+    expect(hook("guard", bash(install), path)).toEqual({ code: 0, out: "", err: "" });
+  });
+
+  it("with warden matching or newer than the plugin, hands the call to warden", async () => {
+    init();
+    expect(denied(hook("guard", bash("git commit -n")))).toContain("-n skips the pre-commit hook");
+    await versionShim("99.0.0");
+    expect(denied(hook("guard", bash("git commit -n")))).toContain("-n skips the pre-commit hook");
+    expect(hook("guard", bash("npm test"))).toEqual({ code: 0, out: "", err: "" });
   });
 
   it("refuses an edit under .warden and allows one elsewhere", () => {
@@ -754,7 +798,7 @@ describe("the Claude Code plugin hook", () => {
 
   it("turns a warden crash into a block with one next action", async () => {
     init();
-    await writeFile(join(shims, "warden"), "#!/bin/sh\nexit 7\n", { mode: 0o755 });
+    await writeFile(join(shims, "warden"), `#!/bin/sh\n[ "$1" = --version ] && echo ${pluginVersion()} && exit 0\nexit 7\n`, { mode: 0o755 });
     const r = hook("guard", edit("src/a.ts"));
     expect(r.code).toBe(2);
     expect(r.err).toContain("warden exited 7. Next action: run warden doctor");

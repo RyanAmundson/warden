@@ -35,6 +35,8 @@ describe("the commit flag parser", () => {
     "git log -n 3",
     "echo git commit -n",
     "git commit --no-edit",
+    "git commit -uno -m x",
+    "git commit -S-n -m x",
     'git commit -m "$(cat <<\'EOF\'\nA "quoted" -n line\nEOF\n)"',
   ])("allows %s", (command) => {
     expect(skips(command)).toEqual([]);
@@ -70,7 +72,7 @@ describe("refusal", () => {
   });
 
   it("refuses input that is not a hook payload", () => {
-    expect(() => refusal(root, "not json")).toThrow("is not JSON");
+    expect(() => refusal(root, "not json")).toThrow("is not JSON. Next action: update Claude Code, then retry the tool call");
     expect(() => refusal(root, JSON.stringify({ tool_name: "Bash", tool_input: {} }))).toThrow("is missing");
   });
 });
