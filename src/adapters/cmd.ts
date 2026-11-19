@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import type { Guardrail } from "../records/types.js";
+import { dirname } from "node:path";
+import type { Guardrail, RecordSet } from "../records/types.js";
 import type { Adapter, RunContext, RunResult } from "./types.js";
 
 export interface Spawned {
@@ -57,8 +58,22 @@ export const OUTPUT_LINES = 20;
 
 const tail = (output: string): string[] => output.trimEnd().split("\n").filter((l) => l !== "").slice(-OUTPUT_LINES);
 
-const runOne = async (g: Guardrail, ctx: RunContext): Promise<RunResult> => {
+export const PACK_TOKEN = "{pack}";
+
+export const packDirs = (set: RecordSet): Map<string, string> =>
+  new Map(set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.map((g): [string, string] => [g.id, dirname(p.file)]))));
+
+const shellWord = (path: string): string => (/^[\w./-]+$/.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`);
+
+export const commandOf = (g: Guardrail, packDir: string | undefined): string => {
   const command = g.implementation.slice(g.implementation.indexOf(":") + 1);
+  if (!command.includes(PACK_TOKEN)) return command;
+  if (packDir === undefined) throw new Error(`Guardrail ${g.id} names ${PACK_TOKEN} but was run without its pack directory`);
+  return command.replaceAll(PACK_TOKEN, shellWord(packDir));
+};
+
+const runOne = async (g: Guardrail, ctx: RunContext): Promise<RunResult> => {
+  const command = commandOf(g, ctx.packDirs?.get(g.id));
   const { code, killed, ms, output } = await spawnBudgeted(command, [], ctx.root, ctx.unbudgeted === true ? undefined : g.budgetMs, true);
   if (killed) return { guardrail: g.id, status: "killed", violations: [], ms, command };
   if (code === 0) return { guardrail: g.id, status: "pass", violations: [], ms };

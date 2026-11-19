@@ -60,6 +60,18 @@ describe("checkConsistency", () => {
     expect(found[0]?.message).toBe("Guardrail id eslint-pass is reserved for Warden's own cost and scaling rows. Next action: rename Guardrail eslint-pass in packs/a/pack.yaml, then run warden compile.");
   });
 
+  it("refuses a cmd Guardrail of kind lint, which warden check would never fail", () => {
+    const cmd = { ...guardrail("g-cmd"), implementation: "cmd:true" };
+    const set = build([pack("a", 1, [practice("p1", "a", { guardrails: [cmd, { ...cmd, id: "g-ok", kind: "runtime" }] })])]);
+    expect(checkConsistency(set)).toEqual([
+      {
+        code: "cmd-lint",
+        record: "g-cmd",
+        message: "Guardrail g-cmd has kind lint but runs a cmd command, whose one project-wide result warden check never reports as a lint failure. Next action: set kind to runtime on Guardrail g-cmd in packs/a/pack.yaml, then run warden compile.",
+      },
+    ]);
+  });
+
   it("flags duplicate-term at the second occurrence", () => {
     const term = { id: "t", definition: "d", bans: [] };
     const set = build([pack("a", 1, [], [term]), pack("b", 2, [], [term])]);

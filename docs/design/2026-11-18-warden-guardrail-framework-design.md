@@ -274,7 +274,12 @@ adapter, and every adapter has the same three jobs:
 A Guardrail's `implementation` names its adapter and the tool's own rule:
 `eslint:no-debugger`, `eslint:warden/no-comments`, `tsc:strictNullChecks`,
 `cmd:npm run check:canon`. An `options` field passes the tool's rule options
-through unchanged. Because every adapter normalizes to the same Violation, the
+through unchanged. In a `cmd` command, `{pack}` stands for the folder of the
+Guardrail's pack, so a pack can ship a script and run it as
+`cmd:node {pack}/check.js`; failures, next actions, and `warden doctor` show
+the command with `{pack}` resolved, and every file in a local pack's folder is
+hashed into the lock. A `cmd` Guardrail reports one project-wide result, so
+compile refuses one whose kind is `lint`. Because every adapter normalizes to the same Violation, the
 baseline, cache, budgets, Evidence, and report work the same for every tool.
 
 | Adapter | Emits | Runs |

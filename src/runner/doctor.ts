@@ -1,6 +1,7 @@
 import { accessSync, constants, existsSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { delimiter, join, resolve } from "node:path";
+import { commandOf, packDirs } from "../adapters/cmd.js";
 import { TOOLS } from "../compiler/lock.js";
 import type { RecordSet } from "../records/types.js";
 
@@ -70,8 +71,9 @@ export async function doctor(set: RecordSet): Promise<DoctorResult> {
   for (const tool of TOOLS) items.push(await toolItem(tool, () => wardenRequire.resolve(tool)));
   items.push(await toolItem("warden eslint plugin", () => import("../../eslint-plugin/index.js")));
   const scripts = scriptsOf(set.root);
+  const dirs = packDirs(set);
   for (const g of set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails))) {
-    if (g.implementation.startsWith("cmd:")) items.push(commandItem(g.id, g.implementation.slice(4), set.root, scripts));
+    if (g.implementation.startsWith("cmd:")) items.push(commandItem(g.id, commandOf(g, dirs.get(g.id)), set.root, scripts));
   }
   const failed = items.find((i) => i.fix !== undefined);
   return {

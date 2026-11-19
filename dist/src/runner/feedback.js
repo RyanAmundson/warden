@@ -1,3 +1,4 @@
+import { commandOf, packDirs } from "../adapters/cmd.js";
 import { PARSE_ERROR } from "../adapters/types.js";
 const EXAMPLE_LINES = 15;
 const ownerOf = (set, id) => {
@@ -37,8 +38,8 @@ const nextAction = (failures, set, notes) => {
     const located = failures.filter((v) => v.file !== "");
     const legacy = failures.find((v) => v.file === "" && ownerOf(set, v.guardrail)?.guardrail.implementation.startsWith("cmd:") === true);
     if (located.length === 0 && legacy !== undefined) {
-        const { implementation } = ownerOf(set, legacy.guardrail).guardrail;
-        return `run \`${implementation.slice(implementation.indexOf(":") + 1)}\` and fix what it reports.`;
+        const { guardrail } = ownerOf(set, legacy.guardrail);
+        return `run \`${commandOf(guardrail, packDirs(set).get(guardrail.id))}\` and fix what it reports.`;
     }
     if (failures.length > 0) {
         return 'change the code at the lines above to match "Do this". Do not edit .warden/ or generated config; that is recorded as tampering.';
