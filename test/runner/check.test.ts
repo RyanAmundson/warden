@@ -742,6 +742,21 @@ describe("unknown adapter at check time", () => {
     expect((await check()).code).toBe(0);
   });
 
+  it("an edit to a script shipped in a pack is tampering, and reverting it passes", async () => {
+    const SCRIPT = ".warden/packs/local/bin/no-broken.mjs";
+    await write(SCRIPT, "process.exit(1);\n");
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    git("add", "-A");
+    git("commit", "-q", "-m", "script");
+    await write(SCRIPT, "process.exit(0);\n");
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    expect(await tampered()).toEqual([{ file: SCRIPT, detail: "source-drift" }]);
+    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([`Next action: revert your change to ${SCRIPT}.`]);
+    git("checkout", "HEAD", "--", SCRIPT);
+    expect((await check()).code).toBe(0);
+  });
+
   describe("a lock edit cannot turn a locked pack's broken prefix into a compile action", () => {
     const PACK = ".warden/packs/local/pack.yaml";
     const breakPrefix = async (): Promise<void> => {
