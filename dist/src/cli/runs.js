@@ -3,18 +3,23 @@ import { dirname, join, resolve } from "node:path";
 import { RecordError, loadRecords } from "../records/load.js";
 import { RUN_TOTAL, readEvidence, wardenHome } from "../runner/evidence.js";
 import { buildReport } from "./report.js";
-const WIDE = [[0x1100, 0x115f], [0x2e80, 0x303e], [0x3041, 0x33ff], [0x3400, 0x4dbf], [0x4e00, 0x9fff], [0xa000, 0xa4cf], [0xac00, 0xd7a3], [0xf900, 0xfaff], [0xfe30, 0xfe6f], [0xff00, 0xff60], [0xffe0, 0xffe6], [0x1f300, 0x1f64f], [0x1f680, 0x1f6ff], [0x1f900, 0x1f9ff], [0x20000, 0x3fffd]];
-const charCells = (code) => {
-    if ((code >= 0x300 && code <= 0x36f) || (code >= 0x200b && code <= 0x200f) || code === 0xfe0f)
+const WIDE = [[0x1100, 0x115f], [0x2e80, 0x303e], [0x3041, 0x33ff], [0x3400, 0x4dbf], [0x4e00, 0x9fff], [0xa000, 0xa4cf], [0xac00, 0xd7a3], [0xf900, 0xfaff], [0xfe30, 0xfe6f], [0xff00, 0xff60], [0xffe0, 0xffe6], [0x20000, 0x3fffd]];
+const segmenter = new Intl.Segmenter();
+const clusterCells = (cluster) => {
+    if (/\p{Emoji_Presentation}|\p{Extended_Pictographic}\uFE0F/u.test(cluster))
+        return 2;
+    const code = cluster.codePointAt(0);
+    if (/^[\p{M}\p{Cf}]/u.test(cluster))
         return 0;
     return WIDE.some(([lo, hi]) => code >= lo && code <= hi) ? 2 : 1;
 };
-export const columns = (text) => [...text].reduce((sum, c) => sum + charCells(c.codePointAt(0)), 0);
+const clusters = (text) => [...segmenter.segment(text)].map((s) => s.segment);
+export const columns = (text) => clusters(text).reduce((sum, c) => sum + clusterCells(c), 0);
 export const cut = (text, width) => {
     let used = 0;
     let out = "";
-    for (const c of text) {
-        used += charCells(c.codePointAt(0));
+    for (const c of clusters(text)) {
+        used += clusterCells(c);
         if (used > width)
             break;
         out += c;

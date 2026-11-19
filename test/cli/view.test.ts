@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { LEAVE, type ViewModel, liveView, plainDeterminism, plainLayers, plainView, plainViolations, render, renderDeterminism, renderLayers, renderViolations } from "../../src/cli/view.js";
-import { columns } from "../../src/cli/runs.js";
+import { columns, cut } from "../../src/cli/runs.js";
 import type { Evidence } from "../../src/runner/evidence.js";
 
 const watched = vi.hoisted(() => [] as string[]);
@@ -926,4 +926,42 @@ it("at 25 and 30 columns every header keeps q quit, r rerun, and its back key", 
   for (const [i, back] of [[1, "l runs"], [2, "v back"], [3, "d back"]] as const) {
     for (const cols of [25, 30]) expect(headers("context-manager", cols)[i], String(cols)).toMatch(new RegExp(`q quit {2}r rerun {2}${back}$`));
   }
+});
+
+const FAMILY = "👨‍👩‍👧";
+const TONE = "👍🏽";
+const FLAG = "🏴\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}";
+
+it("columns measures emoji-presentation characters, joined sequences, and marks the way a terminal draws them", () => {
+  for (const [text, width] of [["⭐", 2], ["✅", 2], ["⌚", 2], ["\u{1FA70}", 2], [FAMILY, 2], [TONE, 2], [FLAG, 2], ["🇯🇵", 2], ["❤️", 2], ["กั", 1], ["e\u0301", 1], ["a日", 3]] as const) {
+    expect(columns(text), text).toBe(width);
+  }
+});
+
+it("cut never splits an emoji cluster", () => {
+  expect(cut(FAMILY, 1)).toBe("");
+  expect(cut(`a${FAMILY}`, 2)).toBe("a");
+  expect(cut(`${FAMILY}b`, 3)).toBe(`${FAMILY}b`);
+  expect(cut(`🇯🇵x`, 2)).toBe("🇯🇵");
+  expect(cut(FLAG, 1)).toBe("");
+});
+
+it("at 40 columns the runs header measures emoji names by what a terminal draws", () => {
+  const runs = (project: string): string => headers(project, 40)[0] as string;
+  for (const wide of ["⭐", "✅", "⌚", "\u{1FA70}"]) expect(runs(wide.repeat(8)), wide).not.toContain(wide);
+  for (const joined of [FAMILY, TONE, FLAG]) expect(runs(joined.repeat(4)), joined).toContain(joined.repeat(4));
+});
+
+it("each screen drops header parts in order: base, then version, then the name, and the three back-key screens drop the name together", () => {
+  for (const project of ["context-manager", LONG]) {
+    for (let cols = 20; cols <= 130; cols++) {
+      for (const l of headers(project, cols)) {
+        if (l.includes("base")) expect(l, `${project} ${cols}`).toContain(" · v9.8.7");
+        if (l.includes(" · v9.8.7")) expect(l, `${project} ${cols}`).toContain(project);
+      }
+    }
+  }
+  const forty = headers("context-manager", 40);
+  expect(forty[0]).toContain("context-manager");
+  for (const l of forty.slice(1)) expect(l).not.toContain("context-manager");
 });
