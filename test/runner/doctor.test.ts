@@ -140,6 +140,14 @@ describe("doctor", () => {
     expect(result.next).toBe(`create ${pack}/bin/gone.mjs, then run warden doctor`);
   });
 
+  it("finds a pack file named inside an option or before shell punctuation", async () => {
+    const pack = join(root, "pack");
+    await mkdir(join(pack, "bin"), { recursive: true });
+    await writeFile(join(pack, "bin/ok.mjs"), "");
+    const result = await doctor(setIn(pack, "node --import=$WARDEN_PACK_DIR/bin/ok.mjs -e 0", 'node "$WARDEN_PACK_DIR/bin/ok.mjs"; true'));
+    expect(result.lines.slice(4)).toEqual(["ok    cmd script-0: node --import=$WARDEN_PACK_DIR/bin/ok.mjs -e 0", 'ok    cmd script-1: node "$WARDEN_PACK_DIR/bin/ok.mjs"; true']);
+  });
+
   it("resolves a command given as a path from the project root", async () => {
     await mkdir(join(root, "scripts"));
     await writeFile(join(root, "scripts/check.sh"), "#!/bin/sh\nexit 0\n");

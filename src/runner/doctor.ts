@@ -40,7 +40,10 @@ const SHELL_WORDS = new Set([
 const commandItem = (id: string, command: string, root: string, scripts: Record<string, unknown>, packDir: string | undefined): Item => {
   const name = `cmd ${id}: ${command}`;
   const raw = command.trim().split(/\s+/);
-  const words = raw.map((w) => (withPackDir(w, packDir ?? "") === w ? w : withPackDir(w, packDir ?? "").replace(/^["']|["']$/g, "")));
+  const words = raw.map((w) => {
+    const expanded = withPackDir(w, packDir ?? "");
+    return expanded === w ? w : expanded.slice(expanded.indexOf(packDir ?? "")).replace(/["';]+$/, "");
+  });
   const absent = words.find((w, i) => w !== raw[i] && !existsSync(w));
   if (absent !== undefined) return { name, problem: `${absent} does not exist in the pack`, fix: `create ${absent}` };
   while (words.length > 1 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0] as string)) words.shift();
