@@ -263,6 +263,9 @@ wired into a check tier.
   fail.
 - `bench` exits 2 when a copied `mustPass` example fails its Guardrail.
 - The Warden self-test runs `bench` on every shipped pack and passes.
+- A change to a pack's `pack.yaml` runs `npx vitest run test/<pack>-pack`,
+  because vitest's import graph cannot see YAML and `vitest related` selects
+  no test for it.
 
 ## Decided by Ryan
 
