@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, join, relative, resolve, sep } from "node:path";
 import { hookTriggers } from "../adapters/claude.js";
 import { PARSE_ERROR } from "../adapters/types.js";
 import { wardenVersion } from "../compiler/compile.js";
@@ -9,7 +9,7 @@ import { LOCK_FORMAT, LOCK_PATH, bundledTools, canonicalJson, readLock, sha256 }
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, projectFiles, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { commitsOf, covers, indexTree, stagedMismatch, checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, stageFile, stagedFiles, unstagedFiles, verifyBase, writeBlob } from "../runner/changed.js";
+import { commitsOf, covers, indexTree, stagedMismatch, checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, stageFile, sparseCheckout, stagedFiles, unstagedFiles, verifyBase, checkoutBlobs } from "../runner/changed.js";
 import { heartbeatProblem, openAlerts } from "../runner/daemon.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
@@ -119,18 +119,28 @@ const runCached = async (set, gs, scanned, shas, ctx, project, run) => {
     return { perFile: [...results, ...parse], wholeProject: others, ran: [...fresh, ...others], cached: hits.size };
 };
 const judgeBlobs = async (root, set, gs, blobs, ctx) => {
-    if (blobs.length === 0 || gs.length === 0)
-        return [];
+    if (blobs.length === 0)
+        return { results: [], shas: new Map() };
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "warden-blobs-")));
+    const remove = () => rmSync(dir, { recursive: true, force: true });
+    const onSignal = (signal) => {
+        remove();
+        process.off("SIGINT", onSignal);
+        process.off("SIGTERM", onSignal);
+        process.kill(process.pid, signal);
+    };
+    process.on("SIGINT", onSignal);
+    process.on("SIGTERM", onSignal);
     try {
-        for (const b of blobs) {
-            mkdirSync(dirname(join(dir, b.path)), { recursive: true });
-            writeBlob(root, b.sha, join(dir, b.path));
-        }
-        return await runGuardrails(set, gs, blobs.map((b) => b.path), { ...ctx, root: dir });
+        const paths = blobs.map((b) => b.path);
+        const at = checkoutBlobs(root, paths, dir);
+        const shas = new Map(paths.map((p) => [p, sha256(readFileSync(join(at, p)))]));
+        return { results: gs.length === 0 ? [] : await runGuardrails(set, gs, paths, { ...ctx, root: at }), shas };
     }
     finally {
-        rmSync(dir, { recursive: true, force: true });
+        process.off("SIGINT", onSignal);
+        process.off("SIGTERM", onSignal);
+        remove();
     }
 };
 const mergeResults = (results) => [...new Set(results.map((r) => r.guardrail))].map((id) => {
@@ -369,9 +379,9 @@ const check = async (opts, live) => {
     const ctx = { root, generatedDir: join(root, ".warden/generated"), onGroup };
     const lockSha = sha256(readFileSync(join(root, LOCK_PATH)));
     const ran = await runCached(set, guardrails, scanned, shas, ctx, project, { lockSha, warden: running, tier });
-    const blobRun = await judgeBlobs(root, set, guardrails.filter((g) => g.kind === "lint" && g.implementation.startsWith("eslint:")), absent, ctx);
-    for (const b of absent)
-        shas.set(b.path, b.sha);
+    const { results: blobRun, shas: blobShas } = await judgeBlobs(root, set, guardrails.filter((g) => g.kind === "lint" && g.implementation.startsWith("eslint:")), absent, ctx);
+    for (const [path, sha] of blobShas)
+        shas.set(path, sha);
     const blobPaths = absent.map((b) => b.path);
     if (groups === 0) {
         openStep(live, "rules", { members: chosen.map((g) => g.id), ...where });
@@ -455,7 +465,7 @@ const check = async (opts, live) => {
         if (n >= loopBreakerRepeats && (repeated === undefined || n > repeated.n))
             repeated = { guardrail, file, n };
     }
-    const notes = { repeated, overBudget, killed };
+    const notes = { repeated, overBudget, killed, ...(blobPaths.length === 0 ? {} : { outside: { files: blobPaths, sparse: sparseCheckout(root) } }) };
     closeStep(live, failedOf(failures, notes) ? "fail" : "done");
     const scope = opts.paths === undefined && opts.rule === undefined ? "full" : "partial";
     const tree = tier === "commit" && scope === "full" && !failedOf(failures, notes) ? indexTree(root) : undefined;

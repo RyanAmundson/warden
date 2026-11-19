@@ -88,9 +88,12 @@ export function readState() {
 }
 export function openAlerts(root) {
     const repo = commonDir(root);
+    const indexes = new Map();
+    const indexOf = (project) => indexes.get(project) ?? indexes.set(project, refresh(emptyIndex(), project)).get(project);
     return Object.values(readState().roots)
         .flatMap((r) => r.open)
-        .filter((d) => d.repo === repo);
+        .filter((d) => d.repo === repo)
+        .filter((d) => d.detail !== "unchecked-commit" || !commitsOf(root, [d.file]).some((c) => stamped(root, indexOf(d.project), c)));
 }
 export function discoverRoots() {
     const roots = evidenceProjects().flatMap((p) => readEvidenceTail(p, LOOP_TAIL_BYTES).flatMap((e) => (e.root === undefined ? [] : [e.root])));

@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import { runIt } from "../adapters/cmd.js";
 import { PARSE_ERROR, type Violation } from "../adapters/types.js";
 import type { Guardrail, Practice, RecordSet } from "../records/types.js";
@@ -29,6 +30,7 @@ export interface Notes {
   unstaged?: string[];
   hidden?: string[];
   base?: string;
+  outside?: { files: string[]; sparse: boolean };
 }
 
 const EXAMPLE_LINES = 15;
@@ -92,6 +94,11 @@ const nextAction = (failures: Violation[], set: RecordSet, notes: Notes): string
   if (located.length === 0 && legacy !== undefined) {
     const { guardrail } = ownerOf(set, legacy.guardrail) as { guardrail: Guardrail };
     return runIt(guardrail);
+  }
+  const outside = [...new Set(failures.map((v) => v.file).filter((f) => notes.outside?.files.includes(f) === true))].sort();
+  if (outside.length > 0) {
+    const bring = notes.outside?.sparse === true ? `git sparse-checkout add -- ${shellWords([...new Set(outside.map((f) => (dirname(f) === "." ? f : dirname(f))))])}` : `git update-index --no-skip-worktree -- ${shellWords(outside)}, then git checkout -- ${shellWords(outside)}`;
+    return `run ${bring} to bring ${outside.join(", ")} onto disk, then change the code at the lines above to match "Do this".`;
   }
   if (failures.length > 0) {
     return 'change the code at the lines above to match "Do this". Do not edit .warden/ or generated config; that is recorded as tampering.';

@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { closeSync, existsSync, lstatSync, openSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { RecordError } from "../records/load.js";
 
@@ -273,14 +273,12 @@ export interface StagedMismatch {
   absent: StagedBlob[];
 }
 
-export function writeBlob(root: string, sha: string, file: string): void {
-  const fd = openSync(file, "w");
-  try {
-    execFileSync("git", ["cat-file", "blob", sha], { cwd: root, env: env(), stdio: ["ignore", fd, "pipe"] });
-  } finally {
-    closeSync(fd);
-  }
+export function checkoutBlobs(root: string, paths: string[], dir: string): string {
+  execFileSync("git", ["--literal-pathspecs", "checkout-index", `--prefix=${dir}/`, "--ignore-skip-worktree-bits", "-z", "--stdin"], { cwd: root, env: env(), input: paths.map((p) => `${p}\0`).join(""), stdio: ["pipe", "ignore", "pipe"] });
+  return join(dir, must(root, ["rev-parse", "--show-prefix"]).trim());
 }
+
+export const sparseCheckout = (root: string): boolean => git(root, ["config", "--bool", "core.sparseCheckout"]).out.trim() === "true";
 
 export function stagedMismatch(root: string, base: string): StagedMismatch {
   const literal = (args: string[]): string[] => names(must(root, ["--literal-pathspecs", ...args]));

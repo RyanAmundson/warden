@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { closeSync, existsSync, lstatSync, openSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { RecordError } from "../records/load.js";
 const noGrafts = join(tmpdir(), `warden-no-grafts-${randomUUID()}`);
@@ -218,15 +218,11 @@ export const covers = (root, run, c) => {
     const parent = c.parents[0];
     return run.tree === c.tree && (parent === undefined || (run.mergeBase !== undefined && (run.mergeBase === parent || isAncestor(root, run.mergeBase, parent))));
 };
-export function writeBlob(root, sha, file) {
-    const fd = openSync(file, "w");
-    try {
-        execFileSync("git", ["cat-file", "blob", sha], { cwd: root, env: env(), stdio: ["ignore", fd, "pipe"] });
-    }
-    finally {
-        closeSync(fd);
-    }
+export function checkoutBlobs(root, paths, dir) {
+    execFileSync("git", ["--literal-pathspecs", "checkout-index", `--prefix=${dir}/`, "--ignore-skip-worktree-bits", "-z", "--stdin"], { cwd: root, env: env(), input: paths.map((p) => `${p}\0`).join(""), stdio: ["pipe", "ignore", "pipe"] });
+    return join(dir, must(root, ["rev-parse", "--show-prefix"]).trim());
 }
+export const sparseCheckout = (root) => git(root, ["config", "--bool", "core.sparseCheckout"]).out.trim() === "true";
 export function stagedMismatch(root, base) {
     const literal = (args) => names(must(root, ["--literal-pathspecs", ...args]));
     const staged = literal(["diff", "-z", "--cached", "--name-only", "--relative", "--no-renames", "--diff-filter=AM", mergeBase(root, base)]);

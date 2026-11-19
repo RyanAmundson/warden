@@ -122,9 +122,12 @@ export function readState(): State {
 
 export function openAlerts(root: string): Detection[] {
   const repo = commonDir(root);
+  const indexes = new Map<string, Index>();
+  const indexOf = (project: string): Index => indexes.get(project) ?? indexes.set(project, refresh(emptyIndex(), project)).get(project) as Index;
   return Object.values(readState().roots)
     .flatMap((r) => r.open)
-    .filter((d) => d.repo === repo);
+    .filter((d) => d.repo === repo)
+    .filter((d) => d.detail !== "unchecked-commit" || !commitsOf(root, [d.file]).some((c) => stamped(root, indexOf(d.project), c)));
 }
 
 export function discoverRoots(): string[] {
