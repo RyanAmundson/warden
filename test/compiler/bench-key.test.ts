@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -50,4 +50,11 @@ it("a change to a pack's example settings makes compile bench its Guardrails aga
   const before = await key();
   await writeFile(join(root, ".warden/packs/local/pack.yaml"), pack("b"));
   expect(await key()).not.toBe(before);
+});
+
+it("a link in a pack folder fails the load with one next action, so retargeting it cannot swap code past the lock", async () => {
+  await rename(join(root, ".warden/packs/local/fs.js"), join(root, ".warden/packs/local/strict.js"));
+  await symlink("strict.js", join(root, ".warden/packs/local/fs.js"));
+  const link = join(root, ".warden/packs/local/fs.js");
+  await expect(key()).rejects.toMatchObject({ name: "RecordError", message: `is a symbolic link in a pack folder, so the lock cannot hash what it points to. Next action: replace ${link} with a copy of what it points to, then run warden compile.` });
 });

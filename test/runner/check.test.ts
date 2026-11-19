@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ESLint } from "eslint";
+import { COMMAND_CHARS } from "../../src/adapters/cmd.js";
 import { eslintAdapter } from "../../src/adapters/eslint.js";
 import { PARSE_ERROR, type RunResult } from "../../src/adapters/types.js";
 import { runCheck } from "../../src/cli/check.js";
@@ -907,7 +908,8 @@ describe("a cmd Guardrail that runs a script in its pack", () => {
     await write("broken", "x\n");
     const { code, out } = await check();
     expect(code).toBe(1);
-    expect(out).toContain(`  Output:   sh "${script}" exited with 1\n            broken thing`);
+    expect(out).toContain(`  Output:   ${`sh "${script}"`.slice(0, COMMAND_CHARS)}`);
+    expect(out).toContain(` exited with 1\n            broken thing`);
     expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([`Next action: run \`sh "${script}"\` and fix what it reports.`]);
     await write(".warden/packs/legacy/check.sh", "true\n");
     expect((await check()).code).toBe(1);
