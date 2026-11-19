@@ -105,6 +105,13 @@ describe("pack settings", () => {
     });
   });
 
+  it("refuses an unknown settings key by name, with one next action", async () => {
+    await withPack(schema, "{ wrds: [b] }", async (project) => {
+      const error = await loadRecords(project, wardenRoot).catch((e: unknown) => e);
+      expect(error).toMatchObject({ name: "RecordError", pointer: "/packs/0/settings/wrds", message: expect.stringMatching(/^wrds is not a setting of pack local\. Next action: remove or rename wrds in the settings of pack local in .*, then run warden compile\.$/) });
+    });
+  });
+
   it("refuses settings for a pack that declares none", async () => {
     await withPack(undefined, "{ max: 5 }", async (project) => {
       const error = await loadRecords(project, wardenRoot).catch((e: unknown) => e);

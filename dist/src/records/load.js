@@ -124,6 +124,10 @@ export function resolveSettings(pack, value, file, pointer) {
     if (validate(resolved))
         return resolved;
     const error = validate.errors?.[0];
+    const extra = error?.keyword === "additionalProperties" ? error.params.additionalProperty : undefined;
+    if (extra !== undefined) {
+        throw new RecordError(file, `${pointer}${error?.instancePath ?? ""}/${extra}`, `${extra} is not a setting of pack ${pack.id}. Next action: remove or rename ${extra} in the settings${error?.instancePath ?? ""} of pack ${pack.id} in ${file} to a setting the schema in ${pack.file} declares, then run warden compile.`);
+    }
     throw new RecordError(file, `${pointer}${error?.instancePath ?? ""}`, `${error?.message ?? "invalid"} for pack ${pack.id}. Next action: fix settings${error?.instancePath ?? ""} of pack ${pack.id} in ${file} to match the settings schema in ${pack.file}, then run warden compile.`);
 }
 export const exampleSet = (set) => ({

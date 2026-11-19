@@ -131,7 +131,7 @@ const runCached = async (
   });
   const others = [
     ...(rest.length > 0 ? await runGuardrails(set, rest, scanned, ctx) : []),
-    ...(trees.length > 0 ? await runGuardrails(set, trees, projectFiles(set.root, set.config.packs.flatMap((p) => p.paths)), ctx) : []),
+    ...(trees.length > 0 ? await runGuardrails(set, trees, projectFiles(set.root, set.config.packs.flatMap((p) => p.paths), run.tier !== "commit"), ctx) : []),
   ];
   return { perFile: [...results, ...parse], wholeProject: others, ran: [...fresh, ...others], cached: hits.size };
 };

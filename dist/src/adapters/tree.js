@@ -3,7 +3,8 @@ import { readFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { RecordError } from "../records/load.js";
 import { enabledOn, pathGroups } from "../records/paths.js";
-import { packCode } from "./pack-code.js";
+import { packEntry } from "./pack-code.js";
+import { inSandbox } from "./sandbox.js";
 const CODE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 const lineStarts = (text) => {
     const starts = [0];
@@ -88,9 +89,14 @@ const treeAdapter = (id) => ({
             const entry = entries.find((e) => e.guardrail === g.id);
             if (entry === undefined)
                 throw new RecordError(generated(id), "", `has no entry for Guardrail ${g.id}. Next action: run warden compile.`);
-            const check = await packCode(g, id);
-            const begin = performance.now();
-            const found = check({ files: files.filter((f) => enabledOn(f, entry.groups)), all: files, read, ...(imports === undefined ? {} : { imports }), settings: entry.settings ?? {}, options: g.options, terms });
+            const code = await packEntry(g, id);
+            const input = { files: files.filter((f) => enabledOn(f, entry.groups)), all: files, ...(imports === undefined ? {} : { imports: [...imports] }), settings: entry.settings ?? {}, options: g.options ?? null, terms };
+            const given = (file) => {
+                if (!known.has(file))
+                    throw new Error(`${file} is not one of the files the check was given`);
+                return read(file);
+            };
+            const { found, ms } = await inSandbox([code], { kind: "tree", entry: code, input }, given, ctx.signal);
             const violations = found.map((v) => {
                 if (!known.has(v.file)) {
                     const file = join(g.packDir, `${id}.js`);
@@ -98,7 +104,7 @@ const treeAdapter = (id) => ({
                 }
                 return { guardrail: g.id, file: v.file, line: v.line ?? 1, message: v.message, ...(v.doThis === undefined ? {} : { doThis: v.doThis }) };
             });
-            out.push({ guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms: graphMs + performance.now() - begin });
+            out.push({ guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms: graphMs + ms });
         }
         return out;
     },

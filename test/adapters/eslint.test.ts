@@ -210,6 +210,23 @@ describe("eslint adapter", () => {
       );
     });
 
+    it("names the pack file and the Guardrail, with one next action, when a pack rule throws", async () => {
+      const dir = await shipped("export default { \"no-x\": { meta: { schema: [{ type: \"object\" }] }, create: () => { throw new Error(\"rule boom\"); } } };\n");
+      const { g, set } = packed(dir);
+      const refusal = conformance(eslintAdapter, resolve(fixtures, "nested"), [g], set, ["src/a.ts"], []);
+      await expect(refusal).rejects.toMatchObject({ name: "RecordError", file: join(dir, "pack.yaml"), pointer: "/guardrails/no-x/implementation" });
+      await expect(refusal).rejects.toThrow(`Guardrail no-x: eslint:local/no-x in ${join(dir, "eslint.js")} threw while linting src/a.ts: Error while loading rule 'local/no-x': rule boom. Next action: fix no-x in ${join(dir, "eslint.js")}, then run warden compile.`);
+    });
+
+    it("names the pack file, with one next action, when a pack's eslint.js does not parse", async () => {
+      const dir = await shipped("export default { \"no-x\": ;\n");
+      const { g, set } = packed(dir);
+      const refusal = conformance(eslintAdapter, resolve(fixtures, "nested"), [g], set, ["src/a.ts"], []);
+      await expect(refusal).rejects.toMatchObject({ name: "RecordError", file: join(dir, "pack.yaml"), pointer: "/guardrails/no-x/implementation" });
+      await expect(refusal).rejects.toThrow(`${join(dir, "eslint.js")} does not load: `);
+      await expect(refusal).rejects.toThrow(`. Next action: fix ${join(dir, "eslint.js")}, then run warden compile.`);
+    });
+
     it("refuses a rule namespaced by another pack", async () => {
       const { g, set } = packed(await shipped(rule), "eslint:other/no-x");
       await expect(conformance(eslintAdapter, resolve(fixtures, "nested"), [g], set, ["src/a.ts"], [])).rejects.toThrow("eslint:other/no-x names no code shipped by this pack. Next action: set implementation of Guardrail no-x to eslint:local/<name>");

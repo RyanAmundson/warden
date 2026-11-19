@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, realpath, rename, symlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -62,25 +63,6 @@ describe("fs adapter", () => {
     ["an ES import of a folder", { "fs.js": "export { default } from \"./lib\";\n", "lib/index.js": "export default {};\n" }, "imports the folder ./lib, which Node's ES module loader refuses. Next action: import the file inside it by its full name, such as ./lib/index.js"],
     ["an extensionless ES import", { "fs.js": "export { default } from \"./lib\";\n", "lib.js": "export default {};\n" }, "imports ./lib, which names no file. Next action: make ./lib"],
     ["a require of a missing file", { "fs.js": "module.exports = require(\"./gone\");\n" }, "requires ./gone, which names no file that Node can load. Next action: make ./gone"],
-    ["createRequire from node:module", { "fs.js": "import { createRequire } from \"node:module\";\nexport default createRequire(import.meta.url)(\"../impl.cjs\");\n" }, "imports node:module, which is not one of the data-only built-ins pack code may use (node:path, node:url, node:util), so it could run code the lock does not hash"],
-    ["createRequire from a built-in fetched at run time", { "fs.js": "export default process.getBuiltinModule(\"node:module\").createRequire(import.meta.url)(\"../impl.cjs\");\n" }, "uses getBuiltinModule, which can run code the lock does not hash"],
-    ["module.register", { "fs.js": "import { register } from \"module\";\nregister(\"../hook.mjs\", import.meta.url);\nexport default {};\n" }, "imports module, which is not one of the data-only built-ins pack code may use (node:path, node:url, node:util), so it could run code the lock does not hash"],
-    ["module.require in CommonJS", { "fs.js": "module.exports = module.require(\"../impl.cjs\");\n" }, "uses module other than as module.exports"],
-    ["an aliased require", { "fs.js": "const load = require;\nmodule.exports = load(\"../impl.cjs\");\n" }, "uses require other than to call it with a fixed path"],
-    ["import() of a URL", { "fs.js": "export default (await import(new URL(\"../impl.js\", import.meta.url))).default;\n" }, "calls import() with a computed path, which Warden cannot follow"],
-    ["import() of a template with a substitution", { "fs.js": "export default (await import(`${\"../impl.js\"}`)).default;\n" }, "calls import() with a computed path, which Warden cannot follow"],
-    ["new Function over a read file", { "fs.js": "export default { mentions: new Function(\"input\", \"return []\") };\n" }, "uses Function, which can run code the lock does not hash"],
-    ["a Function reached through constructor", { "fs.js": "export default { mentions: (() => {}).constructor(\"return []\") };\n" }, "uses constructor, which can run code the lock does not hash"],
-    ["process.dlopen", { "fs.js": "process.dlopen({ exports: {} }, \"../addon.node\");\nexport default {};\n" }, "uses dlopen, which can run code the lock does not hash"],
-    ["eval", { "fs.js": "export default globalThis.eval(\"({})\");\n" }, "uses eval, which can run code the lock does not hash"],
-    ["node:vm", { "fs.js": "import vm from \"node:vm\";\nexport default vm.runInThisContext(\"({})\");\n" }, "imports node:vm, which is not one of the data-only built-ins pack code may use (node:path, node:url, node:util), so it could run code the lock does not hash"],
-    ["node:child_process", { "fs.js": "import { execFileSync } from \"node:child_process\";\nexport default { mentions: () => JSON.parse(execFileSync(\"node\", [\"../run.mjs\"])) };\n" }, "imports node:child_process, which is not one of the data-only built-ins pack code may use (node:path, node:url, node:util), so it could run code the lock does not hash"],
-    ["node:worker_threads", { "fs.js": "import { Worker } from \"node:worker_threads\";\nnew Worker(\"../run.mjs\");\nexport default {};\n" }, "imports node:worker_threads, which is not one of the data-only built-ins pack code may use (node:path, node:url, node:util), so it could run code the lock does not hash"],
-    ["node:inspector", { "fs.js": "import { Session } from \"node:inspector\";\nconst s = new Session();\ns.connect();\ns.post(\"Runtime.evaluate\", { expression: \"1\" });\nexport default {};\n" }, "imports node:inspector, which is not one of the data-only built-ins"],
-    ["node:cluster", { "fs.js": "import cluster from \"node:cluster\";\ncluster.setupPrimary({ exec: \"../run.cjs\" });\ncluster.fork();\nexport default {};\n" }, "imports node:cluster, which is not one of the data-only built-ins"],
-    ["node:fs", { "fs.js": "import { writeFileSync } from \"node:fs\";\nwriteFileSync(\"../out.txt\", \"x\");\nexport default {};\n" }, "imports node:fs, which is not one of the data-only built-ins"],
-    ["a string-literal index of a dynamic loader", { "fs.js": "export default process[\"getBuiltinModule\"](\"node:fs\");\n" }, "uses getBuiltinModule, which can run code the lock does not hash"],
-    ["a built-in without the node: prefix", { "fs.js": "import { posix } from \"path\";\nexport default { mentions: () => [posix.sep] };\n" }, "imports the built-in path without the node: prefix. Next action: import it as node:path"],
   ])("refuses pack code with %s, with one next action", async (_name, files, message) => {
     const pack = await shippedPack("fs", "");
     try {
@@ -92,6 +74,54 @@ describe("fs adapter", () => {
       const g = treeGuardrail("fs:local/mentions", pack.dir);
       const refusal = conformance(fsAdapter, fixture, [g], treeSet(g), ["src/a.ts"], []);
       await expect(refusal).rejects.toThrow(message);
+      await expect(refusal).rejects.toThrow(/Next action: [^]*, then run warden compile\.$/);
+    } finally {
+      await pack.remove();
+    }
+  });
+
+  it.each([
+    ["a computed getBuiltinModule name that runs child_process", { "fs.js": "export default { mentions: () => { process[\"getBuiltin\" + \"Module\"](\"node:child_process\").execFileSync(\"touch\", [MARK]); return []; } };\n" }],
+    ["CommonJS arguments[1], the module wrapper's require", { "fs.js": "const r = arguments[1];\nr(\"node:fs\").writeFileSync(MARK, \"x\");\nmodule.exports = { mentions: () => [] };\n" }],
+    ["Reflect.get of getBuiltinModule", { "fs.js": "export default { mentions: () => { Reflect.get(process, \"getBuiltinModule\")(\"node:fs\").writeFileSync(MARK, \"x\"); return []; } };\n" }],
+    ["a computed destructuring key", { "fs.js": "const { [\"getBuiltinModule\"]: g } = process;\ng(\"node:fs\").writeFileSync(MARK, \"x\");\nexport default { mentions: () => [] };\n" }],
+    ["a property descriptor of getBuiltinModule", { "fs.js": "Object.getOwnPropertyDescriptor(process, \"getBuiltinModule\").value(\"node:child_process\").execFileSync(\"touch\", [MARK]);\nexport default { mentions: () => [] };\n" }],
+    ["node:fs", { "fs.js": "import { writeFileSync } from \"node:fs\";\nwriteFileSync(MARK, \"x\");\nexport default { mentions: () => [] };\n" }],
+    ["createRequire of a file outside the pack", { "fs.js": "import { createRequire } from \"node:module\";\nexport default createRequire(import.meta.url)(\"../impl.cjs\");\n" }],
+    ["node:vm", { "fs.js": "import vm from \"node:vm\";\nvm.runInThisContext(`process.getBuiltinModule(\"node:fs\").writeFileSync(${JSON.stringify(MARK)}, \"x\")`);\nexport default { mentions: () => [] };\n" }],
+    ["node:inspector", { "fs.js": "import { Session } from \"node:inspector\";\nconst s = new Session();\ns.connect();\ns.post(\"Runtime.evaluate\", { expression: `process.getBuiltinModule(\"node:fs\").writeFileSync(${JSON.stringify(MARK)}, \"x\")` });\nexport default { mentions: () => [] };\n" }],
+    ["node:cluster", { "fs.js": "import cluster from \"node:cluster\";\ncluster.setupPrimary({ exec: new URL(\"../impl.cjs\", import.meta.url).pathname });\ncluster.fork();\nexport default { mentions: () => [] };\n" }],
+    ["node:worker_threads", { "fs.js": "import { Worker } from \"node:worker_threads\";\nnew Worker(`require(\"node:fs\").writeFileSync(${JSON.stringify(MARK)}, \"x\")`, { eval: true });\nexport default { mentions: () => [] };\n" }],
+    ["node:net", { "fs.js": "import net from \"node:net\";\nawait new Promise((resolve, reject) => net.connect(9, \"127.0.0.1\").on(\"error\", reject).on(\"connect\", resolve));\nexport default { mentions: () => [] };\n" }],
+  ])("runs pack code with %s in a sandbox that refuses it, with one next action", async (_name, files) => {
+    const pack = await shippedPack("fs", "");
+    const marker = join(pack.dir, "../marker");
+    try {
+      await writeFile(join(pack.dir, "../impl.cjs"), `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "x");\nmodule.exports = { mentions: () => [] };\n`);
+      for (const [file, code] of Object.entries(files)) await writeFile(join(pack.dir, file), `const MARK = ${JSON.stringify(marker)};\n${code}`);
+      const g = treeGuardrail("fs:local/mentions", pack.dir);
+      const refusal = conformance(fsAdapter, fixture, [g], treeSet(g), ["src/a.ts"], []);
+      await expect(refusal).rejects.toThrow("Access to this API has been restricted");
+      await expect(refusal).rejects.toThrow(/Next action: [^]*, then run warden compile\.$/);
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      await pack.remove();
+    }
+  });
+
+  it.each([
+    ["does not parse", "export default { mentions: () => [ };\n", "does not load: "],
+    ["throws", "export default { mentions: () => { throw new TypeError(\"boom\"); } };\n", "Guardrail g: fs:local/mentions in PACK/fs.js threw: boom. Next action: fix mentions in PACK/fs.js, then run warden compile."],
+    ["returns no list", "export default { mentions: () => undefined };\n", "Guardrail g: fs:local/mentions in PACK/fs.js returned undefined that is not a finding of the form { file, message, line?, doThis? }. Next action: fix mentions in PACK/fs.js, then run warden compile."],
+    ["reads a file it was not given", "export default { mentions: ({ read }) => [{ file: \"src/a.ts\", message: read(\"../../etc/hosts\") }] };\n", "threw: ../../etc/hosts is not one of the files the check was given"],
+    ["returns a malformed finding", "export default { mentions: () => [{ file: 1 }] };\n", "returned a list with an item that is not a finding"],
+  ])("names the pack file and the Guardrail, with one next action, when a pack check %s", async (_name, code, message) => {
+    const pack = await shippedPack("fs", code);
+    try {
+      const g = treeGuardrail("fs:local/mentions", pack.dir);
+      const refusal = conformance(fsAdapter, fixture, [g], treeSet(g), ["src/a.ts"], []);
+      await expect(refusal).rejects.toMatchObject({ name: "RecordError", file: join(pack.dir, "pack.yaml"), pointer: "/guardrails/g/implementation" });
+      await expect(refusal).rejects.toThrow(message.replaceAll("PACK", pack.dir));
       await expect(refusal).rejects.toThrow(/Next action: [^]*, then run warden compile\.$/);
     } finally {
       await pack.remove();

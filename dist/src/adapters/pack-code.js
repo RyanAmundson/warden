@@ -1,14 +1,11 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { builtinModules, createRequire } from "node:module";
-import { basename, dirname, extname, join, resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { packFiles } from "../compiler/lock.js";
 import { RecordError } from "../records/load.js";
 export const targetOf = (g) => g.implementation.slice(g.implementation.indexOf(":") + 1);
 const confined = new Set();
 const BUILTINS = new Set(builtinModules);
-const DATA_BUILTINS = new Set(["path", "url", "util"]);
-const DYNAMIC = new Set(["eval", "Function", "createRequire", "getBuiltinModule", "constructor", "binding", "_linkedBinding", "dlopen", "mainModule"]);
 const RELATIVE = /^\.\.?(\/|$)/;
 async function refuseEscapes(packDir, entry, packFile, pointer) {
     if (confined.has(entry))
@@ -26,14 +23,8 @@ async function refuseEscapes(packDir, entry, packFile, pointer) {
     const seen = new Set();
     const pending = [entry];
     const follow = (file, spec, how) => {
-        const name = spec.replace(/^node:/, "").split("/")[0];
-        if (spec.startsWith("node:") || BUILTINS.has(spec)) {
-            if (!DATA_BUILTINS.has(name))
-                refuse(`${file} imports ${spec}, which is not one of the data-only built-ins pack code may use (${[...DATA_BUILTINS].map((b) => `node:${b}`).join(", ")}), so it could run code the lock does not hash`, `remove ${spec} from ${file}`);
-            if (!spec.startsWith("node:"))
-                refuse(`${file} imports the built-in ${spec} without the node: prefix`, `import it as node:${spec} in ${file}`);
+        if (spec.startsWith("node:") || BUILTINS.has(spec))
             return;
-        }
         if (!RELATIVE.test(spec) || !inside(resolve(dirname(file), spec)))
             outside(file, spec);
         let target = resolve(dirname(file), spec);
@@ -58,40 +49,18 @@ async function refuseEscapes(packDir, entry, packFile, pointer) {
     };
     while (pending.length > 0) {
         const file = pending.pop();
-        if (seen.has(file))
+        if (seen.has(file) || !/\.[cm]?js$/.test(file))
             continue;
         seen.add(file);
-        const ext = extname(file);
-        if (ext === ".json")
-            continue;
-        if (![".js", ".mjs", ".cjs"].includes(ext))
-            refuse(`${file} is loaded as pack code but is not JavaScript or JSON, so Warden cannot check what it loads`, `replace ${file} with a .js file`);
         const literal = (node) => (node !== undefined && ts.isStringLiteralLike(node) ? node.text : undefined);
         const visit = (node) => {
-            const parent = node.parent;
             if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier !== undefined) {
                 follow(file, literal(node.moduleSpecifier), "import");
             }
             else if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(node.expression) && node.expression.text === "require"))) {
-                const how = node.expression.kind === ts.SyntaxKind.ImportKeyword ? "import" : "require";
                 const spec = literal(node.arguments[0]);
-                if (spec === undefined)
-                    refuse(`${file} calls ${how}() with a computed path, which Warden cannot follow`, `pass ${how}() a fixed relative path inside ${packDir}`);
-                follow(file, spec, how);
-            }
-            else if (ts.isElementAccessExpression(node) && DYNAMIC.has(literal(node.argumentExpression) ?? "")) {
-                refuse(`${file} uses ${literal(node.argumentExpression)}, which can run code the lock does not hash`, `remove ${literal(node.argumentExpression)} from ${file}`);
-            }
-            else if (ts.isIdentifier(node)) {
-                const named = (ts.isPropertyAccessExpression(parent) || ts.isPropertyAssignment(parent)) && parent.name === node;
-                if (DYNAMIC.has(node.text))
-                    refuse(`${file} uses ${node.text}, which can run code the lock does not hash`, `remove ${node.text} from ${file}`);
-                if (!named && node.text === "require" && !(ts.isCallExpression(parent) && parent.expression === node)) {
-                    refuse(`${file} uses require other than to call it with a fixed path`, `call require with a fixed relative path in ${file}`);
-                }
-                if (!named && node.text === "module" && !(ts.isPropertyAccessExpression(parent) && parent.expression === node && parent.name.text === "exports")) {
-                    refuse(`${file} uses module other than as module.exports, which can load code the lock does not hash`, `use module.exports or export in ${file}`);
-                }
+                if (spec !== undefined)
+                    follow(file, spec, node.expression.kind === ts.SyntaxKind.ImportKeyword ? "import" : "require");
             }
             ts.forEachChild(node, visit);
         };
@@ -99,7 +68,7 @@ async function refuseEscapes(packDir, entry, packFile, pointer) {
     }
     confined.add(entry);
 }
-export async function packCode(g, adapter) {
+export async function packEntry(g, adapter) {
     const target = targetOf(g);
     const [namespace, name] = target.split("/", 2);
     const packFile = g.packDir === undefined ? "pack.yaml" : join(g.packDir, "pack.yaml");
@@ -108,14 +77,12 @@ export async function packCode(g, adapter) {
     if (name === undefined || namespace !== pack) {
         throw new RecordError(packFile, pointer, `${adapter}:${target} names no code shipped by this pack. Next action: set implementation of Guardrail ${g.id} to ${adapter}:${pack ?? "<pack>"}/<name> in ${packFile}, then run warden compile.`);
     }
-    const file = join(g.packDir, `${adapter}.js`);
+    const packDir = g.packDir;
+    const file = join(packDir, `${adapter}.js`);
     if (!existsSync(file)) {
         throw new RecordError(packFile, pointer, `pack ${pack} ships no ${adapter}.js. Next action: add ${file} whose default export maps ${name} to its implementation, then run warden compile.`);
     }
-    await refuseEscapes(realpathSync(g.packDir), realpathSync(file), packFile, pointer);
-    const shipped = (await import(pathToFileURL(file).href)).default ?? {};
-    if (!Object.hasOwn(shipped, name)) {
-        throw new RecordError(packFile, pointer, `${file} exports no ${name}. Next action: add ${name} to the default export of ${file}, then run warden compile.`);
-    }
-    return shipped[name];
+    const real = realpathSync(file);
+    await refuseEscapes(realpathSync(packDir), real, packFile, pointer);
+    return { file, real, name, namespace, guardrail: g.id, implementation: g.implementation, packDir, packFile, pointer };
 }

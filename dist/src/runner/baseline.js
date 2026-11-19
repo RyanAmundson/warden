@@ -71,8 +71,8 @@ export function applyBaseline(results, baseline, scanned, existing, touched = ()
             delete next[g];
     return { failures, next };
 }
-export const projectFiles = (root, globs) => {
-    const out = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" });
+export const projectFiles = (root, globs, untracked = true) => {
+    const out = execFileSync("git", ["ls-files", "-z", "--cached", ...(untracked ? ["--others", "--exclude-standard"] : [])], { cwd: root, encoding: "utf8" });
     return out
         .split("\0")
         .filter((f) => f !== "" && existsSync(join(root, f)) && statSync(join(root, f)).isFile() && globs.some((g) => matchesPath(f, g)));

@@ -984,6 +984,19 @@ describe("a whole-tree Guardrail", () => {
     expect(failures.map((f) => [f.file, f.doThis])).toEqual([["a.ts", "Delete flag.ts."]]);
   });
 
+  it("at the commit tier judges only staged files, so an untracked file does not block an unrelated commit", async () => {
+    await addTree();
+    git("add", "-A");
+    git("commit", "-q", "-m", "tree");
+    git("branch", "-f", "main", "HEAD");
+    await write("flag.ts", "export const flag = 1;\n");
+    await write("a.ts", "export const a = 2;\n");
+    git("add", "a.ts");
+    expect((await check({}, false)).code).toBe(0);
+    git("add", "flag.ts");
+    expect((await check({}, false)).code).toBe(1);
+  });
+
   it("changing a pack's settings and recompiling is loosening", async () => {
     await write(".warden/config.yaml", config(["core", "local", "tree"]).replace('  - id: tree\n    paths: ["**/*.ts"]', '  - id: tree\n    paths: ["**/*.ts"]\n    settings: { flag: flag.ts }'));
     await write(".warden/packs/tree/pack.yaml", `${treePack}settings:\n  type: object\n  properties:\n    flag: { type: string, default: flag.ts }\n`);

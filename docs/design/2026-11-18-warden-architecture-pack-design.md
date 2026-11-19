@@ -471,38 +471,39 @@ Version 2 ships every ARCH practice. The pack ships its own code beside
 `graph.js` holds import-graph checks. A Guardrail names one as
 `<adapter>:architecture/<name>`, and Warden loads it from the pack's folder,
 the same folder `WARDEN_PACK_DIR` names for a `cmd` Guardrail. The lock hashes
-these files with the rest of the pack. Pack code is a closed world: every file
-it loads is hashed, or Warden refuses to load it with one next action.
+these files with the rest of the pack.
 
-- A pack folder holds no symbolic links. Warden refuses a link, because the
-  lock would hash neither the link nor what it points to.
-- Warden resolves each relative `import` by Node's ES module rules and each
-  `require` by Node's CommonJS rules, so extensionless paths, folder index
-  files, and a `package.json` `main` resolve as Node would. It scans every
-  resolved file in turn. Each one must stay inside the pack folder and be
-  JavaScript or JSON, so a native `.node` addon is refused.
-- The only bare specifiers allowed are the data-only built-ins `node:path`,
-  `node:url`, and `node:util`. Warden refuses every other built-in, including
-  any that Node adds later, because a built-in such as `node:vm`,
-  `node:inspector`, `node:cluster`, or `node:fs` can run or write code the
-  lock does not hash. A tree check reads files through its `read` input.
-- Warden refuses dynamic loading: `import()` or `require()` of a computed
-  path, `require` used other than as a call, `module` used other than as
-  `module.exports`, and any use of `eval`, `Function`, `createRequire`,
-  `getBuiltinModule`, `constructor`, `process.binding`, `process.dlopen`,
-  or `process.mainModule`, whether named directly or through a string-literal
-  index such as `process["getBuiltinModule"]`.
+Pack code runs in a sandbox: a child Node process under Node's permission
+model (`--permission`). Warden starts one such process and reuses it for every
+pack check in a run.
 
-These checks are static, and static analysis cannot fully confine
-JavaScript. They stop accidental escapes and the common deliberate ones,
-not every deliberate one. Known limits:
+- It may read only the pack folders it runs and Warden's own install, its code
+  and its `node_modules`. It reads no project file directly. Warden sends the
+  file names, a tree check's `read` asks Warden for each file's text, and
+  ESLint rules receive each file's text.
+- It has no write access, no child processes, no worker threads, no native
+  addons, no inspector, no WASI, and no network. A forbidden call fails with
+  Node's `ERR_ACCESS_DENIED`. Warden then refuses the run with exit 2, names
+  the pack file and the Guardrail, and gives one next action.
+- Its environment is empty. It exits when Warden closes its input, and Warden
+  kills it when Warden exits.
+- A pack check that does not load, throws, or returns something other than a
+  list of `{ file, message, line?, doThis? }` findings is refused the same
+  way. So is an ESLint rule that throws.
 
-- A computed property name, such as `globalThis["ev" + "al"]` or
-  `f["constr" + "uctor"]`, is not detected.
-- `node:util` and `node:url` are judged data-only. A future Node release
-  could add a loader to either, and the allow list would have to change.
-- Which module format runs a `.js` file depends on the nearest
-  `package.json`, which may sit outside the pack folder and outside the lock.
+Two static checks remain, because they give a clearer error than a refused
+read. A pack folder holds no symbolic links, so the lock hashes every file it
+can load. Each literal relative `import` or `require` must resolve by Node's
+rules to a file inside the pack folder.
+
+Known limits:
+
+- Pack code can still read every file in Warden's install. Those files are
+  Warden's own and are pinned by its version, not by the lock.
+- A pack check can spend CPU and memory without limit. No tree or ESLint
+  Guardrail has a time budget.
+- `cmd` Guardrails run outside the sandbox, because a command needs the
+  project and its tools.
 
 The project sets the pack's settings on its config entry. `pack.yaml`
 declares their JSON Schema, with defaults, and Warden refuses settings that do
