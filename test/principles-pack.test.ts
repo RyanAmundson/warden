@@ -226,6 +226,41 @@ describe("principles pack", () => {
     expect((await scan("principles-single-implementation", { "src/client.ts": literal, "src/real.ts": real }))?.status).toBe("pass");
   });
 
+  it("single implementation: forwarding methods and nested returns do not duplicate an implementation", async () => {
+    const client = "export interface Client { get(): number }\n";
+    const real = 'import type { Client } from "./client";\nexport class RealClient implements Client { get(): number { return 1; } }\n';
+    const forwarding = `import type { Client } from "./client";
+import { RealClient } from "./real";
+export interface ClientProvider { get(): Client }
+export class Factory {
+  forward(existing: Client): Client { return existing; }
+  make(): Client {
+    const callback = () => { return { get: () => 2 }; };
+    console.log(callback);
+    return new RealClient();
+  }
+}
+`;
+    const tree = { "src/client.ts": client, "src/real.ts": real, "src/factory.ts": forwarding };
+    expect(await found("principles-single-implementation", tree)).toEqual([
+      "src/client.ts:1: Interface Client has one implementation, the class at src/real.ts:2.",
+    ]);
+    const declarations = [
+      "export function make(fast: boolean): Client { return fast ? { get: () => 2 } : { get: () => 3 }; }",
+      "export function make(n: number): Client; export function make(n: number) { return { get: () => n }; }",
+      "export const make = (): Client => ({ get: () => 2 });",
+      "export class Factory { make(fast: boolean): Client { return fast ? <Client>{ get: () => 2 } : { get: () => 3 }; } }",
+      "export class Factory { make(n: number): Client; make(n: number) { return { get: () => n }; } }",
+      "export class Factory { 'make'(n: number): Client; make(n: number) { return { get: () => n }; } }",
+      "export class Factory { ['make'](n: number): Client; make(n: number) { return { get: () => n }; } }",
+      "export class Factory { make(): Client { return ({ get: () => 2 })!; } }",
+    ];
+    for (const declaration of declarations) {
+      const factory = `import type { Client } from "./client";\n${declaration}\n`;
+      expect(await found("principles-single-implementation", { ...tree, "src/factory.ts": factory }), declaration).toEqual([]);
+    }
+  });
+
   it("duplicate exports: a name the project declares as a contract export may repeat, and the Do this names that declaration", async () => {
     const plugin = "export const start = (): number => 1;\n";
     const tree = { "src/a/main.ts": plugin, "src/b/main.ts": plugin };

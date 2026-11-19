@@ -63,19 +63,54 @@ const typeName = (ts, type) => (type !== undefined && ts.isTypeReferenceNode(typ
 
 const rightmostName = (ts, name) => (ts.isQualifiedName(name) ? name.right.text : name.text);
 
+const returnsObject = (ts, body) => {
+  const object = (node) => {
+    if (node === undefined) return false;
+    if (ts.isParenthesizedExpression(node) || ts.isSatisfiesExpression(node) || ts.isAsExpression(node) || ts.isTypeAssertionExpression(node) || ts.isNonNullExpression(node)) return object(node.expression);
+    if (ts.isConditionalExpression(node)) return object(node.whenTrue) || object(node.whenFalse);
+    return ts.isObjectLiteralExpression(node);
+  };
+  const visit = (node) => {
+    if (ts.isReturnStatement(node)) return object(node.expression) || undefined;
+    if (ts.isFunctionLike(node)) return undefined;
+    return ts.forEachChild(node, visit);
+  };
+  return body !== undefined && (ts.isBlock(body) ? ts.forEachChild(body, visit) === true : object(body));
+};
+
+const methodBody = (ts, ast, node, owner) => {
+  if (node.body !== undefined) return node.body;
+  if (owner === undefined || !ts.isMethodDeclaration(node)) return undefined;
+  const propertyName = (name) => {
+    const key = ts.isComputedPropertyName(name) ? name.expression : name;
+    if (ts.isStringLiteralLike(key) || ts.isNumericLiteral(key)) return key.text;
+    return name.getText(ast);
+  };
+  const name = propertyName(node.name);
+  const isStatic = (m) => m.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) === true;
+  return owner.members.find((member) =>
+    ts.isMethodDeclaration(member) && member.body !== undefined &&
+    propertyName(member.name) === name && isStatic(member) === isStatic(node),
+  )?.body;
+};
+
 const literalImplementations = (ts, files, names) => {
   const wanted = new RegExp(`(?<![\\w$])(${[...names].map((n) => n.replaceAll("$", "\\$")).join("|")})(?![\\w$])`);
-  const found = new Map();
+  const found = new Set();
   for (const { file, ast, text } of files) {
     if (isTest(file) || !wanted.test(text)) continue;
-    const add = (name, node) => {
-      if (names.has(name)) append(found, name, `${file}:${lineOf(ast, node)}`);
+    const add = (name) => {
+      if (names.has(name)) found.add(name);
     };
-    const visit = (node) => {
-      if (ts.isFunctionLike(node) && node.type !== undefined) add(typeName(ts, node.type), node);
-      if (ts.isVariableDeclaration(node) && node.initializer !== undefined && ts.isObjectLiteralExpression(node.initializer)) add(typeName(ts, node.type), node);
-      if (ts.isSatisfiesExpression(node) && ts.isObjectLiteralExpression(node.expression)) add(typeName(ts, node.type), node);
-      ts.forEachChild(node, visit);
+    const visit = (node, parent) => {
+      if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node)) add(typeName(ts, node.type));
+      if (ts.isMethodDeclaration(node) || ts.isGetAccessorDeclaration(node)) {
+        const name = typeName(ts, node.type);
+        if (names.has(name) && returnsObject(ts, methodBody(ts, ast, node, parent !== undefined && ts.isClassLike(parent) ? parent : undefined))) add(name);
+      }
+      if (ts.isVariableDeclaration(node) && node.initializer !== undefined && ts.isObjectLiteralExpression(node.initializer)) add(typeName(ts, node.type));
+      if (ts.isSatisfiesExpression(node) && ts.isObjectLiteralExpression(node.expression)) add(typeName(ts, node.type));
+      ts.forEachChild(node, (child) => visit(child, node));
     };
     visit(ast);
   }

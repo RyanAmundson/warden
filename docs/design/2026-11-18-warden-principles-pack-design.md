@@ -166,10 +166,10 @@ Cross-file checks as tree checks shipped in the pack, each an `fs` or
   of the file it names. A type `import("./x").Name` counts as a use of
   `Name`.
 - A single-implementation finding names a class outside test files. An
-  interface also counts as implemented by each function outside test files
-  whose return type it is, each variable it types that holds an object
-  literal, and each object literal that `satisfies` it, so a factory that
-  returns an object is a second implementation.
+  interface also counts as implemented by a function outside test files
+  whose return type it is, a variable it types that holds an object literal,
+  or an object literal that `satisfies` it. A method or getter with that
+  return type counts when it returns an object literal from its own body.
 - A project lists names that a host contract requires every such file to
   export, such as a plugin's `start`, in the pack's `contractExports`
   setting on its entry in `.warden/config.yaml`. Both name checks skip
