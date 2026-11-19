@@ -1,5 +1,5 @@
 export const SETTINGS_FILE = ".claude/settings.json";
-const DENY = ["Edit(.warden/**)", "Write(.warden/**)", "Bash(git commit*--no-verify*)", "Bash(git commit -n*)"];
+const DENY = ["Edit(.warden/**)", "Write(.warden/**)", "Bash(git commit*--no-verify*)", "Bash(git commit* -n*)"];
 const hook = (base) => ({
     matcher: "Edit|Write|MultiEdit",
     hooks: [{ type: "command", command: `npx --no -- warden check --format agent --hook claude --base '${base.replaceAll("'", "'\\''")}'` }],

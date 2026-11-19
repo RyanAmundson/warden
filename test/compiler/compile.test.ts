@@ -77,6 +77,15 @@ afterEach(async () => {
 });
 
 describe("compile", () => {
+  it("the deny rules stop -n and --no-verify anywhere in a git commit command", async () => {
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    const deny = (JSON.parse(await read(".claude/settings.json")) as { permissions: { deny: string[] } }).permissions.deny;
+    const bash = deny.filter((d) => d.startsWith("Bash(")).map((d) => new RegExp(`^${d.slice(5, -1).split("*").map((p) => p.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`));
+    for (const command of ["git commit -n", "git commit -n -m x", "git commit -m x -n", "git commit --no-verify", "git commit -m x --no-verify"]) {
+      expect(bash.some((r) => r.test(command)), command).toBe(true);
+    }
+  });
+
   it("compile writes config, deny rules, and lock", async () => {
     const { findings, written } = await compile(root, wardenRoot);
     expect(findings).toEqual([]);
@@ -86,7 +95,7 @@ describe("compile", () => {
     expect(Object.keys(rules)[0]).toBe("@generated");
     expect(Array.isArray(rules.entries)).toBe(true);
     const settings = JSON.parse(await read(".claude/settings.json"));
-    expect(settings.permissions.deny).toEqual(["Edit(.warden/**)", "Write(.warden/**)", "Bash(git commit*--no-verify*)", "Bash(git commit -n*)"]);
+    expect(settings.permissions.deny).toEqual(["Edit(.warden/**)", "Write(.warden/**)", "Bash(git commit*--no-verify*)", "Bash(git commit* -n*)"]);
     const lock = readLock(root);
     expect(Object.keys(lock.generated).sort()).toEqual([
       ".claude/settings.json#warden",
@@ -132,7 +141,7 @@ describe("compile", () => {
     const settings = JSON.parse(await read(".claude/settings.json"));
     expect(settings.model).toBe("x");
     expect(settings.permissions.allow).toEqual(["Read"]);
-    expect(settings.permissions.deny).toEqual(["Bash(rm*)", "Edit(.warden/**)", "Write(.warden/**)", "Bash(git commit*--no-verify*)", "Bash(git commit -n*)"]);
+    expect(settings.permissions.deny).toEqual(["Bash(rm*)", "Edit(.warden/**)", "Write(.warden/**)", "Bash(git commit*--no-verify*)", "Bash(git commit* -n*)"]);
   });
 
   it("compile registers the edit-tier hook once", async () => {
