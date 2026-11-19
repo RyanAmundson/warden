@@ -13,6 +13,7 @@ import { findWardenRoot } from "../records/load.js";
 import { runBench } from "./bench.js";
 import { runCheck } from "./check.js";
 import { DEFAULT_PORT, installDaemon, runDaemon, uninstallDaemon } from "./daemon.js";
+import { runDispute } from "./dispute.js";
 import { runExplain } from "./explain.js";
 import { runDoctor, runInit } from "./init.js";
 import { runPacks } from "./packs.js";
@@ -103,6 +104,14 @@ program
 });
 program.command("explain <id>").description("explain a Practice or Guardrail").action(async (id) => {
     process.exitCode = await runExplain(root(), findWardenRoot(), id);
+});
+program
+    .command("dispute <guardrail> <path>")
+    .description("record an objection and the compliant approaches already tried")
+    .option("--reason <reason>", "why the Guardrail does not fit")
+    .option("--attempt <approaches...>", "compliant approaches you tried")
+    .action(async (guardrail, path, options) => {
+    process.exitCode = await runDispute(root(), findWardenRoot(), guardrail, resolve(path), options);
 });
 program.command("report").description("Guardrails grouped by Practice, strongest kind first").option("--json", "print JSON").option("--format <format>", "text or json", "text").action(async (o) => {
     process.exitCode = await runReport(root(), findWardenRoot(), o.json === true || oneOf("report", "format", o.format, ["text", "json"]) === "json");
