@@ -8,9 +8,12 @@ const seen = new Set();
 let lastBeat = Date.now();
 let events;
 let pending;
+let loads = 0;
 
 const api = async (path) => {
-  const res = await fetch(path, { cache: "no-store" });
+  const res = await fetch(path, { cache: "no-store" }).catch((cause) => {
+    throw Object.assign(cause, { network: true });
+  });
   const body = await res.json();
   if (!res.ok) throw Object.assign(new Error(body.error), { status: res.status, body });
   return body;
@@ -38,7 +41,11 @@ const render = () => {
   state.now = Date.now();
   const key = focusKey(document.activeElement);
   const caret = document.activeElement?.selectionStart;
-  root.innerHTML = renderApp(state);
+  try {
+    root.innerHTML = renderApp(state);
+  } catch (cause) {
+    root.innerHTML = renderApp({ ...state, lost: false, error: { error: `This page could not be drawn: ${cause.message}`, next: "reload this page" } });
+  }
   document.title = pageTitle(state);
   const el = key ? root.querySelector(key) : null;
   if (el) {
@@ -56,13 +63,16 @@ const goLost = () => {
 };
 
 const load = async () => {
+  const seq = ++loads;
   try {
     const [health, { projects }] = await Promise.all([api("/api/health"), api("/api/projects")]);
+    if (seq !== loads) return;
     state.health = health;
     state.projects = projects;
     if (state.project === undefined || !projects.some((p) => p.project === state.project)) state.project = projects[0]?.project;
     const needsProject = ["runs", "run", "layers", "violations"].includes(page);
     const loaded = needsProject && state.project === undefined ? {} : await (LOAD[page] ?? LOAD.overview)(projects, state.project);
+    if (seq !== loads) return;
     const data = { projects, ...loaded };
     const ids = runIds(data);
     state.view.fresh = new Set(seen.size === 0 ? [] : ids.filter((id) => !seen.has(id)));
@@ -72,14 +82,16 @@ const load = async () => {
     state.lost = false;
     lastBeat = Date.now();
   } catch (cause) {
-    if (cause.status === undefined) return goLost();
-    state.error = { status: cause.status, ...cause.body };
+    if (seq !== loads) return;
+    if (cause.network) return goLost();
+    state.lost = false;
+    state.error = cause.status === undefined ? { error: `This page could not load: ${cause.message}`, next: "reload this page" } : { status: cause.status, ...cause.body };
   }
   render();
 };
 
 const schedule = () => {
-  if (state.view.paused || state.lost) return;
+  if (state.view.paused) return;
   clearTimeout(pending);
   pending = setTimeout(load, 250);
 };
@@ -100,6 +112,7 @@ const connect = () => {
     lastBeat = Date.now();
     const beat = JSON.parse(e.data);
     if (beat && state.health) state.health.heartbeatAt = beat.at;
+    if (state.lost) load();
   });
 };
 

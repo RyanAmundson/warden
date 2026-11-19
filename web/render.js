@@ -315,12 +315,14 @@ export const runsPage = (state) => {
   const runs = data.runs.runs;
   const shown = filterRuns(runs, view);
   const counts = { all: runs.length, pass: runs.filter(passed).length, not: runs.filter(notPassing).length };
+  const missing = view.run && !runs.some((r) => r.run === view.run);
   const selected = runs.find((r) => r.run === view.run) ?? shown[0];
   const seg = [["all", "All"], ["pass", "Passed"], ["not", "Not passing"]].map(([id, label]) => `<button type="button" data-outcome="${id}" aria-pressed="${(view.outcome ?? "all") === id ? "true" : "false"}">${label} ${num(counts[id])}</button>`).join("");
   const tiers = ["edit", "commit", "boundary"].map((t) => `<option value="${t}"${view.tier === t ? " selected" : ""}>${t}</option>`).join("");
   const label = { all: "All runs", pass: "Passed", not: "Not passing" }[view.outcome ?? "all"];
   const cols = ["timeLink", "trigger", "tier", "outcome", "bar", "ms", "next"];
   return `${header(`Runs · ${esc(data.runs.project)}`, `${plural(runs.length, "recent run")} · ${num(counts.not)} not passing`, projectPicker(state, "rn-proj"))}
+${missing ? missingRun(data.runs.project, view.run, runs.length) : ""}
 <div class="filters"><div class="seg" role="group" aria-label="Outcome">${seg}</div><label><span class="lbl">Tier</span><select id="rn-tier" data-action="tier"><option value="">Every tier</option>${tiers}</select></label><label><span class="lbl">File</span><input id="rn-file" type="search" data-action="file" placeholder="Filter by changed file" value="${esc(view.file ?? "")}"></label></div>
 <div class="split"><section class="mod wide" aria-labelledby="rn-list"><div class="modh"><h2 class="h2" id="rn-list">${label} · newest first</h2><span class="muted">Bars share one scale, 0 to 3 s</span></div>
 <div class="scroll"><table><thead><tr><th scope="col">Time</th><th scope="col">Trigger</th><th scope="col">Tier</th><th scope="col">Outcome</th><th scope="col">Duration</th><th scope="col" class="r">ms</th><th scope="col">Next action</th></tr></thead>
@@ -346,11 +348,16 @@ const banner = (run) => {
   return `<section class="banner ${run.outcome === "tampered" ? "red" : "amber"}" aria-labelledby="er-h"><div class="top">${tag(o)}<h2 id="er-h">${esc(title)}</h2></div><p>${esc(why)}</p>${run.next ? nextBox(run.next) : ""}</section>`;
 };
 
+const missingRun = (project, id, count) => `<section class="mod pad" role="status">Run <span class="mono">${esc(id)}</span> is not among the last ${plural(count, "run")} of ${esc(project)}, so this page cannot show it. <a href="${href("runs", { project })}">Open the run list</a></section>`;
+
 export const runPage = (state) => {
   const { data } = state;
+  if (data.projects.length === 0) return emptyState();
   const project = data.runs.project;
   const runs = data.runs.runs;
-  const run = runs.find((r) => r.run === state.view?.run) ?? runs[0];
+  const wanted = state.view?.run;
+  if (wanted && !runs.some((r) => r.run === wanted)) return `${header(`Runs · ${esc(project)}`, "Run not found")}${missingRun(project, wanted, runs.length)}`;
+  const run = runs.find((r) => r.run === wanted) ?? runs[0];
   if (run === undefined) return `${header(`Runs · ${esc(project)}`, "No runs yet")}<section class="mod pad muted">No check has run in ${esc(project)} yet.</section>`;
   const streak = streakOf(runs, run);
   const reached = STEPS.filter((s) => run.steps?.[s.id] !== undefined).length;
@@ -382,8 +389,9 @@ export const layersPage = (state) => {
               .join("")}`,
         )
         .join("");
-      const name = b.band.replace(/^./, (c) => c.toUpperCase());
-      return `<section class="mod" aria-labelledby="ly-${b.band}"><div class="modh"><div style="flex-direction:row;align-items:center;gap:10px">${marks[b.band] ?? ""}<h2 class="h2" id="ly-${b.band}">${name}</h2><span class="muted">${esc(BAND_TEXT[b.band] ?? "")}</span></div><span class="muted">${plural(count, "rule")}</span></div><div class="scroll"><table><thead><tr><th scope="col">Rank</th><th scope="col">Kind or Guardrail</th><th scope="col">Pack</th><th scope="col">Practice</th><th scope="col">Adapter</th><th scope="col">Runs at</th><th scope="col" class="r">Median</th><th scope="col"><span class="lbl">Weak</span></th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+      const name = esc(b.band.replace(/^./, (c) => c.toUpperCase()));
+      const id = esc(b.band);
+      return `<section class="mod" aria-labelledby="ly-${id}"><div class="modh"><div style="flex-direction:row;align-items:center;gap:10px">${marks[b.band] ?? ""}<h2 class="h2" id="ly-${id}">${name}</h2><span class="muted">${esc(BAND_TEXT[b.band] ?? "")}</span></div><span class="muted">${plural(count, "rule")}</span></div><div class="scroll"><table><thead><tr><th scope="col">Rank</th><th scope="col">Kind or Guardrail</th><th scope="col">Pack</th><th scope="col">Practice</th><th scope="col">Adapter</th><th scope="col">Runs at</th><th scope="col" class="r">Median</th><th scope="col"><span class="lbl">Weak</span></th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
     })
     .join("");
   const rulesOf = (id) => l.bands.flatMap((b) => b.kinds.flatMap((k) => k.rules.filter((r) => r.pack === id)));
@@ -463,12 +471,13 @@ export const determinismPage = (state) => {
 <div class="scroll"><table><thead><tr><th scope="col" style="width:200px">Project</th><th scope="col" class="r">Tampered</th><th scope="col" class="r">Refused</th><th scope="col" class="r">Error</th><th scope="col" class="r">Unstaged</th><th scope="col">Most recent</th></tr></thead><tbody>${stops}</tbody></table></div></section>`;
 };
 
-const LOCK_ART = `<svg class="lockart" viewBox="0 0 122 34" preserveAspectRatio="xMinYMid meet" role="img" aria-label="Two key profiles overlaid: the lock's key from the merge base in steel outline, and this tree's records in dashed red. They no longer match."><rect x="1" y="4" width="26" height="24" rx="7" fill="#E1E5EA" stroke="#1C2A3F" stroke-width="0.5"/><circle cx="10" cy="16" r="3.5" fill="#F8F9FA" stroke="#1C2A3F" stroke-width="0.5"/><path d="M27 10 L112 10 L118 16.5 L112 23 L104 23 L100.5 12.75 L95.5 12.75 L88.5 24 L83.5 24 L76.5 16.5 L71.5 16.5 L64.5 14 L59.5 14 L52.5 21.5 L47.5 21.5 L40.5 21.5 L35.5 21.5 L32 24 L27 24 Z" fill="#B3261E" fill-opacity="0.22" stroke="#B3261E" stroke-width="0.5" stroke-dasharray="1.2 0.8"/><path d="M27 10 L112 10 L118 16.5 L112 23 L104 23 L100.5 20.25 L95.5 20.25 L88.5 24 L83.5 24 L76.5 24 L71.5 24 L64.5 14 L59.5 14 L52.5 21.5 L47.5 21.5 L40.5 21.5 L35.5 21.5 L32 24 L27 24 Z" fill="none" stroke="#1C2A3F" stroke-width="0.6"/><path d="M74 16.5 L74 24 M98 12.75 L98 20.25" stroke="#B3261E" stroke-width="1.1"/></svg>`;
+const LOCK_ART = `<svg class="lockart" viewBox="0 0 122 34" preserveAspectRatio="xMinYMid meet" role="img" aria-label="Illustration only: a key that no longer fits its lock"><rect x="1" y="4" width="26" height="24" rx="7" fill="#E1E5EA" stroke="#1C2A3F" stroke-width="0.5"/><circle cx="10" cy="16" r="3.5" fill="#F8F9FA" stroke="#1C2A3F" stroke-width="0.5"/><path d="M27 10 L112 10 L118 16.5 L112 23 L104 23 L100.5 12.75 L95.5 12.75 L88.5 24 L83.5 24 L76.5 16.5 L71.5 16.5 L64.5 14 L59.5 14 L52.5 21.5 L47.5 21.5 L40.5 21.5 L35.5 21.5 L32 24 L27 24 Z" fill="#B3261E" fill-opacity="0.22" stroke="#B3261E" stroke-width="0.5" stroke-dasharray="1.2 0.8"/><path d="M27 10 L112 10 L118 16.5 L112 23 L104 23 L100.5 20.25 L95.5 20.25 L88.5 24 L83.5 24 L76.5 24 L71.5 24 L64.5 14 L59.5 14 L52.5 21.5 L47.5 21.5 L40.5 21.5 L35.5 21.5 L32 24 L27 24 Z" fill="none" stroke="#1C2A3F" stroke-width="0.6"/><path d="M74 16.5 L74 24 M98 12.75 L98 20.25" stroke="#B3261E" stroke-width="1.1"/></svg>`;
 
 const isOpen = (open, e) => open.some((d) => d.project === e.project && d.file === e.file && d.detail === e.detail);
 
 export const tamperPage = (state) => {
   const { data } = state;
+  if (data.projects.length === 0) return emptyState();
   const { open, recent } = data.tamper;
   const projects = [...new Set(open.map((d) => d.project))];
   const kinds = [...new Set(open.map((d) => d.detail.split(" ")[0]))];
@@ -480,7 +489,7 @@ export const tamperPage = (state) => {
   if (open.length === 0) return `${header("Tamper", "The daemon compares each project's hooks, plugin, and records with its lock")}<section class="mod"><div class="alert">${tag({ cls: "pass", text: "Clear" })}<div>No open tamper detections in any watched project.</div></div></section>${history}`;
   const first = open[0];
   return `<section class="banner red" role="alert" aria-labelledby="tp-h"><div class="top" style="justify-content:space-between"><div style="display:flex;flex-direction:column;gap:4px;min-width:0"><h1 id="tp-h">Tamper detected in ${esc(projects.join(" and "))}</h1><p>${plural(open.length, "open detection")}. The first: ${esc(first.detail)} on ${esc(first.file)}. ${esc(DETAIL_TEXT[first.detail.split(" ")[0]] ?? "")}</p></div></div>${nextBox(first.next)}</section>
-<div class="split">${kinds.some((k) => LOCK_KINDS.has(k)) ? `<section class="mod wide" aria-labelledby="tp-key"><div class="modh"><h2 class="h2" id="tp-key">The key no longer fits</h2><span class="muted">records compared with the lock at the merge base</span></div><div class="pad">${LOCK_ART}<div class="legend" style="padding-top:6px"><span><i class="sw" aria-hidden="true" style="border:1.5px solid #1C2A3F"></i>lock written at the merge base</span><span><i class="sw" aria-hidden="true" style="border:1.5px dashed #B3261E;background:#F3D3CF"></i>this tree's records</span></div></div></section>` : ""}
+<div class="split">${kinds.some((k) => LOCK_KINDS.has(k)) ? `<section class="mod wide" aria-labelledby="tp-key"><div class="modh"><h2 class="h2" id="tp-key">The key no longer fits</h2><span class="muted">illustration; the files that changed are listed below</span></div><div class="pad">${LOCK_ART}</div></section>` : ""}
 <section class="mod narrow" aria-labelledby="tp-kinds"><div class="modh"><h2 class="h2" id="tp-kinds">What was found</h2></div><dl class="kinds">${kinds.map((k) => `<dt class="mono">${esc(k)}</dt><dd>${esc(DETAIL_TEXT[k] ?? "Reported by the daemon.")}</dd>`).join("")}</dl></section></div>
 <section class="mod" aria-labelledby="tp-open"><div class="modh"><h2 class="h2" id="tp-open">Open now · ${plural(open.length, "detection")}</h2><span class="muted">Each clears when the daemon's next scan no longer finds it</span></div><div class="scroll"><table><thead><tr><th scope="col">Project</th><th scope="col">File</th><th scope="col">Kind</th><th scope="col">Next action</th></tr></thead><tbody>${open.map((d) => `<tr class="held"><td>${esc(d.project)}</td><td class="mono">${esc(d.file)}</td><td class="mono">${esc(d.detail)}</td><td class="mono wrap">${esc(d.next)}</td></tr>`).join("")}</tbody></table></div></section>
 ${history}`;

@@ -160,6 +160,19 @@ describe("pages render from API responses", () => {
     expect(html).not.toContain("The key no longer fits");
   });
 
+  it("says so when a linked run is not among the fetched runs", () => {
+    const html = renderApp(state("run", { runs: { project: "context-manager", runs: cmRuns } }, { view: { run: "r-old", fresh: new Set() } }));
+    expect(html).toContain("is not among the last 4 runs of context-manager");
+    expect(html).not.toContain("Error at rules intact");
+    const list = renderApp(state("runs", { runs: { project: "context-manager", runs: cmRuns } }, { view: { run: "r-old", outcome: "all", fresh: new Set() } }));
+    expect(list).toContain("is not among the last 4 runs");
+  });
+
+  it("escapes band names from the layers API", () => {
+    const html = renderApp(state("layers", { layers: { ...layers, bands: [{ band: '"><x-inj>', kinds: [] }] } }, { project: "warden" }));
+    expect(html).not.toContain("<x-inj>");
+  });
+
   it("renders the tamper page clear when nothing is open", () => {
     const html = renderApp(state("tamper", { tamper: { open: [], recent: [] } }));
     expect(html).toContain("No open tamper detections in any watched project.");
@@ -167,7 +180,7 @@ describe("pages render from API responses", () => {
   });
 
   it("renders the empty state on every project page when nothing is watched", () => {
-    for (const page of ["overview", "runs", "layers", "violations", "determinism"]) {
+    for (const page of ["overview", "runs", "run", "layers", "violations", "determinism", "tamper"]) {
       const html = renderApp({ ...state(page, {}), projects: [], data: { projects: [] } });
       expect(html).toContain("No projects are watched yet");
       expect(nextActions(html)).toEqual(["run warden init in a project"]);
