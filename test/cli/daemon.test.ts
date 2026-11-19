@@ -140,7 +140,7 @@ it("binds 127.0.0.1, writes a heartbeat, removes only its own heartbeat on stop,
   expect((await get("/api/health", `localhost:${s.port}`)).status).toBe(200);
   await stop();
   expect(existsSync(heartbeatFile())).toBe(false);
-  await start();
+  served = await serve(wardenRoot, 0, { intervalMs: 60_000, debounceMs: 20 });
   await beat({ pid: 1, port: 9 });
   await stop();
   expect(existsSync(heartbeatFile())).toBe(true);
