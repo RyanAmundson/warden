@@ -18,6 +18,7 @@ import { runExplain } from "./explain.js";
 import { runDoctor, runInit } from "./init.js";
 import { runPacks } from "./packs.js";
 import { runReport } from "./report.js";
+import { type ReviewOptions, reviewOptions, runBrief, runTriage } from "./review.js";
 import { runRuns } from "./runs.js";
 import { type Screen, liveView, loadView, plainDeterminism, plainLayers, plainView, plainViolations } from "./view.js";
 import { wardenHome } from "../runner/evidence.js";
@@ -131,6 +132,27 @@ program
       signal: AbortSignal.any([stop.signal, outputClosed.signal]),
       ...(o.html === undefined ? {} : { html: o.html }),
     });
+  });
+
+const review = program.command("review").description("brief a reviewer on a change, and triage the reviewer's report");
+const reviewFlags = (c: Command): Command =>
+  c
+    .option("--capability <id>", "the Capability with a review block")
+    .option("--base <ref>", "the branch the change merges into")
+    .option("--head <ref>", "the head to review")
+    .option("--previous-head <ref>", "the head the previous round reviewed; makes this round 2")
+    .option("--previous-report <file>", "the reviewer's report of the previous round; needs --previous-head")
+    .option("--requirements <paths...>", "files that state what the change must do");
+reviewFlags(review.command("brief").description("print the reviewer's full invocation as JSON"))
+  .option("--previous <file>", "the triage JSON of the previous round")
+  .action(async (o: Partial<ReviewOptions>) => {
+    process.exitCode = await runBrief(root(), findWardenRoot(), reviewOptions("brief", o));
+  });
+reviewFlags(review.command("triage").description("route the reviewer's report by kind to one next action"))
+  .option("--report <file>", "the reviewer's report")
+  .option("--format <format>", "text or json", "text")
+  .action(async (o: Partial<ReviewOptions>) => {
+    process.exitCode = await runTriage(root(), findWardenRoot(), reviewOptions("triage", { ...o, format: oneOf("review triage", "format", o.format ?? "text", ["text", "json"] as const) }));
   });
 
 program

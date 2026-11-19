@@ -75,6 +75,44 @@ describe("loadRecords", () => {
   });
 });
 
+describe("pack capabilities", () => {
+  const withCapabilities = async (capabilities: string[] | undefined, run: (project: string) => Promise<void>): Promise<void> => {
+    const project = await mkdtemp(join(tmpdir(), "warden-capabilities-"));
+    try {
+      await mkdir(join(project, ".warden/packs/local"), { recursive: true });
+      const lines = capabilities === undefined ? [] : ["capabilities:", ...capabilities];
+      await writeFile(join(project, ".warden/packs/local/pack.yaml"), ["id: local", "layer: 1", "terms: []", "practices: []", ...lines, ""].join("\n"));
+      await writeFile(join(project, ".warden/config.yaml"), ["project: p", "base: main", "packs:", "  - id: local", "    paths: []", "tierBudgetMs: { edit: 1, commit: 1, boundary: 1 }", "loopBreakerRepeats: 3", ""].join("\n"));
+      await run(project);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  };
+  const record = ["  - id: review-gate", "    kind: skill", "    serves: review", "    purpose: Gate a unit before review.", "    when: Before asking for review.", "    upholds: [no-var]", "    commands: [warden gate]", "    replaces: [old-gate]", "    review: { adapter: superpowers, model: opus }"];
+
+  it("loads a pack's capabilities with their pack id", async () => {
+    await withCapabilities(record, async (project) => {
+      const set = await loadRecords(project, wardenRoot);
+      expect(set.packs[0]?.capabilities[0]).toEqual({ id: "review-gate", kind: "skill", serves: "review", purpose: "Gate a unit before review.", when: "Before asking for review.", upholds: ["no-var"], commands: ["warden gate"], replaces: ["old-gate"], review: { adapter: "superpowers", model: "opus" }, pack: "local" });
+    });
+  });
+
+  it("a pack without capabilities loads them as an empty list", async () => {
+    await withCapabilities(undefined, async (project) => {
+      const set = await loadRecords(project, wardenRoot);
+      expect(set.packs[0]?.capabilities).toEqual([]);
+    });
+  });
+
+  it("a capability with an unknown field is refused with its pointer", async () => {
+    await withCapabilities([...record, "    extra: x"], async (project) => {
+      const error = await loadRecords(project, wardenRoot).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(RecordError);
+      expect((error as RecordError).pointer).toBe("/capabilities/0/extra");
+    });
+  });
+});
+
 describe("pack settings", () => {
   const withPack = async (settings: string | undefined, entry: string | undefined, run: (project: string) => Promise<void>): Promise<void> => {
     const project = await mkdtemp(join(tmpdir(), "warden-settings-"));
