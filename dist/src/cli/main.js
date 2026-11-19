@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command, CommanderError } from "commander";
+import { refusal } from "../adapters/claude.js";
 import { compile, wardenVersion } from "../compiler/compile.js";
 import { runBench } from "./bench.js";
 import { runCheck } from "./check.js";
@@ -82,6 +83,11 @@ program
         hookInput: o.hook === undefined ? undefined : readFileSync(0, "utf8"),
         trigger: oneOf("check", "trigger", o.trigger, ["git-commit", "manual"]),
     });
+});
+program.command("guard").description("refuse a Claude Code tool call that edits .warden or skips the pre-commit hook; reads the PreToolUse input on stdin").action(() => {
+    const reason = refusal(root(), readFileSync(0, "utf8"));
+    if (reason !== undefined)
+        process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } })}\n`);
 });
 program
     .command("bench")

@@ -1,0 +1,14 @@
+{
+  "name": "warden",
+  "description": "Warden, a guardrail compiler, as a Claude Code plugin",
+  "owner": {
+    "name": "Ryan Amundson"
+  },
+  "plugins": [
+    {
+      "name": "warden",
+      "source": "./",
+      "description": "Warden's Claude Code hooks: the edit check, and refusals for .warden/ edits and commits that skip the pre-commit hook"
+    }
+  ]
+}

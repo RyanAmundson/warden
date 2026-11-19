@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
+import { hookTrigger } from "../adapters/claude.js";
 import { PARSE_ERROR } from "../adapters/types.js";
 import { wardenVersion } from "../compiler/compile.js";
 import { LOCK_PATH, bundledTools, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
@@ -23,6 +24,11 @@ const requireBase = (base, configured) => {
     if (base !== undefined)
         return base;
     throw new RecordError("", "/base", `--base is missing; Warden takes the base branch from the command, never from the editable config. Next action: run warden check --base ${configured}`);
+};
+const hookBase = (root) => {
+    if (!existsSync(join(root, LOCK_PATH)))
+        throw new RecordError(LOCK_PATH, "", "is missing, so the edit hook has no base branch. Next action: run warden compile");
+    return readLock(root).config.base;
 };
 const refuseOwnBranch = (root, base) => {
     if (!containsHead(root, base))
@@ -64,20 +70,6 @@ const scannedFiles = (root, base, paths) => {
         }
         return file;
     });
-};
-const hookTrigger = (root, input) => {
-    let parsed;
-    try {
-        parsed = JSON.parse(input);
-    }
-    catch {
-        throw new RecordError("hook input", "", "is not JSON");
-    }
-    const file = parsed?.tool_input?.file_path;
-    if (typeof file !== "string")
-        throw new RecordError("hook input", "/tool_input/file_path", "is missing");
-    const absolute = resolve(root, file);
-    return relative(root, existsSync(absolute) ? realpathSync(absolute) : absolute);
 };
 const runCached = async (set, gs, scanned, shas, ctx, project, run) => {
     const lint = scanned.length === 0 ? [] : gs.filter((g) => g.kind === "lint");
@@ -194,7 +186,7 @@ const check = async (opts, live) => {
     const set = await loadRecords(root, opts.wardenRoot);
     const { project, loopBreakerRepeats } = set.config;
     live.project = project;
-    const base = requireBase(opts.base, set.config.base);
+    const base = requireBase(opts.base ?? (opts.hook === "claude" ? hookBase(root) : undefined), set.config.base);
     verifyBase(root, base, CHECK_BASE_ACTION);
     refuseOwnBranch(root, base);
     openStep(live, "rules-intact");

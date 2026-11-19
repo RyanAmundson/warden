@@ -1,7 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { expectedOutputs } from "../compiler/compile.js";
-import { isWardenEntry } from "../compiler/emit.js";
 import { LOCK_FORMAT, LOCK_PATH, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError, readText } from "../records/load.js";
 import { kindRank } from "../records/types.js";
@@ -20,8 +19,8 @@ const tempsIn = (root, dir, recursive) => {
     });
 };
 const leftoverTemps = (root, lock) => {
-    const parents = Object.keys(lock?.generated ?? {}).map((key) => dirname(key.split("#")[0]));
-    const shallow = [...new Set([".claude", ...parents])].flatMap((dir) => tempsIn(root, dir, false));
+    const parents = Object.keys(lock?.generated ?? {}).map((key) => dirname(key));
+    const shallow = [...new Set(parents)].flatMap((dir) => tempsIn(root, dir, false));
     return [...new Set([...tempsIn(root, ".warden", true), ...shallow])].sort();
 };
 const readJson = async (root, file) => {
@@ -35,13 +34,6 @@ const readJson = async (root, file) => {
         throw new RecordError(file, "", `not valid JSON: ${cause.message}`);
     }
 };
-const extractOwned = (settings, owned) => Object.fromEntries(Object.entries(owned).map(([path, entries]) => {
-    const ours = new Set(entries.map(canonicalJson));
-    let node = settings;
-    for (const key of path.split("."))
-        node = isObject(node) ? node[key] : undefined;
-    return [path, Array.isArray(node) ? node.filter((e) => isWardenEntry(e, ours)) : []];
-}));
 const parsedOrSkipped = (text) => {
     try {
         return [JSON.parse(text)];
@@ -135,10 +127,8 @@ export async function findTampering(set, wardenRoot, base) {
     const root = set.root;
     const lock = existsSync(join(root, LOCK_PATH)) ? readLock(root) : undefined;
     const found = leftoverTemps(root, lock).map((file) => ({ file, detail: "leftover-temp" }));
-    const settings = new Map();
     for (const file of SETTINGS_FILES) {
         const value = await readJson(root, file);
-        settings.set(file, value);
         if (isObject(value) && value.disableAllHooks === true)
             found.push({ file, detail: "hooks-disabled" });
     }
@@ -151,12 +141,8 @@ export async function findTampering(set, wardenRoot, base) {
     if (sourceDrift.length === 0 && canonicalJson({ ...lock, tools: null }) !== canonicalJson({ ...expected.lock, tools: null })) {
         found.push({ file: LOCK_PATH, detail: "lock-drift" });
     }
-    for (const [key, hash] of Object.entries(lock.generated)) {
-        const at = key.indexOf("#");
-        const file = at === -1 ? key : key.slice(0, at);
-        const actual = at === -1
-            ? await readText(join(root, file))
-            : canonicalJson(extractOwned(settings.has(file) ? settings.get(file) : await readJson(root, file), expected.owned[file] ?? {}));
+    for (const [file, hash] of Object.entries(lock.generated)) {
+        const actual = await readText(join(root, file));
         if (actual === undefined || sha256(actual) !== hash)
             found.push({ file, detail: "generated-drift" });
     }

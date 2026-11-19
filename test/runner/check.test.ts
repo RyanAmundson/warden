@@ -365,8 +365,7 @@ describe("runCheck", () => {
   it("disabling hooks in either settings file is tampering", async () => {
     await write(".claude/settings.local.json", JSON.stringify({ disableAllHooks: true }));
     expect((await check()).code).toBe(1);
-    const settings = JSON.parse(await read(".claude/settings.json")) as Record<string, unknown>;
-    await write(".claude/settings.json", JSON.stringify({ ...settings, disableAllHooks: true }));
+    await write(".claude/settings.json", JSON.stringify({ model: "x", disableAllHooks: true }));
     await rm(join(root, ".claude/settings.local.json"));
     expect((await check()).code).toBe(1);
     expect(await tampered()).toEqual([
@@ -375,13 +374,10 @@ describe("runCheck", () => {
     ]);
   });
 
-  it("removing a Warden settings entry is drift, other settings edits are not", async () => {
-    const settings = JSON.parse(await read(".claude/settings.json")) as { permissions: { deny: string[] } };
-    await write(".claude/settings.json", JSON.stringify({ ...settings, model: "x", permissions: { deny: [...settings.permissions.deny, "Bash(rm*)"] } }));
+  it("edits to .claude/settings.json are not Warden's drift", async () => {
+    await write(".claude/settings.json", JSON.stringify({ model: "x", permissions: { deny: ["Bash(rm*)"] } }));
     expect((await check()).code).toBe(0);
-    await write(".claude/settings.json", JSON.stringify({ ...settings, permissions: { deny: settings.permissions.deny.slice(1) } }));
-    expect((await check()).code).toBe(1);
-    expect(await tampered()).toEqual([{ file: ".claude/settings.json", detail: "generated-drift" }]);
+    expect(await tampered()).toEqual([]);
   });
 
   it("record edits without compile are source drift", async () => {
@@ -1167,7 +1163,7 @@ describe("residual fixes", () => {
 
   it("the reviewer's repro: --base set to the agent's own committed branch exits 2 and names the base it merges into", async () => {
     await commitOwnBase();
-    expect(JSON.parse(await read(".claude/settings.json")).hooks.PostToolUse[0].hooks[0].command).toContain("--base 'feature'");
+    expect(JSON.parse(await read(".warden/lock.json")).config.base).toBe("feature");
     const { code, err } = await check({ base: "feature" });
     expect(code).toBe(2);
     expect(err).toContain("Next action: run warden check --base main");
@@ -1224,11 +1220,18 @@ describe("residual fixes", () => {
     expect(err).toContain("Next action: run warden check --base main");
   });
 
-  it("the emitted hook command names the base it was compiled with", async () => {
-    const settings = JSON.parse(await read(".claude/settings.json")) as { hooks: { PostToolUse: { hooks: { command: string }[] }[] } };
-    expect(settings.hooks.PostToolUse.flatMap((e) => e.hooks.map((h) => h.command))).toEqual([
-      "npx --no -- warden check --format agent --hook claude --base 'main'",
-    ]);
+  it("the edit hook takes its base from the lock, not from the editable config", async () => {
+    await write("b.ts", "// two\nconst b = 1;\n");
+    const input = JSON.stringify({ tool_input: { file_path: join(root, "b.ts") } });
+    expect(JSON.parse((await check({ base: undefined, format: "agent", hook: "claude", hookInput: input })).out).decision).toBe("block");
+    await write(".warden/config.yaml", config(["core", "local"]).replace("base: main", "base: nowhere"));
+    const { code, err } = await check({ base: undefined, format: "agent", hook: "claude", hookInput: input });
+    expect(code).toBe(0);
+    expect(err).toBe("");
+    await rm(join(root, ".warden/lock.json"));
+    const missing = await check({ base: undefined, format: "agent", hook: "claude", hookInput: input });
+    expect(missing.code).toBe(2);
+    expect(missing.err).toContain("Next action: run warden compile");
   });
 });
 
