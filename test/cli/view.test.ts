@@ -83,7 +83,7 @@ const fits = (lines: string[]): void => {
 it("renders a passing run at 80 columns", () => {
   const lines = render(model([...steps("r1", "14:01:40"), passRun]), size, 0);
   fits(lines);
-  expect(lines[0]).toBe(" WARDEN  context-manager · base origin/main · v9.8.7     l layers  v viol  d det");
+  expect(lines[0]).toBe(" WARDEN  context-manager · v9.8.7       q quit  r rerun  l layers  v viol  d det");
   expect(lines[1]).toBe("─".repeat(80));
   expect(lines[2]).toBe(" NOW  commit check · 3 files · triggered by git commit · 13 ms");
   expect(lines[3]).toMatch(/^ {3}✓ 1 rules intact {6}lock matches, 0 tampered files +2\.0 ms$/);
@@ -789,14 +789,19 @@ it("plain output outside a terminal never tells the reader to press r", () => {
   }
 });
 
-it("the runs header keeps the project, base, and version at 80 columns", () => {
-  for (const cols of [80, 70]) {
-    const lines = render(model([]), { cols, rows: 30 }, 0);
-    expect(lines[0]).toContain("context-manager · base origin/main · v9.8.7");
-    expect(lines[0]).toContain(cols === 80 ? "l layers  v viol  d det" : "q quit");
-    expect(lines[0]?.length).toBeLessThanOrEqual(cols);
-  }
-  expect(renderLayers(model([]), { cols: 80, rows: 30 })[0]).toContain("· v9.8.7");
+it("the runs header at 80 columns keeps q quit, r rerun, and labelled screen keys, dropping base before them", () => {
+  const first = render(model([]), { cols: 80, rows: 30 }, 0)[0] as string;
+  for (const part of ["context-manager", "q quit", "r rerun", "l layers"]) expect(first).toContain(part);
+  expect(first).not.toContain("base");
+  const wide = render(model([]), { cols: 120, rows: 30 }, 0)[0] as string;
+  expect(wide).toContain("base origin/main · v9.8.7");
+  expect(render(model([]), { cols: 50, rows: 30 }, 0)[0]).toContain("q quit");
+  expect(renderLayers(model([]), { cols: 80, rows: 30 })[0]).toContain("context-manager");
+});
+
+it("the layers and violations screens at 30 columns draw no line wider than 30", () => {
+  for (const l of renderLayers(layered(), { cols: 30, rows: 40 })) expect(l.length, l).toBeLessThanOrEqual(30);
+  for (const l of renderViolations(violated(), { cols: 30, rows: 40 })) expect(l.length, l).toBeLessThanOrEqual(30);
 });
 
 it("with 9-digit counts at 40 columns every column name is whole, never cut with an ellipsis", () => {

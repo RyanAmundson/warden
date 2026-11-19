@@ -74,8 +74,18 @@ const wrap = (text, width, most) => {
 };
 const count = (n) => n.toLocaleString("en-US");
 const header = (model, hints, width) => {
-    const left = ` WARDEN  ${model.project} · base ${model.base} · v${model.version}`;
-    return spread(left, hints.find((h) => left.length + 1 + h.length <= width) ?? hints.at(-1), width);
+    const name = ` WARDEN  ${model.project}`;
+    const lefts = [`${name} · base ${model.base} · v${model.version}`, `${name} · v${model.version}`, name];
+    const keyed = hints.filter((h) => h.startsWith("q quit  r rerun"));
+    const rest = hints.filter((h) => !keyed.includes(h));
+    const fits = (left, h) => left.length + 1 + h.length <= width;
+    for (const left of lefts) {
+        const h = keyed.find((k) => fits(left, k));
+        if (h !== undefined)
+            return spread(left, h, width);
+    }
+    const left = lefts[0];
+    return spread(left, rest.find((h) => fits(left, h)) ?? rest.at(-1), width);
 };
 const DETAIL = 25;
 const partLines = (first, parts, right, width) => {
@@ -256,7 +266,7 @@ const LAYER_TEXT = {
 };
 const DETERMINISTIC = new Set(BANDS[0]?.kinds);
 export function renderLayers(model, size) {
-    const width = Math.max(40, size.cols);
+    const width = Math.max(20, size.cols);
     const rule = "─".repeat(width);
     const inner = width - 5;
     const boxed = (left, right = "") => ` │ ${spread(left, right, inner).padEnd(inner)} │`;
@@ -291,7 +301,7 @@ export function renderLayers(model, size) {
 const MIN_BAR = 8;
 const LEGEND = [" █ baselined, allowed until touched", " ▓ new in the last run, blocking"];
 export function renderViolations(model, size) {
-    const width = Math.max(40, size.cols);
+    const width = Math.max(20, size.cols);
     const rule = "─".repeat(width);
     const runs = runRecords(model.evidence);
     const baselined = new Map(model.rules.map((r) => [r.guardrail, r.baselined]));
