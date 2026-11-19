@@ -87,7 +87,7 @@ export function classify(raw: RawFinding, touched: Touched, round: number): Revi
 
 const numbers = (fs: ReviewFinding[]): string => fs.map((f) => f.n).join(", ");
 
-export function triage(raws: RawFinding[], touched: Touched, round: number, rerun: string): Triage {
+export function triage(raws: RawFinding[], touched: Touched, round: number, rerun: string, rerunAfterFix = rerun): Triage {
   const findings = raws.map((r) => classify(r, touched, round));
   const env = findings.filter((f) => f.kind === "env");
   const flake = findings.filter((f) => f.kind === "flake");
@@ -97,7 +97,7 @@ export function triage(raws: RawFinding[], touched: Touched, round: number, reru
   let next: string | null = null;
   if (env.length > 0) next = `fix the environment named in finding ${env[0]!.n}, then ${rerun}.`;
   else if (flake.length > 0) next = `rerun the test named in finding ${flake[0]!.n} alone; if it fails again, file a slow-test task, then ${rerun}.`;
-  else if (block.length > 0) next = `send findings ${numbers(block)} back to the builder, then ${rerun} on the new head.`;
+  else if (block.length > 0) next = `send findings ${numbers(block)} back to the builder, then ${rerunAfterFix} on the new head.`;
   else if (filed.length > 0) next = `file one task for each of findings ${numbers(filed)}.`;
   return { verdict, findings, next };
 }

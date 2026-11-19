@@ -58,6 +58,7 @@ function parseYaml(file: string, text: string): unknown {
 }
 
 const SHAPES: Record<string, string> = {
+  id: "a skill id starts with a lowercase letter or digit and contains only those characters and hyphens",
   mustFail: "an example is a non-empty string or a map of relative paths to file contents",
   mustPass: "an example is a non-empty string or a map of relative paths to file contents",
   implementation: "an implementation is <adapter>:<target>, such as eslint:no-var",

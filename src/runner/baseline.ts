@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { PARSE_ERROR, type RunResult, type Violation } from "../adapters/types.js";
 import { matchesPath } from "../records/paths.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
-import { runGuardrails } from "./run.js";
+import { prefixOf, runGuardrails } from "./run.js";
 
 export type Baseline = Record<string, Record<string, number>>;
 
@@ -85,7 +85,8 @@ export const projectFiles = (root: string, globs: string[], untracked = true): s
 
 export async function measureBaseline(set: RecordSet, guardrails: Guardrail[]): Promise<{ baseline: Baseline; files: number; unparsed: string[] }> {
   const files = projectFiles(set.root, set.config.packs.flatMap((p) => p.paths));
-  const results = files.length === 0 || guardrails.length === 0 ? [] : await runGuardrails(set, guardrails, files, { root: set.root, generatedDir: join(set.root, ".warden/generated"), unbudgeted: true });
+  const measured = guardrails.filter((g) => prefixOf(g) !== "cmd");
+  const results = files.length === 0 || measured.length === 0 ? [] : await runGuardrails(set, measured, files, { root: set.root, generatedDir: join(set.root, ".warden/generated"), unbudgeted: true });
   const unparsed = results.filter((r) => r.guardrail === PARSE_ERROR).flatMap((r) => r.violations.map((v) => `${v.file}:${v.line}`));
   const baseline: Baseline = {};
   for (const r of results) {

@@ -1,0 +1,66 @@
+id: review
+layer: 9
+terms:
+  - id: change
+    definition: The commits and working-tree edits between a base commit and the head under review.
+    bans: []
+  - id: reviewer
+    definition: A fresh agent session that did not build a change and judges it against its requirements.
+    bans: []
+settings:
+  type: object
+  additionalProperties: false
+  properties:
+    tests:
+      type: array
+      minItems: 1
+      items: { type: string, minLength: 1 }
+      default: ["test/**/*.test.ts"]
+    test: { type: string, minLength: 1, default: "npx vitest run --maxWorkers=2" }
+    build:
+      type: object
+      additionalProperties: false
+      required: [command, output]
+      properties:
+        command: { type: string, minLength: 1 }
+        output: { type: string, minLength: 1 }
+  examples:
+    - tests: ["test/**/*.test.mjs"]
+      test: "node --test --test-isolation=none"
+practices:
+  - id: review-gate-first
+    statement: A change reaches a reviewer only after its new tests pass on the change and fail on its base.
+    terms: [change, reviewer]
+    paths: []
+    conflictsWith: []
+    guardrails:
+      - id: review-gate
+        kind: runtime
+        runs: [boundary]
+        budgetMs: 120000
+        version: 1
+        implementation: 'cmd:exec node "$WARDEN_PACK_DIR/gate.js"'
+        mustFail:
+          test/a.test.mjs: |
+            import test from 'node:test';
+            test('a', () => {});
+        mustPass:
+          lib.mjs: "export const v = 2;\n"
+          test/a.test.mjs: |
+            import test from 'node:test';
+            import assert from 'node:assert/strict';
+            import { v } from '../lib.mjs';
+            test('a', () => assert.equal(v, 2));
+capabilities:
+  - id: change-review
+    kind: skill
+    serves: change
+    purpose: Review a change against its requirements.
+    when: A change is ready for independent review.
+    upholds: [review-gate-first]
+    replaces: ["dispatching a reviewer before the gate passes", "reading a review report and choosing what to do by hand"]
+    review: { adapter: superpowers-review, model: opus }
+    commands:
+      - warden check --rule review-gate --tier boundary --base <base>
+      - warden review brief --capability change-review --base <base> --head <head> --requirements <paths>
+      - warden review triage --capability change-review --base <base> --head <head> --requirements <paths> --report <report>

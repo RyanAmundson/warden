@@ -40,9 +40,9 @@ const writeTree = async (root, tree) => {
         }));
     }
 };
-const measure = (project, s, cfg, rerun, signal) => withExampleProject(async (root) => {
+const measure = (project, s, cfg, rerun, signal) => withExampleProject(async (root, commit) => {
     const set = exampleSet(project);
-    const ctx = { root, generatedDir: join(root, ".warden/generated"), unbudgeted: true, signal };
+    const ctx = { root, generatedDir: join(root, ".warden/generated"), base: commit, unbudgeted: true, signal };
     await writeTree(root, adapters.get(prefixOf(s.g)).emit([s.g], set));
     const files = [];
     let copies = 0;

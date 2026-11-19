@@ -68,7 +68,7 @@ export function classify(raw, touched, round) {
     return { ...raw, kind, action, blocks };
 }
 const numbers = (fs) => fs.map((f) => f.n).join(", ");
-export function triage(raws, touched, round, rerun) {
+export function triage(raws, touched, round, rerun, rerunAfterFix = rerun) {
     const findings = raws.map((r) => classify(r, touched, round));
     const env = findings.filter((f) => f.kind === "env");
     const flake = findings.filter((f) => f.kind === "flake");
@@ -81,7 +81,7 @@ export function triage(raws, touched, round, rerun) {
     else if (flake.length > 0)
         next = `rerun the test named in finding ${flake[0].n} alone; if it fails again, file a slow-test task, then ${rerun}.`;
     else if (block.length > 0)
-        next = `send findings ${numbers(block)} back to the builder, then ${rerun} on the new head.`;
+        next = `send findings ${numbers(block)} back to the builder, then ${rerunAfterFix} on the new head.`;
     else if (filed.length > 0)
         next = `file one task for each of findings ${numbers(filed)}.`;
     return { verdict, findings, next };

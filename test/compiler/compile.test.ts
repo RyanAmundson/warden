@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
@@ -564,6 +565,29 @@ describe("compile", () => {
       pointer: "/practices/0/guardrails/0/implementation",
       message: `an implementation is <adapter>:<target>, such as eslint:no-var. Next action: fix implementation at /practices/0/guardrails/0 in ${file}, then run warden compile.`,
     });
+  });
+
+  it("adding a cmd Guardrail does not run it for the baseline", async () => {
+    const git = (...args: string[]): string => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: root, encoding: "utf8" });
+    const marker = join(home, "marker.txt");
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src/a.ts"), "export const a = 1;\n");
+    git("init", "-q", "-b", "main");
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    git("add", "-A");
+    git("commit", "-qm", "base");
+    const before = await read(".warden/lock.json");
+    await usePack(localPack(legacyGuardrail(`echo ran >> ${marker} && test ! -e broken`, PROVEN_TREES)));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    await writeFile(join(root, ".warden/lock.json"), before);
+    await rm(marker);
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect(await readFile(marker, "utf8")).toBe("ran\nran\n");
+  });
+
+  it("a cmd Guardrail that needs WARDEN_BASE passes the admission bench", async () => {
+    await usePack(localPack(legacyGuardrail('test -n "$WARDEN_BASE" || exit 2; test ! -e broken', PROVEN_TREES)));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
   });
 
   it("a fixture tree's directories are gone before the next example runs", async () => {

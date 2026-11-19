@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { targetOf } from "../adapters/pack-code.js";
 import type { Adapter } from "../adapters/types.js";
@@ -14,6 +14,7 @@ import { COMMIT_HOOK, commitHook, stamp } from "./emit.js";
 import { runExamples } from "./examples.js";
 import { commandSources } from "./command-sources.js";
 import { LOCK_PATH, type Lock, computeLock, packFiles, scriptsOf, sha256 } from "./lock.js";
+import { checkCommands, emitSkills, SKILLS_DIR } from "./skills.js";
 
 const sourceFiles = async (set: RecordSet, projectRoot: string, wardenRoot: string): Promise<Record<string, string>> => {
   const out: Record<string, string> = {};
@@ -87,17 +88,38 @@ export async function expectedOutputs(set: RecordSet, projectRoot: string, warde
       .join(""),
   );
 
-  const emitted = { ...emitAll(set), [COMMIT_HOOK]: commitHook(version, set.config.base) };
+  const emitted: Record<string, string> = { ...emitAll(set), [COMMIT_HOOK]: commitHook(version, set.config.base) };
+  for (const [path, content] of Object.entries(emitSkills(set))) {
+    if (path in emitted) throw new Error(`more than one output is ${path}`);
+    emitted[path] = content;
+  }
   const files = Object.fromEntries(Object.entries(emitted).map(([key, content]) => [key, stamp(key, content, version, sourceHash)]));
   return { lock: computeLock(set, files, sources, version), files };
 }
 
-const previousGuardrails = (text: string | undefined): Lock["guardrails"] | undefined => {
+const previousLock = (text: string | undefined): Lock | undefined => {
   if (text === undefined) return undefined;
   try {
-    return (JSON.parse(text) as Lock).guardrails;
+    return JSON.parse(text) as Lock;
   } catch {
     return undefined;
+  }
+};
+
+const retireSkills = async (root: string, previous: Lock | undefined, outputs: Record<string, string>): Promise<void> => {
+  for (const file of Object.keys(previous?.generated ?? {})) {
+    const [id, name, extra] = file.slice(SKILLS_DIR.length + 1).split("/");
+    if (!file.startsWith(`${SKILLS_DIR}/`) || !/^[a-z0-9][a-z0-9-]*$/.test(id ?? "") || name !== "SKILL.md" || extra !== undefined || file in outputs) continue;
+    let directory = root;
+    for (const segment of dirname(file).split("/")) {
+      directory = join(directory, segment);
+      const entry = await lstat(directory).catch((cause: NodeJS.ErrnoException) => {
+        if (cause.code === "ENOENT") return undefined;
+        throw cause;
+      });
+      if (entry?.isDirectory() !== true) break;
+      if (directory === join(root, dirname(file))) await rm(join(root, file), { force: true });
+    }
   }
 };
 
@@ -127,15 +149,17 @@ export async function practicesElsewhere(set: RecordSet, wardenRoot: string): Pr
 
 export async function compile(projectRoot: string, wardenRoot: string): Promise<{ findings: Finding[]; written: string[] }> {
   const set = await loadRecords(projectRoot, wardenRoot);
-  const findings = [...checkConsistency(set, await practicesElsewhere(set, wardenRoot)), ...(await runExamples(set))];
+  const findings = [...checkConsistency(set, await practicesElsewhere(set, wardenRoot)), ...(await runExamples(set)), ...(await checkCommands(set, wardenRoot))];
   if (findings.length > 0) return { findings, written: [] };
   const slow = await admit(set, await wardenVersion(wardenRoot));
   if (slow.length > 0) return { findings: slow, written: [] };
 
   const { lock, files: outputs } = await expectedOutputs(set, projectRoot, wardenRoot);
 
-  const previous = previousGuardrails(await readText(join(projectRoot, LOCK_PATH)));
+  const prior = previousLock(await readText(join(projectRoot, LOCK_PATH)));
+  const previous = prior?.guardrails;
   await writeAll(projectRoot, outputs);
+  await retireSkills(projectRoot, prior, outputs);
   await writeAll(projectRoot, { [LOCK_PATH]: `${JSON.stringify(lock, null, 2)}\n` });
   const written = [...Object.keys(outputs), LOCK_PATH];
   if (previous === undefined || !isRepository(projectRoot)) return { findings: [], written };

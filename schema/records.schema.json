@@ -110,6 +110,8 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["id", "kind", "serves", "purpose", "when", "upholds", "commands", "replaces"],
+      "if": { "properties": { "kind": { "const": "skill" } } },
+      "then": { "properties": { "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" } } },
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "kind": { "enum": ["skill", "tool"] },

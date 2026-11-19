@@ -8,6 +8,11 @@ export function stamp(path, content, version, sourceHash) {
             throw new Error(`${path} must hold a JSON object to carry a generated header`);
         return `${JSON.stringify({ "@generated": header, ...body }, null, 2)}\n`;
     }
+    if (path.endsWith(".md")) {
+        if (!content.startsWith("---\n"))
+            throw new Error(`${path} must start with front matter to carry a generated header`);
+        return `---\ngenerated: '${header}'\n${content.slice(4)}`;
+    }
     if (/\.(js|mjs|ts)$/.test(path))
         return `// ${header}\n${content}`;
     if (content.startsWith("#!"))

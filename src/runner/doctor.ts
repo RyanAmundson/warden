@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
@@ -8,6 +8,7 @@ import { PACK_VAR, brief } from "../adapters/cmd.js";
 import { targetOf } from "../adapters/pack-code.js";
 import { COMMIT_HOOK } from "../compiler/emit.js";
 import { TOOLS, firstLine, scriptsOf } from "../compiler/lock.js";
+import { skillPath, SKILLS_DIR } from "../compiler/skills.js";
 import type { RecordSet } from "../records/types.js";
 
 export interface DoctorResult {
@@ -60,6 +61,24 @@ const commandItem = (id: string, command: string, root: string, scripts: Record<
     return { name, problem: `package.json has no "${script}" script`, fix: `add a "${script}" script to package.json` };
   }
   return { name };
+};
+
+const real = (file: string): string | undefined => {
+  try {
+    return realpathSync(file);
+  } catch {
+    return undefined;
+  }
+};
+
+const skillItem = (id: string, root: string): Item => {
+  const link = `.claude/skills/${id}`;
+  const target = real(join(root, SKILLS_DIR, id));
+  if (target === undefined || !existsSync(join(root, skillPath(id)))) return { name: `skill ${id}`, problem: `${skillPath(id)} does not exist`, fix: "run warden compile" };
+  if (real(join(root, link)) === target) return { name: `skill ${id}` };
+  const entry = lstatSync(join(root, link), { throwIfNoEntry: false });
+  const prepare = entry?.isSymbolicLink() === true ? `run unlink ${link} && ` : entry === undefined ? "run " : `move ${link} to a different path, then run `;
+  return { name: `skill ${id}`, problem: `${link} does not link to ${SKILLS_DIR}/${id}, so Claude Code cannot load the skill`, fix: `${prepare}mkdir -p .claude/skills && ln -s ../../${SKILLS_DIR}/${id} ${link}` };
 };
 
 const toolItem = async (name: string, load: () => unknown): Promise<Item> => {
@@ -128,7 +147,7 @@ export const commitHookItem = (root: string): Item => {
   return { name };
 };
 
-export async function doctor(set: RecordSet, withCommitHook = false): Promise<DoctorResult> {
+export async function doctor(set: RecordSet, explicit = false): Promise<DoctorResult> {
   const items: Item[] = [];
   for (const tool of TOOLS) items.push(await toolItem(tool, () => wardenRequire.resolve(tool)));
   items.push(await toolItem("warden eslint plugin", () => import("../../eslint-plugin/index.js")));
@@ -136,8 +155,11 @@ export async function doctor(set: RecordSet, withCommitHook = false): Promise<Do
   for (const g of set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails))) {
     if (g.implementation.startsWith("cmd:")) items.push(commandItem(g.id, targetOf(g), set.root, scripts, g.packDir));
   }
-  if (withCommitHook) items.push(commitHookItem(set.root));
-  const plugin = withCommitHook ? pluginState(set.root) : undefined;
+  if (explicit) {
+    for (const c of set.packs.flatMap((p) => p.capabilities)) if (c.kind === "skill") items.push(skillItem(c.id, set.root));
+    items.push(commitHookItem(set.root));
+  }
+  const plugin = explicit ? pluginState(set.root) : undefined;
   const note = plugin === undefined || plugin.state === "enabled" ? [] : [`note  Claude plugin ${PLUGIN} is ${plugin.state === "missing" ? "not installed" : `disabled in ${plugin.file}`}, so Claude Code edits are not checked; to check them, ${pluginAction(plugin)}`];
   const failed = items.find((i) => i.fix !== undefined);
   return {

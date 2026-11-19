@@ -8,6 +8,7 @@ import { Command, CommanderError } from "commander";
 import { refusal } from "../adapters/claude.js";
 import { compile, wardenVersion } from "../compiler/compile.js";
 import { thenRemoveExampleProjects } from "../compiler/examples.js";
+import { COMMAND_PROBE, UNKNOWN_COMMAND } from "../compiler/skills.js";
 import { findWardenRoot } from "../records/load.js";
 import { runBench } from "./bench.js";
 import { runCheck } from "./check.js";
@@ -16,6 +17,7 @@ import { runExplain } from "./explain.js";
 import { runDoctor, runInit } from "./init.js";
 import { runPacks } from "./packs.js";
 import { runReport } from "./report.js";
+import { reviewOptions, runBrief, runTriage } from "./review.js";
 import { runRuns } from "./runs.js";
 import { liveView, loadView, plainDeterminism, plainLayers, plainView, plainViolations } from "./view.js";
 import { wardenHome } from "../runner/evidence.js";
@@ -32,7 +34,7 @@ for (const stream of [process.stdout, process.stderr]) {
         outputClosed.abort();
     });
 }
-const program = new Command("warden").exitOverride();
+const program = new Command("warden").exitOverride().enablePositionalOptions().passThroughOptions();
 const root = () => {
     try {
         return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -124,6 +126,25 @@ program
         ...(o.html === undefined ? {} : { html: o.html }),
     });
 });
+const review = program.command("review").description("brief a reviewer on a change, and triage the reviewer's report");
+const reviewFlags = (c) => c
+    .option("--capability <id>", "the Capability with a review block")
+    .option("--base <ref>", "the branch the change merges into")
+    .option("--head <ref>", "the head to review")
+    .option("--previous-head <ref>", "the head the previous round reviewed; makes this round 2")
+    .option("--previous-report <file>", "the reviewer's report of the previous round; needs --previous-head")
+    .option("--requirements <paths...>", "files that state what the change must do");
+reviewFlags(review.command("brief").description("print the reviewer's full invocation as JSON"))
+    .option("--previous <file>", "the triage JSON of the previous round")
+    .action(async (o) => {
+    process.exitCode = await runBrief(root(), findWardenRoot(), reviewOptions("brief", o));
+});
+reviewFlags(review.command("triage").description("route the reviewer's report by kind to one next action"))
+    .option("--report <file>", "the reviewer's report")
+    .option("--format <format>", "text or json", "text")
+    .action(async (o) => {
+    process.exitCode = await runTriage(root(), findWardenRoot(), reviewOptions("triage", { ...o, format: oneOf("review triage", "format", o.format ?? "text", ["text", "json"]) }));
+});
 program
     .command("daemon [action]")
     .description("run the per-machine daemon that watches .warden projects and serves the local API; install or uninstall it as a launchd agent")
@@ -175,8 +196,26 @@ program
             child.kill();
     }
 });
+function canProbe(words) {
+    if (words.length === 0)
+        return false;
+    let scope = program;
+    for (const word of words) {
+        const command = scope.commands.find((entry) => entry.name() === word || entry.aliases().includes(word));
+        if (command === undefined)
+            return false;
+        if (command.commands.length === 0)
+            return true;
+        scope = command;
+    }
+    return true;
+}
 await thenRemoveExampleProjects(async () => {
     program.version(await wardenVersion(findWardenRoot()));
+    if (process.env[COMMAND_PROBE] === "1" && !canProbe(process.argv.slice(2, -1))) {
+        process.exitCode = UNKNOWN_COMMAND;
+        return;
+    }
     await program.parseAsync(process.argv);
 }, (cause) => {
     if (cause instanceof CommanderError) {

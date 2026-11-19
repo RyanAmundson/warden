@@ -3,7 +3,7 @@ import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { PARSE_ERROR } from "../adapters/types.js";
 import { matchesPath } from "../records/paths.js";
-import { runGuardrails } from "./run.js";
+import { prefixOf, runGuardrails } from "./run.js";
 export const BASELINE_PATH = ".warden/baseline.json";
 export function readBaseline(root) {
     try {
@@ -79,7 +79,8 @@ export const projectFiles = (root, globs, untracked = true) => {
 };
 export async function measureBaseline(set, guardrails) {
     const files = projectFiles(set.root, set.config.packs.flatMap((p) => p.paths));
-    const results = files.length === 0 || guardrails.length === 0 ? [] : await runGuardrails(set, guardrails, files, { root: set.root, generatedDir: join(set.root, ".warden/generated"), unbudgeted: true });
+    const measured = guardrails.filter((g) => prefixOf(g) !== "cmd");
+    const results = files.length === 0 || measured.length === 0 ? [] : await runGuardrails(set, measured, files, { root: set.root, generatedDir: join(set.root, ".warden/generated"), unbudgeted: true });
     const unparsed = results.filter((r) => r.guardrail === PARSE_ERROR).flatMap((r) => r.violations.map((v) => `${v.file}:${v.line}`));
     const baseline = {};
     for (const r of results) {

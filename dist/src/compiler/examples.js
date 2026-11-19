@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, posix } from "node:path";
@@ -37,12 +38,24 @@ export async function thenRemoveExampleProjects(run, report) {
         report(cause);
     }
 }
+const IDENTITY = { GIT_AUTHOR_NAME: "warden", GIT_AUTHOR_EMAIL: "warden@example.invalid", GIT_COMMITTER_NAME: "warden", GIT_COMMITTER_EMAIL: "warden@example.invalid" };
+const git = (project, args) => {
+    const env = { ...process.env, ...IDENTITY };
+    delete env["GIT_DIR"];
+    delete env["GIT_WORK_TREE"];
+    delete env["GIT_INDEX_FILE"];
+    delete env["GIT_COMMON_DIR"];
+    return execFileSync("git", args, { cwd: project, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+};
 export async function withExampleProject(fn) {
     const project = await mkdtemp(join(tmpdir(), "warden-examples-"));
     try {
         await writeFile(join(project, "package.json"), "{}\n");
         await writeFile(join(project, "tsconfig.json"), TSCONFIG);
-        return await fn(project);
+        git(project, ["init", "-q"]);
+        git(project, ["add", "-A"]);
+        git(project, ["-c", "user.name=warden", "-c", "user.email=warden@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "scaffold"]);
+        return await fn(project, git(project, ["rev-parse", "HEAD"]).trim());
     }
     finally {
         const removal = rm(project, { recursive: true, force: true }).catch((cause) => Promise.reject({ project, cause: cause.message }));
@@ -56,9 +69,9 @@ export async function runExamples(project) {
     if (unknown.length > 0)
         return unknown;
     const findings = [];
-    await withExampleProject(async (project) => {
+    await withExampleProject(async (project, base) => {
         const checked = [];
-        const ctx = { root: project, generatedDir: join(project, ".warden/generated") };
+        const ctx = { root: project, generatedDir: join(project, ".warden/generated"), base };
         const emittedPaths = set.packs
             .flatMap((p) => p.practices.flatMap((x) => x.guardrails))
             .flatMap((g) => {
