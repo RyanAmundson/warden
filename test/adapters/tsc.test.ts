@@ -214,6 +214,22 @@ describe("tsc adapter", () => {
     });
   });
 
+  it("names the syntax error location in the project config and passes after repair", async () => {
+    await withProject(async (root) => {
+      const path = join(root, "tsconfig.json");
+      const original = await readFile(path, "utf8");
+      const g = guardrail("tsc", "tsc:baseline-errors");
+      await emitInto(root, [g]);
+      await writeFile(path, '{\n  "compilerOptions": {}\n  "include": ["src/**/*.ts"]\n}\n');
+      const error = await tscAdapter.run([g], [], ctxFor(root)).catch((cause: unknown) => cause);
+      expect(error).toBeInstanceOf(RecordError);
+      expect((error as Error).message).toMatch(/TS1005:/);
+      expect((error as Error).message).toContain(`Next action: fix the syntax in ${path}:3, then run warden check again.`);
+      await writeFile(path, original);
+      expect((await tscAdapter.run([g], [], ctxFor(root))).map((result) => result.status)).toEqual(["pass"]);
+    });
+  });
+
   it("an options error exits as a usage failure with one next action", async () => {
     await withProject(async (root) => {
       const path = join(root, "tsconfig.json");
