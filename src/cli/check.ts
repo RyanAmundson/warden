@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { basename, join, relative, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { hookTriggers } from "../adapters/claude.js";
 import { PARSE_ERROR, type RunContext, type RunResult, type Violation } from "../adapters/types.js";
 import { wardenVersion } from "../compiler/compile.js";
@@ -9,7 +10,7 @@ import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import type { Guardrail, Kind, RecordSet, Tier } from "../records/types.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { commitsOf, covers, indexTree, stagedMismatch, checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, stageFile, stagedFiles, unstagedFiles, verifyBase } from "../runner/changed.js";
+import { commitsOf, covers, indexTree, stagedMismatch, checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, stageFile, stagedFiles, type StagedBlob, unstagedFiles, verifyBase, writeBlob } from "../runner/changed.js";
 import { type Detection, heartbeatProblem, openAlerts } from "../runner/daemon.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { type Evidence, LOOP_TAIL_BYTES, type Outcome, RUN_TOTAL, type RunFailure, type Step, type Trigger, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
@@ -132,6 +133,28 @@ const runCached = async (
   const others = rest.length > 0 ? await runGuardrails(set, rest, scanned, ctx) : [];
   return { perFile: [...results, ...parse], wholeProject: others, ran: [...fresh, ...others], cached: hits.size };
 };
+
+const judgeBlobs = async (root: string, set: RecordSet, gs: Guardrail[], blobs: StagedBlob[], ctx: RunContext): Promise<RunResult[]> => {
+  if (blobs.length === 0 || gs.length === 0) return [];
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "warden-blobs-")));
+  try {
+    for (const b of blobs) {
+      mkdirSync(dirname(join(dir, b.path)), { recursive: true });
+      writeBlob(root, b.sha, join(dir, b.path));
+    }
+    return await runGuardrails(set, gs, blobs.map((b) => b.path), { ...ctx, root: dir });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+};
+
+const mergeResults = (results: RunResult[]): RunResult[] =>
+  [...new Set(results.map((r) => r.guardrail))].map((id) => {
+    const all = results.filter((r) => r.guardrail === id);
+    const violations = all.flatMap((r) => r.violations);
+    const status = all.some((r) => r.status === "killed") ? "killed" : violations.length > 0 ? "fail" : "pass";
+    return { ...(all[0] as RunResult), status, violations, ms: all.reduce((n, r) => n + r.ms, 0) };
+  });
 
 const failedOf = (failures: Violation[], notes: Notes): boolean =>
   failures.length > 0 || [notes.tampered, notes.killed, notes.unstaged].some((list) => (list ?? []).length > 0);
@@ -352,6 +375,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const onlyCommit = opts.trigger === "git-commit" && index !== undefined && !["index", "index.lock"].includes(basename(index));
   const committing = onlyCommit ? new Set(stagedFiles(root)) : undefined;
   const scanned = committing === undefined ? listed : listed.filter((f) => committing.has(f) || !unstaged.has(f));
+  let absent: StagedBlob[] = [];
   if (tier === "commit") {
     const differing = scanned.filter((f) => unstaged.has(f));
     if (differing.length > 0) {
@@ -363,6 +387,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
       const notes = { unstaged: mismatch.paths, hidden: mismatch.hidden, base };
       return finish(project, "unstaged", scanned, report([], set, opts, notes), { set, notes });
     }
+    if (opts.paths === undefined) absent = mismatch.absent;
   }
   const shas = new Map(scanned.map((f) => [f, sha256(readFileSync(join(root, f)))]));
   const where = { files: scanned.length, ...(scanned.length === 1 ? { file: scanned[0] } : {}) };
@@ -374,20 +399,23 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const ctx = { root, generatedDir: join(root, ".warden/generated"), onGroup };
   const lockSha = sha256(readFileSync(join(root, LOCK_PATH)));
   const ran = await runCached(set, guardrails, scanned, shas, ctx, project, { lockSha, warden: running, tier });
+  const blobRun = await judgeBlobs(root, set, guardrails.filter((g) => g.kind === "lint" && g.implementation.startsWith("eslint:")), absent, ctx);
+  for (const b of absent) shas.set(b.path, b.sha);
+  const blobPaths = absent.map((b) => b.path);
   if (groups === 0) {
     openStep(live, "rules", { members: chosen.map((g) => g.id), ...where });
     closeStep(live, "done", { status: scanned.length === 0 ? "empty" : "cached" });
   }
   openStep(live, "verdict");
   const wanted = (r: RunResult): boolean => selected.has(r.guardrail) || !known.has(r.guardrail);
-  const perFile = ran.perFile.filter(wanted);
+  const perFile = mergeResults([...ran.perFile, ...blobRun]).filter(wanted);
   const wholeProject = ran.wholeProject.filter(wanted);
   const overBudget = [...perFile, ...wholeProject].filter((r) => r.overBudget === true).map((r) => ({ guardrail: r.guardrail, ms: r.ms, ...(r.shared?.budgetMs === undefined ? {} : { budgetMs: r.shared.budgetMs }) }));
   const killed = [...perFile, ...wholeProject]
     .filter((r) => r.status === "killed")
     .map((r) => ({ guardrail: r.guardrail, ms: r.ms, command: r.command as string }));
 
-  const exists = (f: string): boolean => existsSync(join(root, f));
+  const exists = (f: string): boolean => existsSync(join(root, f)) || blobPaths.includes(f);
   const changes = changesSinceMergeBase(root, base);
   const touched = (v: Violation): boolean => {
     const lines = changes.lines.get(v.file);
@@ -397,7 +425,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   };
   const baseline = readBaseline(root);
   const ratchetFrom = matchesHead(root, BASELINE_PATH) ? "head" : "uncommitted";
-  const narrow = applyBaseline(perFile, carryRenames(baseline, changes.renames), scanned, exists, touched);
+  const narrow = applyBaseline(perFile, carryRenames(baseline, changes.renames), [...scanned, ...blobPaths], exists, touched);
   const judged =
     tier === "edit"
       ? scanned
@@ -445,7 +473,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   let repeated: Repeated | undefined;
   for (const key of new Set(failures.map((v) => `${v.guardrail}\0${v.file}`))) {
     const [guardrail, file] = key.split("\0") as [string, string];
-    const detail = shas.get(file) ?? (file !== "" && exists(file) ? sha256(readFileSync(join(root, file))) : "");
+    const detail = shas.get(file) ?? (file !== "" && existsSync(join(root, file)) ? sha256(readFileSync(join(root, file))) : "");
     const triggered = trigger.has(file);
     appendEvidence(project, { at, kind: "fired", guardrail, file, status: "fail", detail, triggered });
     if (!triggered) continue;

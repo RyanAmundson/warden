@@ -222,10 +222,11 @@ A running daemon discovers a repository as soon as `warden init` or a check
 writes the repository's first Evidence, without waiting for its next
 10-second tick.
 
-In a sparse checkout, a commit-tier check cannot scan a file outside the
-sparse set. It accepts such a file only when its staged content equals the
-same path in `HEAD` or in a commit being merged, so a merge that brings in
-changes outside the sparse set commits normally.
+A commit-tier check judges a skip-worktree file that is missing from disk,
+such as a file outside a sparse checkout, by its staged content: it copies
+the staged blob to a temporary folder outside the repository and runs the
+ESLint Guardrails on it. Whole-project Guardrails, such as `tsc` and
+commands, still see only the files on disk.
 If `state.json` is lost, the daemon rebuilds open alerts from git and
 Evidence. A commit made while the daemon was stopped and `state.json` was
 missing is not judged, because the daemon never recorded it.

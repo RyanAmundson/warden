@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, openSync, readdirSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { RecordError } from "../records/load.js";
 
@@ -262,20 +262,30 @@ export const covers = (root: string, run: { tree?: string; mergeBase?: string },
   return run.tree === c.tree && (parent === undefined || (run.mergeBase !== undefined && (run.mergeBase === parent || isAncestor(root, run.mergeBase, parent))));
 };
 
+export interface StagedBlob {
+  path: string;
+  sha: string;
+}
+
 export interface StagedMismatch {
   paths: string[];
   hidden: string[];
+  absent: StagedBlob[];
 }
 
-const mergeHeads = (root: string): string[] => {
-  const file = resolve(root, must(root, ["rev-parse", "--git-path", "MERGE_HEAD"]).trim());
-  return existsSync(file) ? readFileSync(file, "utf8").split("\n").filter((l) => l !== "") : [];
-};
+export function writeBlob(root: string, sha: string, file: string): void {
+  const fd = openSync(file, "w");
+  try {
+    execFileSync("git", ["cat-file", "blob", sha], { cwd: root, env: env(), stdio: ["ignore", fd, "pipe"] });
+  } finally {
+    closeSync(fd);
+  }
+}
 
 export function stagedMismatch(root: string, base: string): StagedMismatch {
   const literal = (args: string[]): string[] => names(must(root, ["--literal-pathspecs", ...args]));
   const staged = literal(["diff", "-z", "--cached", "--name-only", "--relative", "--no-renames", "--diff-filter=AM", mergeBase(root, base)]);
-  if (staged.length === 0) return { paths: [], hidden: [] };
+  if (staged.length === 0) return { paths: [], hidden: [], absent: [] };
   const index = new Map(
     literal(["ls-files", "-s", "-z", "--", ...staged]).map((line) => {
       const [meta = "", path = ""] = line.split("\t");
@@ -288,11 +298,9 @@ export function stagedMismatch(root: string, base: string): StagedMismatch {
   const present = regular.filter((p) => existsSync(join(root, p)) && lstatSync(join(root, p)).isFile());
   const hashes = present.length === 0 ? [] : must(root, ["--literal-pathspecs", "hash-object", "--", ...present]).trim().split("\n");
   const work = new Map(present.map((p, i) => [p, hashes[i]]));
-  const sparse = regular.filter((p) => tags.get(p) === "S" && !existsSync(join(root, p)));
-  const parents = sparse.length === 0 ? [] : ["HEAD", ...mergeHeads(root)].filter((c) => hasCommit(root, c));
-  const committed = new Set(parents.flatMap((c) => literal(["ls-tree", "-r", "-z", c, "--", ...sparse]).map((line) => `${line.split("\t")[1]}\t${line.split("\t")[0]?.split(" ")[2]}`)));
-  const paths = regular.filter((p) => work.get(p) !== index.get(p)?.sha && !committed.has(`${p}\t${index.get(p)?.sha}`));
-  return { paths, hidden: paths.filter((p) => tags.get(p) === "S" || /^[a-z]$/.test(tags.get(p) ?? "")) };
+  const absent = new Set(regular.filter((p) => tags.get(p)?.toUpperCase() === "S" && !existsSync(join(root, p))));
+  const paths = regular.filter((p) => !absent.has(p) && work.get(p) !== index.get(p)?.sha);
+  return { paths, hidden: paths.filter((p) => tags.get(p) === "S" || /^[a-z]$/.test(tags.get(p) ?? "")), absent: [...absent].map((path) => ({ path, sha: index.get(path)?.sha as string })) };
 }
 
 export function commitsOf(root: string, shas: string[]): Committed[] {
