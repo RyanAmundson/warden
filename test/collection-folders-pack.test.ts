@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runExamples } from "../src/compiler/examples.js";
 import { loadRecords } from "../src/records/load.js";
 import type { Guardrail, RecordSet } from "../src/records/types.js";
@@ -45,7 +45,10 @@ beforeEach(async () => {
   guardrails = set.packs.find((p) => p.id === "collection-folders")?.practices.flatMap((x) => x.guardrails) ?? [];
 });
 
-afterEach(() => rm(root, { recursive: true, force: true }));
+afterEach(async () => {
+  vi.unstubAllEnvs();
+  await rm(root, { recursive: true, force: true });
+});
 
 describe("collection-folders pack", () => {
   it("collection-folders pack examples hold", async () => {
@@ -70,6 +73,17 @@ describe("collection-folders pack", () => {
     const lines = failed?.violations[0]?.message.split("\n") ?? [];
     expect(lines).toContain("src/[widgets]/stray.ts is a file directly inside a collection");
     expect(lines.at(-1)).toMatch(/Next action: move each listed file into an item folder of its collection\.$/);
+  });
+
+  it("outside a git repository walks the folder whatever the locale", async () => {
+    vi.stubEnv("LC_ALL", "de_DE.UTF-8");
+    vi.stubEnv("LANG", "de_DE.UTF-8");
+    await write("src/[widgets]/button/index.ts");
+    await write("src/[widgets]/stray.ts");
+    const statuses = [];
+    for (const g of guardrails.slice(1)) statuses.push((await run(g.id))?.status);
+    expect(statuses).toEqual(["pass", "pass", "pass"]);
+    expect((await run("warden-collection-holds-only-folders"))?.violations[0]?.message).toContain("src/[widgets]/stray.ts is a file directly inside a collection");
   });
 
   it("names what an item lacks and what it has extra", async () => {
