@@ -2,7 +2,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { builtinModules, createRequire } from "node:module";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import type { Node as TsNode } from "typescript";
-import { packFiles } from "../compiler/lock.js";
+import { isOsJunk, packFiles } from "../compiler/lock.js";
 import { RecordError } from "../records/load.js";
 import type { Guardrail } from "../records/types.js";
 
@@ -28,7 +28,7 @@ const RELATIVE = /^\.\.?(\/|$)/;
 
 async function refuseEscapes(packDir: string, entry: string, packFile: string, pointer: string): Promise<void> {
   if (confined.has(entry)) return;
-  await packFiles(dirname(packDir), basename(packDir));
+  const sources = new Set((await packFiles(dirname(packDir), basename(packDir))).map((key) => join(dirname(packDir), key)));
   const { default: ts } = await import("typescript");
   const inside = (path: string): boolean => path.startsWith(`${packDir}${sep}`);
   if (!inside(entry)) {
@@ -39,6 +39,7 @@ async function refuseEscapes(packDir: string, entry: string, packFile: string, p
   };
   const outside = (file: string, spec: string): never =>
     refuse(`${file} imports ${spec}, which is outside the pack folder ${packDir}, so the lock cannot see it`, `move what ${spec} provides into ${packDir} and import it by a relative path inside that folder`);
+  const refuseJunk = (message: string): never => refuse(message, "rename the file to a name that is not OS junk, and point the code at the new name");
   const seen = new Set<string>();
   const pending = [entry];
   const follow = (file: string, spec: string, how: "import" | "require"): void => {
@@ -58,6 +59,7 @@ async function refuseEscapes(packDir: string, entry: string, packFile: string, p
     }
     const real = realpathSync(target);
     if (!inside(real)) outside(file, spec);
+    if (isOsJunk(basename(real)) || isOsJunk(basename(target)) || !sources.has(real)) refuseJunk(`${file} loads ${spec}, which is an OS junk file that the lock does not hash`);
     pending.push(real);
   };
   while (pending.length > 0) {
@@ -71,6 +73,9 @@ async function refuseEscapes(packDir: string, entry: string, packFile: string, p
       } else if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(node.expression) && node.expression.text === "require"))) {
         const spec = literal(node.arguments[0]);
         if (spec !== undefined) follow(file, spec, node.expression.kind === ts.SyntaxKind.ImportKeyword ? "import" : "require");
+      }
+      if (ts.isStringLiteralLike(node) && isOsJunk(basename(node.text))) {
+        refuseJunk(`${file} names ${node.text}, an OS junk file that the lock does not hash`);
       }
       ts.forEachChild(node, visit);
     };

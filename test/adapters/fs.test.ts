@@ -32,6 +32,22 @@ describe("fs adapter", () => {
     }
   });
 
+  it.each([
+    ["a require of Thumbs.db", { "fs.js": "module.exports = require(\"./Thumbs.db\");\n", "Thumbs.db": "module.exports = {};\n" }],
+    ["a require of thumbs.db in other case", { "fs.js": "module.exports = require(\"./thumbs.db\");\n", "Thumbs.db": "module.exports = {};\n" }],
+    ["a string literal naming desktop.ini", { "fs.js": "const f = \"desktop.ini\";\nexport default {};\n" }],
+    ["a string literal naming a junk path in other case", { "fs.js": "const f = \"data/.DS_STORE\";\nexport default {};\n" }],
+  ])("refuses pack code with %s, because the lock does not hash OS junk", async (_name, files) => {
+    const pack = await shippedPack("fs", "");
+    try {
+      for (const [file, code] of Object.entries(files)) await writeFile(join(pack.dir, file), code);
+      const g = treeGuardrail("fs:local/mentions", pack.dir);
+      await expect(conformance(fsAdapter, fixture, [g], treeSet(g), ["src/a.ts"], [])).rejects.toThrow("OS junk file that the lock does not hash. Next action: rename the file to a name that is not OS junk, and point the code at the new name, then run warden compile.");
+    } finally {
+      await pack.remove();
+    }
+  });
+
   it("refuses pack code that is a link to a file outside the pack folder", async () => {
     const pack = await shippedPack("fs", check);
     try {
