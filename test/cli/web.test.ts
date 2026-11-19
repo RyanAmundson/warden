@@ -19,7 +19,9 @@ const ERROR_NEXT = "run warden compile, stage .warden, and commit";
 
 const errorRun = (id: string, minutes: number) => run({ run: id, at: at(minutes), outcome: "error", result: undefined, exit: 2, ms: 506, steps: { "rules-intact": 1.3 }, next: ERROR_NEXT, ratchet: undefined, rules: undefined });
 
-const blockRun = run({ run: "r-block", at: at(20), tier: "commit", trigger: "git-commit", result: "fail", exit: 1, failures: [{ file: "src/cli/view.ts", line: 212, guardrail: "warden-no-suppressions", practice: "no-suppressions", doThis: "delete the eslint-disable comment on line 212" }], next: "remove the suppression at src/cli/view.ts:212, then commit again" });
+const BLOCK_NEXT = "remove the suppression at src/cli/view.ts:212, then commit again";
+
+const blockRun = run({ run: "r-block", at: at(20), tier: "commit", trigger: "git-commit", result: "fail", exit: 1, failures: [{ file: "src/cli/view.ts", line: 212, guardrail: "warden-no-suppressions", practice: "no-suppressions", doThis: "delete the eslint-disable comment on line 212" }], next: BLOCK_NEXT });
 
 const cmRuns = [errorRun("r-err2", 40), errorRun("r-err1", 35), run(), blockRun];
 
@@ -81,7 +83,10 @@ describe("pages render from API responses", () => {
     expect(all).toContain("Commit check");
     expect(all).toContain("Block · L212");
     expect(all).toContain("Do this: delete the eslint-disable comment on line 212");
-    expect(nextActions(all)).toEqual(["remove the suppression at src/cli/view.ts:212, then commit again"]);
+    expect(nextActions(all)).toEqual([BLOCK_NEXT]);
+    expect(all.split(`>${BLOCK_NEXT}<`)).toHaveLength(2);
+    expect(all).toContain('<td><a href="#detail">See run details</a></td>');
+    expect(all).toContain(`<td class="mono clip" title="${ERROR_NEXT}">${ERROR_NEXT}</td>`);
     const not = renderApp(state("runs", { runs: { project: "context-manager", runs: cmRuns } }, { view: { outcome: "not", fresh: new Set() } }));
     expect(not).toContain("Not passing · newest first");
     expect(not).not.toContain('run=r-pass"');
@@ -297,6 +302,11 @@ describe("review and UI QA round 2", () => {
     const runPage = lost("run", { runs: { project: "context-manager", runs: cmRuns } }, { view: { run: "r-block", fresh: new Set() } });
     expect(runPage).toContain("Blocked by 1 failure");
     expect(nextActions(runPage)).toEqual(["run warden daemon install"]);
+    const list = lost("runs", { runs: { project: "context-manager", runs: cmRuns } }, { view: { run: "r-block" } });
+    expect(nextActions(list)).toEqual(["run warden daemon install"]);
+    expect(list).not.toContain(BLOCK_NEXT);
+    expect(list).not.toContain(ERROR_NEXT);
+    expect(list).not.toContain("See run details");
   });
 
   it("shows each overview run's next action once", () => {

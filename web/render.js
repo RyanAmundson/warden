@@ -241,6 +241,11 @@ ${end}
 };
 
 const runRow = (run, cols, view) => {
+  const selected = view?.selected === run.run;
+  let next = '<td class="muted">Nothing to do</td>';
+  if (quiet) next = '<td class="muted">–</td>';
+  else if (run.next && selected) next = '<td><a href="#detail">See run details</a></td>';
+  else if (run.next) next = `<td class="mono clip" title="${esc(run.next)}">${esc(run.next)}</td>`;
   const cells = {
     time: `<td>${esc(clock(run.at))}</td>`,
     timeLink: `<td><a href="${href("runs", { project: run.project, run: run.run })}#detail" style="font-weight:600">${esc(clock(run.at))}</a></td>`,
@@ -252,10 +257,10 @@ const runRow = (run, cols, view) => {
     bar: `<td>${durationBar(run)}</td>`,
     ms: `<td class="r">${ms(run.ms)}</td>`,
     ratchet: `<td class="r">${run.ratchet ? num(run.ratchet[1]) : "–"}</td>`,
-    next: `<td class="mono clip" title="${esc(run.next ?? "")}">${esc(run.next ?? "nothing to do")}</td>`,
+    next,
   };
-  const cls = [view?.selected === run.run ? "sel" : notPassing(run) ? "held" : "", view?.fresh?.has(run.run) ? "arrived" : ""].filter(Boolean).join(" ");
-  return `<tr${cls === "" ? "" : ` class="${cls}"`}${view?.selected === run.run ? ' aria-current="true"' : ""}>${cols.map((c) => cells[c]).join("")}</tr>`;
+  const cls = [selected ? "sel" : notPassing(run) ? "held" : "", view?.fresh?.has(run.run) ? "arrived" : ""].filter(Boolean).join(" ");
+  return `<tr${cls === "" ? "" : ` class="${cls}"`}${selected ? ' aria-current="true"' : ""}>${cols.map((c) => cells[c]).join("")}</tr>`;
 };
 
 export const overviewPage = (state) => {
@@ -293,7 +298,7 @@ const stepsList = (run) => {
 const failuresTable = (run) => {
   const list = run.failures ?? [];
   if (list.length === 0) return "";
-  return `<div class="pad lbl">Failures · ${num(list.length)}</div><div class="scroll"><table><thead><tr><th scope="col">File</th><th scope="col" class="r">Line</th><th scope="col">Guardrail</th><th scope="col">Practice</th></tr></thead><tbody>${list
+  return `<div class="pad lbl">Failures · ${num(list.length)}</div><div class="scroll"><table class="failures"><thead><tr><th scope="col">File</th><th scope="col" class="r">Line</th><th scope="col">Guardrail</th><th scope="col">Practice</th></tr></thead><tbody>${list
     .map((f) => `<tr><td class="mono wrap path">${esc(f.file === "" ? "project" : f.file)}</td><td class="r">${esc(f.line ?? "")}</td><td class="mono">${esc(f.guardrail)}</td><td>${esc(f.practice)}</td></tr>${f.doThis ? `<tr><td colspan="4" class="wrap muted">Do this: ${esc(f.doThis)}</td></tr>` : ""}`)
     .join("")}</tbody></table></div>`;
 };

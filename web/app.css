@@ -153,3 +153,10 @@ input::placeholder{color:#5E6773}
 .arrived td{animation:arrive 1.6s cubic-bezier(.16,1,.3,1)}
 @media (prefers-reduced-motion:reduce){.arrived td{animation:none}}
 @media (max-width:779px){.shell{align-content:flex-start}.side{gap:14px}.side .navs{display:flex;flex-wrap:wrap;align-items:flex-start;gap:14px 24px}.side .navs>*{flex:1 1 200px}.side .navs>.nav{flex-direction:row;flex-wrap:wrap}.main{padding:16px 16px 28px}.alert>.slot{flex-basis:100%}th,td{padding:6px 10px}.track{width:120px}}
+
+@media (max-width:620px){
+  .failures{table-layout:fixed;overflow-wrap:anywhere}
+  .failures :is(th,td){white-space:normal}
+  .failures th:first-child{width:36%}
+  .failures th:nth-child(2){width:46px}
+}
