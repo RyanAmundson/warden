@@ -156,15 +156,6 @@ describe("doctor", () => {
     expect(result.lines.slice(4)).toEqual(['ok    cmd script-0: node "$WARDEN_PACK_DIR"/bin/ok.mjs']);
   });
 
-  it("resolves {pack} to the folder of the Guardrail's pack", async () => {
-    await mkdir(join(root, "packs/local"), { recursive: true });
-    await writeFile(join(root, "packs/local/check.sh"), "#!/bin/sh\nexit 0\n");
-    await chmod(join(root, "packs/local/check.sh"), 0o755);
-    const result = await doctor(setWith("{pack}/check.sh", "{pack}/missing.sh"));
-    const dir = join(root, "packs/local");
-    expect(result.lines.slice(4)).toEqual([`ok    cmd script-0: ${dir}/check.sh`, `FAIL  cmd script-1: ${dir}/missing.sh  ${dir}/missing.sh is not an executable file in the project`]);
-  });
-
   it("resolves a command given as a path from the project root", async () => {
     await mkdir(join(root, "scripts"));
     await writeFile(join(root, "scripts/check.sh"), "#!/bin/sh\nexit 0\n");

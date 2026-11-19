@@ -900,15 +900,15 @@ describe("final review: legacy feedback", () => {
 });
 
 describe("a cmd Guardrail that runs a script in its pack", () => {
-  it("runs {pack} as the pack folder, names the resolved command, and treats a script edit as tampering", async () => {
+  it("runs WARDEN_PACK_DIR as the pack folder, names the resolved command, and treats a script edit as tampering", async () => {
     await write(".warden/packs/legacy/check.sh", "test ! -e broken || { echo broken thing; exit 1; }\n");
-    await addLegacy("commit", "sh {pack}/check.sh", 5000);
+    await addLegacy("commit", 'sh "$WARDEN_PACK_DIR/check.sh"', 5000);
     const script = join(root, ".warden/packs/legacy/check.sh");
     await write("broken", "x\n");
     const { code, out } = await check();
     expect(code).toBe(1);
-    expect(out).toContain(`  Output:   sh ${script} exited with 1\n            broken thing`);
-    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([`Next action: run \`sh ${script}\` and fix what it reports.`]);
+    expect(out).toContain(`  Output:   sh "${script}" exited with 1\n            broken thing`);
+    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([`Next action: run \`sh "${script}"\` and fix what it reports.`]);
     await write(".warden/packs/legacy/check.sh", "true\n");
     expect((await check()).code).toBe(1);
     expect(await tampered()).toContainEqual({ file: ".warden/packs/legacy/check.sh", detail: "source-drift" });
