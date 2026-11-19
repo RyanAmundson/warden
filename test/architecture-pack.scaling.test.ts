@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
-import { CODE_PATHS, bench } from "./pack-bench.js";
+import { CODE_PATHS, bench, guardrailIds } from "./pack-bench.js";
 
-it.for(["architecture-world-modules", "architecture-world-globals", "architecture-source-shape"])("%s scales at most linearly", async (rule, ctx) => {
+it.for(await guardrailIds("architecture", CODE_PATHS))("%s scales at most linearly", async (rule, ctx) => {
   const { code, out } = await bench("architecture", CODE_PATHS, { rule }, ctx);
   expect(code, out).toBe(0);
 });
