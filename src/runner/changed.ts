@@ -326,9 +326,9 @@ export function stagedMismatch(root: string, base: string): StagedMismatch {
   if (staged.length === 0) return { paths: [], hidden: [], absent: [] };
   const index = new Map(
     literal(["ls-files", "-s", "-z", "--", ...staged]).map((line) => {
-      const [meta = "", path = ""] = line.split("\t");
-      const [mode, sha] = meta.split(" ");
-      return [path, { mode, sha }] as const;
+      const separator = line.indexOf("\t");
+      const [mode, sha] = line.slice(0, separator).split(" ");
+      return [line.slice(separator + 1), { mode, sha }] as const;
     }),
   );
   const tags = new Map(literal(["ls-files", "-v", "-z", "--", ...staged]).map((line) => [line.slice(2), line[0] as string] as const));
