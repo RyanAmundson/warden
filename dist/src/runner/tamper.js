@@ -86,7 +86,8 @@ export const widens = (now, was) => {
     const [a, b] = [now.split(" & "), was.split(" & ")];
     return a.length === b.length && a.every((glob, i) => globWidens(glob, b[i]));
 };
-const loosened = (root, base, lock) => {
+const loosened = (set, wardenRoot, base, lock) => {
+    const { root } = set;
     const before = readBaseLock(root, base);
     if (before === undefined)
         return [];
@@ -106,6 +107,11 @@ const loosened = (root, base, lock) => {
     }
     const covers = (now, was) => was.every((x) => now.includes(x));
     const pathsCover = (now, was) => was.every((x) => now.some((y) => widens(y, x)));
+    const bundledPrinciples = "packs/principles/pack.yaml";
+    const principles = before.sources?.[bundledPrinciples] === undefined
+        ? undefined
+        : set.packs.find((pack) => pack.file === join(wardenRoot, bundledPrinciples));
+    const principlesRules = new Set(principles?.practices.flatMap((practice) => practice.guardrails.map((guardrail) => guardrail.id)));
     for (const [id, g] of Object.entries(before.guardrails)) {
         const now = lock.guardrails[id];
         const known = now !== undefined && g.kind !== undefined;
@@ -113,11 +119,12 @@ const loosened = (root, base, lock) => {
         const cmdLintToRuntime = known && g.kind === "lint" && now.kind === "runtime" && g.implementation.startsWith("cmd:");
         if (known && !cmdLintToRuntime && kindRank(now.kind) > kindRank(g.kind))
             found.push({ file: LOCK_PATH, detail: "weakened-kind", guardrail: id, was: g.kind });
+        const previousSettings = g.settings ?? (principlesRules.has(id) ? { contractExports: [] } : null);
         const weaker = now === undefined ||
             now.budgetMs > g.budgetMs ||
             !covers(now.runs, g.runs) ||
             !pathsCover(now.paths, g.paths) ||
-            (!stronger && (now.implementation !== g.implementation || canonicalJson(now.options) !== canonicalJson(g.options) || canonicalJson(now.settings ?? null) !== canonicalJson(g.settings ?? null)));
+            (!stronger && (now.implementation !== g.implementation || canonicalJson(now.options) !== canonicalJson(g.options) || canonicalJson(now.settings ?? null) !== canonicalJson(previousSettings)));
         if (weaker)
             found.push({ file: LOCK_PATH, detail: "loosened", guardrail: id });
     }
@@ -177,5 +184,5 @@ export async function findTampering(set, wardenRoot, base, staged) {
             found.push({ file, detail: "generated-drift" });
     }
     found.push(...projectWideEntries(readBaseline(root)).map((guardrail) => ({ file: BASELINE_PATH, detail: "loosened", guardrail })));
-    return [...found, ...loosened(root, base, lock), ...unsignedChanges(root, base, wardenRoot, staged)];
+    return [...found, ...loosened(set, wardenRoot, base, lock), ...unsignedChanges(root, base, wardenRoot, staged)];
 }
