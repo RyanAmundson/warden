@@ -23,11 +23,12 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 if [ -f "$root/tsconfig.json" ]; then
-  if ! (cd "$root" && node_modules/.bin/tsc --outDir "$work/fresh"); then
+  git -C "$root" checkout-index -a --prefix="$work/staged/"
+  ln -s "$root/node_modules" "$work/staged/node_modules"
+  if ! (cd "$work/staged" && node_modules/.bin/tsc --outDir "$work/fresh"); then
     echo "self-check: the source does not compile. Next action: run npm run typecheck and fix the errors it names, then commit." >&2
     exit 1
   fi
-  git -C "$root" checkout-index --prefix="$work/staged/" -- $(git -C "$root" ls-files dist)
   for dir in $(git -C "$root" ls-files dist | cut -d/ -f2 | sort -u); do
     if ! diff -r "$work/staged/dist/$dir" "$work/fresh/$dir" >/dev/null 2>&1; then
       echo "self-check: the staged dist/$dir differs from a fresh compile of the source. Next action: run npm run build:dist, stage dist, then commit." >&2

@@ -125,6 +125,24 @@ describe("self-check.sh", () => {
     expect(broken.err).toContain("Next action: run npm run typecheck and fix the errors it names, then commit.");
   });
 
+  it("compiles the staged source, so an untracked source file cannot enter the committed dist", async () => {
+    await symlink(resolve(scripts, "../node_modules"), join(repo, "node_modules"));
+    await writeFile(join(repo, ".gitignore"), "node_modules\n");
+    await writeFile(join(repo, "tsconfig.json"), JSON.stringify({ compilerOptions: { outDir: "dist", rootDir: ".", module: "NodeNext", moduleResolution: "NodeNext", types: [] }, include: ["src"] }));
+    await mkdir(join(repo, "src"));
+    await writeFile(join(repo, "src/x.ts"), "export const x = 1;\n");
+    execFileSync("node_modules/.bin/tsc", [], { cwd: repo });
+    git("add", "-A");
+    git("commit", "-q", "-m", "built");
+    git("tag", "t1");
+    await writeFile(join(repo, "src/untracked.ts"), "export const u = 1;\n");
+    execFileSync("node_modules/.bin/tsc", [], { cwd: repo });
+    git("add", "dist");
+    const r = sh("scripts/self-check.sh", "t1");
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("staged dist/src differs from a fresh compile of the source. Next action: run npm run build:dist, stage dist, then commit.");
+  });
+
   it("requires the pinned tag as an argument", () => {
     const r = sh("scripts/self-check.sh");
     expect(r.code).toBe(2);
