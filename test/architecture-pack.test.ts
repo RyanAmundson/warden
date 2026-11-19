@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { practicesElsewhere } from "../src/compiler/compile.js";
 import { checkConsistency } from "../src/compiler/consistency.js";
 import { runExamples } from "../src/compiler/examples.js";
 import type { Adapter } from "../src/adapters/types.js";
@@ -75,7 +76,7 @@ afterEach(async () => {
 
 describe("architecture pack world boundary", () => {
   it("is consistent and its examples hold", async () => {
-    expect(checkConsistency(set)).toEqual([]);
+    expect(checkConsistency(set, await practicesElsewhere(set, wardenRoot))).toEqual([]);
     expect(await runExamples(set)).toEqual([]);
   });
 

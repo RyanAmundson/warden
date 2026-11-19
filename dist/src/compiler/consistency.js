@@ -40,7 +40,7 @@ const effectiveFolders = (set, practice) => {
 };
 const escape = (word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const duplicates = (ids) => ids.filter((id, i) => ids.indexOf(id) !== i);
-export function checkConsistency(set, elsewhere = new Map()) {
+export function checkConsistency(set, elsewhere) {
     const findings = [];
     const add = (code, record, message) => {
         findings.push({ code, record, message });

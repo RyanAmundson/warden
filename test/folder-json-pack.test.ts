@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { practicesElsewhere } from "../src/compiler/compile.js";
 import { checkConsistency } from "../src/compiler/consistency.js";
 import { runExamples } from "../src/compiler/examples.js";
 import { loadRecords } from "../src/records/load.js";
@@ -50,13 +51,14 @@ afterEach(() => rm(root, { recursive: true, force: true }));
 describe("folder-json pack", () => {
   it("folder-json pack examples hold and the records are consistent", async () => {
     expect(guardrail.id).toBe("warden-folders-hold-one-file-until-the-leaf");
-    expect(checkConsistency(set)).toEqual([]);
+    expect(checkConsistency(set, await practicesElsewhere(set, wardenRoot))).toEqual([]);
     expect(await runExamples(set)).toEqual([]);
   });
 
   it("requires collection-folders, and says to enable it", async () => {
     await write(".warden/config.yaml", config(["folder-json"]));
-    const findings = checkConsistency(await loadRecords(root, wardenRoot));
+    const onlyFolderJson = await loadRecords(root, wardenRoot);
+    const findings = checkConsistency(onlyFolderJson, await practicesElsewhere(onlyFolderJson, wardenRoot));
     expect(findings.map((f) => f.code)).toEqual(["undefined-term"]);
     expect(findings[0]?.message).toMatch(/Next action: enable the pack that defines Term collection before pack folder-json in \.warden\/config\.yaml, then run warden compile\.$/);
   });

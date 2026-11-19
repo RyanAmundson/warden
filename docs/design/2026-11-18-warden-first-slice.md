@@ -124,13 +124,16 @@ interface RecordSet { config: ProjectConfig; packs: Pack[]; root: string }
 
 **Interfaces:**
 - Consumes: `RecordSet`.
-- Produces: `interface Finding { code: string; record: string; message: string }`; `checkConsistency(set: RecordSet): Finding[]`.
+- Produces: `interface Finding { code: string; record: string; message: string }`; `checkConsistency(set: RecordSet, elsewhere: ReadonlyMap<string, string>): Finding[]`. The compiler supplies the practice inventory from packs outside the enabled set.
 
-Finding codes, exactly: `duplicate-term`, `duplicate-practice`, `duplicate-guardrail`, `prose-only` (no Guardrail of kind other than `instruction`), `conflict-overlap` (two Practices in `conflictsWith` share a path glob prefix in the config), `undefined-term` (Practice `terms` names a missing Term), `banned-synonym` (a statement contains a Term's banned word, whole-word, case-insensitive), `layer-order` (two configured packs share a `layer`). Packs load in `layer` order, whatever order `config.packs` lists them in.
+First-slice finding codes include `duplicate-term`, `duplicate-practice`, `duplicate-guardrail`, `prose-only` (no Guardrail of kind other than `instruction`), `conflict-overlap` (conflicting Practices apply in overlapping folders), `undefined-term` (Practice `terms` names a missing Term), `banned-synonym` (a statement contains a Term's banned word, whole-word, case-insensitive), and `layer-order` (two configured packs share a `layer`). Packs load in `layer` order, whatever order `config.packs` lists them in.
 
-- [ ] **Step 1: Write one failing test per code**, each building a minimal `RecordSet` in the test and asserting `checkConsistency(set).map(f => f.code)` equals `[<code>]`; plus `clean set has no findings` asserting `[]`.
+- `conflict-scope` means a pack involved in a Practice conflict is missing folder scopes or has paths that are not folder scopes. Set that pack's `paths` in `.warden/config.yaml` to folder scopes such as `src/ui/**`, then run `warden compile`.
+- `conflict-same-pack` means a pack declares a conflict between two of its own Practices. Remove the contradictory `conflictsWith` entries or move one Practice into a separate pack. Use non-overlapping folder scopes if both packs are enabled, then run `warden compile`.
+
+- [ ] **Step 1: Write one failing test per code**, each building a minimal `RecordSet` in the test and asserting `checkConsistency(set, elsewhere).map(f => f.code)` equals `[<code>]`; plus `clean set has no findings` asserting `[]`.
 - [ ] **Step 2:** Run `npx vitest run test/compiler/consistency.test.ts --maxWorkers=2`. Expected: FAIL.
-- [ ] **Step 3:** Implement `checkConsistency`. Glob overlap: two globs overlap when one's literal prefix (up to the first `*`) starts with the other's.
+- [ ] **Step 3:** Implement `checkConsistency`. Two folder scopes overlap when they name the same folder or one names an ancestor of the other.
 - [ ] **Step 4:** Run the tests. Expected: PASS.
 - [ ] **Step 5:** Commit `Warden rejects duplicate, prose-only, conflicting, and loosening records`.
 
