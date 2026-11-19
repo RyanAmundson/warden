@@ -15,12 +15,6 @@ const RUNS = 3;
 
 export const RANK: Verdict[] = ["constant", "sublinear", "linear", "superlinear"];
 
-const median = (xs: number[]): number => {
-  const s = [...xs].sort((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 === 1 ? (s[mid] as number) : ((s[mid - 1] as number) + (s[mid] as number)) / 2;
-};
-
 const mean = (xs: number[]): number => xs.reduce((a, b) => a + b, 0) / xs.length;
 
 export const slope = (points: [number, number][], f: number): number => {
@@ -103,7 +97,7 @@ const measure = (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string):
         if (own === undefined) throw new Error(`no result for guardrail ${s.g.id}`);
         times.push(s.time(own));
       }
-      return median(times);
+      return Math.min(...times);
     };
     const seen = new Map<number, number>();
     const at = async (n: number): Promise<number> => {

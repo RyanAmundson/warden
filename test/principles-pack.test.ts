@@ -76,8 +76,8 @@ beforeEach(async () => {
 afterEach(() => rm(root, { recursive: true, force: true }));
 
 describe("principles pack", () => {
-  it("principles pack Guardrails scale at most linearly", async () => {
-    const { code, out } = await bench(root, { pack: "principles" });
+  it.each(ids)("%s scales at most linearly", async (rule) => {
+    const { code, out } = await bench(root, { rule });
     expect(code, out).toBe(0);
   });
 

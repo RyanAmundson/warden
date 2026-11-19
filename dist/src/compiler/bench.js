@@ -9,11 +9,6 @@ import { readBenchCache, writeBenchCache } from "../runner/cache.js";
 import { adapters, runGuardrails } from "../runner/run.js";
 const RUNS = 3;
 export const RANK = ["constant", "sublinear", "linear", "superlinear"];
-const median = (xs) => {
-    const s = [...xs].sort((a, b) => a - b);
-    const mid = Math.floor(s.length / 2);
-    return s.length % 2 === 1 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
-};
 const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
 export const slope = (points, f) => {
     const xs = points.map(([n]) => Math.log(n));
@@ -70,7 +65,7 @@ const measure = (set, s, cfg, rerun) => withExampleProject(async (project) => {
                 throw new Error(`no result for guardrail ${s.g.id}`);
             times.push(s.time(own));
         }
-        return median(times);
+        return Math.min(...times);
     };
     const seen = new Map();
     const at = async (n) => {

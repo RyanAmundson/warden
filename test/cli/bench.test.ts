@@ -14,11 +14,13 @@ let root: string;
 let home: string;
 let roots: string[];
 let checked: number;
+let spikes: number;
 
 const models: Record<string, (n: number, root: string) => number> = {
   linear: (n) => 2 + n,
   quadratic: (n) => 2 + (n * n) / 10,
   constant: () => 5,
+  spiky: (n) => 2 + n + (n === 200 && (spikes = (spikes + 1) % 3) !== 0 ? (n * n) / 10 : 0),
   flaky: (n, r) => (r === roots[0] ? 2 + (n * n) / 10 : 2 + n),
 };
 
@@ -89,6 +91,7 @@ beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), "warden-home-"));
   roots = [];
   checked = 0;
+  spikes = 0;
   vi.stubEnv("WARDEN_HOME", home);
   adapters.set("fake", fake);
 });
@@ -181,4 +184,14 @@ it("every copy the bench writes exists with its mustPass content before the Guar
   const { code, out } = await bench();
   expect(code, out).toBe(0);
   expect(checked).toBe(400);
+});
+
+it("a size where two of three runs are slowed by noise keeps its fastest run, so the verdict stays linear without a second measurement", async () => {
+  await setup({ local: [guardrail("noisy", "spiky")] });
+  const { code, out } = await bench();
+  expect(code, out).toBe(0);
+  expect(roots).toHaveLength(1);
+  const noisy = (await scaling()).find((e) => e.guardrail === "noisy");
+  expect(noisy).toMatchObject({ verdict: "linear", points: [[25, 27], [50, 52], [100, 102], [200, 202]] });
+  expect(noisy).not.toHaveProperty("previous");
 });
