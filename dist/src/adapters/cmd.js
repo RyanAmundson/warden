@@ -8,7 +8,7 @@ const killGroup = (pid) => {
             throw cause;
     }
 };
-export const spawnBudgeted = (file, args, cwd, budgetMs, shell = false) => new Promise((resolve, reject) => {
+export const spawnBudgeted = (file, args, cwd, budgetMs, shell = false, signal) => new Promise((resolve, reject) => {
     const start = performance.now();
     const child = spawn(file, args, { cwd, shell, detached: true, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
@@ -29,20 +29,24 @@ export const spawnBudgeted = (file, args, cwd, budgetMs, shell = false) => new P
             killed = true;
             killGroup(child.pid);
         }, budgetMs);
+    const abort = () => killGroup(child.pid);
+    signal?.addEventListener("abort", abort, { once: true });
     child.on("error", (err) => {
         clearTimeout(timer);
+        signal?.removeEventListener("abort", abort);
         reject(err);
     });
-    child.on("close", (code, signal) => {
+    child.on("close", (code, exitSignal) => {
         clearTimeout(timer);
-        resolve({ stdout, stderr, output, code, signal, killed, ms: performance.now() - start });
+        signal?.removeEventListener("abort", abort);
+        resolve({ stdout, stderr, output, code, signal: exitSignal, killed, ms: performance.now() - start });
     });
 });
 export const OUTPUT_LINES = 20;
 const tail = (output) => output.trimEnd().split("\n").filter((l) => l !== "").slice(-OUTPUT_LINES);
 const runOne = async (g, ctx) => {
     const command = g.implementation.slice(g.implementation.indexOf(":") + 1);
-    const { code, killed, ms, output } = await spawnBudgeted(command, [], ctx.root, ctx.unbudgeted === true ? undefined : g.budgetMs, true);
+    const { code, killed, ms, output } = await spawnBudgeted(command, [], ctx.root, ctx.unbudgeted === true ? undefined : g.budgetMs, true, ctx.signal);
     if (killed)
         return { guardrail: g.id, status: "killed", violations: [], ms, command };
     if (code === 0)

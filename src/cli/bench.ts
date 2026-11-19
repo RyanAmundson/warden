@@ -20,7 +20,7 @@ const select = (set: RecordSet, rule: string | undefined, pack: string | undefin
   return gs;
 };
 
-export async function runBench(root: string, wardenRoot: string, opts: { rule?: string; pack?: string }): Promise<number> {
+export async function runBench(root: string, wardenRoot: string, opts: { rule?: string; pack?: string; signal?: AbortSignal }): Promise<number> {
   try {
     const set = await loadRecords(root, wardenRoot);
     const cfg = benchSettings(set.config);
@@ -35,7 +35,7 @@ export async function runBench(root: string, wardenRoot: string, opts: { rule?: 
       const measured: Measurement[] = [];
       const inner: typeof rows = [];
       for (const s of own) {
-        const m = await benchSubject(set, s, cfg, "warden bench");
+        const m = await benchSubject(set, s, cfg, "warden bench", opts.signal);
         record({ guardrail: s.id }, m);
         measured.push(m);
         inner.push({ indent: "    ", label: s.id, m, id: s.id });
@@ -46,7 +46,7 @@ export async function runBench(root: string, wardenRoot: string, opts: { rule?: 
     }
     const lint = opts.rule === undefined && opts.pack === undefined ? subjects.find((s) => prefixOf(s.g) === "eslint") : undefined;
     if (lint !== undefined) {
-      const m = await benchSubject(set, { ...lint, id: ESLINT_PASS, time: (r) => r.ms - (r.ruleMs ?? 0) } satisfies Subject, cfg, "warden bench");
+      const m = await benchSubject(set, { ...lint, id: ESLINT_PASS, time: (r) => r.ms - (r.ruleMs ?? 0) } satisfies Subject, cfg, "warden bench", opts.signal);
       record({ guardrail: ESLINT_PASS }, m);
       rows.push({ indent: "  ", label: ESLINT_PASS, m, id: ESLINT_PASS });
     }

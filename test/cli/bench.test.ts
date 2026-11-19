@@ -63,7 +63,7 @@ const setup = async (packs: Record<string, string[][]>, extra: string[] = [], pa
   }
 };
 
-const bench = async (opts: { rule?: string; pack?: string } = {}): Promise<{ code: number; out: string; err: string }> => {
+const bench = async (opts: { rule?: string; pack?: string; signal?: AbortSignal } = {}): Promise<{ code: number; out: string; err: string }> => {
   let out = "";
   let err = "";
   vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
@@ -204,4 +204,21 @@ it("a fixed time slowed on its first three runs still starts the doubling at the
   const { code, out } = await bench();
   expect(code, out).toBe(0);
   expect((await scaling()).find((e) => e.guardrail === "jitter")).toMatchObject({ f: 2.5, points: [[50, 27], [100, 52], [200, 102], [400, 202]] });
+});
+
+it("an aborted bench kills the run in flight, starts no other run, and removes its copies", async () => {
+  const log = join(home, "runs.log");
+  const cmd = ["      - id: sleeper", "        kind: runtime", "        runs: [boundary]", "        budgetMs: 5000", "        version: 1", `        implementation: "cmd:echo $$ $(pwd) >> ${log}; exec sleep 30"`, '        mustFail: "bad\\n"', '        mustPass: "const a = 1;\\n"'];
+  await setup({ local: [cmd] });
+  const controller = new AbortController();
+  const run = bench({ signal: controller.signal });
+  await vi.waitFor(() => expect(existsSync(log)).toBe(true));
+  controller.abort();
+  await expect(run).rejects.toMatchObject({ name: "AbortError" });
+  await new Promise((r) => setTimeout(r, 200));
+  const lines = readFileSync(log, "utf8").trim().split("\n");
+  expect(lines).toHaveLength(1);
+  const [pid, project] = (lines[0] as string).split(" ");
+  expect(() => process.kill(-Number(pid), 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+  expect(existsSync(project as string)).toBe(false);
 });

@@ -32,7 +32,7 @@ export async function runBench(root, wardenRoot, opts) {
             const measured = [];
             const inner = [];
             for (const s of own) {
-                const m = await benchSubject(set, s, cfg, "warden bench");
+                const m = await benchSubject(set, s, cfg, "warden bench", opts.signal);
                 record({ guardrail: s.id }, m);
                 measured.push(m);
                 inner.push({ indent: "    ", label: s.id, m, id: s.id });
@@ -43,7 +43,7 @@ export async function runBench(root, wardenRoot, opts) {
         }
         const lint = opts.rule === undefined && opts.pack === undefined ? subjects.find((s) => prefixOf(s.g) === "eslint") : undefined;
         if (lint !== undefined) {
-            const m = await benchSubject(set, { ...lint, id: ESLINT_PASS, time: (r) => r.ms - (r.ruleMs ?? 0) }, cfg, "warden bench");
+            const m = await benchSubject(set, { ...lint, id: ESLINT_PASS, time: (r) => r.ms - (r.ruleMs ?? 0) }, cfg, "warden bench", opts.signal);
             record({ guardrail: ESLINT_PASS }, m);
             rows.push({ indent: "  ", label: ESLINT_PASS, m, id: ESLINT_PASS });
         }

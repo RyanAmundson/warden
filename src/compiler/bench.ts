@@ -69,13 +69,14 @@ const writeTree = async (root: string, tree: Record<string, string>): Promise<vo
   }
 };
 
-const measure = (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string): Promise<Measurement> =>
+const measure = (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string, signal?: AbortSignal): Promise<Measurement> =>
   withExampleProject(async (project) => {
-    const ctx = { root: project, generatedDir: join(project, ".warden/generated"), unbudgeted: true };
+    const ctx = { root: project, generatedDir: join(project, ".warden/generated"), unbudgeted: true, signal };
     await writeTree(project, (adapters.get(prefixOf(s.g)) as Adapter).emit([s.g], set));
     const files: string[] = [];
     let copies = 0;
     const sample = async (n: number, runs = RUNS): Promise<number> => {
+      signal?.throwIfAborted();
       const tree: Record<string, string> = {};
       for (; copies < n; copies++) {
         for (const c of copyOf(s.g, s.prefix, copies)) {
@@ -86,7 +87,9 @@ const measure = (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string):
       await writeTree(project, tree);
       const times: number[] = [];
       for (let i = 0; i < runs; i++) {
+        signal?.throwIfAborted();
         const results = await runGuardrails(set, [s.g], files, ctx);
+        signal?.throwIfAborted();
         const bad = results.find((r) => r.status !== "pass");
         if (bad !== undefined) {
           throw new RecordError(
@@ -123,11 +126,11 @@ const measure = (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string):
     return { verdict: k > cfg.linearMax ? "superlinear" : k < cfg.sublinearMax ? "sublinear" : "linear", k, points, f };
   });
 
-export const benchSubject = async (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string): Promise<Measurement & { previous?: Measurement }> => {
+export const benchSubject = async (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string, signal?: AbortSignal): Promise<Measurement & { previous?: Measurement }> => {
   refuseUnmatched(s, rerun);
-  const first = await measure(set, s, cfg, rerun);
+  const first = await measure(set, s, cfg, rerun, signal);
   if (first.verdict !== "superlinear") return first;
-  return { ...(await measure(set, s, cfg, rerun)), previous: first };
+  return { ...(await measure(set, s, cfg, rerun, signal)), previous: first };
 };
 
 export const subjectsOf = (set: RecordSet, gs: Guardrail[]): Subject[] =>

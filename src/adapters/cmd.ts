@@ -20,7 +20,7 @@ const killGroup = (pid: number): void => {
   }
 };
 
-export const spawnBudgeted = (file: string, args: string[], cwd: string, budgetMs: number | undefined, shell = false): Promise<Spawned> =>
+export const spawnBudgeted = (file: string, args: string[], cwd: string, budgetMs: number | undefined, shell = false, signal?: AbortSignal): Promise<Spawned> =>
   new Promise((resolve, reject) => {
     const start = performance.now();
     const child = spawn(file, args, { cwd, shell, detached: true, stdio: ["ignore", "pipe", "pipe"] });
@@ -43,13 +43,17 @@ export const spawnBudgeted = (file: string, args: string[], cwd: string, budgetM
             killed = true;
             killGroup(child.pid as number);
           }, budgetMs);
+    const abort = (): void => killGroup(child.pid as number);
+    signal?.addEventListener("abort", abort, { once: true });
     child.on("error", (err) => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
       reject(err);
     });
-    child.on("close", (code, signal) => {
+    child.on("close", (code, exitSignal) => {
       clearTimeout(timer);
-      resolve({ stdout, stderr, output, code, signal, killed, ms: performance.now() - start });
+      signal?.removeEventListener("abort", abort);
+      resolve({ stdout, stderr, output, code, signal: exitSignal, killed, ms: performance.now() - start });
     });
   });
 
@@ -59,7 +63,7 @@ const tail = (output: string): string[] => output.trimEnd().split("\n").filter((
 
 const runOne = async (g: Guardrail, ctx: RunContext): Promise<RunResult> => {
   const command = g.implementation.slice(g.implementation.indexOf(":") + 1);
-  const { code, killed, ms, output } = await spawnBudgeted(command, [], ctx.root, ctx.unbudgeted === true ? undefined : g.budgetMs, true);
+  const { code, killed, ms, output } = await spawnBudgeted(command, [], ctx.root, ctx.unbudgeted === true ? undefined : g.budgetMs, true, ctx.signal);
   if (killed) return { guardrail: g.id, status: "killed", violations: [], ms, command };
   if (code === 0) return { guardrail: g.id, status: "pass", violations: [], ms };
   return {

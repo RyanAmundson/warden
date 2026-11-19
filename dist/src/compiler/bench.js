@@ -40,12 +40,13 @@ const writeTree = async (root, tree) => {
         }));
     }
 };
-const measure = (set, s, cfg, rerun) => withExampleProject(async (project) => {
-    const ctx = { root: project, generatedDir: join(project, ".warden/generated"), unbudgeted: true };
+const measure = (set, s, cfg, rerun, signal) => withExampleProject(async (project) => {
+    const ctx = { root: project, generatedDir: join(project, ".warden/generated"), unbudgeted: true, signal };
     await writeTree(project, adapters.get(prefixOf(s.g)).emit([s.g], set));
     const files = [];
     let copies = 0;
     const sample = async (n, runs = RUNS) => {
+        signal?.throwIfAborted();
         const tree = {};
         for (; copies < n; copies++) {
             for (const c of copyOf(s.g, s.prefix, copies)) {
@@ -56,7 +57,9 @@ const measure = (set, s, cfg, rerun) => withExampleProject(async (project) => {
         await writeTree(project, tree);
         const times = [];
         for (let i = 0; i < runs; i++) {
+            signal?.throwIfAborted();
             const results = await runGuardrails(set, [s.g], files, ctx);
+            signal?.throwIfAborted();
             const bad = results.find((r) => r.status !== "pass");
             if (bad !== undefined) {
                 throw new RecordError(s.pack.file, `/guardrails/${s.g.id}/mustPass`, `Guardrail ${s.g.id} failed on a copy of its mustPass example at ${bad.violations[0]?.file || files[0]}. Next action: change the mustPass example of Guardrail ${s.g.id} in ${s.pack.file} so every copy of it passes, then run ${rerun}.`);
@@ -93,12 +96,12 @@ const measure = (set, s, cfg, rerun) => withExampleProject(async (project) => {
     const k = slope(points, f);
     return { verdict: k > cfg.linearMax ? "superlinear" : k < cfg.sublinearMax ? "sublinear" : "linear", k, points, f };
 });
-export const benchSubject = async (set, s, cfg, rerun) => {
+export const benchSubject = async (set, s, cfg, rerun, signal) => {
     refuseUnmatched(s, rerun);
-    const first = await measure(set, s, cfg, rerun);
+    const first = await measure(set, s, cfg, rerun, signal);
     if (first.verdict !== "superlinear")
         return first;
-    return { ...(await measure(set, s, cfg, rerun)), previous: first };
+    return { ...(await measure(set, s, cfg, rerun, signal)), previous: first };
 };
 export const subjectsOf = (set, gs) => set.packs.flatMap((pack) => pack.practices.flatMap((x) => {
     const groups = pathGroups(x.paths, set.config.packs.find((p) => p.id === pack.id)?.paths ?? []);
