@@ -113,16 +113,17 @@ The baseline absorbs these at adoption, so the ratchet never blocks work.
   Guardrail, so its `mustFail` example never fails. That mapping is part of
   the second release's engine needs.
 - **A `cmd` Guardrail can't be baselined** and must not use kind `lint`
-  (sibling note from the collection-folders session). Both apply to the
-  second release.
+  (sibling note from the collection-folders session). The second release
+  therefore runs its cross-file checks through the `fs` adapter, whose
+  findings are per file.
 - **The YAGNI single-implementation proxy needs a port exception.** The
   architecture pack requires each port to have one implementation at first,
   so that proxy's statement must exclude a `port`.
 
 ## Second release (`cm-wkqedr.27`)
 
-Cross-file checks as tested `.mjs` scripts under `packs/principles/bin/`,
-each a `cmd` Guardrail of kind `runtime` at `boundary`:
+Cross-file checks as tree checks shipped in the pack, each an `fs` or
+`graph` Guardrail of kind `lint` at `boundary`:
 
 - Duplicate blocks of 8 or more significant lines (DRY). A spike measured
   1.4 s across all of Context Manager and found 679 duplicates.
@@ -140,11 +141,19 @@ each a `cmd` Guardrail of kind `runtime` at `boundary`:
 - Practices `no-repeated-code` (`principles-duplicate-blocks`),
   `no-speculative-code` (`principles-unused-exports`,
   `principles-single-implementation`), and `one-home-per-name`
-  (`principles-duplicate-exports`). Each runs a script from
-  `packs/principles/bin/` through `$WARDEN_PACK_DIR`.
-- The scripts share `project.mjs`. It lists files with `git ls-files`, or
-  walks the folder, without `node_modules`, when there is no git checkout or
-  no git. It parses with the TypeScript parser in one process.
+  (`principles-duplicate-exports`). Each is a check that runs in the pack's
+  sandbox: `graph:principles/unused-exports` in `packs/principles/graph.js`,
+  and the other three as `fs:principles/<name>` in `packs/principles/fs.js`.
+- The unused-export check uses the `graph` adapter's import graph to skip
+  each file that no other file imports. Such a file is an entry point, such
+  as a script, a package's main file, or a page a framework loads, and its
+  exports are its interface. This also keeps a one-file example of another
+  Guardrail from failing the check.
+- The checks share `packs/principles/code.js`. They read the files Warden
+  gives them through `read`, never the disk, and parse them with the `ts`
+  compiler API Warden passes in. Each finding names one file and line, and
+  a duplicate block also its last line, so the baseline counts it per file.
+  Each finding's Do this names the exact edit for that finding.
 - Test, spec, and story files are read as users: their imports and
   implementing classes count. Violations are never reported in them, and
   the duplicate-block check does not read them. Declaration files are not
@@ -163,7 +172,7 @@ each a `cmd` Guardrail of kind `runtime` at `boundary`:
   `meta`, `links`, `headers`, `handle`, `shouldRevalidate`,
   `ErrorBoundary`, `HydrateFallback`, `Layout`); and SvelteKit (`load`,
   `prerender`, `ssr`, `csr`, `trailingSlash`, `entries`). The list is
-  `FRAMEWORK_EXPORTS` in `project.mjs`.
+  `FRAMEWORK_EXPORTS` in `code.js`.
 - A port is the file named after its group folder inside a bracketed
   collection. Files named `create` are skipped by the SSOT check, because the
   architecture layout gives every group one.

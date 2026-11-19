@@ -49,14 +49,16 @@ const WORKER = new URL(`./tsc-worker${extname(fileURLToPath(import.meta.url))}`,
 let worker: Worker | undefined;
 let busy = false;
 
-const ask = (request: TscRequest, budgetMs: number | undefined): Promise<{ reply?: TscReply; ms: number }> =>
+const ask = (request: TscRequest, budgetMs: number | undefined, signal?: AbortSignal): Promise<{ reply?: TscReply; ms: number }> =>
   new Promise((resolve, reject) => {
+    signal?.throwIfAborted();
     if (busy) throw new Error("the tsc adapter checks one program at a time; await the previous run");
     busy = true;
     const w = (worker ??= new Worker(WORKER));
     const start = performance.now();
     const settle = (lost: boolean): number => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       w.off("message", onReply).off("error", onError).off("exit", onExit);
       busy = false;
       if (lost) worker = undefined;
@@ -72,6 +74,11 @@ const ask = (request: TscRequest, budgetMs: number | undefined): Promise<{ reply
       settle(true);
       reject(new Error(`tsc ended with exit code ${code}`));
     };
+    const onAbort = (): void => {
+      settle(true);
+      void w.terminate();
+      reject(signal?.reason);
+    };
     const timer =
       budgetMs === undefined
         ? undefined
@@ -80,6 +87,7 @@ const ask = (request: TscRequest, budgetMs: number | undefined): Promise<{ reply
             void w.terminate();
             resolve({ ms });
           }, budgetMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
     w.ref();
     w.on("message", onReply).on("error", onError).on("exit", onExit);
     w.postMessage(request);
@@ -88,7 +96,7 @@ const ask = (request: TscRequest, budgetMs: number | undefined): Promise<{ reply
 const run = async (gs: Guardrail[], _files: string[], ctx: RunContext): Promise<RunResult[]> => {
   const budgetMs = ctx.unbudgeted === true ? undefined : Math.min(...gs.map((g) => g.budgetMs));
   const project = join(relative(ctx.root, ctx.generatedDir), "tsconfig.json");
-  const { reply, ms } = await ask({ cwd: ctx.root, project, parameterCodes: FLAG_CODES.noUnusedParameters as number[] }, budgetMs);
+  const { reply, ms } = await ask({ cwd: ctx.root, project, parameterCodes: FLAG_CODES.noUnusedParameters as number[] }, budgetMs, ctx.signal);
   const killed = reply === undefined;
   const stdout = reply?.stdout ?? "";
   const owners = new Map<string, string>();

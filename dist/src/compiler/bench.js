@@ -1,19 +1,15 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { enabledOn, examplePrefix, withExampleProject } from "./examples.js";
-import { canonicalJson, sha256 } from "./lock.js";
-import { RecordError } from "../records/load.js";
-import { pathGroups } from "../records/paths.js";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
+import { examplePrefix, withExampleProject } from "./examples.js";
+import { canonicalJson, packFiles, sha256 } from "./lock.js";
+import { RecordError, exampleSet } from "../records/load.js";
+import { enabledOn, pathGroups } from "../records/paths.js";
 import { benchSettings } from "../records/types.js";
 import { readBenchCache, writeBenchCache } from "../runner/cache.js";
 import { adapters, runGuardrails } from "../runner/run.js";
 const RUNS = 3;
+const FIXED_RUNS = 9;
 export const RANK = ["constant", "sublinear", "linear", "superlinear"];
-const median = (xs) => {
-    const s = [...xs].sort((a, b) => a - b);
-    const mid = Math.floor(s.length / 2);
-    return s.length % 2 === 1 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
-};
 const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
 export const slope = (points, f) => {
     const xs = points.map(([n]) => Math.log(n));
@@ -34,26 +30,37 @@ const refuseUnmatched = (s, rerun) => {
         return;
     throw new RecordError(s.pack.file, `/guardrails/${s.g.id}/mustPass`, `Guardrail ${s.g.id} would not run on ${lost.path}, a copy of its mustPass example, because it is outside ${s.groups.map((g) => g.join(" & ")).join(", ")}. Next action: change the paths of Practice ${s.practice} in ${s.pack.file} so they also match files in a subfolder, or make the mustPass example of Guardrail ${s.g.id} a single file, then run ${rerun}.`);
 };
+const WRITE_BATCH = 64;
 const writeTree = async (root, tree) => {
-    for (const [path, content] of Object.entries(tree)) {
-        await mkdir(dirname(join(root, path)), { recursive: true });
-        await writeFile(join(root, path), content);
+    const entries = Object.entries(tree);
+    for (let i = 0; i < entries.length; i += WRITE_BATCH) {
+        await Promise.all(entries.slice(i, i + WRITE_BATCH).map(async ([path, content]) => {
+            await mkdir(dirname(join(root, path)), { recursive: true });
+            await writeFile(join(root, path), content);
+        }));
     }
 };
-const measure = (set, s, cfg, rerun) => withExampleProject(async (project) => {
-    const ctx = { root: project, generatedDir: join(project, ".warden/generated"), unbudgeted: true };
-    await writeTree(project, adapters.get(prefixOf(s.g)).emit([s.g], set));
+const measure = (project, s, cfg, rerun, signal) => withExampleProject(async (root) => {
+    const set = exampleSet(project);
+    const ctx = { root, generatedDir: join(root, ".warden/generated"), unbudgeted: true, signal };
+    await writeTree(root, adapters.get(prefixOf(s.g)).emit([s.g], set));
     const files = [];
     let copies = 0;
-    const sample = async (n) => {
+    const sample = async (n, runs = RUNS) => {
+        signal?.throwIfAborted();
+        const tree = {};
         for (; copies < n; copies++) {
-            const copy = copyOf(s.g, s.prefix, copies);
-            await writeTree(project, Object.fromEntries(copy.map((c) => [c.path, c.content])));
-            files.push(...copy.map((c) => c.path));
+            for (const c of copyOf(s.g, s.prefix, copies)) {
+                tree[c.path] = c.content;
+                files.push(c.path);
+            }
         }
+        await writeTree(root, tree);
         const times = [];
-        for (let i = 0; i < RUNS; i++) {
+        for (let i = 0; i < runs; i++) {
+            signal?.throwIfAborted();
             const results = await runGuardrails(set, [s.g], files, ctx);
+            signal?.throwIfAborted();
             const bad = results.find((r) => r.status !== "pass");
             if (bad !== undefined) {
                 throw new RecordError(s.pack.file, `/guardrails/${s.g.id}/mustPass`, `Guardrail ${s.g.id} failed on a copy of its mustPass example at ${bad.violations[0]?.file || files[0]}. Next action: change the mustPass example of Guardrail ${s.g.id} in ${s.pack.file} so every copy of it passes, then run ${rerun}.`);
@@ -63,7 +70,7 @@ const measure = (set, s, cfg, rerun) => withExampleProject(async (project) => {
                 throw new Error(`no result for guardrail ${s.g.id}`);
             times.push(s.time(own));
         }
-        return median(times);
+        return Math.min(...times);
     };
     const seen = new Map();
     const at = async (n) => {
@@ -77,7 +84,7 @@ const measure = (set, s, cfg, rerun) => withExampleProject(async (project) => {
             points.push([base * m, await at(base * m)]);
         return points;
     };
-    const f = await at(1);
+    const f = await sample(1, FIXED_RUNS);
     let base = cfg.baseFiles;
     while ((await at(base)) - f < cfg.minMarginalMs) {
         if (base * 16 > cfg.maxFiles)
@@ -89,13 +96,13 @@ const measure = (set, s, cfg, rerun) => withExampleProject(async (project) => {
         return { verdict: "constant", points, f };
     const k = slope(points, f);
     return { verdict: k > cfg.linearMax ? "superlinear" : k < cfg.sublinearMax ? "sublinear" : "linear", k, points, f };
-});
-export const benchSubject = async (set, s, cfg, rerun) => {
+}, true);
+export const benchSubject = async (set, s, cfg, rerun, signal) => {
     refuseUnmatched(s, rerun);
-    const first = await measure(set, s, cfg, rerun);
+    const first = await measure(set, s, cfg, rerun, signal);
     if (first.verdict !== "superlinear")
         return first;
-    return { ...(await measure(set, s, cfg, rerun)), previous: first };
+    return { ...(await measure(set, s, cfg, rerun, signal)), previous: first };
 };
 export const subjectsOf = (set, gs) => set.packs.flatMap((pack) => pack.practices.flatMap((x) => {
     const groups = pathGroups(x.paths, set.config.packs.find((p) => p.id === pack.id)?.paths ?? []);
@@ -104,12 +111,18 @@ export const subjectsOf = (set, gs) => set.packs.flatMap((pack) => pack.practice
 }));
 const r1 = (n) => Math.round(n * 10) / 10;
 export const pointsText = (m) => `${m.points.map(([n, ms]) => `${n} files ${r1(ms)}ms`).join(", ")}; fixed ${r1(m.f)}ms`;
+export async function benchKey(s, warden, cfg) {
+    const dir = s.g.packDir;
+    const files = dir === undefined ? [] : (await packFiles(dirname(dir), basename(dir))).sort();
+    const code = await Promise.all(files.map(async (f) => [f, sha256(await readFile(join(dirname(dir), f)))]));
+    return sha256(canonicalJson(["bench", s.g.id, s.g.version, s.g.implementation, s.g.options ?? null, warden, cfg, s.groups, code]));
+}
 export async function admit(set, warden) {
     const cfg = benchSettings(set.config);
     const gs = set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.filter((g) => g.kind !== "instruction")));
     const findings = [];
     for (const s of subjectsOf(set, gs)) {
-        const key = sha256(canonicalJson(["bench", s.g.id, s.g.version, s.g.implementation, s.g.options ?? null, warden, cfg, s.groups]));
+        const key = await benchKey(s, warden, cfg);
         if (readBenchCache(key) !== undefined)
             continue;
         let m;

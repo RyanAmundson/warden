@@ -1,6 +1,6 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -274,7 +274,13 @@ describe("warden CLI", () => {
     expect(r.code).toBe(2);
     expect(r.err).toContain("Next action: run warden init --base origin/main");
     expect(warden("init", "--base", "origin/main").code).toBe(0);
-    await adoptedBase("origin/main");
+    expect(await readFile(join(root, ".warden/config.yaml"), "utf8")).toContain('base: "origin/main"');
+    git("add", "-A");
+    git("commit", "-q", "-m", "adopt");
+    const adopted = warden("check", "--base", "origin/main");
+    expect(adopted.err).toBe("");
+    expect(adopted.code).toBe(1);
+    expect(adopted.out).toContain("Next action: run git --literal-pathspecs restore --source=");
     expect(execFileSync("git", ["branch", "--list"], { cwd: root, encoding: "utf8" }).replace(/[* ]/g, "").split("\n").filter(Boolean)).toEqual(["feat"]);
   });
 
@@ -396,7 +402,7 @@ describe("warden CLI", () => {
     );
     const r = warden("compile");
     expect(r.code).toBe(2);
-    expect(r.err).toMatch(/^unknown-adapter local-no-x: .*Next action: set implementation to one of eslint:<\.\.\.>, tsc:<\.\.\.>, cmd:<\.\.\.> in \S*\/\.warden\/packs\/local\/pack\.yaml, then run warden compile\.$/m);
+    expect(r.err).toMatch(/^unknown-adapter local-no-x: .*Next action: set implementation to one of eslint:<\.\.\.>, tsc:<\.\.\.>, cmd:<\.\.\.>, fs:<\.\.\.>, graph:<\.\.\.> in \S*\/\.warden\/packs\/local\/pack\.yaml, then run warden compile\.$/m);
     expect(existsSync(join(root, ".warden/lock.json"))).toBe(false);
   });
 
@@ -607,7 +613,7 @@ describe("warden CLI", () => {
     expect(initialized.out).toContain("ok    tool typescript\n");
     const r = warden("doctor");
     expect(r.code, r.err).toBe(0);
-    expect(r.out).toBe("ok    tool eslint\nok    tool typescript-eslint\nok    tool typescript\nok    tool warden eslint plugin\n");
+    expect(r.out).toBe("ok    tool eslint\nok    tool typescript-eslint\nok    tool typescript\nok    tool warden eslint plugin\nok    git pre-commit hook: .warden/generated/hooks/pre-commit\n");
   });
 
   it("doctor exits 2 with the failing item and one next action", async () => {
@@ -745,11 +751,11 @@ describe("warden CLI", () => {
     init();
     const r = warden("--violations");
     expect(r.code, r.err).toBe(0);
-    expect(r.out).toMatch(/^ WARDEN .* v back {2}d determinism\n/);
+    expect(r.out).toMatch(/^ WARDEN .* v back {2}d (determinism|det)\n/);
     expect(r.out).toMatch(/\n VIOLATIONS BY PACK +baselined +new +last run\n/);
     expect(r.out).toMatch(/\n core +█+ +1 +– *\n/);
     expect(r.out).toMatch(/\n {3}warden-no-comments +█+ +1 +– *\n/);
-    expect(r.out).toContain(" Next action: press r to run warden check");
+    expect(r.out).toContain(" Next action: run warden check");
     expect(r.out).not.toContain("\x1b");
     await rm(join(root, ".warden/baseline.json"));
     const bare = warden("--violations");
@@ -769,7 +775,7 @@ describe("warden CLI", () => {
     const before = warden("--determinism");
     expect(before.code, before.err).toBe(0);
     expect(before.out).toMatch(/\n ▸ \S+ +no completed run yet\n/);
-    expect(before.out).toContain(" No project has a completed run. Next action: press r to run warden check");
+    expect(before.out).toContain(" No project has a completed run. Next action: run warden check");
     await writeFile(join(root, "src/add.ts"), "// eslint-disable-next-line\nexport const add = (a: number, b: number) => a + b;\n");
     expect(warden("check", "--base", "main").code).toBe(1);
     const run = (await readFile(join(home, "evidence", `${project}.jsonl`), "utf8")).trim().split("\n").map((l) => JSON.parse(l) as { guardrail?: string; outcome?: string; kinds?: Record<string, number> }).filter((e) => e.guardrail === "run").at(-1);
@@ -784,6 +790,74 @@ describe("warden CLI", () => {
     expect(r.out).toMatch(/\n {3}older +·+ +0 +0 +0 +1 +–\n/);
     expect(r.out).not.toContain("\x1b");
     expect(warden("--determinism", "--layers").code).toBe(2);
+  });
+});
+
+describe("the commit-tier git hook", () => {
+  const commit = (path: string): { code: number | null; out: string; err: string } => {
+    const r = spawnSync("git", ["-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x"], { cwd: root, encoding: "utf8", env: { ...process.env, PATH: path, WARDEN_HOME: home } });
+    return { code: r.status, out: r.stdout, err: r.stderr };
+  };
+  let bin: string;
+  const tools = (): string => `${bin}:/usr/bin:/bin`;
+
+  beforeEach(async () => {
+    bin = await mkdtemp(join(tmpdir(), "warden-bin-"));
+    await symlink(execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim(), join(bin, "git"));
+  });
+
+  afterEach(() => rm(bin, { recursive: true, force: true }));
+
+  it("init points git at the locked, executable pre-commit hook under .warden", async () => {
+    init();
+    expect(execFileSync("git", ["config", "core.hooksPath"], { cwd: root, encoding: "utf8" }).trim()).toBe(".warden/generated/hooks");
+    const lock = JSON.parse(await readFile(join(root, ".warden/lock.json"), "utf8")) as { generated: Record<string, string> };
+    expect(Object.keys(lock.generated)).toContain(".warden/generated/hooks/pre-commit");
+    expect(execFileSync("sh", ["-c", "test -x .warden/generated/hooks/pre-commit && echo yes"], { cwd: root, encoding: "utf8" })).toBe("yes\n");
+  });
+
+  it("a commit runs Warden's commit check and is refused when a Guardrail fails", async () => {
+    init();
+    await writeFile(join(bin, "warden"), `#!/bin/sh\nexec "${process.execPath}" "${main}" "$@"\n`, { mode: 0o755 });
+    git("add", "-A");
+    git("commit", "-q", "-m", "adopt");
+    await writeFile(join(root, "src/b.ts"), "// new\nexport const b = 1;\n");
+    git("add", "-A");
+    const refused = commit(tools());
+    expect(refused.code).toBe(1);
+    expect(refused.err).toContain("FAIL src/b.ts:1");
+    await writeFile(join(root, "src/b.ts"), "export const b = 1;\n");
+    git("add", "-A");
+    expect(commit(tools()).code).toBe(0);
+  });
+
+  it("a commit with no warden on PATH is refused with the install command as its one next action", () => {
+    init();
+    git("add", "-A");
+    const r = commit(tools());
+    expect(r.code).not.toBe(0);
+    const version = (JSON.parse(readFileSync(join(wardenRoot, "package.json"), "utf8")) as { version: string }).version;
+    expect(r.err).toContain(`Next action: run npm install -g git+https://github.com/RyanAmundson/warden.git#v${version}, then commit again.`);
+    expect(r.err.match(/Next action/g)).toHaveLength(1);
+  });
+
+  it("init leaves a project's own hooks in force, and doctor names the one line that chains Warden's", async () => {
+    await mkdir(join(root, "hooks"));
+    git("config", "core.hooksPath", "hooks");
+    const r = warden("init");
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("Next action: make hooks/pre-commit an executable script that runs .warden/generated/hooks/pre-commit and exits with its status, then run warden doctor\n");
+    expect(execFileSync("git", ["config", "core.hooksPath"], { cwd: root, encoding: "utf8" }).trim()).toBe("hooks");
+    await writeFile(join(root, "hooks/pre-commit"), "#!/bin/sh\n.warden/generated/hooks/pre-commit || exit $?\n", { mode: 0o755 });
+    expect(warden("doctor").code).toBe(0);
+  });
+
+  it("doctor in a fresh clone names the git config command that installs the hook", () => {
+    init();
+    git("config", "--unset", "core.hooksPath");
+    const r = warden("doctor");
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("Next action: run git config core.hooksPath .warden/generated/hooks, then run warden doctor\n");
   });
 });
 
@@ -878,11 +952,94 @@ describe("the Claude Code plugin hook", () => {
     expect(hook("check", edit("src/b.ts"))).toEqual({ code: 0, out: "", err: "" });
   });
 
+  const codexCommand = (event: "PreToolUse" | "PostToolUse"): string => {
+    const config = JSON.parse(readFileSync(join(wardenRoot, "hooks/codex.json"), "utf8")) as { hooks: Record<string, { hooks: { command: string }[] }[]> };
+    return (config.hooks[event] as { hooks: { command: string }[] }[])[0]?.hooks[0]?.command as string;
+  };
+  const codex = (event: "PreToolUse" | "PostToolUse", input: unknown): { code: number | null; out: string; err: string } => {
+    const r = spawnSync("sh", ["-c", codexCommand(event)], { cwd: root, input: JSON.stringify(input), encoding: "utf8", env: { ...process.env, PATH: `${shims}:${system}`, WARDEN_HOME: home, PLUGIN_ROOT: wardenRoot } });
+    return { code: r.status, out: r.stdout, err: r.stderr };
+  };
+  const patch = (...lines: string[]): unknown => ({ tool_name: "apply_patch", tool_input: { command: ["*** Begin Patch", ...lines, "*** End Patch", ""].join("\n") } });
+
+  it("the Codex plugin's version is the package's version, and its manifest names the Codex hooks", () => {
+    const manifest = JSON.parse(readFileSync(join(wardenRoot, ".codex-plugin/plugin.json"), "utf8")) as { version: string; hooks: string };
+    expect(manifest.version).toBe(pluginVersion());
+    expect(existsSync(join(wardenRoot, manifest.hooks))).toBe(true);
+  });
+
+  it("the Codex hooks refuse a patch under .warden, and block after a patch that breaks a Guardrail", async () => {
+    init();
+    git("add", "-A");
+    git("commit", "-q", "-m", "adopt");
+    expect(denied(codex("PreToolUse", patch("*** Update File: src/a.ts", "*** Add File: .warden/x.yaml", "+x")))).toContain(".warden/x.yaml is a Warden record");
+    expect(codex("PreToolUse", patch("*** Update File: src/a.ts"))).toEqual({ code: 0, out: "", err: "" });
+    expect(denied(codex("PreToolUse", bash("git commit -n")))).toContain("-n skips the pre-commit hook");
+    await writeFile(join(root, "src/b.ts"), "// new\nexport const b = 1;\n");
+    const r = codex("PostToolUse", patch("*** Add File: src/b.ts", "+// new", "+export const b = 1;"));
+    expect(r.code, r.err).toBe(0);
+    expect((JSON.parse(r.out) as { decision: string; reason: string }).reason).toContain("FAIL src/b.ts:1");
+  });
+
   it("turns a warden crash into a block with one next action", async () => {
     init();
     await writeFile(join(shims, "warden"), `#!/bin/sh\n[ "$1" = --version ] && echo ${pluginVersion()} && exit 0\nexit 7\n`, { mode: 0o755 });
     const r = hook("guard", edit("src/a.ts"));
     expect(r.code).toBe(2);
     expect(r.err).toContain("warden exited 7. Next action: run warden doctor");
+  });
+});
+
+describe("a sandbox child busy in a pack check", () => {
+  const spinPack = [
+    "id: spin",
+    "layer: 2",
+    "terms: []",
+    "practices:",
+    "  - id: p",
+    "    statement: s",
+    "    terms: []",
+    "    paths: []",
+    "    conflictsWith: []",
+    "    guardrails:",
+    "      - id: spin-loop",
+    "        kind: lint",
+    "        runs: [commit]",
+    "        budgetMs: 5000",
+    "        version: 1",
+    "        implementation: \"fs:spin/loop\"",
+    "        mustFail:",
+    "          a.ts: \"x\\n\"",
+    "        mustPass:",
+    "          b.ts: \"y\\n\"",
+    "",
+  ].join("\n");
+
+  const children = (packDir: string): string[] =>
+    spawnSync("pgrep", ["-f", "--", `--allow-fs-read=${packDir}`], { encoding: "utf8" }).stdout.split("\n").filter((l) => l !== "");
+
+  const until = async (done: () => boolean): Promise<void> => {
+    for (let i = 0; i < 100 && !done(); i++) await new Promise((r) => setTimeout(r, 50));
+    expect(done()).toBe(true);
+  };
+
+  it.each(["SIGKILL", "SIGTERM", "SIGINT"] as const)("exits when warden's own pid gets %s", async (signal) => {
+    const project = await realpath(await mkdtemp(join(tmpdir(), "warden-spin-")));
+    try {
+      await mkdir(join(project, ".warden/packs/spin"), { recursive: true });
+      await writeFile(join(project, ".warden/config.yaml"), ["warden: 0.1.0", "project: spin", "base: main", "packs:", "  - id: spin", '    paths: ["**/*"]', "tierBudgetMs: { edit: 1000, commit: 2000, boundary: 5000 }", "loopBreakerRepeats: 3", ""].join("\n"));
+      await writeFile(join(project, ".warden/packs/spin/pack.yaml"), spinPack);
+      await writeFile(join(project, ".warden/packs/spin/fs.js"), "export default { loop: () => { for (;;) {} } };\n");
+      const packDir = join(project, ".warden/packs/spin");
+      execFileSync("git", ["init", "-q", "-b", "main"], { cwd: project, stdio: "ignore" });
+      const run = spawn(process.execPath, [main, "compile"], { cwd: project, stdio: "ignore", env: { ...process.env, WARDEN_HOME: home } });
+      const exited = new Promise((r) => run.on("exit", r));
+      await until(() => children(packDir).length > 0);
+      run.kill(signal);
+      await exited;
+      await until(() => children(packDir).length === 0);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
   });
 });

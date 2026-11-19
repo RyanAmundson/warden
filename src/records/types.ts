@@ -42,12 +42,13 @@ export interface Pack {
   layer: number;
   terms: Term[];
   practices: Practice[];
+  settings?: Record<string, unknown>;
 }
 
 export interface ProjectConfig {
   project: string;
   base: string;
-  packs: { id: string; paths: string[] }[];
+  packs: { id: string; paths: string[]; settings?: Record<string, unknown> }[];
   tierBudgetMs: Record<Tier, number>;
   loopBreakerRepeats: number;
   bench?: Partial<BenchSettings>;

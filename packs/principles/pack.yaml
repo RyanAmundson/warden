@@ -114,11 +114,11 @@ practices:
     conflictsWith: []
     guardrails:
       - id: principles-duplicate-blocks
-        kind: runtime
+        kind: lint
         runs: [boundary]
         budgetMs: 5000
         version: 1
-        implementation: 'cmd:node "$WARDEN_PACK_DIR/bin/duplicate-blocks.mjs"'
+        implementation: "fs:principles/duplicate-blocks"
         mustFail:
           src/a.ts: "export const a = (n: number): number => {\n  const x1 = n + 1;\n  const x2 = x1 * 2;\n  const x3 = x2 - 3;\n  const x4 = x3 / 4;\n  const x5 = x4 % 5;\n  const x6 = x5 + 6;\n  const x7 = x6 * 7;\n  return x7;\n};\n"
           src/b.ts: "export const b = (n: number): number => {\n  const x1 = n + 1;\n  const x2 = x1 * 2;\n  const x3 = x2 - 3;\n  const x4 = x3 / 4;\n  const x5 = x4 % 5;\n  const x6 = x5 + 6;\n  const x7 = x6 * 7;\n  return x7;\n};\n"
@@ -126,29 +126,29 @@ practices:
           src/a.ts: "export default (n: number): number => n + 1;\n"
           src/b.ts: "import step from \"./a\";\nconsole.log(step(1));\n"
   - id: no-speculative-code
-    statement: Code builds nothing ahead of need. Every export is imported by another file, and an interface has more than one implementing class unless it sits in a port, the file named after its group folder inside a bracketed collection. Test, spec, and story files count as users but are not checked, export-star barrels count as uses, and names a framework requires, such as metadata, GET, and loader, are exempt.
+    statement: Code builds nothing ahead of need. Every export of a file that another file imports is imported by another file, since a file nothing imports is an entry point whose exports are its interface, and an interface has more than one implementing class unless it sits in a port, the file named after its group folder inside a bracketed collection. Test, spec, and story files count as users but are not checked, export-star barrels count as uses, and names a framework requires, such as metadata, GET, and loader, are exempt.
     terms: []
     paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"]
     conflictsWith: []
     guardrails:
       - id: principles-unused-exports
-        kind: runtime
+        kind: lint
         runs: [boundary]
         budgetMs: 5000
         version: 1
-        implementation: 'cmd:node "$WARDEN_PACK_DIR/bin/unused-exports.mjs"'
+        implementation: "graph:principles/unused-exports"
         mustFail:
-          src/a.ts: "export const step = (n: number): number => n + 1;\n"
-          src/b.ts: "console.log(1);\n"
+          src/a.ts: "export const step = (n: number): number => n + 1;\nexport const twice = (n: number): number => n * 2;\n"
+          src/b.ts: "import { step } from \"./a\";\nconsole.log(step(1));\n"
         mustPass:
           src/a.ts: "export const step = (n: number): number => n + 1;\n"
           src/b.ts: "import { step } from \"./a\";\nconsole.log(step(1));\n"
       - id: principles-single-implementation
-        kind: runtime
+        kind: lint
         runs: [boundary]
         budgetMs: 5000
         version: 1
-        implementation: 'cmd:node "$WARDEN_PACK_DIR/bin/single-implementation.mjs"'
+        implementation: "fs:principles/single-implementation"
         mustFail:
           src/shape.ts: "export interface Shape {\n  area(): number;\n}\n"
           src/square.ts: "import type { Shape } from \"./shape\";\nexport class Square implements Shape {\n  area(): number {\n    return 1;\n  }\n}\n"
@@ -163,11 +163,11 @@ practices:
     conflictsWith: []
     guardrails:
       - id: principles-duplicate-exports
-        kind: runtime
+        kind: lint
         runs: [boundary]
         budgetMs: 5000
         version: 1
-        implementation: 'cmd:node "$WARDEN_PACK_DIR/bin/duplicate-exports.mjs"'
+        implementation: "fs:principles/duplicate-exports"
         mustFail:
           src/a.ts: "export const step = (n: number): number => n + 1;\n"
           src/b.ts: "export const step = (n: number): number => n + 2;\n"

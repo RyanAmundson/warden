@@ -1,15 +1,16 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, matchesGlob, posix } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { adapters, runGuardrails, unknownAdapters } from "../runner/run.js";
-import { pathGroups } from "../records/paths.js";
+import { enabledOn, pathGroups } from "../records/paths.js";
+import { exampleSet } from "../records/load.js";
 import type { Example, Guardrail, RecordSet } from "../records/types.js";
 import { type Adapter, PARSE_ERROR } from "../adapters/types.js";
 import type { Finding } from "./consistency.js";
 
 const TSCONFIG = JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", skipLibCheck: true }, include: ["**/*.ts"] });
 
-const literal = (glob: string): string => glob.split("*", 1)[0] ?? "";
+const literal = (glob: string): string => (glob.startsWith("!") ? "" : (glob.split("*", 1)[0] ?? ""));
 
 export const examplePrefix = (group: string[] | undefined): string => (group ?? []).map(literal).reduce((a, b) => (b.length > a.length ? b : a), "");
 
@@ -23,20 +24,57 @@ const ownedBy = (owned: Set<string>) => (key: string): boolean => {
   return first === "node_modules" || first === ".warden" || [...owned].some((o) => path === o || path.startsWith(`${o}/`));
 };
 
-export const enabledOn = (file: string, groups: string[][]): boolean => groups.length === 0 || groups.some((g) => g.every((glob) => matchesGlob(file, glob)));
+interface Unremoved {
+  project: string;
+  cause: string;
+}
 
-export async function withExampleProject<T>(fn: (project: string) => Promise<T>): Promise<T> {
+const unremoved = (failures: Unremoved[]): Error =>
+  new Error(
+    `Warden could not remove ${failures.length === 1 ? "its example project" : `${failures.length} example projects:`} ${failures.map((f) => `${f.project} (${f.cause})`).join(", ")}. Next action: delete ${failures.map((f) => f.project).join(" and ")}, then run the command again.`,
+  );
+
+const removals = new Set<Promise<void>>();
+
+export const exampleProjectsRemoved = async (): Promise<void> => {
+  const pending = [...removals];
+  removals.clear();
+  const failures = (await Promise.allSettled(pending)).flatMap((r) => (r.status === "rejected" ? [r.reason as Unremoved] : []));
+  if (failures.length > 0) throw unremoved(failures);
+};
+
+export async function thenRemoveExampleProjects(run: () => Promise<void>, report: (cause: unknown) => void): Promise<void> {
+  try {
+    await run();
+  } catch (cause) {
+    report(cause);
+  }
+  try {
+    await exampleProjectsRemoved();
+  } catch (cause) {
+    report(cause);
+  }
+}
+
+export async function withExampleProject<T>(fn: (project: string) => Promise<T>, removeLater = false): Promise<T> {
   const project = await mkdtemp(join(tmpdir(), "warden-examples-"));
   try {
     await writeFile(join(project, "package.json"), "{}\n");
     await writeFile(join(project, "tsconfig.json"), TSCONFIG);
     return await fn(project);
   } finally {
-    await rm(project, { recursive: true, force: true });
+    const removal = rm(project, { recursive: true, force: true }).catch((cause: Error) => Promise.reject<void>({ project, cause: cause.message } satisfies Unremoved));
+    if (removeLater) {
+      removals.add(removal);
+      removal.then(() => removals.delete(removal), () => undefined);
+    } else {
+      await removal.catch((failure: Unremoved) => Promise.reject(unremoved([failure])));
+    }
   }
 }
 
-export async function runExamples(set: RecordSet): Promise<Finding[]> {
+export async function runExamples(project: RecordSet): Promise<Finding[]> {
+  const set = exampleSet(project);
   const unknown = unknownAdapters(set).map(({ code, record, message }) => ({ code, record, message }));
   if (unknown.length > 0) return unknown;
   const findings: Finding[] = [];

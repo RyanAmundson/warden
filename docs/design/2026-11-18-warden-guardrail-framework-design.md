@@ -279,11 +279,18 @@ folder of the Guardrail's pack, so a pack can ship a script and run it as
 `cmd:node "$WARDEN_PACK_DIR/check.js"`; failures and next actions show the
 command with the folder substituted and shell-quoted, `warden doctor` checks
 that each named pack file exists, and every file in a bundled or local pack's
-folder but `.DS_Store` is hashed into the lock. A `cmd` Guardrail reports one project-wide result,
-unless it exits 1 and prints only `<file>:<line>[-<end>]: <message>` lines to stdout followed by
-one line that ends in `Next action: <action>`; then each line is a violation in that file, with
-the action as its Do this, so its results can be baselined per file. Compile refuses a `cmd`
-Guardrail whose kind is `lint`; moving such a Guardrail from `lint`
+folder but `.DS_Store` is hashed into the lock. A `cmd` command that is
+only `node "$WARDEN_PACK_DIR/<script>"` and plain arguments, in a pack that
+Warden ships, runs the script in a worker thread inside Warden rather than a
+new Node process, and the budget stops the worker. The script sees the project
+root as `process.cwd()`, its arguments in `process.argv`, and its exit code as
+the verdict, but it cannot call `process.chdir`, so it resolves every relative
+path against `process.cwd()`. Every other command, including a local pack's
+script, runs in the shell. A `cmd` command that exits 2 reports
+an error in its environment or usage, not a violation: Warden exits 2 with the
+command's last output line as the next action, or tells you to run the command
+when that line has none. A `cmd` Guardrail reports one project-wide result, so
+compile refuses one whose kind is `lint`; moving such a Guardrail from `lint`
 to `runtime` is not weakening, since its `lint` result never failed. Because every adapter normalizes to the same Violation, the
 baseline, cache, budgets, Evidence, and report work the same for every tool.
 
@@ -291,7 +298,7 @@ baseline, cache, budgets, Evidence, and report work the same for every tool.
 |---|---|---|
 | `eslint` | `.warden/generated/eslint.config.mjs` | ESLint API |
 | `tsc` | `.warden/generated/tsconfig.json`, extending the project's own and adding flags | `tsc --noEmit -p`, diagnostics parsed per file |
-| `cmd` | nothing | a shell command; exit status is the verdict |
+| `cmd` | nothing | a shell command, or a worker thread for `node <script>`; exit status is the verdict |
 | `claude-settings` | `permissions.deny` entries | nothing; it is a harness control |
 | later: `codex-config`, `git-hooks`, `skills`, `tla` | | |
 
@@ -545,8 +552,10 @@ An independent builder read this design and asked six questions. Answers:
    `permissions.deny` list only, and the drift check covers that key.
 2. **Everything under `.warden/` is framework source.** A commit that changes
    `.warden/` must be signed by a key in an allowed-signers list that ships
-   inside the pinned Warden package, not in the consuming repo.
-   `warden check` verifies this with git's signature verification. Warden
+   inside the pinned Warden package, not in the consuming repo: the
+   `allowed_signers` file at the package root, which the lock hashes like a
+   bundled pack file. `warden check` verifies this with git's signature
+   verification. A missing or empty list fails every `.warden/` change. Warden
    covers `.warden/` only; the existing `Ryan-Approved:` and protected-paths
    mechanism keeps the files it covers until they migrate.
 3. **Existing scripts register as `legacy` Guardrails.** A `legacy` Guardrail

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { compile } from "../compiler/compile.js";
@@ -5,7 +6,7 @@ import { RecordError, loadRecords } from "../records/load.js";
 import { initAction, listPacks } from "./packs.js";
 import { measureBaseline, writeBaseline } from "../runner/baseline.js";
 import { verifyBase } from "../runner/changed.js";
-import { doctor, formatDoctor } from "../runner/doctor.js";
+import { HOOKS_DIR, doctor, formatDoctor, hooksUnused } from "../runner/doctor.js";
 
 const CONFIG_PATH = ".warden/config.yaml";
 
@@ -51,6 +52,7 @@ export async function runInit(root: string, wardenRoot: string, requested: strin
     if (!wardenExisted) rmSync(warden, { recursive: true, force: true });
     throw cause;
   }
+  if (hooksUnused(root)) execFileSync("git", ["config", "core.hooksPath", HOOKS_DIR], { cwd: root });
   return runDoctor(root, wardenRoot);
 }
 
@@ -73,7 +75,7 @@ async function initialize(root: string, wardenRoot: string, packs: string[], bas
 }
 
 export async function runDoctor(root: string, wardenRoot: string): Promise<number> {
-  const health = await doctor(await loadRecords(root, wardenRoot));
+  const health = await doctor(await loadRecords(root, wardenRoot), true);
   process.stdout.write(`${formatDoctor(health)}\n`);
   return health.next === undefined ? 0 : 2;
 }

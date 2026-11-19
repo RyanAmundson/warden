@@ -1,10 +1,12 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { chmod, cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ESLint } from "eslint";
+import { COMMAND_CHARS, runIt } from "../../src/adapters/cmd.js";
 import { eslintAdapter } from "../../src/adapters/eslint.js";
 import { PARSE_ERROR, type RunResult } from "../../src/adapters/types.js";
 import { runCheck } from "../../src/cli/check.js";
@@ -15,7 +17,9 @@ import { applyBaseline } from "../../src/runner/baseline.js";
 import { LOOP_TAIL_BYTES } from "../../src/runner/evidence.js";
 import { recordedBases } from "../../src/runner/tamper.js";
 
-const wardenRoot = resolve(import.meta.dirname, "../..");
+const packageRoot = resolve(import.meta.dirname, "../..");
+let wardenRoot: string;
+let keys: string;
 
 const config = (packs: string[], repeats = 3): string =>
   [
@@ -107,6 +111,12 @@ const git = (...args: string[]): string =>
     stdio: ["ignore", "pipe", "pipe"],
   });
 
+const pub = (name: string): string => readFileSync(join(keys, `${name}.pub`), "utf8").trim();
+const signers = (...names: string[]): string => names.map((n) => `ryan ${pub(n)}\n`).join("");
+const commitSigned = (key: string, message: string): void => {
+  git("-c", "gpg.format=ssh", "-c", "gpg.ssh.program=ssh-keygen", "-c", `user.signingkey=${join(keys, key)}`, "commit", "-q", "-S", "-m", message);
+};
+
 const write = async (file: string, content: string): Promise<void> => {
   await mkdir(resolve(root, file, ".."), { recursive: true });
   await writeFile(join(root, file), content);
@@ -158,6 +168,11 @@ const failedFiles = (out: string): string[] =>
 let templateHome: string;
 
 beforeAll(async () => {
+  keys = await mkdtemp(join(tmpdir(), "warden-keys-"));
+  for (const name of ["ryan", "agent"]) execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", name, "-f", join(keys, name)]);
+  wardenRoot = await mkdtemp(join(tmpdir(), "warden-package-"));
+  for (const entry of await readdir(packageRoot)) if (entry !== "allowed_signers" && entry !== ".git") await symlink(join(packageRoot, entry), join(wardenRoot, entry));
+  await writeFile(join(wardenRoot, "allowed_signers"), signers("ryan"));
   templateHome = await mkdtemp(join(tmpdir(), "warden-home-"));
   vi.stubEnv("WARDEN_HOME", templateHome);
   template = await realpath(await mkdtemp(join(tmpdir(), "warden-check-template-")));
@@ -173,9 +188,12 @@ afterAll(async () => {
   vi.unstubAllEnvs();
   await rm(template, { recursive: true, force: true });
   await rm(templateHome, { recursive: true, force: true });
+  await rm(keys, { recursive: true, force: true });
+  await rm(wardenRoot, { recursive: true, force: true });
 });
 
 beforeEach(async () => {
+  await writeFile(join(wardenRoot, "allowed_signers"), signers("ryan"));
   root = await realpath(await mkdtemp(join(tmpdir(), "warden-check-")));
   home = await mkdtemp(join(tmpdir(), "warden-home-"));
   vi.stubEnv("WARDEN_HOME", home);
@@ -772,7 +790,7 @@ describe("unknown adapter at check time", () => {
     await write(SCRIPT, "process.exit(1);\n");
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
     git("add", "-A");
-    git("commit", "-q", "-m", "script");
+    commitSigned("ryan", "script");
     await write(SCRIPT, "process.exit(0);\n");
     const { code, out } = await check();
     expect(code).toBe(1);
@@ -865,7 +883,7 @@ describe("unknown adapter at check time", () => {
     const { code, err } = await check();
     expect(code).toBe(2);
     expect(err).toBe(
-      `${file} /guardrails/extra-no-debugger/implementation: Guardrail extra-no-debugger names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...> in ${file}, then run warden compile.\n`,
+      `${file} /guardrails/extra-no-debugger/implementation: Guardrail extra-no-debugger names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd, fs, graph. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...>, fs:<...>, graph:<...> in ${file}, then run warden compile.\n`,
     );
     await write(".warden/packs/extra/pack.yaml", (await read(".warden/packs/extra/pack.yaml")).replace("eslnt:", "eslint:"));
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
@@ -907,24 +925,22 @@ describe("a cmd Guardrail that runs a script in its pack", () => {
     await write("broken", "x\n");
     const { code, out } = await check();
     expect(code).toBe(1);
-    expect(out).toContain(`  Output:   sh "${script}" exited with 1\n            broken thing`);
-    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([`Next action: run \`sh "${script}"\` and fix what it reports.`]);
+    expect(out).toContain(`  Output:   ${`sh "${script}"`.slice(0, COMMAND_CHARS)}`);
+    expect(out).toContain(` exited with 1\n            broken thing`);
+    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([`Next action: ${runIt({ id: "legacy-script", kind: "legacy", runs: ["commit"], budgetMs: 5000, version: 1, implementation: 'cmd:sh "$WARDEN_PACK_DIR/check.sh"', packDir: join(root, ".warden/packs/legacy") })}`]);
     await write(".warden/packs/legacy/check.sh", "true\n");
     expect((await check()).code).toBe(1);
     expect(await tampered()).toContainEqual({ file: ".warden/packs/legacy/check.sh", detail: "source-drift" });
   });
 
-  it("a script that prints file:line lines fails each file it names, with the script's next action as Do this and one Next action", async () => {
-    await write(".warden/packs/legacy/bin/no-broken.mjs", 'import { existsSync } from "node:fs";\nif (existsSync("broken")) { console.log("broken:1: broken exists\\n1 broken file. Next action: delete broken."); process.exit(1); }\n');
-    await addLegacy("commit", 'node "$WARDEN_PACK_DIR/bin/no-broken.mjs"', 5000);
-    git("add", "-A");
-    git("commit", "-q", "-m", "base");
-    git("branch", "-f", "main", "HEAD");
-    await write("broken", "x\n");
-    const { code, out } = await check();
-    expect(code).toBe(1);
-    expect(out).toContain("FAIL broken:1  legacy-check\n  Rule:     The legacy script passes.\n  Output:   broken exists\n  Do this:  delete broken.");
-    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual(['Next action: change the code at the lines above to match "Do this". Do not edit .warden/ or generated config; that is recorded as tampering.']);
+  it("a script that exits 2 stops the check with exit 2 and the script's next action, not a Guardrail failure", async () => {
+    await write(".warden/packs/legacy/check.sh", "test ! -e broken || exit 1; test ! -e nogit || { echo 'git is not on PATH. Next action: install git so that it is on PATH.'; exit 2; }\n");
+    await addLegacy("commit", 'sh "$WARDEN_PACK_DIR/check.sh"', 5000);
+    await write("nogit", "x\n");
+    const { code, out, err } = await check();
+    expect(code).toBe(2);
+    expect(out).toBe("");
+    expect(err).toBe(`${join(root, ".warden/packs/legacy/pack.yaml")} /guardrails/legacy-script/implementation: sh "${join(root, ".warden/packs/legacy/check.sh")}" exited with 2, an error in its environment or usage, not a violation: git is not on PATH. Next action: install git so that it is on PATH.\n`);
   });
 
   it("moving a base-locked cmd Guardrail from lint to runtime, as compile asks, is not tampering", async () => {
@@ -940,6 +956,98 @@ describe("a cmd Guardrail that runs a script in its pack", () => {
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
     expect((await check()).code).toBe(0);
     expect(await tampered()).toEqual([]);
+  });
+});
+
+describe("a whole-tree Guardrail", () => {
+  const treePack = [
+    "id: tree",
+    "layer: 2",
+    "terms: []",
+    "practices:",
+    "  - id: no-flag",
+    "    statement: No flag file sits beside the code.",
+    "    terms: []",
+    "    paths: []",
+    "    conflictsWith: []",
+    "    guardrails:",
+    "      - id: tree-flagged",
+    "        kind: lint",
+    "        runs: [commit]",
+    "        budgetMs: 5000",
+    "        version: 1",
+    "        implementation: \"fs:tree/flagged\"",
+    "        mustFail:",
+    "          flag.ts: \"export const flag = 1;\\n\"",
+    "          a.ts: \"export const a = 1;\\n\"",
+    "        mustPass:",
+    "          a.ts: \"export const a = 1;\\n\"",
+    "",
+  ].join("\n");
+  const flagged = 'export default {\n  flagged: ({ files, all }) => (all.includes("flag.ts") ? files.filter((f) => f !== "flag.ts").map((file) => ({ file, message: "flag.ts is present.", doThis: "Delete flag.ts." })) : []),\n};\n';
+  const addTree = async (): Promise<void> => {
+    await write(".warden/config.yaml", config(["core", "local", "tree"]));
+    await write(".warden/packs/tree/pack.yaml", treePack);
+    await write(".warden/packs/tree/fs.js", flagged);
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+  };
+
+  it("fails at the commit tier on a file the change did not touch, with the check's next action", async () => {
+    await addTree();
+    await write("flag.ts", "export const flag = 1;\n");
+    const { code, out } = await check({ format: "json" });
+    expect(code).toBe(1);
+    const { failures } = JSON.parse(out) as { failures: { file: string; doThis: string }[] };
+    expect(failures.map((f) => [f.file, f.doThis])).toEqual([["a.ts", "Delete flag.ts."]]);
+  });
+
+  it("at the commit tier judges only staged files, so an untracked file does not block an unrelated commit", async () => {
+    await addTree();
+    git("add", "-A");
+    git("commit", "-q", "-m", "tree");
+    git("branch", "-f", "main", "HEAD");
+    await write("flag.ts", "export const flag = 1;\n");
+    await write("a.ts", "export const a = 2;\n");
+    git("add", "a.ts");
+    expect((await check({}, false)).code).toBe(0);
+    git("add", "flag.ts");
+    expect((await check({}, false)).code).toBe(1);
+  });
+
+  it("changing a pack's settings and recompiling is loosening", async () => {
+    await write(".warden/config.yaml", config(["core", "local", "tree"]).replace('  - id: tree\n    paths: ["**/*.ts"]', '  - id: tree\n    paths: ["**/*.ts"]\n    settings: { flag: flag.ts }'));
+    await write(".warden/packs/tree/pack.yaml", `${treePack}settings:\n  type: object\n  properties:\n    flag: { type: string, default: flag.ts }\n`);
+    await write(".warden/packs/tree/fs.js", flagged);
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    git("add", "-A");
+    git("commit", "-q", "-m", "settings");
+    git("branch", "-f", "main", "HEAD");
+    expect((await check()).code).toBe(0);
+    await write(".warden/config.yaml", (await read(".warden/config.yaml")).replace("flag: flag.ts", "flag: none.ts"));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    const loosened = await check();
+    expect(loosened.code).toBe(1);
+    expect(loosened.out.split("\n").filter((l) => l.startsWith("TAMPERED"))).toEqual(["TAMPERED .warden/lock.json  loosened tree-flagged"]);
+    expect(await tampered()).toContainEqual({ file: ".warden/lock.json", detail: "loosened" });
+  });
+
+  it("editing a local pack's shipped code and recompiling is loosening", async () => {
+    await addTree();
+    git("add", "-A");
+    git("commit", "-q", "-m", "tree");
+    git("branch", "-f", "main", "HEAD");
+    expect((await check()).code).toBe(0);
+    await write(".warden/packs/tree/fs.js", "export default { flagged: () => [] };\n");
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: ".warden/lock.json", detail: "loosened" });
+  });
+
+  it("compile baselines the violations a new whole-tree Guardrail finds, file by file", async () => {
+    await write("flag.ts", "export const flag = 1;\n");
+    await addTree();
+    expect(JSON.parse(await read(".warden/baseline.json"))).toEqual({ "warden-no-comments": { "a.ts": 1 }, "tree-flagged": { "a.ts": 1 } });
+    expect((await check()).code).toBe(0);
   });
 });
 
@@ -1271,7 +1379,7 @@ describe("residual fixes", () => {
     await write(".warden/config.yaml", config(["core", "local"]).replace("base: main", "base: feature"));
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
     git("add", "-A");
-    git("commit", "-q", "-m", "own base");
+    commitSigned("ryan", "own base");
   };
 
   it("a base committed as the agent's own branch is a moved base against the base the hook names", async () => {
@@ -1325,7 +1433,7 @@ describe("residual fixes", () => {
     await write(".warden/config.yaml", config(["core", "local"]));
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
     git("add", "-A");
-    git("commit", "-q", "-m", "base back to main");
+    commitSigned("ryan", "base back to main");
     const { code, err } = await check({ base: "trunk" });
     expect(err).toBe("");
     expect(code).toBe(1);
@@ -1626,7 +1734,7 @@ describe("performance: run records and input size", () => {
     await addLegacy("commit", "test ! -e broken", 5000);
     await write("b.ts", "const b = 1;\n");
     git("add", "-A");
-    git("commit", "-q", "-m", "legacy");
+    commitSigned("ryan", "legacy");
     expect((await check({ paths: ["a.ts", "b.ts"] })).code).toBe(0);
     const rows = await costs();
     const runs = rows.filter((e) => e.guardrail === "run");
@@ -1716,7 +1824,7 @@ describe("performance: run records and input size", () => {
     await addLegacy("edit, commit", "test ! -e broken", 5000);
     await write("b.ts", "const b = 1;\n");
     git("add", "-A");
-    git("commit", "-q", "-m", "legacy");
+    commitSigned("ryan", "legacy");
     expect((await check({ paths: ["b.ts"], tier: "edit" })).code).toBe(0);
     expect((await check({ paths: ["b.ts"], tier: "edit" })).code).toBe(0);
     const [first, second] = (await costs()).filter((e) => e.guardrail === "run") as Record<string, unknown>[];
@@ -1762,7 +1870,7 @@ describe("performance: run records and input size", () => {
 });
 
 describe("engine review: the Warden that wrote the lock", () => {
-  const running = (JSON.parse(readFileSync(join(wardenRoot, "package.json"), "utf8")) as { version: string }).version;
+  const running = (JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as { version: string }).version;
 
   const editLock = async (edit: (lock: Record<string, unknown>) => void): Promise<void> => {
     const lock = JSON.parse(await read(".warden/lock.json")) as Record<string, unknown>;
@@ -1818,7 +1926,7 @@ describe("engine review: the Warden that wrote the lock", () => {
     expect(err).toContain("Next action: run warden compile, stage .warden, and commit.");
     expect(await tampered()).toEqual([]);
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
-    expect(Object.keys(JSON.parse(await read(".warden/lock.json")).generated)).toEqual([".warden/generated/eslint.rules.json"]);
+    expect(Object.keys(JSON.parse(await read(".warden/lock.json")).generated)).toEqual([".warden/generated/eslint.rules.json", ".warden/generated/hooks/pre-commit"]);
     expect((await check()).code).toBe(0);
   });
 
@@ -1988,5 +2096,673 @@ describe("engine review: one next action", () => {
       await rm(root, { recursive: true, force: true });
       root = origin;
     }
+  });
+});
+
+describe("signed .warden changes", () => {
+  beforeEach(async () => {
+    await write(".warden/notes.txt", "one\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "notes");
+    git("branch", "-f", "main", "HEAD");
+  });
+
+  it("an unsigned commit that changes .warden is tampering with one next action", async () => {
+    await write(".warden/notes.txt", signers("ryan", "agent"));
+    git("commit", "-q", "-am", "add my key");
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
+    expect(out.match(/Next action:/g)).toHaveLength(1);
+    expect(out).toContain(`Next action: run git --literal-pathspecs restore --source=${git("rev-parse", "main").trim()} --staged --worktree -- '.warden/notes.txt' && git --literal-pathspecs commit --only --allow-empty -m 'Restore .warden files changed without an allowed signature' -- '.warden/notes.txt' to restore the .warden/ files changed without an allowed signature to the merge base, then run warden check again.`);
+    await follow(out);
+    expect((await check()).code).toBe(0);
+    expect(await read(".warden/notes.txt")).toBe("one\n");
+  });
+
+  const commitEnv = async (): Promise<NodeJS.ProcessEnv> => {
+    const bin = join(root, ".git", "warden-bin");
+    await mkdir(bin, { recursive: true });
+    await writeFile(join(bin, "warden"), `#!/bin/sh\nexec '${process.execPath}' --preserve-symlinks --preserve-symlinks-main '${join(wardenRoot, "dist/src/cli/main.js")}' "$@"\n`, { mode: 0o755 });
+    git("config", "core.hooksPath", ".warden/generated/hooks");
+    git("config", "commit.gpgsign", "false");
+    return { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
+  };
+
+  const follow = async (out: string): Promise<void> => {
+    const action = /Next action: run (.*) to restore the \.warden\/ files/s.exec(out)?.[1];
+    expect(action).toBeDefined();
+    const r = spawnSync("sh", ["-c", action as string], { cwd: root, env: await commitEnv(), encoding: "utf8" });
+    expect(`${r.stdout}${r.stderr}`).not.toContain("TAMPERED");
+    expect(r.status, `${r.stdout}${r.stderr}`).toBe(0);
+  };
+
+  const fixes = async (stage = true): Promise<void> => {
+    await follow((await check({}, stage)).out);
+    expect((await check({}, stage)).code).toBe(0);
+  };
+
+  it("a staged revert of a committed unsigned change is told a command that works, which a refusing pre-commit hook does not block", async () => {
+    await write(".warden/notes.txt", "two\n");
+    git("commit", "-q", "-am", "agent change");
+    const sha = git("rev-parse", "HEAD").trim();
+    await write(".warden/notes.txt", "one\n");
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    expect(out.match(/Next action:/g)).toHaveLength(1);
+    expect(out).toContain(`Next action: run git --literal-pathspecs restore --source=${git("rev-parse", "main").trim()} `);
+    expect(out).not.toContain("stash");
+    expect(sha).not.toBe(git("rev-parse", "main").trim());
+    await follow(out);
+    expect((await check()).code).toBe(0);
+  });
+
+  it("an unsigned merge is told a restore that works", async () => {
+    git("checkout", "-q", "-b", "side");
+    await write(".warden/side.txt", "side\n");
+    git("add", "-A");
+    commitSigned("ryan", "side");
+    git("checkout", "-q", "feature");
+    git("merge", "-q", "--no-ff", "--no-commit", "side");
+    await write(".warden/notes.txt", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "merge side");
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    expect(out).toContain("-- '.warden/notes.txt' && ");
+    await follow(out);
+    expect((await check()).code).toBe(0);
+  });
+
+  it("an unsigned commit that loosens a Guardrail is told to restore it first, and that clears every failure", async () => {
+    await write(".warden/packs/local/pack.yaml", localPack().replace("runs: [edit, commit]", "runs: [edit]"));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    git("add", "-A");
+    git("commit", "-q", "-m", "loosen");
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    expect((await tampered()).map((t) => t.detail)).toContain("loosened");
+    expect(out.match(/Next action:/g)).toHaveLength(1);
+    await follow(out);
+    expect((await check()).code).toBe(0);
+  });
+
+  it("several unsigned commits are restored to the merge base in one commit", async () => {
+    await write(".warden/b.txt", "x\n");
+    await write(".warden/notes.txt", "c1\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "c1");
+    await write(".warden/b.txt", "y\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "c2");
+    await write(".warden/notes.txt", "c3\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "c3");
+    const { out } = await check();
+    expect(out).toContain("-- '.warden/b.txt' '.warden/notes.txt' && ");
+    await follow(out);
+    expect((await check()).code).toBe(0);
+    expect(existsSync(join(root, ".warden/b.txt"))).toBe(false);
+    expect(git("rev-list", "--count", "main..HEAD").trim()).toBe("4");
+  });
+
+  const gitlink = async (ignore: boolean): Promise<void> => {
+    const sub = git("commit-tree", git("mktree").trim(), "-m", "sub").trim();
+    git("update-index", "--add", "--cacheinfo", `160000,${sub},.warden/packs/evil`);
+    await write(".gitmodules", `[submodule "evil"]\n\tpath = .warden/packs/evil\n\turl = https://example.invalid/x\n${ignore ? "\tignore = all\n" : ""}`);
+    git("add", ".gitmodules");
+    git("commit", "-q", "-m", "gitlink");
+  };
+
+  it("a submodule ignore = all in .gitmodules cannot hide an unsigned gitlink under .warden", async () => {
+    await gitlink(true);
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/packs/evil", detail: "unsigned" }]);
+    expect(out.match(/Next action:/g)).toHaveLength(1);
+    await follow(out);
+    expect((await check({}, false)).code).toBe(0);
+  });
+
+  it("diff.ignoreSubmodules = all in the repository config cannot hide an unsigned gitlink under .warden", async () => {
+    await gitlink(false);
+    git("config", "diff.ignoreSubmodules", "all");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/packs/evil", detail: "unsigned" }]);
+    expect(out.match(/Next action:/g)).toHaveLength(1);
+    await follow(out);
+    expect((await check({}, false)).code).toBe(0);
+  });
+
+  it("an unsigned orphan first parent is tampering with one next action that works", async () => {
+    git("switch", "-q", "--orphan", "orphan");
+    git("checkout", "main", "--", ".");
+    await write(".warden/notes.txt", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "orphan");
+    git("merge", "-q", "--allow-unrelated-histories", "-s", "ours", "main", "-m", "merge main");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
+    expect(out.match(/Next action:/g)).toHaveLength(1);
+    await follow(out);
+    expect((await check({}, false)).code).toBe(0);
+  });
+
+  it("an untracked file in a path the restore brings back is replaced by the merge-base content", async () => {
+    git("rm", "-q", ".warden/notes.txt");
+    git("commit", "-q", "-m", "delete notes");
+    await write(".warden/notes.txt", "local\n");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    await follow(out);
+    expect((await check({}, false)).code).toBe(0);
+    expect(await read(".warden/notes.txt")).toBe("one\n");
+  });
+
+  it("a restore keeps a later change to the same lines outside .warden and finishes under the pre-commit hook", async () => {
+    await write(".warden/notes.txt", "evil\n");
+    await write("a.ts", "// one\nconst a = 2;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "c1");
+    await write("a.ts", "// one\nconst a = 3;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "c2");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    await follow(out);
+    expect(await read("a.ts")).toBe("// one\nconst a = 3;\n");
+    expect((await check({}, false)).code).toBe(0);
+  });
+
+  it("a merge of a signed main change over an unsigned edit to the same .warden lines is restored to the merge base in one step", async () => {
+    await write(".warden/notes.txt", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "c1 unsigned");
+    git("checkout", "-q", "main");
+    await write(".warden/notes.txt", "b\n");
+    git("add", "-A");
+    commitSigned("ryan", "main signed");
+    git("checkout", "-q", "feature");
+    expect(() => git("merge", "-q", "main", "-m", "merge main")).toThrow();
+    await write(".warden/notes.txt", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "--no-edit");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
+    expect(out.match(/Next action:/g)).toHaveLength(1);
+    expect(out).toContain(`restore --source=${git("rev-parse", "main").trim()} `);
+    await follow(out);
+    expect(await read(".warden/notes.txt")).toBe("b\n");
+    expect((await check({}, false)).code).toBe(0);
+  });
+
+  it("a signed later edit of a line an unsigned commit changed is restored to the merge base in one step", async () => {
+    await write(".warden/notes.txt", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "c1 unsigned");
+    await write(".warden/notes.txt", "evil2\n");
+    git("add", "-A");
+    commitSigned("ryan", "c2 signed");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
+    await follow(out);
+    expect(await read(".warden/notes.txt")).toBe("one\n");
+    expect((await check({}, false)).code).toBe(0);
+  });
+
+  it("a staged change outside .warden stays staged and out of the restore commit", async () => {
+    await write(".warden/notes.txt", "evil\n");
+    git("commit", "-q", "-am", "c1 unsigned");
+    await write("a.ts", "const a = 9;\n");
+    git("add", "a.ts");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    expect(out).not.toContain("stash");
+    await follow(out);
+    expect(git("diff", "--name-only", "HEAD~1", "HEAD").trim()).toBe(".warden/notes.txt");
+    expect(git("diff", "--cached", "--name-only").trim()).toBe("a.ts");
+    expect((await check({}, false)).code).toBe(0);
+  });
+
+  const hookCommit = async (message: string): Promise<string> => {
+    const r = spawnSync("git", ["commit", "-m", message], { cwd: root, env: await commitEnv(), encoding: "utf8" });
+    expect(r.status).not.toBe(0);
+    return `${r.stdout}${r.stderr}`;
+  };
+
+  it("an untracked pack file beside an unsigned change is named first, and the restore after it is accepted by the hook", async () => {
+    await write(".warden/notes.txt", "evil\n");
+    git("commit", "-q", "-am", "c1 unsigned");
+    await write(".warden/packs/local/extra.yaml", "x: 1\n");
+    const first = await check({}, false);
+    expect(first.code).toBe(1);
+    expect(first.out.match(/Next action:/g)).toHaveLength(1);
+    expect(first.out).toContain("Next action: delete .warden/packs/local/extra.yaml.");
+    await rm(join(root, ".warden/packs/local/extra.yaml"));
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    await follow(out);
+    expect((await check({}, false)).code).toBe(0);
+  });
+
+  it("a partial staged restore refused by the hook gets a hook action that restores every unsigned path", async () => {
+    await write(".warden/notes.txt", "evil\n");
+    await write(".warden/b.txt", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "two unsigned");
+    git("restore", "--source=main", "--staged", "--worktree", "--", ".warden/notes.txt");
+    const refused = await hookCommit("partial");
+    expect(refused).toContain("TAMPERED .warden/b.txt  unsigned");
+    expect(refused).toContain("-- '.warden/b.txt' '.warden/notes.txt' to restore");
+    await follow(refused);
+    expect((await check({}, false)).code).toBe(0);
+    expect(existsSync(join(root, ".warden/b.txt"))).toBe(false);
+  });
+
+  it("a staged git rm of an unsigned added file gets a restore that commits the deletion", async () => {
+    await write(".warden/b.txt", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "add b unsigned");
+    git("rm", "-q", ".warden/b.txt");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    await follow(out);
+    expect((await check({}, false)).code).toBe(0);
+    expect(git("stash", "list")).toBe("");
+  });
+
+  it("the hook's action after a staged git rm under .warden works", async () => {
+    await write(".warden/b.txt", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "add b unsigned");
+    await write(".warden/notes.txt", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "notes unsigned");
+    git("rm", "-q", ".warden/b.txt");
+    await follow(await hookCommit("undo b"));
+    expect((await check({}, false)).code).toBe(0);
+  });
+
+  it("a staged deletion outside .warden stays staged while the restore commits", async () => {
+    await write(".warden/notes.txt", "evil\n");
+    git("commit", "-q", "-am", "c1 unsigned");
+    git("rm", "-q", "a.ts");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    await follow(out);
+    expect(git("status", "--short")).toContain("D  a.ts");
+    expect(git("diff", "--name-only", "HEAD~1", "HEAD").trim()).toBe(".warden/notes.txt");
+    expect((await check({}, false)).code).toBe(0);
+  });
+
+  it("an unsigned commit that also raises the baseline gets a restore that includes the baseline", async () => {
+    const before = await read(".warden/baseline.json");
+    await write(".warden/notes.txt", "evil\n");
+    await write(".warden/baseline.json", `${JSON.stringify({ ...JSON.parse(before), "local/no-broken": { "a.ts": 5 } }, null, 2)}\n`);
+    git("add", "-A");
+    git("commit", "-q", "-m", "raise");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    expect(out).toContain("-- '.warden/baseline.json' '.warden/notes.txt' to restore");
+    await follow(out);
+    expect(await read(".warden/baseline.json")).toBe(before);
+    expect((await check({}, false)).code).toBe(0);
+  });
+
+  it("an unsigned change under a case variant of .warden is unsigned where git ignores case", async () => {
+    git("config", "core.ignorecase", "true");
+    const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: root, input: "x: 1\n", encoding: "utf8" }).trim();
+    git("update-index", "--add", "--cacheinfo", `100644,${blob},.WARDEN/packs/local/extra.yaml`);
+    git("commit", "-q", "-m", "case variant");
+    expect((await check({}, false)).code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: ".WARDEN/packs/local/extra.yaml", detail: "unsigned" });
+  });
+
+  it("a case-only rename under .warden gets a restore that converges where git ignores case", async () => {
+    git("config", "core.ignorecase", "true");
+    git("mv", ".warden/notes.txt", ".warden/NOTES.txt");
+    git("commit", "-q", "-m", "case rename");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    await follow(out);
+    expect((await check({}, false)).code).toBe(0);
+    expect(git("ls-tree", "-r", "--name-only", "HEAD", "--", ".warden/notes.txt").trim()).toBe(".warden/notes.txt");
+  });
+
+  it("git rm --cached of an unsigned added file gets a restore whose one commit removes it", async () => {
+    await write(".warden/b.txt", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "add b unsigned");
+    git("rm", "-q", "--cached", ".warden/b.txt");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    await follow(out);
+    expect(git("diff", "--name-only", "HEAD~1", "HEAD").trim()).toBe(".warden/b.txt");
+    expect((await check({}, false)).code).toBe(0);
+  });
+
+  it("the hook still refuses a plain partial commit whose unstaged files would fail a commit-tier guardrail", async () => {
+    git("checkout", "-q", "main");
+    await addLegacy("commit", 'test ! -e broken && test "$(cat x.ts 2>/dev/null)" = "$(cat y.ts 2>/dev/null)"', 5000);
+    await write("x.ts", "export const v = 1;\n");
+    await write("y.ts", "export const v = 1;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "x y");
+    git("checkout", "-q", "-B", "feature");
+    await write("x.ts", "export const v = 2;\n");
+    await write("y.ts", "export const v = 2;\n");
+    git("add", "x.ts");
+    const head = git("rev-parse", "HEAD").trim();
+    const refused = await hookCommit("partial");
+    expect(refused).toContain("UNSTAGED y.ts");
+    expect(git("rev-parse", "HEAD").trim()).toBe(head);
+  });
+
+  it("Warden's pre-commit hook still refuses a staged unsigned .warden change over an unsigned commit", async () => {
+    await write(".warden/notes.txt", "evil\n");
+    git("commit", "-q", "-am", "c1 unsigned");
+    const head = git("rev-parse", "HEAD").trim();
+    await write(".warden/notes.txt", "evil2\n");
+    git("add", "-A");
+    const r = spawnSync("git", ["commit", "-m", "c2"], { cwd: root, env: await commitEnv(), encoding: "utf8" });
+    expect(r.status).not.toBe(0);
+    expect(`${r.stdout}${r.stderr}`).toContain("TAMPERED .warden/notes.txt  unsigned");
+    expect(git("rev-parse", "HEAD").trim()).toBe(head);
+  });
+
+  it("a graft cannot hide an unsigned deletion", async () => {
+    git("rm", "-q", ".warden/notes.txt");
+    git("commit", "-q", "-m", "delete notes");
+    await writeFile(join(root, ".git/info/grafts"), `${git("rev-parse", "HEAD").trim()} ${git("rev-parse", "main~1").trim()}\n`);
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
+    await fixes();
+  });
+
+  it("a graft cannot move the merge base onto an unsigned change", async () => {
+    await write(".warden/notes.txt", "evil\n");
+    git("commit", "-q", "-am", "agent change");
+    const [u, n, before] = ["HEAD", "main", "main~1"].map((r) => git("rev-parse", r).trim()) as [string, string, string];
+    const x = git("commit-tree", `${u}^{tree}`, "-p", before, "-m", "stand-in").trim();
+    await writeFile(join(root, ".git/info/grafts"), `${n} ${before} ${x}\n${u} ${x}\n`);
+    expect(git("merge-base", "main", "HEAD").trim()).toBe(x);
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
+    await fixes();
+  });
+
+  it("a forged commit-graph cannot give an unsigned commit the base tree", async () => {
+    await write(".warden/notes.txt", "evil\n");
+    git("commit", "-q", "-am", "agent change");
+    const [u, tree] = [git("rev-parse", "HEAD").trim(), git("rev-parse", "main^{tree}").trim()];
+    git("commit-graph", "write", "--reachable");
+    const file = join(root, ".git/objects/info/commit-graph");
+    const b = await readFile(file);
+    const chunk = new Map(Array.from({ length: (b[6] as number) + 1 }, (_, i) => [b.subarray(8 + 12 * i, 12 + 12 * i).toString("latin1"), Number(b.readBigUInt64BE(12 + 12 * i))]));
+    const [oidl, cdat] = [chunk.get("OIDL") as number, chunk.get("CDAT") as number];
+    let i = 0;
+    while (b.subarray(oidl + 20 * i, oidl + 20 * i + 20).toString("hex") !== u) i++;
+    Buffer.from(tree, "hex").copy(b, cdat + 36 * i);
+    createHash("sha1").update(b.subarray(0, b.length - 20)).digest().copy(b, b.length - 20);
+    await chmod(file, 0o644);
+    await writeFile(file, b);
+    expect(git("diff", "main", "HEAD", "--", ".warden")).toBe("");
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
+    await fixes();
+  });
+
+
+  it("a replace ref cannot stand a base-tree commit in for an unsigned change", async () => {
+    await write(".warden/notes.txt", "two\n");
+    git("commit", "-q", "-am", "agent change");
+    git("replace", "HEAD", git("commit-tree", "main^{tree}", "-p", "main", "-m", "stand-in").trim());
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
+    await fixes();
+  });
+
+  it("an unsigned merge that changes .warden itself is unsigned", async () => {
+    git("checkout", "-q", "-b", "side");
+    await write(".warden/side.txt", "side\n");
+    git("add", "-A");
+    commitSigned("ryan", "side");
+    git("checkout", "-q", "feature");
+    git("merge", "-q", "--no-ff", "--no-commit", "side");
+    await write(".warden/notes.txt", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "merge side");
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
+    await fixes();
+  });
+
+  it("a signed merge does not vouch for an unsigned commit it brings in", async () => {
+    git("checkout", "-q", "-b", "side");
+    await write(".warden/side.txt", "side\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "side");
+    git("checkout", "-q", "feature");
+    git("-c", "gpg.format=ssh", "-c", "gpg.ssh.program=ssh-keygen", "-c", `user.signingkey=${join(keys, "ryan")}`, "merge", "-q", "--no-ff", "-S", "-m", "merge side", "side");
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/side.txt", detail: "unsigned" }]);
+    await fixes();
+  });
+
+  it("a clean unsigned merge of a signed commit passes", async () => {
+    git("checkout", "-q", "-b", "side");
+    await write(".warden/side.txt", "side\n");
+    git("add", "-A");
+    commitSigned("ryan", "side");
+    git("checkout", "-q", "feature");
+    git("merge", "-q", "--no-ff", "-m", "merge side", "side");
+    expect((await check()).code).toBe(0);
+  });
+
+  it("a signed merge that changes .warden itself passes", async () => {
+    git("checkout", "-q", "-b", "side");
+    await write(".warden/side.txt", "side\n");
+    git("add", "-A");
+    commitSigned("ryan", "side");
+    git("checkout", "-q", "feature");
+    git("merge", "-q", "--no-ff", "--no-commit", "side");
+    await write(".warden/notes.txt", "merged\n");
+    git("add", "-A");
+    commitSigned("ryan", "merge side");
+    expect((await check()).code).toBe(0);
+    expect(await tampered()).toEqual([]);
+  });
+
+  it("a signed rename under .warden passes", async () => {
+    git("mv", ".warden/notes.txt", ".warden/moved.txt");
+    commitSigned("ryan", "rename notes");
+    expect((await check()).code).toBe(0);
+    expect(await tampered()).toEqual([]);
+  });
+
+  it("an unsigned deletion under .warden is unsigned", async () => {
+    git("rm", "-q", ".warden/notes.txt");
+    git("commit", "-q", "-m", "delete notes");
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
+    await fixes();
+  });
+
+  it.each([
+    [".warden/moved.txt", [".warden/moved.txt", ".warden/notes.txt"]],
+    ["notes.txt", [".warden/notes.txt"]],
+  ])("an unsigned rename to %s reports every .warden path it touches", async (to, files) => {
+    git("mv", ".warden/notes.txt", to);
+    git("commit", "-q", "-m", "rename notes");
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual(files.map((file) => ({ file, detail: "unsigned" })));    await fixes();
+  });
+
+  it("a file name that holds the old record separator cannot mark another file signed", async () => {
+    const odd = ".warden/a\x01G\n";
+    await write(odd, "odd\n");
+    await write(".warden/notes.txt", "two\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "odd name");
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([
+      { file: odd, detail: "unsigned" },
+      { file: ".warden/notes.txt", detail: "unsigned" },
+    ]);
+    await fixes();
+  });
+
+  it("a key outside the packaged allowed signers is untrusted, whatever the repository config says", async () => {
+    await write(".warden/notes.txt", signers("ryan", "agent"));
+    await writeFile(join(keys, "agent_signers"), signers("agent"));
+    git("config", "gpg.ssh.allowedSignersFile", join(keys, "agent_signers"));
+    git("add", "-A");
+    commitSigned("agent", "add my key");
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "untrusted-signature" }]);
+    await fixes();
+  });
+
+  it("a .warden change signed by an allowed key passes", async () => {
+    await write(".warden/notes.txt", signers("ryan", "agent"));
+    git("add", "-A");
+    commitSigned("ryan", "add the agent key");
+    expect((await check()).code).toBe(0);
+    expect(await tampered()).toEqual([]);
+  });
+
+  it("reverting an unsigned .warden change clears it once the revert is committed, not before", async () => {
+    await write(".warden/notes.txt", signers("ryan", "agent"));
+    git("commit", "-q", "-am", "add my key");
+    await write(".warden/notes.txt", "one\n");
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
+    git("commit", "-q", "-m", "revert my key");
+    expect((await check()).code).toBe(0);
+  });
+
+  it("an unsigned commit stays unsigned while its file has other uncommitted edits", async () => {
+    await write(".warden/notes.txt", signers("ryan", "agent"));
+    git("commit", "-q", "-am", "add my key");
+    await write(".warden/notes.txt", `${signers("ryan", "agent")} `);
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
+    await fixes();
+  });
+
+  it("a later signed commit does not vouch for an earlier unsigned one", async () => {
+    await write(".warden/notes.txt", signers("ryan", "agent"));
+    git("commit", "-q", "-am", "add my key");
+    await write(".warden/notes.txt", `${signers("ryan", "agent")}\n`);
+    git("add", "-A");
+    commitSigned("ryan", "tidy");
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
+    await fixes();
+  });
+
+  it.each(["openpgp", "x509"])("a %s program in the repository config cannot vouch for a change", async (format) => {
+    const fake = join(keys, `fake-${format}`);
+    const armor = format === "x509" ? "SIGNED MESSAGE" : "PGP SIGNATURE";
+    await writeFile(fake, `#!/bin/sh\nfor a in "$@"; do if [ "$a" = "--verify" ]; then printf "[GNUPG:] NEWSIG\\n[GNUPG:] GOODSIG ABCDEF ryan\\n[GNUPG:] VALIDSIG ABCDEF 2026-01-01 0 4 0 1 8 00 ABCDEF\\n[GNUPG:] TRUST_ULTIMATE 0 pgp\\n"; exit 0; fi; done\ncat >/dev/null\necho "[GNUPG:] SIG_CREATED " >&2\nprintf -- "-----BEGIN ${armor}-----\\nfake\\n-----END ${armor}-----\\n"\n`);
+    await chmod(fake, 0o755);
+    git("config", "gpg.program", fake);
+    git("config", "gpg.x509.program", fake);
+    await write(".warden/notes.txt", signers("ryan", "agent"));
+    git("add", "-A");
+    git("-c", `gpg.format=${format}`, "commit", "-q", "-S", "-m", "add my key");
+    expect(git("log", "-1", "--format=%G?").trim()).toBe("G");
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
+    await fixes();
+  });
+
+  it("an ssh program in the repository config cannot vouch for a key", async () => {
+    const fake = join(keys, "fakessh");
+    await writeFile(fake, '#!/bin/sh\ncat >/dev/null\ncase "$*" in *find-principals*) echo ryan ;; *) echo \'Good "git" signature for ryan with ED25519 key SHA256:x\' ;; esac\n');
+    await chmod(fake, 0o755);
+    await write(".warden/notes.txt", signers("ryan", "agent"));
+    git("add", "-A");
+    commitSigned("agent", "add my key");
+    git("config", "gpg.ssh.program", fake);
+    expect(git("-c", `gpg.ssh.allowedSignersFile=${join(keys, "none")}`, "log", "-1", "--format=%G?").trim()).toBe("G");
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "untrusted-signature" }]);
+    await fixes();
+  });
+
+  it("a replace ref cannot stand a signed commit in for an unsigned one", async () => {
+    await write(".warden/notes.txt", signers("ryan", "agent"));
+    git("commit", "-q", "-am", "add my key");
+    const unsigned = git("rev-parse", "HEAD").trim();
+    git("-c", "gpg.format=ssh", "-c", "gpg.ssh.program=ssh-keygen", "-c", `user.signingkey=${join(keys, "ryan")}`, "commit", "-q", "--amend", "-S", "--no-edit");
+    const signed = git("rev-parse", "HEAD").trim();
+    git("reset", "-q", "--hard", unsigned);
+    git("replace", unsigned, signed);
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
+    await fixes();
+  });
+
+  it("a signed change checked without ssh-keygen on PATH says to install it, not to revert", async () => {
+    await write(".warden/notes.txt", signers("ryan", "agent"));
+    git("add", "-A");
+    commitSigned("ryan", "add the agent key");
+    const bin = await mkdtemp(join(tmpdir(), "warden-bin-"));
+    await symlink(execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim(), join(bin, "git"));
+    vi.stubEnv("PATH", bin);
+    const { code, out, err } = await check().finally(() => rm(bin, { recursive: true, force: true }));
+    expect(code).toBe(2);
+    expect(`${out}${err}`.match(/Next action:/g)).toHaveLength(1);
+    expect(err).toContain("Next action: install OpenSSH so ssh-keygen is on PATH, then run warden check again.");
+  });
+
+  it("an allowed_signers file in the repository cannot vouch for a key", async () => {
+    await write(".warden/allowed_signers", signers("ryan", "agent"));
+    git("add", "-A");
+    commitSigned("ryan", "list the agent key in the repository");
+    git("branch", "-f", "main", "HEAD");
+    await write(".warden/notes.txt", "two\n");
+    git("add", "-A");
+    commitSigned("agent", "change notes");
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "untrusted-signature" }]);
+    await fixes();
+  });
+
+  it.each([["missing", null], ["empty", " \n"]])("a %s packaged allowed-signers list fails every .warden change with one next action", async (_, text) => {
+    if (text === null) await rm(join(wardenRoot, "allowed_signers"));
+    else await writeFile(join(wardenRoot, "allowed_signers"), text);
+    await write(".warden/notes.txt", "two\n");
+    await write(".warden/more.txt", "two\n");
+    git("add", "-A");
+    commitSigned("ryan", "change notes");
+    const { code, out, err } = await check();
+    expect(code).toBe(1);
+    expect((await tampered()).filter((t) => t.detail === "no-allowed-signers")).toEqual([
+      { file: ".warden/more.txt", detail: "no-allowed-signers" },
+      { file: ".warden/notes.txt", detail: "no-allowed-signers" },
+    ]);
+    expect(`${out}${err}`.match(/Next action:/g)).toHaveLength(1);
+    expect(out).toContain("Next action: reinstall Warden from a release that ships its allowed_signers file, then run warden check again.");
+  });
+
+  it("the packaged allowed-signers list is a hashed input of the lock", async () => {
+    expect(readLock(root).sources.allowed_signers).toBe(sha256(signers("ryan")));
+    await writeFile(join(wardenRoot, "allowed_signers"), signers("ryan", "agent"));
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: "allowed_signers", detail: "source-drift" }]);
+  });
+
+  it("a lowered baseline needs no signature", async () => {
+    await write("a.ts", "const a = 1;\n");
+    expect((await check()).code).toBe(0);
+    git("commit", "-q", "-m", "fix a.ts");
+    expect((await check()).code).toBe(0);
+    expect(await tampered()).toEqual([]);
   });
 });

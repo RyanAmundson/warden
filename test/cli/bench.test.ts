@@ -1,10 +1,11 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Adapter } from "../../src/adapters/types.js";
 import { runBench } from "../../src/cli/bench.js";
+import { exampleProjectsRemoved } from "../../src/compiler/examples.js";
 import { BENCH_DEFAULTS } from "../../src/records/types.js";
 import { adapters } from "../../src/runner/run.js";
 
@@ -14,11 +15,16 @@ const version = (JSON.parse(readFileSync(join(wardenRoot, "package.json"), "utf8
 let root: string;
 let home: string;
 let roots: string[];
+let checked: number;
+let spikes: number;
+let fixedRuns: number;
 
 const models: Record<string, (n: number, root: string) => number> = {
   linear: (n) => 2 + n,
   quadratic: (n) => 2 + (n * n) / 10,
   constant: () => 5,
+  spiky: (n) => 2 + n + (n === 200 && (spikes = (spikes + 1) % 3) !== 0 ? (n * n) / 10 : 0),
+  jittery: (n) => (n === 1 ? 12.5 - ((fixedRuns += 1) > 3 ? 10 : 0) : 2 + n / 2),
   flaky: (n, r) => (r === roots[0] ? 2 + (n * n) / 10 : 2 + n),
 };
 
@@ -29,6 +35,12 @@ const fake: Adapter = {
     if (!roots.includes(ctx.root)) roots.push(ctx.root);
     return gs.map((g) => {
       const model = g.implementation.slice("fake:".length);
+      if (model === "copies") {
+        const wrong = files.find((f) => !existsSync(join(ctx.root, f)) || readFileSync(join(ctx.root, f), "utf8") !== "const a = 1;\n");
+        checked = Math.max(checked, new Set(files).size === files.length && wrong === undefined ? files.length : -1);
+        if (wrong !== undefined || checked < 0) return { guardrail: g.id, status: "fail", violations: [{ guardrail: g.id, file: wrong ?? "", line: 1, message: "bad copy" }], ms: 1 };
+        return { guardrail: g.id, status: "pass", violations: [], ms: 2 + files.length };
+      }
       if (model === "fails") return { guardrail: g.id, status: "fail", violations: [{ guardrail: g.id, file: files[0] as string, line: 1, message: "bad" }], ms: 1 };
       return { guardrail: g.id, status: "pass", violations: [], ms: (models[model] as (n: number, root: string) => number)(files.length, ctx.root) };
     });
@@ -53,7 +65,7 @@ const setup = async (packs: Record<string, string[][]>, extra: string[] = [], pa
   }
 };
 
-const bench = async (opts: { rule?: string; pack?: string } = {}): Promise<{ code: number; out: string; err: string }> => {
+const bench = async (opts: { rule?: string; pack?: string; signal?: AbortSignal } = {}): Promise<{ code: number; out: string; err: string }> => {
   let out = "";
   let err = "";
   vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
@@ -82,6 +94,9 @@ beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "warden-bench-"));
   home = await mkdtemp(join(tmpdir(), "warden-home-"));
   roots = [];
+  checked = 0;
+  spikes = 0;
+  fixedRuns = 0;
   vi.stubEnv("WARDEN_HOME", home);
   adapters.set("fake", fake);
 });
@@ -166,6 +181,49 @@ it("a copy that lands outside the Guardrail's paths exits 2 with one next action
   expect(err.match(/Next action:/g)).toHaveLength(1);
   expect(err).toContain("Guardrail tree would not run on src/bench-1/src/a.ts, a copy of its mustPass example, because it is outside src/*.ts.");
   expect(roots).toEqual([]);
+});
+
+it("every copy the bench writes exists with its mustPass content before the Guardrail runs, for single-file and tree examples", async () => {
+  const tree = ["        mustPass:", '          src/a.ts: "const a = 1;\\n"', '          src/deep/b.ts: "const a = 1;\\n"'];
+  await setup({ local: [guardrail("single", "copies"), guardrail("tree", "copies", tree)] }, [], '["src/**/*.ts"]');
+  const { code, out } = await bench();
+  expect(code, out).toBe(0);
+  expect(checked).toBe(400);
+});
+
+it("a size where two of three runs are slowed by noise keeps its fastest run, so the verdict stays linear without a second measurement", async () => {
+  await setup({ local: [guardrail("noisy", "spiky")] });
+  const { code, out } = await bench();
+  expect(code, out).toBe(0);
+  expect(roots).toHaveLength(1);
+  const noisy = (await scaling()).find((e) => e.guardrail === "noisy");
+  expect(noisy).toMatchObject({ verdict: "linear", points: [[25, 27], [50, 52], [100, 102], [200, 202]] });
+  expect(noisy).not.toHaveProperty("previous");
+});
+
+it("a fixed time slowed on its first three runs still starts the doubling at the size its fastest run implies", async () => {
+  await setup({ local: [guardrail("jitter", "jittery")] });
+  const { code, out } = await bench();
+  expect(code, out).toBe(0);
+  expect((await scaling()).find((e) => e.guardrail === "jitter")).toMatchObject({ f: 2.5, points: [[50, 27], [100, 52], [200, 102], [400, 202]] });
+});
+
+it("an aborted bench kills the run in flight, starts no other run, and removes its copies", async () => {
+  const log = join(home, "runs.log");
+  const cmd = ["      - id: sleeper", "        kind: runtime", "        runs: [boundary]", "        budgetMs: 5000", "        version: 1", `        implementation: "cmd:echo $$ $(pwd) >> ${log}; exec sleep 30"`, '        mustFail: "bad\\n"', '        mustPass: "const a = 1;\\n"'];
+  await setup({ local: [cmd] });
+  const controller = new AbortController();
+  const run = bench({ signal: controller.signal });
+  await vi.waitFor(() => expect(existsSync(log)).toBe(true));
+  controller.abort();
+  await expect(run).rejects.toMatchObject({ name: "AbortError" });
+  await new Promise((r) => setTimeout(r, 200));
+  await exampleProjectsRemoved();
+  const lines = readFileSync(log, "utf8").trim().split("\n");
+  expect(lines).toHaveLength(1);
+  const [pid, project] = (lines[0] as string).split(" ");
+  expect(() => process.kill(-Number(pid), 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+  expect(existsSync(project as string)).toBe(false);
 });
 
 it("bench refuses settings in config.yaml that the lock does not hold, and runs once they match", async () => {

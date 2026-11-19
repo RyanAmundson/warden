@@ -2,13 +2,13 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runExamples } from "../src/compiler/examples.js";
 import { eslintAdapter } from "../src/adapters/eslint.js";
+import { fsAdapter, graphAdapter } from "../src/adapters/tree.js";
 import { loadRecords } from "../src/records/load.js";
 import type { Guardrail, RecordSet } from "../src/records/types.js";
-import { applyBaseline, measureBaseline, writeBaseline } from "../src/runner/baseline.js";
+import { applyBaseline, measureBaseline, projectFiles, writeBaseline } from "../src/runner/baseline.js";
 import { runGuardrails } from "../src/runner/run.js";
 
 const wardenRoot = resolve(import.meta.dirname, "..");
@@ -59,10 +59,12 @@ const longFunction = (total: number): string =>
 let root: string;
 let set: RecordSet;
 let guardrails: Guardrail[];
+let written: Set<string>;
 
 const write = async (file: string, content: string): Promise<void> => {
   await mkdir(dirname(join(root, file)), { recursive: true });
   await writeFile(join(root, file), content);
+  if (!file.startsWith(".")) written.add(file);
 };
 
 const check = async (id: string, source: string) => {
@@ -74,6 +76,7 @@ const check = async (id: string, source: string) => {
 };
 
 beforeEach(async () => {
+  written = new Set();
   root = await mkdtemp(join(tmpdir(), "warden-principles-"));
   await write(".warden/config.yaml", config);
   set = await loadRecords(root, wardenRoot);
@@ -85,10 +88,18 @@ afterEach(() => rm(root, { recursive: true, force: true }));
 const block = (name: string, gap = ""): string =>
   `export const ${name} = (n: number): number => {\n${lines(7, (i) => `  const x${i + 1} = ${i === 0 ? "n" : `x${i}`} + ${i + 1};${gap}`)}\n  return x7;\n};\n`;
 
+const emitTree = async (gs: Guardrail[]): Promise<void> => {
+  for (const adapter of [fsAdapter, graphAdapter]) {
+    const own = gs.filter((g) => g.implementation.startsWith(`${adapter.id}:`));
+    for (const [file, content] of Object.entries(adapter.emit(own, set))) await write(file, content);
+  }
+};
+
 const scan = async (id: string, tree: Record<string, string>) => {
   for (const [file, content] of Object.entries(tree)) await write(file, content);
   const g = guardrails.find((x) => x.id === id) as Guardrail;
-  const [result] = await runGuardrails(set, [g], [], { root, generatedDir: join(root, ".warden/generated") });
+  await emitTree([g]);
+  const [result] = await runGuardrails(set, [g], [...written], { root, generatedDir: join(root, ".warden/generated") });
   return result;
 };
 
@@ -127,14 +138,14 @@ describe("principles pack", () => {
 
   it("duplicate blocks: names the later copy and the block it repeats, as one range per copy", async () => {
     expect(await found("principles-duplicate-blocks", { "src/a.ts": block("a"), "src/b.ts": `const pad = 1;\n${block("b")}` })).toEqual([
-      "src/b.ts:3-10: lines 3-10 repeat the block that starts at src/a.ts:2",
+      "src/b.ts:3-10: Lines 3-10 repeat the block that starts at src/a.ts:2.",
     ]);
   });
 
   it("duplicate blocks: one copy longer than 8 lines is one violation, and comments and blank lines are not significant", async () => {
     const long = (name: string): string => `export const ${name} = (n: number): number => {\n${lines(12, (i) => `  const x${i + 1} = ${i === 0 ? "n" : `x${i}`} + ${i + 1};`)}\n  return x12;\n};\n`;
     const spaced = long("b").replace("const x3", "// spacer\n\n  const x3");
-    expect(await found("principles-duplicate-blocks", { "src/a.ts": long("a"), "src/b.ts": spaced })).toEqual(["src/b.ts:2-16: lines 2-16 repeat the block that starts at src/a.ts:2"]);
+    expect(await found("principles-duplicate-blocks", { "src/a.ts": long("a"), "src/b.ts": spaced })).toEqual(["src/b.ts:2-16: Lines 2-16 repeat the block that starts at src/a.ts:2."]);
   });
 
   it("duplicate blocks: a run of identical lines inside one block is not a copy of itself, and test files are not read", async () => {
@@ -146,16 +157,17 @@ describe("principles pack", () => {
       "src/a.ts": "export const a = 1;\nexport const b = 2;\nexport const c = 3;\nexport const own = 4;\nexport default 5;\nconsole.log(own);\n",
       "src/use.ts": 'import { a as alias } from "./a";\nimport * as $all from "./a";\nexport { c } from "./a";\nconsole.log(alias, $all.b);\n',
     };
-    expect(await found("principles-unused-exports", tree)).toEqual(["src/a.ts:4: own is exported, but no other file imports it"]);
+    expect(await found("principles-unused-exports", tree)).toEqual(["src/a.ts:4: own is exported, but no other file imports it."]);
   });
 
   it("single implementation: names the interface and its class, and exempts a port", async () => {
     const shape = "export interface Shape {\n  area(): number;\n}\n";
     const square = 'import type * as port from "./shape";\nexport class Square implements port.Shape {\n  area(): number {\n    return 1;\n  }\n}\n';
     expect(await found("principles-single-implementation", { "src/shape.ts": shape, "src/square.ts": square })).toEqual([
-      "src/shape.ts:1: interface Shape has one implementation, the class at src/square.ts:2",
+      "src/shape.ts:1: Interface Shape has one implementation, the class at src/square.ts:2.",
     ]);
     await rm(join(root, "src"), { recursive: true });
+    written.clear();
     expect((await scan("principles-single-implementation", { "src/[services]/shape/shape.ts": shape, "src/[services]/shape/square.ts": square }))?.status).toBe("pass");
   });
 
@@ -167,7 +179,11 @@ describe("principles pack", () => {
       "src/[services]/x/create.ts": "export const create = 1;\n",
       "src/[services]/y/create.ts": "export const create = 2;\n",
     };
-    expect(await found("principles-duplicate-exports", tree)).toEqual(["src/b.ts:2: step is also exported from src/a.ts:1"]);
+    expect(await found("principles-duplicate-exports", tree)).toEqual(["src/b.ts:2: step is also exported from src/a.ts:1."]);
+  });
+
+  it("unused exports: a file no other file imports is an entry point, and its exports are not checked", async () => {
+    expect((await scan("principles-unused-exports", { "src/main.ts": "export const run = 1;\n", "src/lib.ts": "export const used = 1;\nexport const spare = 2;\n", "src/use.ts": 'import { used } from "./lib";\nconsole.log(used);\n' }))?.violations.map((v) => `${v.file}:${v.line}`)).toEqual(["src/lib.ts:2"]);
   });
 
   it("unused exports: a name behind an export-star barrel is used", async () => {
@@ -202,42 +218,28 @@ describe("principles pack", () => {
     expect((await scan("principles-unused-exports", tree))?.status).toBe("pass");
   });
 
-  it("without git on the PATH a script walks the folder instead of failing", async () => {
-    await write("src/a.ts", "export const step = 1;\n");
-    await write("node_modules/x/a.ts", "export const step = 2;\n");
-    const script = join(wardenRoot, "packs/principles/bin/duplicate-exports.mjs");
-    const run = spawnSync(process.execPath, [script], { cwd: root, encoding: "utf8", env: { PATH: dirname(process.execPath) === "/usr/bin" ? "/nonexistent" : dirname(process.execPath) } });
-    expect([run.status, run.stderr]).toEqual([0, ""]);
-  });
-
-  it("a script given an argument exits 2 with one next action", async () => {
-    const script = join(wardenRoot, "packs/principles/bin/duplicate-blocks.mjs");
-    let out = "";
-    try {
-      execFileSync("node", [script, "extra"], { cwd: root, encoding: "utf8" });
-    } catch (cause) {
-      expect((cause as { status: number }).status).toBe(2);
-      out = (cause as { stdout: string }).stdout;
-    }
-    expect(out.trimEnd().split("\n")).toEqual([`${script} takes no arguments and got extra. Next action: run node "${script}" with no arguments from the project root.`]);
-  });
-
-  it("in a git repository a script reads tracked and untracked files and skips ignored ones, and its violations can be baselined", async () => {
+  it("each finding names one file and line with its own Do this, and the findings can be baselined per file", async () => {
     execFileSync("git", ["init", "-q"], { cwd: root });
     await write(".gitignore", "dist/\n");
     await write("dist/a.ts", "export const step = 1;\n");
     await write("src/a.ts", "export const step = 2;\n");
-    expect((await scan("principles-duplicate-exports", {}))?.status).toBe("pass");
     await write("src/b.ts", "export const step = 3;\n");
+    await write("src/c.ts", "export const step = 4;\n");
     const g = guardrails.find((x) => x.id === "principles-duplicate-exports") as Guardrail;
+    await emitTree([g]);
+    const files = projectFiles(root, set.config.packs.flatMap((p) => p.paths));
+    const results = await runGuardrails(set, [g], files, { root, generatedDir: join(root, ".warden/generated") });
+    expect(results[0]?.violations.map((v) => [v.file, v.line, v.doThis])).toEqual([
+      ["src/b.ts", 1, "Import step from src/a.ts instead of declaring it here, or rename it here if it means something different."],
+      ["src/c.ts", 1, "Import step from src/a.ts instead of declaring it here, or rename it here if it means something different."],
+    ]);
     const { baseline } = await measureBaseline(set, [g]);
-    expect(baseline).toEqual({ "principles-duplicate-exports": { "src/b.ts": 1 } });
+    expect(baseline).toEqual({ "principles-duplicate-exports": { "src/b.ts": 1, "src/c.ts": 1 } });
     expect(() => writeBaseline(root, baseline)).not.toThrow();
-    const results = await runGuardrails(set, [g], [], { root, generatedDir: join(root, ".warden/generated") });
-    expect(applyBaseline(results, baseline, ["src/b.ts"], () => true).failures).toEqual([]);
+    expect(applyBaseline(results, baseline, ["src/b.ts", "src/c.ts"], () => true).failures).toEqual([]);
   });
 
-  it("every cross-file script finishes within its budget on 3000 files", async () => {
+  it("every cross-file check finishes within its budget on 3000 files", async () => {
     const ids = ["principles-duplicate-blocks", "principles-unused-exports", "principles-single-implementation", "principles-duplicate-exports"];
     await Promise.all(
       Array.from({ length: 3000 }, (_, i) =>
@@ -245,7 +247,8 @@ describe("principles pack", () => {
       ),
     );
     const gs = guardrails.filter((g) => ids.includes(g.id));
-    const results = await runGuardrails(set, gs, [], { root, generatedDir: join(root, ".warden/generated") });
-    expect(results.map((r) => [r.guardrail, r.status === "killed" || r.overBudget === true])).toEqual(ids.map((id) => [id, false]));
+    await emitTree(gs);
+    const results = await runGuardrails(set, gs, [...written], { root, generatedDir: join(root, ".warden/generated") });
+    expect(results.map((r) => [r.guardrail, r.status === "killed" || r.overBudget === true]).sort()).toEqual(ids.map((id) => [id, false]).sort());
   });
 });

@@ -101,6 +101,12 @@ describe("doctor", () => {
     expect(result.next).toBe("install othertool so it is on PATH, then run warden doctor");
   });
 
+  it("cuts a long command to 200 characters on its line", async () => {
+    const long = `echo ${"x".repeat(300)}`;
+    const result = await doctor(setWith(long));
+    expect(result.lines.slice(4)).toEqual([`ok    cmd script-0: ${long.slice(0, 200)} …  (shell)`]);
+  });
+
   it("skips leading assignments and treats builtins, keywords, and compound commands as the shell's", async () => {
     await writeFile(join(root, "package.json"), JSON.stringify({ scripts: {} }));
     const result = await doctor(setWith("FOO=1 test ! -e broken", "cd src && true", "( true )", "if true; then true; fi", "FOO=1 BAR=2 npm run lint"));

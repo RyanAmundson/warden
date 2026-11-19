@@ -28,7 +28,8 @@
                         "required": ["id", "paths"],
                         "properties": {
                             "id": { "type": "string", "minLength": 1 },
-                            "paths": { "type": "array", "items": { "type": "string" } }
+                            "paths": { "type": "array", "items": { "type": "string" } },
+                            "settings": { "type": "object" }
                         }
                     }
                 },
@@ -112,7 +113,8 @@
                 "id": { "type": "string", "minLength": 1 },
                 "layer": { "type": "integer", "minimum": 0 },
                 "terms": { "type": "array", "items": { "$ref": "#/$defs/term" } },
-                "practices": { "type": "array", "items": { "$ref": "#/$defs/practice" } }
+                "practices": { "type": "array", "items": { "$ref": "#/$defs/practice" } },
+                "settings": { "type": "object" }
             }
         }
     }

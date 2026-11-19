@@ -1,4 +1,4 @@
-import { withPackDir } from "../adapters/cmd.js";
+import { runIt } from "../adapters/cmd.js";
 import { PARSE_ERROR } from "../adapters/types.js";
 const EXAMPLE_LINES = 15;
 const ownerOf = (set, id) => {
@@ -10,24 +10,39 @@ const ownerOf = (set, id) => {
     return undefined;
 };
 const byLocation = (a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line);
+const shellWords = (words) => words.map((f) => `'${f.replaceAll("'", "'\\''")}'`).join(" ");
 const nextAction = (failures, set, notes) => {
-    if (notes.tampered?.some((t) => t.detail === "base-moved") === true) {
+    if (notes.tampered?.some((t) => t.detail === "no-allowed-signers") === true) {
+        return "reinstall Warden from a release that ships its allowed_signers file, then run warden check again.";
+    }
+    const restore = notes.tampered?.find((t) => t.restore !== undefined)?.restore;
+    const others = (notes.tampered ?? []).filter((t) => t.restore === undefined);
+    if (restore !== undefined && others.every((t) => [t.file, ...(t.sources ?? [])].every((f) => restore.paths.includes(f)))) {
+        const stray = restore.stray.length === 0 ? "" : `rm -rf -- ${shellWords(restore.stray)} && `;
+        const back = restore.known.length === 0 ? "" : `git --literal-pathspecs restore --source=${restore.base} --staged --worktree -- ${shellWords(restore.known)} && `;
+        const commit = restore.aliased ? "git commit --allow-empty -m 'Restore .warden files changed without an allowed signature'" : `git --literal-pathspecs commit --only --allow-empty -m 'Restore .warden files changed without an allowed signature' -- ${shellWords(restore.paths)}`;
+        return `run ${stray}${back}${commit} to restore the .warden/ files changed without an allowed signature to the merge base, then run warden check again.`;
+    }
+    if (others.some((t) => t.detail === "base-moved")) {
         return "revert the base change in .warden/config.yaml and run warden compile.";
     }
-    const weakened = notes.tampered?.find((t) => t.detail === "weakened-kind");
+    const weakened = others.find((t) => t.detail === "weakened-kind");
     if (weakened !== undefined)
         return `restore kind ${weakened.was} on ${weakened.guardrail} and run warden compile.`;
-    if (notes.tampered !== undefined && notes.tampered.length > 0) {
-        const sources = notes.tampered.flatMap((t) => t.sources ?? []);
-        if (sources.length === 0)
-            return `revert your change to ${[...new Set(notes.tampered.map((t) => t.file))].join(", ")}.`;
-        const files = [...new Set([...sources, ...notes.tampered.filter((t) => t.sources === undefined && t.file !== ".warden/lock.json").map((t) => t.file)])];
+    if (others.length > 0) {
+        const sources = others.flatMap((t) => t.sources ?? []);
+        if (sources.length === 0) {
+            const strays = [...new Set(others.filter((t) => t.untracked === true).map((t) => t.file))];
+            const reverts = [...new Set(others.filter((t) => t.untracked !== true).map((t) => t.file))];
+            return [...(strays.length === 0 ? [] : [`delete ${strays.join(", ")}`]), ...(reverts.length === 0 ? [] : [`revert your change to ${reverts.join(", ")}`])].join(", then ") + ".";
+        }
+        const files = [...new Set([...sources, ...others.filter((t) => t.sources === undefined && t.file !== ".warden/lock.json").map((t) => t.file)])];
         return `revert your change to ${files.join(", ")}, then run warden compile.`;
     }
     if ((notes.unstaged ?? []).length > 0) {
         if (notes.base === undefined)
             throw new Error("an unstaged note needs the base to name the next command");
-        return `run git add -- ${notes.unstaged?.map((f) => `'${f.replaceAll("'", "'\\''")}'`).join(" ")}, then run warden check --base ${notes.base}.`;
+        return `run git add -- ${shellWords(notes.unstaged ?? [])}, then run warden check --base ${notes.base}.`;
     }
     const parse = failures.filter((v) => v.guardrail === PARSE_ERROR).sort(byLocation)[0];
     if (parse !== undefined)
@@ -39,7 +54,7 @@ const nextAction = (failures, set, notes) => {
     const legacy = failures.find((v) => v.file === "" && ownerOf(set, v.guardrail)?.guardrail.implementation.startsWith("cmd:") === true);
     if (located.length === 0 && legacy !== undefined) {
         const { guardrail } = ownerOf(set, legacy.guardrail);
-        return `run \`${withPackDir(guardrail.implementation.slice(guardrail.implementation.indexOf(":") + 1), guardrail.packDir)}\` and fix what it reports.`;
+        return runIt(guardrail);
     }
     if (failures.length > 0) {
         return 'change the code at the lines above to match "Do this". Do not edit .warden/ or generated config; that is recorded as tampering.';
@@ -90,7 +105,7 @@ export function formatFeedback(failures, set, format, notes = {}) {
     if (format === "json") {
         return JSON.stringify({ failures: items, tampered, unstaged: notes.unstaged, repeated: notes.repeated, overBudget: notes.overBudget, killed: notes.killed, next });
     }
-    const lines = tampered.map((t) => `TAMPERED ${t.file}  ${t.detail}`);
+    const lines = tampered.map((t) => `TAMPERED ${t.file}  ${t.detail}${t.guardrail === undefined ? "" : ` ${t.guardrail}`}`);
     lines.push(...(notes.unstaged ?? []).map((f) => `UNSTAGED ${f}  the commit tier judges what you stage; this working copy differs from the index`));
     for (const item of items) {
         lines.push(`FAIL ${item.file === "" ? "project" : `${item.file}:${item.line}`}  ${item.practice}`);

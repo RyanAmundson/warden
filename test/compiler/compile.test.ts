@@ -73,14 +73,14 @@ describe("compile", () => {
   it("compile writes only under .warden", async () => {
     const { findings, written } = await compile(root, wardenRoot);
     expect(findings).toEqual([]);
-    expect(written.sort()).toEqual([".warden/generated/eslint.rules.json", ".warden/lock.json"]);
+    expect(written.sort()).toEqual([".warden/generated/eslint.rules.json", ".warden/generated/hooks/pre-commit", ".warden/lock.json"]);
     const rules = JSON.parse(await read(".warden/generated/eslint.rules.json"));
     expect(rules["@generated"]).toMatch(HEADER);
     expect(Object.keys(rules)[0]).toBe("@generated");
     expect(Array.isArray(rules.entries)).toBe(true);
     const lock = readLock(root);
-    expect(Object.keys(lock.generated)).toEqual([".warden/generated/eslint.rules.json"]);
-    expect(Object.keys(lock.sources).sort()).toEqual([".warden/config.yaml", ...(await readdir(join(wardenRoot, "packs/core/fixtures"))).map((f) => `packs/core/fixtures/${f}`).sort(), "packs/core/pack.yaml"]);
+    expect(Object.keys(lock.generated)).toEqual([".warden/generated/eslint.rules.json", ".warden/generated/hooks/pre-commit"]);
+    expect(Object.keys(lock.sources).sort()).toEqual([".warden/config.yaml", "allowed_signers", ...(await readdir(join(wardenRoot, "packs/core/fixtures"))).map((f) => `packs/core/fixtures/${f}`).sort(), "packs/core/pack.yaml"]);
     expect(lock.guardrails["warden-no-comments"]).toEqual({
       kind: "lint",
       budgetMs: 5000,
@@ -144,7 +144,7 @@ describe("compile", () => {
       {
         code: "unknown-adapter",
         record: "local-no-var",
-        message: `Guardrail local-no-var names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...> in ${file}, then run warden compile.`,
+        message: `Guardrail local-no-var names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd, fs, graph. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...>, fs:<...>, graph:<...> in ${file}, then run warden compile.`,
       },
     ]);
     expect(written).toEqual([]);
@@ -355,7 +355,7 @@ describe("compile", () => {
     await expect(expectedOutputs(await loadRecords(root, wardenRoot), root, wardenRoot)).rejects.toMatchObject({
       file,
       pointer: "/guardrails/local-script/implementation",
-      message: `Guardrail local-script names adapter "cmdd", which is not registered; the known adapters are eslint, tsc, cmd. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...> in ${file}, then run warden compile.`,
+      message: `Guardrail local-script names adapter "cmdd", which is not registered; the known adapters are eslint, tsc, cmd, fs, graph. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...>, fs:<...>, graph:<...> in ${file}, then run warden compile.`,
     });
   });
 

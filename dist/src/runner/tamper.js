@@ -1,12 +1,14 @@
-import { existsSync, readdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { expectedOutputs } from "../compiler/compile.js";
 import { LOCK_FORMAT, LOCK_PATH, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError, readText } from "../records/load.js";
 import { kindRank } from "../records/types.js";
 import { BASELINE_PATH, carryRenames, projectWideEntries, readBaseline } from "./baseline.js";
-import { changesSinceMergeBase, containsHead, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
+import { changeSignatures, trackedFiles, changesSinceMergeBase, containsHead, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
 const SETTINGS_FILES = [".claude/settings.json", ".claude/settings.local.json"];
+export const SIGNERS_FILE = "allowed_signers";
 const isObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const tempsIn = (root, dir, recursive) => {
     if (!existsSync(join(root, dir)))
@@ -66,6 +68,24 @@ export function readBaseLock(root, base) {
 }
 const benchLoosened = (was, now) => was !== undefined &&
     (now === undefined || now.linearMax > was.linearMax || now.constantMs > was.constantMs || now.minMarginalMs > was.minMarginalMs || now.maxFiles < was.maxFiles);
+const globWidens = (now, was) => {
+    const [a, b] = [now.split(/(\{[^{}]*\})/), was.split(/(\{[^{}]*\})/)];
+    if (a.length !== b.length)
+        return false;
+    const [kept, dropped] = now.startsWith("!") ? [b, a] : [a, b];
+    return a.every((part, i) => {
+        if (part === b[i])
+            return true;
+        if (i % 2 === 0)
+            return false;
+        const members = new Set(kept[i].slice(1, -1).split(","));
+        return dropped[i].slice(1, -1).split(",").every((m) => members.has(m));
+    });
+};
+export const widens = (now, was) => {
+    const [a, b] = [now.split(" & "), was.split(" & ")];
+    return a.length === b.length && a.every((glob, i) => globWidens(glob, b[i]));
+};
 const loosened = (root, base, lock) => {
     const before = readBaseLock(root, base);
     if (before === undefined)
@@ -85,20 +105,6 @@ const loosened = (root, base, lock) => {
         found.push({ file: LOCK_PATH, detail: "loosened" });
     }
     const covers = (now, was) => was.every((x) => now.includes(x));
-    const widens = (now, was) => {
-        const [a, b] = [now.split(/(\{[^{}]*\})/), was.split(/(\{[^{}]*\})/)];
-        if (a.length !== b.length)
-            return false;
-        return a.every((part, i) => {
-            const old = b[i];
-            if (part === old)
-                return true;
-            if (i % 2 === 0)
-                return false;
-            const members = new Set(part.slice(1, -1).split(","));
-            return old.slice(1, -1).split(",").every((m) => members.has(m));
-        });
-    };
     const pathsCover = (now, was) => was.every((x) => now.some((y) => widens(y, x)));
     for (const [id, g] of Object.entries(before.guardrails)) {
         const now = lock.guardrails[id];
@@ -111,10 +117,13 @@ const loosened = (root, base, lock) => {
             now.budgetMs > g.budgetMs ||
             !covers(now.runs, g.runs) ||
             !pathsCover(now.paths, g.paths) ||
-            (!stronger && (now.implementation !== g.implementation || canonicalJson(now.options) !== canonicalJson(g.options)));
+            (!stronger && (now.implementation !== g.implementation || canonicalJson(now.options) !== canonicalJson(g.options) || canonicalJson(now.settings ?? null) !== canonicalJson(g.settings ?? null)));
         if (weaker)
             found.push({ file: LOCK_PATH, detail: "loosened", guardrail: id });
     }
+    const editedCode = Object.keys(before.sources ?? {}).filter((k) => /^\.warden\/packs\/[^/]+\/./.test(k) && !k.endsWith("/pack.yaml") && before.sources[k] !== lock.sources[k]);
+    if (editedCode.length > 0)
+        found.push({ file: LOCK_PATH, detail: "loosened" });
     const { renames } = changesSinceMergeBase(root, base);
     const baseBaseline = carryRenames(JSON.parse(showAtMergeBase(root, base, BASELINE_PATH) ?? "{}"), renames);
     for (const [id, entries] of Object.entries(carryRenames(readBaseline(root), renames))) {
@@ -130,7 +139,19 @@ const loosened = (root, base, lock) => {
     const sources = Object.keys({ ...before.sources, ...lock.sources }).filter((k) => k.startsWith(".warden/") && before.sources?.[k] !== lock.sources[k]);
     return sources.length === 0 ? found : found.map((t) => (t.file === LOCK_PATH && t.detail === "loosened" ? { ...t, sources } : t));
 };
-export async function findTampering(set, wardenRoot, base) {
+const unsignedChanges = (root, base, wardenRoot, staged) => {
+    const signers = join(wardenRoot, SIGNERS_FILE);
+    const listed = existsSync(signers) && readFileSync(signers, "utf8").trim() !== "";
+    const { files, restore } = changeSignatures(root, base, ".warden", signers, staged, [BASELINE_PATH]);
+    const failed = [...files].filter(([file]) => file !== BASELINE_PATH);
+    if (!listed)
+        return failed.map(([file]) => ({ file, detail: "no-allowed-signers" }));
+    if (failed.some(([, status]) => status !== "N") && spawnSync("ssh-keygen", ["-?"]).error !== undefined) {
+        throw new RecordError("", "", "ssh-keygen is not on PATH, so signatures on .warden changes cannot be checked. Next action: install OpenSSH so ssh-keygen is on PATH, then run warden check again.");
+    }
+    return failed.map(([file, status]) => ({ file, detail: status === "N" ? "unsigned" : "untrusted-signature", restore }));
+};
+export async function findTampering(set, wardenRoot, base, staged) {
     const root = set.root;
     const lock = existsSync(join(root, LOCK_PATH)) ? readLock(root) : undefined;
     const found = leftoverTemps(root, lock).map((file) => ({ file, detail: "leftover-temp" }));
@@ -144,7 +165,8 @@ export async function findTampering(set, wardenRoot, base) {
     const expected = await expectedOutputs(set, root, wardenRoot);
     const sources = [...new Set([...Object.keys(lock.sources), ...Object.keys(expected.lock.sources)])].sort();
     const sourceDrift = sources.filter((file) => lock.sources[file] !== expected.lock.sources[file]);
-    found.push(...sourceDrift.map((file) => ({ file, detail: "source-drift" })));
+    const tracked = trackedFiles(root, sourceDrift.filter((file) => file.startsWith(".warden/") && existsSync(join(root, file))));
+    found.push(...sourceDrift.map((file) => ({ file, detail: "source-drift", ...(file.startsWith(".warden/") && existsSync(join(root, file)) && !tracked.has(file) ? { untracked: true } : {}) })));
     if (sourceDrift.length === 0 && canonicalJson({ ...lock, tools: null }) !== canonicalJson({ ...expected.lock, tools: null })) {
         found.push({ file: LOCK_PATH, detail: "lock-drift" });
     }
@@ -154,5 +176,5 @@ export async function findTampering(set, wardenRoot, base) {
             found.push({ file, detail: "generated-drift" });
     }
     found.push(...projectWideEntries(readBaseline(root)).map((guardrail) => ({ file: BASELINE_PATH, detail: "loosened", guardrail })));
-    return [...found, ...loosened(root, base, lock)];
+    return [...found, ...loosened(root, base, lock), ...unsignedChanges(root, base, wardenRoot, staged)];
 }

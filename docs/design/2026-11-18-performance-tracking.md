@@ -174,6 +174,20 @@ so the cache never answers. It also runs unbudgeted (`ctx.unbudgeted`), so a
 slow size is measured instead of killed. Runs go one at a time, which follows
 the shared-compute rule and keeps them from competing for the CPU.
 
+**Removal.** A measurement returns before its temporary project is removed.
+The project is removed in the background, and every `warden` command waits for
+those removals before it exits. When removals fail, the command exits 2 with
+one message that names every folder it could not remove and one next action:
+delete those folders, then run the command again. A command that already
+failed reports its own error first, then the removal error.
+
+**Test timeout (Ryan, 2026-11-18).** Only the `scaling` vitest project raises
+the test timeout, to 10 s; every other test keeps the 5 s default. The limit
+covers the bench's worst case, two from-scratch measurements of one
+Guardrail. At load 8 to 10, the slowest observed scaling test that measured
+once took 4.4 s, so two measurements take up to about 8.9 s; 10 s leaves
+about 1 s above that.
+
 **Lint Guardrails are fitted on their own rule time (my call),** taken from
 ESLint's `stats`, not on the whole pass. The verdict is about the rule alone.
 The shared pass is benchmarked as its own row, `eslint-pass`. A superlinear
@@ -192,8 +206,8 @@ results are kept in the `scaling` Evidence, so a Guardrail that flips often
 shows up in review. A real defect repeats; a burst of machine noise usually
 doesn't.
 
-**Measurement.** Each size runs 3 times, and the benchmark keeps the median.
-It measures fixed cost `f` once, with a single file. The exponent `k` is the
+**Measurement.** Each size runs 3 times, and the benchmark keeps the fastest
+run. It measures fixed cost `f` with a single file, as the fastest of 9 runs. The exponent `k` is the
 least-squares slope of `log(ms − f)` against `log(files)` over the four sizes.
 Subtracting `f` stops startup time, such as ESLint or `tsc` launching, from
 making a linear Guardrail look sublinear.
@@ -269,6 +283,9 @@ wired into a check tier.
   fail.
 - `bench` exits 2 when a copied `mustPass` example fails its Guardrail.
 - The Warden self-test runs `bench` on every shipped pack and passes.
+- A change to a pack's `pack.yaml` runs `npx vitest run test/<pack>-pack`,
+  because vitest's import graph cannot see YAML and `vitest related` selects
+  no test for it.
 
 ## Decided by Ryan
 
