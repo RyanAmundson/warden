@@ -582,27 +582,47 @@ it("a violation in a file outside the sparse set names the sparse-checkout step 
   expect(warden(root, {}, "check", "--base", "main").code).toBe(0);
 });
 
-it.each([false, true])("the printed sparse-checkout step brings a bracketed folder onto disk (cone %s)", async (cone) => {
-  await mkdir(join(root, "docs/[id]"), { recursive: true });
-  await writeFile(join(root, "docs/[id]/k.ts"), "export const k = 1;\n");
+const between = (text: string, start: string, end: string): string => {
+  const from = text.indexOf(start);
+  expect(from).toBeGreaterThanOrEqual(0);
+  return text.slice(from + start.length, text.indexOf(end, from + start.length));
+};
+
+const follow = (step: string): void => {
+  execFileSync("sh", ["-c", step.replaceAll(", then ", " && ")], { cwd: root, stdio: "ignore" });
+};
+
+it.each([
+  { dir: "docs/[id]", cone: false, step: "git sparse-checkout add -- 'docs/\\[id\\]'" },
+  { dir: "docs/[id]", cone: true, step: "git sparse-checkout add --skip-checks -- 'docs/[id]'" },
+  { dir: "!x", cone: false, step: "git sparse-checkout add -- '\\!x'" },
+  { dir: "#x", cone: false, step: "git sparse-checkout add -- '\\#x'" },
+  { dir: "x ", cone: false, step: "git sparse-checkout add -- 'x\\ '" },
+  { dir: "x ", cone: true, step: "git update-index --no-skip-worktree -- 'x /k.ts', then git checkout -- 'x /k.ts'" },
+])("the printed steps bring $dir onto disk and stage it (cone $cone)", async ({ dir, cone, step }) => {
+  const file = `${dir}/k.ts`;
+  await mkdir(join(root, dir), { recursive: true });
+  await writeFile(join(root, file), "export const k = 1;\n");
   git(root, "add", "-A");
   commitUnhooked("k");
   git(root, "switch", "-q", "-c", "feat");
-  await writeFile(join(root, "docs/[id]/k.ts"), "// bad\nexport const k = 1;\n");
+  await writeFile(join(root, file), "// bad\nexport const k = 1;\n");
   git(root, "add", "-A");
   commitUnhooked("bad");
-  sparseOut(cone);
-  expect(existsSync(join(root, "docs/[id]/k.ts"))).toBe(false);
+  if (cone) git(root, "sparse-checkout", "set", "--cone", "src", ".warden");
+  else git(root, "sparse-checkout", "set", "--no-cone", "/src/", "/.warden/");
+  expect(existsSync(join(root, file))).toBe(false);
   await writeFile(join(root, "src/a.ts"), "export const a = 2;\n");
   git(root, "add", "src/a.ts");
   const r = warden(root, {}, "check", "--base", "main");
   expect(r.code).toBe(1);
-  const step = /Next action: run (git sparse-checkout add .*) to bring docs\/\[id\]\/k\.ts onto disk/.exec(r.out)?.[1];
-  expect(step).toBe(cone ? "git sparse-checkout add --skip-checks -- 'docs/[id]'" : "git sparse-checkout add -- 'docs/\\[id\\]'");
-  execFileSync("sh", ["-c", step as string], { cwd: root, stdio: "ignore" });
-  expect(readFileSync(join(root, "docs/[id]/k.ts"), "utf8")).toContain("// bad");
-  await writeFile(join(root, "docs/[id]/k.ts"), "export const k = 1;\n");
-  git(root, "add", "docs/[id]/k.ts");
+  expect(between(r.out, "Next action: run ", ` to bring ${file} onto disk`)).toBe(step);
+  follow(step);
+  expect(readFileSync(join(root, file), "utf8")).toContain("// bad");
+  await writeFile(join(root, file), "export const k = 1;\n");
+  const unstaged = warden(root, {}, "check", "--base", "main");
+  expect(unstaged.code).toBe(1);
+  follow(between(unstaged.out, "Next action: run ", ", then run warden check"));
   expect(warden(root, {}, "check", "--base", "main").code).toBe(0);
 });
 

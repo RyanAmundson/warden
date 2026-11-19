@@ -361,12 +361,12 @@ const check = async (opts, live) => {
     if (tier === "commit") {
         const differing = scanned.filter((f) => unstaged.has(f));
         if (differing.length > 0) {
-            const notes = { unstaged: differing, base };
+            const notes = { unstaged: differing, base, sparse: sparseMode(root) };
             return finish(project, "unstaged", scanned, report([], set, opts, notes), { set, notes });
         }
         const mismatch = stagedMismatch(root, base);
         if (mismatch.paths.length > 0) {
-            const notes = { unstaged: mismatch.paths, hidden: mismatch.hidden, base };
+            const notes = { unstaged: mismatch.paths, hidden: mismatch.hidden, base, sparse: sparseMode(root) };
             return finish(project, "unstaged", scanned, report([], set, opts, notes), { set, notes });
         }
         if (opts.paths === undefined)
@@ -468,7 +468,7 @@ const check = async (opts, live) => {
         if (n >= loopBreakerRepeats && (repeated === undefined || n > repeated.n))
             repeated = { guardrail, file, n };
     }
-    const notes = { repeated, overBudget, killed, ...(blobPaths.length === 0 ? {} : { outside: { files: blobPaths, sparse: sparseMode(root) } }) };
+    const notes = { repeated, overBudget, killed, ...(blobPaths.length === 0 ? {} : { outside: blobPaths, sparse: sparseMode(root) }) };
     closeStep(live, failedOf(failures, notes) ? "fail" : "done");
     const scope = opts.paths === undefined && opts.rule === undefined ? "full" : "partial";
     const tree = tier === "commit" && scope === "full" && !failedOf(failures, notes) ? indexTree(root) : undefined;
