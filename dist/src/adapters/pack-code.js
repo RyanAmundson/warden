@@ -7,7 +7,7 @@ import { RecordError } from "../records/load.js";
 export const targetOf = (g) => g.implementation.slice(g.implementation.indexOf(":") + 1);
 const confined = new Set();
 const BUILTINS = new Set(builtinModules);
-const UNSAFE_BUILTINS = new Set(["vm", "child_process", "module", "worker_threads"]);
+const DATA_BUILTINS = new Set(["path", "url", "util"]);
 const DYNAMIC = new Set(["eval", "Function", "createRequire", "getBuiltinModule", "constructor", "binding", "_linkedBinding", "dlopen", "mainModule"]);
 const RELATIVE = /^\.\.?(\/|$)/;
 async function refuseEscapes(packDir, entry, packFile, pointer) {
@@ -28,8 +28,8 @@ async function refuseEscapes(packDir, entry, packFile, pointer) {
     const follow = (file, spec, how) => {
         const name = spec.replace(/^node:/, "").split("/")[0];
         if (spec.startsWith("node:") || BUILTINS.has(spec)) {
-            if (UNSAFE_BUILTINS.has(name))
-                refuse(`${file} imports ${spec}, which can run code the lock does not hash`, `remove ${spec} from ${file}`);
+            if (!DATA_BUILTINS.has(name))
+                refuse(`${file} imports ${spec}, which is not one of the data-only built-ins pack code may use (${[...DATA_BUILTINS].map((b) => `node:${b}`).join(", ")}), so it could run code the lock does not hash`, `remove ${spec} from ${file}`);
             if (!spec.startsWith("node:"))
                 refuse(`${file} imports the built-in ${spec} without the node: prefix`, `import it as node:${spec} in ${file}`);
             return;
@@ -78,6 +78,9 @@ async function refuseEscapes(packDir, entry, packFile, pointer) {
                 if (spec === undefined)
                     refuse(`${file} calls ${how}() with a computed path, which Warden cannot follow`, `pass ${how}() a fixed relative path inside ${packDir}`);
                 follow(file, spec, how);
+            }
+            else if (ts.isElementAccessExpression(node) && DYNAMIC.has(literal(node.argumentExpression) ?? "")) {
+                refuse(`${file} uses ${literal(node.argumentExpression)}, which can run code the lock does not hash`, `remove ${literal(node.argumentExpression)} from ${file}`);
             }
             else if (ts.isIdentifier(node)) {
                 const named = (ts.isPropertyAccessExpression(parent) || ts.isPropertyAssignment(parent)) && parent.name === node;

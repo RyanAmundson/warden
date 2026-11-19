@@ -481,14 +481,17 @@ it loads is hashed, or Warden refuses to load it with one next action.
   files, and a `package.json` `main` resolve as Node would. It scans every
   resolved file in turn. Each one must stay inside the pack folder and be
   JavaScript or JSON, so a native `.node` addon is refused.
-- The only bare specifiers allowed are `node:` built-ins. Warden refuses
-  `node:vm`, `node:child_process`, `node:module`, and `node:worker_threads`,
-  because each can run code the lock does not hash.
+- The only bare specifiers allowed are the data-only built-ins `node:path`,
+  `node:url`, and `node:util`. Warden refuses every other built-in, including
+  any that Node adds later, because a built-in such as `node:vm`,
+  `node:inspector`, `node:cluster`, or `node:fs` can run or write code the
+  lock does not hash. A tree check reads files through its `read` input.
 - Warden refuses dynamic loading: `import()` or `require()` of a computed
   path, `require` used other than as a call, `module` used other than as
   `module.exports`, and any use of `eval`, `Function`, `createRequire`,
   `getBuiltinModule`, `constructor`, `process.binding`, `process.dlopen`,
-  or `process.mainModule`.
+  or `process.mainModule`, whether named directly or through a string-literal
+  index such as `process["getBuiltinModule"]`.
 
 These checks are static, and static analysis cannot fully confine
 JavaScript. They stop accidental escapes and the common deliberate ones,
@@ -496,8 +499,8 @@ not every deliberate one. Known limits:
 
 - A computed property name, such as `globalThis["ev" + "al"]` or
   `f["constr" + "uctor"]`, is not detected.
-- Code may read files with `node:fs` and act on their contents as data.
-  Only the code paths named above run such contents as code.
+- `node:util` and `node:url` are judged data-only. A future Node release
+  could add a loader to either, and the allow list would have to change.
 - Which module format runs a `.js` file depends on the nearest
   `package.json`, which may sit outside the pack folder and outside the lock.
 

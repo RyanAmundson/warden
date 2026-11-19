@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
-import { PACK_VAR } from "../adapters/cmd.js";
+import { PACK_VAR, brief } from "../adapters/cmd.js";
 import { COMMIT_HOOK } from "../compiler/emit.js";
 import { TOOLS, firstLine } from "../compiler/lock.js";
 const wardenRequire = createRequire(import.meta.url);
@@ -25,7 +25,7 @@ const SHELL_WORDS = new Set([
     "!", "{", "}", "[[", ".", ":", "[", "alias", "bg", "break", "case", "cd", "command", "continue", "declare", "do", "done", "echo", "elif", "else", "esac", "eval", "exec", "exit", "export", "false", "fg", "fi", "for", "function", "getopts", "hash", "if", "jobs", "kill", "let", "local", "printf", "pwd", "read", "readonly", "return", "select", "set", "shift", "source", "test", "then", "time", "times", "trap", "true", "type", "typeset", "ulimit", "umask", "unalias", "unset", "until", "wait", "while",
 ]);
 const commandItem = (id, command, root, scripts, packDir) => {
-    const name = `cmd ${id}: ${command}`;
+    const name = `cmd ${id}: ${brief(command)}`;
     const raw = command.trim().split(/\s+/);
     const words = raw.map((w) => {
         const expanded = packDir === undefined ? w : w.replace(PACK_VAR, () => packDir);

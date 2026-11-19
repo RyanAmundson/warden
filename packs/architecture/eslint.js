@@ -205,16 +205,16 @@ const storeWritesOnlyInSinks = {
 const groupBoundaries = {
   meta: meta({ port: "{{target}} is inside group {{group}}. Import the group through its port, {{port}}." }),
   create(context) {
-    const file = fileOf(context);
     const settings = settingsOf(context);
-    const own = groupOf(file, settings);
-    const root = isCompositionRoot(file, settings);
+    let file;
     return references((node, specifier) => {
+      if (!specifier.startsWith(".")) return;
+      file ??= fileOf(context);
       const target = resolveFrom(file, specifier);
-      const group = target === undefined ? undefined : groupOf(`${target}/`, settings);
-      if (group === undefined || own?.dir === group.dir || sameModule(target, group.port)) return;
+      const group = groupOf(`${target}/`, settings);
+      if (group === undefined || groupOf(file, settings)?.dir === group.dir || sameModule(target, group.port)) return;
       const factory = stem(target).slice(group.dir.length + 1);
-      if (root && (factory === "create" || /^adapters\/[^/]+\/create$/.test(factory))) return;
+      if ((factory === "create" || /^adapters\/[^/]+\/create$/.test(factory)) && isCompositionRoot(file, settings)) return;
       context.report({ node, messageId: "port", data: { target, group: group.name, port: group.port } });
     });
   },

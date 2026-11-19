@@ -3,8 +3,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { bundledScript, cmdAdapter, runInProcess } from "../../src/adapters/cmd.js";
-import { findWardenRoot, readPack } from "../../src/records/load.js";
+import { bundledScript, cmdAdapter, runInProcess, runIt } from "../../src/adapters/cmd.js";
+import { findWardenRoot } from "../../src/records/load.js";
 import { runGuardrails } from "../../src/runner/run.js";
 import type { Guardrail, RecordSet } from "../../src/records/types.js";
 import { conformance } from "./conformance.js";
@@ -120,8 +120,6 @@ describe("cmd adapter", () => {
   });
 
   it("runs in a worker only a script in a pack Warden ships, named through WARDEN_PACK_DIR with plain arguments", async () => {
-    const { pack } = await readPack(process.cwd(), findWardenRoot(), "collection-folders", "config.yaml");
-    for (const g of pack.practices.flatMap((p) => p.guardrails)) expect(bundledScript(g.implementation.slice("cmd:".length), g.packDir)?.[0]).toMatch(/\.cjs$/);
     const shipped = join(findWardenRoot(), "packs", "collection-folders");
     expect(bundledScript('node "$WARDEN_PACK_DIR/a.cjs" x --y=1', shipped)).toEqual([join(shipped, "a.cjs"), "x", "--y=1"]);
     expect(bundledScript('node "$WARDEN_PACK_DIR/a.cjs"', "/project/.warden/packs/local")).toBeUndefined();
@@ -140,6 +138,12 @@ describe("cmd adapter", () => {
     } finally {
       await rm(pack, { recursive: true, force: true });
     }
+  });
+
+  it("names a short command in its next action, and points a cut-off command at its pack.yaml", () => {
+    expect(runIt(legacy("cmd:npm test"))).toBe("run `npm test` and fix what it reports.");
+    const long = { ...legacy(`cmd:echo ${"x".repeat(300)}`), packDir: "/p/.warden/packs/local" };
+    expect(runIt(long)).toBe("run the implementation command of Guardrail g in /p/.warden/packs/local/pack.yaml, from the project root with WARDEN_PACK_DIR=/p/.warden/packs/local, and fix what it reports.");
   });
 
   it("a command that exits 2 is an environment or usage error that keeps its last line's next action, or names one", async () => {

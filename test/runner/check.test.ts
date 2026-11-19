@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ESLint } from "eslint";
-import { COMMAND_CHARS } from "../../src/adapters/cmd.js";
+import { COMMAND_CHARS, runIt } from "../../src/adapters/cmd.js";
 import { eslintAdapter } from "../../src/adapters/eslint.js";
 import { PARSE_ERROR, type RunResult } from "../../src/adapters/types.js";
 import { runCheck } from "../../src/cli/check.js";
@@ -910,7 +910,7 @@ describe("a cmd Guardrail that runs a script in its pack", () => {
     expect(code).toBe(1);
     expect(out).toContain(`  Output:   ${`sh "${script}"`.slice(0, COMMAND_CHARS)}`);
     expect(out).toContain(` exited with 1\n            broken thing`);
-    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([`Next action: run \`sh "${script}"\` and fix what it reports.`]);
+    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([`Next action: ${runIt({ id: "legacy-script", kind: "legacy", runs: ["commit"], budgetMs: 5000, version: 1, implementation: 'cmd:sh "$WARDEN_PACK_DIR/check.sh"', packDir: join(root, ".warden/packs/legacy") })}`]);
     await write(".warden/packs/legacy/check.sh", "true\n");
     expect((await check()).code).toBe(1);
     expect(await tampered()).toContainEqual({ file: ".warden/packs/legacy/check.sh", detail: "source-drift" });
