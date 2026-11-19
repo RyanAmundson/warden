@@ -202,6 +202,14 @@ it("a step-only run stays live until its rules' kill timeout, past the tier budg
   expect(lines.at(-1)).toBe(" Running warden check…");
 });
 
+it("a run whose ratchet came from an uncommitted baseline says so beside the counts", () => {
+  const uncommitted: Evidence = { ...blockRun, ratchetFrom: "uncommitted" };
+  const lines = render(model([...steps("r2", "14:02:11", "fail"), uncommitted]), { cols: 160, rows: 30 }, 0);
+  expect(lines).toContainEqual(expect.stringMatching(/44,174 → 44,174 uncommitted$/));
+  const committed = render(model([...steps("r2", "14:02:11", "fail"), { ...blockRun, ratchetFrom: "head" }]), { cols: 160, rows: 30 }, 0);
+  expect(committed).toContainEqual(expect.stringMatching(/44,174 → 44,174$/));
+});
+
 it("a wide terminal still shows control characters as visible escapes on every line", () => {
   const file = "q\x1b]0;PWNED\x07\r\x1b[2K.ts";
   const hostile: Evidence = { ...blockRun, file, failures: [{ file, line: 2, guardrail: "warden-no-comments", practice: "no-comments" }] };

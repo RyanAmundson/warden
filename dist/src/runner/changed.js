@@ -53,6 +53,7 @@ export const headCommit = (root) => {
     const r = git(root, ["rev-parse", "--verify", "--quiet", "HEAD"]);
     return r.ok ? r.out.trim() : undefined;
 };
+export const matchesHead = (root, path) => must(root, ["status", "--porcelain", "-z", "--ignored", "--", path]) === "";
 export const containsHead = (root, ref) => git(root, ["merge-base", "--is-ancestor", "HEAD", ref]).ok;
 export function historyOf(root, path) {
     const commits = names(must(root, ["log", "-z", "--full-history", "--format=%H", "HEAD", "--", path]));

@@ -10,5 +10,18 @@ export function stamp(path, content, version, sourceHash) {
     }
     if (/\.(js|mjs|ts)$/.test(path))
         return `// ${header}\n${content}`;
+    if (content.startsWith("#!"))
+        return content.replace("\n", `\n# ${header}\n`);
     throw new Error(`cannot place a generated header in ${path}`);
 }
+export const COMMIT_HOOK = ".warden/generated/hooks/pre-commit";
+const quoted = (word) => `'${word.replaceAll("'", "'\\''")}'`;
+export const commitHook = (version, base) => [
+    "#!/bin/sh",
+    "if ! command -v warden >/dev/null 2>&1; then",
+    `  echo "Warden's commit check needs the global warden command, and it is not on PATH. Next action: run npm install -g git+https://github.com/RyanAmundson/warden.git#v${version}, then commit again." >&2`,
+    "  exit 2",
+    "fi",
+    `exec warden check --base ${quoted(base)} --trigger git-commit`,
+    "",
+].join("\n");
