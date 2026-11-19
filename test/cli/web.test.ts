@@ -119,7 +119,7 @@ describe("pages render from API responses", () => {
     expect(html).toContain("67%");
     expect(html).toContain("No run has reached rules yet");
     expect(html).toContain("Stops before any rule ran");
-    expect(html).toMatch(/context-manager<\/td><td class="r">0<\/td><td class="r">2<\/td>/);
+    expect(html).toMatch(/context-manager<\/td><td class="r">0<\/td><td class="r">0<\/td><td class="r">2<\/td>/);
   });
 
   it("renders the tamper state with exactly one next action", () => {
@@ -129,6 +129,27 @@ describe("pages render from API responses", () => {
     expect(nextActions(html)).toEqual([detection.next]);
     expect(html).toContain("Open now · 1 detection");
     expect(html).toContain("Not open now");
+  });
+
+  it("renders the refused outcome with its next action", () => {
+    const refused = run({ run: "r-ref", at: at(45), tier: "commit", trigger: "git-commit", outcome: "refused", result: undefined, exit: 1, steps: { "rules-intact": 2 }, next: "start the daemon: warden daemon install", ratchet: undefined, rules: undefined });
+    const html = renderApp(state("run", { runs: { project: "context-manager", runs: [refused, ...cmRuns] } }, { view: { run: "r-ref", fresh: new Set() } }));
+    expect(html).toContain("Refused at rules intact");
+    expect(nextActions(html)).toEqual(["start the daemon: warden daemon install"]);
+    const stops = renderApp(state("determinism", { determinism, runs: { "context-manager": [refused, ...cmRuns], warden: [] } }));
+    expect(stops).toMatch(/context-manager<\/td><td class="r">0<\/td><td class="r">1<\/td><td class="r">2<\/td>/);
+  });
+
+  it("renders gate-off and unchecked-commit detections with their API next action and no lock art", () => {
+    const open = [
+      { project: "warden", root: "/p/w", file: "run r-9", detail: "gate-off", next: "run warden check at the commit tier without WARDEN_DAEMON=off" },
+      { project: "warden", root: "/p/w", file: "3f2a9c1", detail: "unchecked-commit", next: "run warden check --base main and fix what it reports" },
+    ];
+    const html = renderApp(state("tamper", { tamper: { open, recent: [] } }));
+    expect(nextActions(html)).toEqual([open[0]?.next]);
+    expect(html).toContain("skipped the daemon gate");
+    expect(html).toContain("without a passing commit check");
+    expect(html).not.toContain("The key no longer fits");
   });
 
   it("renders the tamper page clear when nothing is open", () => {
@@ -214,6 +235,20 @@ describe("the daemon serves the web UI", () => {
     expect(res.status).toBe(200);
     expect(res.type).toBe(type);
     expect(res.body).toContain(text);
+  });
+
+  it("refuses a page for a foreign Host", async () => {
+    const res = await new Promise<{ status: number; body: string }>((done, fail) => {
+      request({ host: "127.0.0.1", port: served.port, path: "/runs", headers: { host: "evil.example" } }, (r) => {
+        let body = "";
+        r.on("data", (c: Buffer) => (body += c.toString("utf8")));
+        r.on("end", () => done({ status: r.statusCode ?? 0, body }));
+      })
+        .on("error", fail)
+        .end();
+    });
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body).next).toBe(`open http://127.0.0.1:${served.port}/ directly`);
   });
 
   it("still answers an unknown path with a JSON 404", async () => {

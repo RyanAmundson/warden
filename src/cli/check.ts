@@ -9,7 +9,7 @@ import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import type { Guardrail, Kind, RecordSet, Tier } from "../records/types.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
+import { indexTree, checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
 import { heartbeatProblem } from "../runner/daemon.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { type Evidence, LOOP_TAIL_BYTES, type Outcome, RUN_TOTAL, type RunFailure, type Step, type Trigger, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
@@ -192,6 +192,11 @@ const nextOf = (message: string): string | undefined => {
   return at === -1 ? undefined : message.slice(at + "Next action: ".length).replace(/\.$/, "");
 };
 
+const treeOf = (root: string): { tree?: string } => {
+  const tree = indexTree(root);
+  return tree === undefined ? {} : { tree };
+};
+
 const baselineTotal = (b: Record<string, Record<string, number>>): number => Object.values(b).reduce((n, e) => n + Object.values(e).reduce((a, x) => a + x, 0), 0);
 
 const check = async (opts: CheckOptions, live: Live): Promise<number> => {
@@ -211,6 +216,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
       tier,
       trigger: live.trigger,
       root,
+      ...(tier === "commit" ? treeOf(root) : {}),
       outcome,
       ...(outcome === "ran" && judged !== undefined ? { result: failedOf(failures, judged.notes) ? "fail" : "pass" } : {}),
       exit: code,
@@ -243,6 +249,18 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const set = await loadRecords(root, opts.wardenRoot);
   const { project, loopBreakerRepeats } = set.config;
   live.project = project;
+  if (tier === "commit") {
+    if (process.env.WARDEN_DAEMON === "off") appendEvidence(project, { at, kind: "gate-off", run, tier, trigger: live.trigger, root, ...(opts.base === undefined ? {} : { base: opts.base }) });
+    else {
+      const problem = heartbeatProblem();
+      if (problem !== undefined) {
+        process.stderr.write(`${problem}\n`);
+        const commit = headCommit(root);
+        appendEvidence(project, { at, kind: "cost", guardrail: RUN_TOTAL, run, tier, trigger: live.trigger, root, outcome: "refused", exit: 1, ms: performance.now() - live.started, steps: {}, files: 0, bytes: 0, next: nextOf(problem) as string, ...(commit === undefined ? {} : { commit }) });
+        return 1;
+      }
+    }
+  }
   const base = requireBase(opts.base ?? (opts.hook === "claude" ? hookBase(root) : undefined), set.config.base);
   verifyBase(root, base, checkBaseAction);
   refuseOwnBranch(root, base);
@@ -431,11 +449,6 @@ export async function runCheck(opts: CheckOptions): Promise<number> {
     started: performance.now(),
     steps: {},
   };
-  const stale = live.tier === "commit" ? heartbeatProblem() : undefined;
-  if (stale !== undefined) {
-    process.stderr.write(`${stale}\n`);
-    return 1;
-  }
   try {
     return await check(opts, live);
   } catch (cause) {

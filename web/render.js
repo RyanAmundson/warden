@@ -34,13 +34,17 @@ const DETAIL_TEXT = {
   "leftover-temp": "A temporary file from an interrupted compile is still there.",
   "hooks-disabled": "A settings file sets disableAllHooks.",
   "hook-unwired": "The commit hook does not run Warden.",
-  "plugin-missing": "The Warden Claude plugin is not enabled.",
-  "plugin-disabled": "The Warden Claude plugin is turned off.",
+  "plugin-missing": "The Warden Claude plugin was enabled here before and is no longer installed.",
+  "plugin-disabled": "The Warden Claude plugin was enabled here before and is now turned off.",
+  "gate-off": "A commit check ran with WARDEN_DAEMON=off, so it skipped the daemon gate.",
+  "unchecked-commit": "A commit landed without a passing commit check for its tree.",
   "record-error": "A record no longer loads.",
   removed: ".warden/config.yaml was removed.",
 };
 
-const OUTCOME_TITLE = { error: "Error", tampered: "Tampered", unstaged: "Unstaged changes" };
+const OUTCOME_TITLE = { error: "Error", tampered: "Tampered", unstaged: "Unstaged changes", refused: "Refused" };
+
+const LOCK_KINDS = new Set(["source-drift", "generated-drift", "lock-drift", "loosened", "weakened-kind", "base-moved", "missing-lock", "leftover-temp"]);
 
 export const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
@@ -104,6 +108,7 @@ export const outcome = (run) => {
   if (run.outcome === "empty") return { cls: "idle", text: "No changes" };
   if (run.outcome === "tampered") return { cls: "tamper", text: "Tampered", icon: true };
   if (run.outcome === "unstaged") return { cls: "err", text: "Unstaged", icon: true };
+  if (run.outcome === "refused") return { cls: "err", text: "Refused", icon: true };
   if (run.outcome === "error") return { cls: "err", text: `Error · ${stoppedAt(run).label}`, icon: true };
   return { cls: "idle", text: run.outcome ?? "Unknown" };
 };
@@ -445,8 +450,8 @@ export const determinismPage = (state) => {
     .map((p) => {
       const runs = data.runs[p.project] ?? [];
       const count = (o) => runs.filter((r) => r.outcome === o).length;
-      const recent = runs.find((r) => ["tampered", "error", "unstaged"].includes(r.outcome));
-      return `<tr><td style="font-weight:700">${esc(p.project)}</td><td class="r">${num(count("tampered"))}</td><td class="r">${num(count("error"))}</td><td class="r">${num(count("unstaged"))}</td><td class="wrap">${recent ? `<a href="${href("run", { project: p.project, run: recent.run })}">${esc(clock(recent.at))}</a> · ${esc(outcome(recent).text)}${recent.next ? ` · <span class="mono">${esc(recent.next)}</span>` : ""}` : '<span class="muted">none</span>'}</td></tr>`;
+      const recent = runs.find((r) => ["tampered", "error", "unstaged", "refused"].includes(r.outcome));
+      return `<tr><td style="font-weight:700">${esc(p.project)}</td><td class="r">${num(count("tampered"))}</td><td class="r">${num(count("refused"))}</td><td class="r">${num(count("error"))}</td><td class="r">${num(count("unstaged"))}</td><td class="wrap">${recent ? `<a href="${href("run", { project: p.project, run: recent.run })}">${esc(clock(recent.at))}</a> · ${esc(outcome(recent).text)}${recent.next ? ` · <span class="mono">${esc(recent.next)}</span>` : ""}` : '<span class="muted">none</span>'}</td></tr>`;
     })
     .join("");
   const depth = Math.max(0, ...data.projects.map((p) => (data.runs[p.project] ?? []).length));
@@ -454,7 +459,7 @@ export const determinismPage = (state) => {
 <section class="mod" aria-labelledby="dt-proj"><div class="modh"><h2 class="h2" id="dt-proj">Rule failures by strength</h2><div class="legend"><span><i class="sw det" aria-hidden="true"></i>deterministic: type, lint, runtime</span><span><i class="sw jud" aria-hidden="true"></i>judgment: model, review</span><span><i class="sw pro" aria-hidden="true"></i>prose: instruction, legacy</span>${unknown ? '<span><i class="sw unk" aria-hidden="true"></i>unknown: recorded before kinds were kept</span>' : ""}</div></div>
 <div class="scroll"><table><thead><tr><th scope="col" style="width:200px">Project</th><th scope="col">Failures</th><th scope="col" class="r">Deterministic</th><th scope="col" class="r">Judgment</th><th scope="col" class="r">Prose</th><th scope="col" class="r">Deterministic share</th></tr></thead><tbody>${rows}</tbody></table></div></section>
 <section class="mod" aria-labelledby="dt-stops"><div class="modh"><h2 class="h2" id="dt-stops">Stops before any rule ran</h2><span class="muted">Not counted above: Warden itself refused the run · last ${plural(depth, "run")} per project</span></div>
-<div class="scroll"><table><thead><tr><th scope="col" style="width:200px">Project</th><th scope="col" class="r">Tampered</th><th scope="col" class="r">Error</th><th scope="col" class="r">Unstaged</th><th scope="col">Most recent</th></tr></thead><tbody>${stops}</tbody></table></div></section>`;
+<div class="scroll"><table><thead><tr><th scope="col" style="width:200px">Project</th><th scope="col" class="r">Tampered</th><th scope="col" class="r">Refused</th><th scope="col" class="r">Error</th><th scope="col" class="r">Unstaged</th><th scope="col">Most recent</th></tr></thead><tbody>${stops}</tbody></table></div></section>`;
 };
 
 const LOCK_ART = `<svg class="lockart" viewBox="0 0 122 34" preserveAspectRatio="xMinYMid meet" role="img" aria-label="Two key profiles overlaid: the lock's key from the merge base in steel outline, and this tree's records in dashed red. They no longer match."><rect x="1" y="4" width="26" height="24" rx="7" fill="#E1E5EA" stroke="#1C2A3F" stroke-width="0.5"/><circle cx="10" cy="16" r="3.5" fill="#F8F9FA" stroke="#1C2A3F" stroke-width="0.5"/><path d="M27 10 L112 10 L118 16.5 L112 23 L104 23 L100.5 12.75 L95.5 12.75 L88.5 24 L83.5 24 L76.5 16.5 L71.5 16.5 L64.5 14 L59.5 14 L52.5 21.5 L47.5 21.5 L40.5 21.5 L35.5 21.5 L32 24 L27 24 Z" fill="#B3261E" fill-opacity="0.22" stroke="#B3261E" stroke-width="0.5" stroke-dasharray="1.2 0.8"/><path d="M27 10 L112 10 L118 16.5 L112 23 L104 23 L100.5 20.25 L95.5 20.25 L88.5 24 L83.5 24 L76.5 24 L71.5 24 L64.5 14 L59.5 14 L52.5 21.5 L47.5 21.5 L40.5 21.5 L35.5 21.5 L32 24 L27 24 Z" fill="none" stroke="#1C2A3F" stroke-width="0.6"/><path d="M74 16.5 L74 24 M98 12.75 L98 20.25" stroke="#B3261E" stroke-width="1.1"/></svg>`;
@@ -474,7 +479,7 @@ export const tamperPage = (state) => {
   if (open.length === 0) return `${header("Tamper", "The daemon compares each project's hooks, plugin, and records with its lock")}<section class="mod"><div class="alert">${tag({ cls: "pass", text: "Clear" })}<div>No open tamper detections in any watched project.</div></div></section>${history}`;
   const first = open[0];
   return `<section class="banner red" role="alert" aria-labelledby="tp-h"><div class="top" style="justify-content:space-between"><div style="display:flex;flex-direction:column;gap:4px;min-width:0"><h1 id="tp-h">Tamper detected in ${esc(projects.join(" and "))}</h1><p>${plural(open.length, "open detection")}. The first: ${esc(first.detail)} on ${esc(first.file)}. ${esc(DETAIL_TEXT[first.detail.split(" ")[0]] ?? "")}</p></div></div>${nextBox(first.next)}</section>
-<div class="split"><section class="mod wide" aria-labelledby="tp-key"><div class="modh"><h2 class="h2" id="tp-key">The key no longer fits</h2><span class="muted">records compared with the lock at the merge base</span></div><div class="pad">${LOCK_ART}<div class="legend" style="padding-top:6px"><span><i class="sw" aria-hidden="true" style="border:1.5px solid #1C2A3F"></i>lock written at the merge base</span><span><i class="sw" aria-hidden="true" style="border:1.5px dashed #B3261E;background:#F3D3CF"></i>this tree's records</span></div></div></section>
+<div class="split">${kinds.some((k) => LOCK_KINDS.has(k)) ? `<section class="mod wide" aria-labelledby="tp-key"><div class="modh"><h2 class="h2" id="tp-key">The key no longer fits</h2><span class="muted">records compared with the lock at the merge base</span></div><div class="pad">${LOCK_ART}<div class="legend" style="padding-top:6px"><span><i class="sw" aria-hidden="true" style="border:1.5px solid #1C2A3F"></i>lock written at the merge base</span><span><i class="sw" aria-hidden="true" style="border:1.5px dashed #B3261E;background:#F3D3CF"></i>this tree's records</span></div></div></section>` : ""}
 <section class="mod narrow" aria-labelledby="tp-kinds"><div class="modh"><h2 class="h2" id="tp-kinds">What was found</h2></div><dl class="kinds">${kinds.map((k) => `<dt class="mono">${esc(k)}</dt><dd>${esc(DETAIL_TEXT[k] ?? "Reported by the daemon.")}</dd>`).join("")}</dl></section></div>
 <section class="mod" aria-labelledby="tp-open"><div class="modh"><h2 class="h2" id="tp-open">Open now · ${plural(open.length, "detection")}</h2><span class="muted">Each clears when the daemon's next scan no longer finds it</span></div><div class="scroll"><table><thead><tr><th scope="col">Project</th><th scope="col">File</th><th scope="col">Kind</th><th scope="col">Next action</th></tr></thead><tbody>${open.map((d) => `<tr class="held"><td>${esc(d.project)}</td><td class="mono">${esc(d.file)}</td><td class="mono">${esc(d.detail)}</td><td class="mono wrap">${esc(d.next)}</td></tr>`).join("")}</tbody></table></div></section>
 ${history}`;

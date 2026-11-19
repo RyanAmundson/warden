@@ -1,7 +1,9 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
+import { homedir } from "node:os";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
+import { RecordError } from "../records/load.js";
 import { PACK_VAR } from "../adapters/cmd.js";
 import { COMMIT_HOOK } from "../compiler/emit.js";
 import { TOOLS, firstLine } from "../compiler/lock.js";
@@ -61,6 +63,29 @@ const toolItem = async (name, load) => {
         return { name: `tool ${name}`, problem: firstLine(cause.message), fix: `reinstall Warden so its bundled ${name} loads` };
     }
 };
+const PLUGIN = "warden@warden";
+export const PLUGIN_SETUP = `run claude plugin marketplace add RyanAmundson/warden, then claude plugin install ${PLUGIN}`;
+export const claudeDir = () => process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
+const settingsOf = (file) => {
+    if (!existsSync(file))
+        return undefined;
+    try {
+        return JSON.parse(readFileSync(file, "utf8"));
+    }
+    catch (cause) {
+        throw new RecordError(file, "", `is not valid JSON (${cause.message}). Next action: fix the JSON in ${file}`);
+    }
+};
+export const pluginAction = (p) => (p.state === "disabled" ? `set enabledPlugins "${PLUGIN}" to true in ${p.file}` : PLUGIN_SETUP);
+export function pluginState(root) {
+    let found = { state: "missing", file: join(claudeDir(), "settings.json") };
+    for (const file of [join(claudeDir(), "settings.json"), join(root, ".claude/settings.json"), join(root, ".claude/settings.local.json")]) {
+        const value = settingsOf(file)?.enabledPlugins?.[PLUGIN];
+        if (value !== undefined)
+            found = { state: value === true ? "enabled" : "disabled", file };
+    }
+    return found;
+}
 const hooksPath = (root) => {
     const r = spawnSync("git", ["config", "--get", "core.hooksPath"], { cwd: root, encoding: "utf8" });
     return r.status === 0 ? r.stdout.trim() : undefined;
@@ -95,9 +120,11 @@ export async function doctor(set, withCommitHook = false) {
     }
     if (withCommitHook)
         items.push(commitHookItem(set.root));
+    const plugin = withCommitHook ? pluginState(set.root) : undefined;
+    const note = plugin === undefined || plugin.state === "enabled" ? [] : [`note  Claude plugin ${PLUGIN} is ${plugin.state === "missing" ? "not installed" : `disabled in ${plugin.file}`}, so Claude Code edits are not checked; to check them, ${pluginAction(plugin)}`];
     const failed = items.find((i) => i.fix !== undefined);
     return {
-        lines: items.map((i) => (i.problem === undefined ? `ok    ${i.name}` : `FAIL  ${i.name}  ${i.problem}`)),
+        lines: [...items.map((i) => (i.problem === undefined ? `ok    ${i.name}` : `FAIL  ${i.name}  ${i.problem}`)), ...note],
         next: failed === undefined ? undefined : `${failed.fix}, then run warden doctor`,
     };
 }

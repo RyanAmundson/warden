@@ -116,6 +116,39 @@ next action:
   `.warden/generated/hooks/pre-commit` and exit with its status, for example
   with the line `.warden/generated/hooks/pre-commit || exit $?`.
 
+## Daemon
+
+A commit-tier check, which includes the pre-commit hook and a plain
+`warden check`, needs the Warden daemon. Install it once per machine as a
+launchd agent:
+
+```sh
+warden daemon install
+```
+
+`warden daemon uninstall` removes it, and `warden daemon` runs it in the
+foreground. The daemon watches every project whose root appears in Warden's
+Evidence, which `warden init` and every check write. It records each change
+to `.warden/`, each commit, and each tamper detection as Evidence with one
+next action. Tamper detections cover:
+
+- a commit hook that git no longer runs;
+- `.warden/` contents that no longer match the lock;
+- a Claude plugin that was enabled and is now disabled or removed;
+- a commit with no passing commit-tier check;
+- a check that ran with `WARDEN_DAEMON=off`.
+
+It writes a heartbeat every 10 seconds. A commit-tier check exits 1 when the
+heartbeat is missing, older than 30 seconds, dated in the future, or written
+by a process that is no longer running.
+
+`WARDEN_DAEMON=off` skips the heartbeat check, for tests and CI only. Each
+check that skips it is recorded, and the daemon flags it.
+
+The daemon serves a JSON API on `http://127.0.0.1:7419` (`--port` changes
+it). It answers only requests whose `Host` is `127.0.0.1` or `localhost` on
+that port.
+
 ## Release
 
 ```bash
