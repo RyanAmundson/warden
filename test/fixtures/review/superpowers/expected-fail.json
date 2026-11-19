@@ -1,0 +1,9 @@
+{
+  "verdict": "fail",
+  "reviewedHead": "1111111111111111111111111111111111111111",
+  "findings": [
+    { "n": 1, "severity": "important", "title": "The retry still swallows the error", "file": "src/run.ts", "line": 42, "reproducesOn": ["head"], "spec": true, "earlier": 1, "flaky": false, "correction": "run throws the original error after the last retry." },
+    { "n": 2, "severity": "minor", "title": "The help text names the old flag", "file": "src/cli.ts", "line": 7, "reproducesOn": ["head", "base"], "spec": false, "flaky": false, "correction": "the help text names --base." },
+    { "n": 3, "severity": "environment", "title": "vitest is not installed in the worktree", "reproducesOn": ["head"], "spec": false, "flaky": false, "correction": "npx vitest --version exits 0 in the worktree." }
+  ]
+}

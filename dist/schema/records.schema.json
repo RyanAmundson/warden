@@ -106,6 +106,30 @@
                 "guardrails": { "type": "array", "items": { "$ref": "#/$defs/guardrail" } }
             }
         },
+        "capability": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "kind", "serves", "purpose", "when", "upholds", "commands", "replaces"],
+            "properties": {
+                "id": { "type": "string", "minLength": 1 },
+                "kind": { "enum": ["skill", "tool"] },
+                "serves": { "type": "string", "minLength": 1 },
+                "purpose": { "type": "string", "minLength": 1 },
+                "when": { "type": "string", "minLength": 1 },
+                "upholds": { "type": "array", "items": { "type": "string" } },
+                "commands": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+                "replaces": { "type": "array", "items": { "type": "string" } },
+                "review": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["adapter", "model"],
+                    "properties": {
+                        "adapter": { "type": "string", "minLength": 1 },
+                        "model": { "type": "string", "minLength": 1 }
+                    }
+                }
+            }
+        },
         "pack": {
             "type": "object",
             "additionalProperties": false,
@@ -115,6 +139,7 @@
                 "layer": { "type": "integer", "minimum": 0 },
                 "terms": { "type": "array", "items": { "$ref": "#/$defs/term" } },
                 "practices": { "type": "array", "items": { "$ref": "#/$defs/practice" } },
+                "capabilities": { "type": "array", "items": { "$ref": "#/$defs/capability" } },
                 "settings": { "type": "object" }
             }
         }

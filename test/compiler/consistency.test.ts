@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { checkConsistency } from "../../src/compiler/consistency.js";
-import type { Guardrail, Pack, Practice, RecordSet, Term } from "../../src/records/types.js";
+import { reviewAdapters } from "../../src/review/adapter.js";
+import type { Capability, Guardrail, Pack, Practice, RecordSet, Term } from "../../src/records/types.js";
 
 const guardrail = (id: string, kind: Guardrail["kind"] = "lint"): Guardrail => ({
   id,
@@ -22,13 +23,30 @@ const practice = (id: string, pack: string, over: Partial<Practice> = {}): Pract
   ...over,
 });
 
-const pack = (id: string, layer: number, practices: Practice[] = [], terms: Term[] = []): Pack => ({
+const pack = (id: string, layer: number, practices: Practice[] = [], terms: Term[] = [], capabilities: Capability[] = []): Pack => ({
   id,
   file: `packs/${id}/pack.yaml`,
   layer,
   terms,
   practices,
+  capabilities,
 });
+
+const capability = (id: string, pack: string, over: Partial<Capability> = {}): Capability => ({
+  id,
+  kind: "skill",
+  serves: "t",
+  purpose: "Gate a unit.",
+  when: "Before review.",
+  upholds: [],
+  commands: ["warden gate"],
+  replaces: [],
+  pack,
+  ...over,
+});
+
+const term = { id: "t", definition: "d", bans: [] };
+const termU = { id: "u", definition: "d", bans: [] };
 
 const build = (packs: Pack[], paths: Record<string, string[]> = {}): RecordSet => ({
   root: "/w",
@@ -275,6 +293,50 @@ describe("checkConsistency", () => {
   it("flags layer-order", () => {
     const set = build([pack("a", 2, [practice("p1", "a")]), pack("b", 2, [practice("p2", "b")])]);
     expect(codes(set)).toEqual(["layer-order"]);
+  });
+
+  it("two capabilities with one id fail as duplicate-capability", () => {
+    const set = build([pack("a", 1, [], [term, termU], [capability("c", "a")]), pack("b", 2, [], [], [capability("c", "b", { serves: "u" })])]);
+    const found = checkConsistency(set);
+    expect(found.map((f) => [f.code, f.record])).toEqual([["duplicate-capability", "c"]]);
+    const renamed = build([pack("a", 1, [], [term, termU], [capability("c", "a")]), pack("b", 2, [], [], [capability("c2", "b", { serves: "u" })])]);
+    expect(checkConsistency(renamed)).toEqual([]);
+  });
+
+  it("two capabilities that serve one Term fail as same-purpose", () => {
+    const set = build([pack("a", 1, [], [term], [capability("first", "a")]), pack("b", 2, [], [], [capability("second", "b")])]);
+    const found = checkConsistency(set);
+    expect(found.map((f) => [f.code, f.record])).toEqual([["same-purpose", "second"]]);
+    expect(found[0]?.message.endsWith("Next action: merge second into first in packs/b/pack.yaml, then run warden compile.")).toBe(true);
+    const merged = build([pack("a", 1, [], [term], [capability("first", "a")]), pack("b", 2)]);
+    expect(checkConsistency(merged)).toEqual([]);
+  });
+
+  it("a capability that upholds an undefined Practice fails as undefined-upheld", () => {
+    const set = build([pack("a", 1, [], [term], [capability("c", "a", { upholds: ["p"] })])]);
+    const found = checkConsistency(set);
+    expect(found.map((f) => [f.code, f.record])).toEqual([["undefined-upheld", "c"]]);
+    const enabled = build([pack("a", 1, [], [term], [capability("c", "a", { upholds: ["p"] })]), pack("b", 2, [practice("p", "b")])]);
+    expect(checkConsistency(enabled)).toEqual([]);
+  });
+
+  it("a capability that serves an undefined Term fails as undefined-serves", () => {
+    const set = build([pack("a", 1, [], [], [capability("c", "a")])]);
+    const found = checkConsistency(set);
+    expect(found.map((f) => [f.code, f.record])).toEqual([["undefined-serves", "c"]]);
+    const enabled = build([pack("b", 1, [], [term]), pack("a", 2, [], [], [capability("c", "a")])]);
+    expect(checkConsistency(enabled)).toEqual([]);
+  });
+
+  it("an unknown review adapter fails as unknown-review-adapter", () => {
+    const set = build([pack("a", 1, [], [term], [capability("c", "a", { review: { adapter: "nope", model: "opus" } })])]);
+    const found = checkConsistency(set);
+    expect(found.map((f) => [f.code, f.record])).toEqual([["unknown-review-adapter", "c"]]);
+    const known = [...reviewAdapters.keys()];
+    expect(known).toEqual(["superpowers-review"]);
+    expect(found[0]?.message).toBe(`Capability c names review adapter nope, which Warden does not have. Next action: set review.adapter to one of ${known.join(", ")} in packs/a/pack.yaml, then run warden compile.`);
+    const fixed = build([pack("a", 1, [], [term], [capability("c", "a", { review: { adapter: known[0]!, model: "opus" } })])]);
+    expect(checkConsistency(fixed)).toEqual([]);
   });
 
   it("orders findings by code then record id", () => {

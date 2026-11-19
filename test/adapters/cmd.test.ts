@@ -26,7 +26,7 @@ const emptySet: RecordSet = { root: "", packs: [], config: {} as never };
 
 const setOf = (g: Guardrail): RecordSet => ({
   ...emptySet,
-  packs: [{ id: "p", file: "pack.yaml", layer: 0, terms: [], practices: [{ id: "x", pack: "p", statement: "s", terms: [], paths: [], conflictsWith: [], guardrails: [g] }] }],
+  packs: [{ id: "p", file: "pack.yaml", layer: 0, terms: [], capabilities: [], practices: [{ id: "x", pack: "p", statement: "s", terms: [], paths: [], conflictsWith: [], guardrails: [g] }] }],
 });
 
 describe("cmd adapter", () => {
