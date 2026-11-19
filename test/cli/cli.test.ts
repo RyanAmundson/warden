@@ -613,7 +613,7 @@ describe("warden CLI", () => {
     expect(initialized.out).toContain("ok    tool typescript\n");
     const r = warden("doctor");
     expect(r.code, r.err).toBe(0);
-    expect(r.out).toBe("ok    tool eslint\nok    tool typescript-eslint\nok    tool typescript\nok    tool warden eslint plugin\nok    git pre-commit hook: .warden/generated/hooks/pre-commit\n");
+    expect(r.out).toBe("ok    tool eslint\nok    tool typescript-eslint\nok    tool typescript\nok    tool warden eslint plugin\nok    git pre-commit hook: .warden/generated/hooks/pre-commit\nnote  Claude plugin warden@warden is not installed, so Claude Code edits are not checked; to check them, run claude plugin marketplace add RyanAmundson/warden, then claude plugin install warden@warden\n");
   });
 
   it("doctor exits 2 with the failing item and one next action", async () => {

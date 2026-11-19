@@ -1,6 +1,8 @@
+import { dirname } from "node:path";
 import { runIt } from "../adapters/cmd.js";
 import { PARSE_ERROR, type Violation } from "../adapters/types.js";
 import type { Guardrail, Practice, RecordSet } from "../records/types.js";
+import type { SparseMode } from "./changed.js";
 import type { Tamper } from "./tamper.js";
 
 export type Format = "text" | "agent" | "json";
@@ -27,7 +29,10 @@ export interface Notes {
   overBudget?: OverBudget[];
   killed?: Killed[];
   unstaged?: string[];
+  hidden?: string[];
   base?: string;
+  outside?: string[];
+  sparse?: SparseMode;
 }
 
 const EXAMPLE_LINES = 15;
@@ -43,6 +48,12 @@ const ownerOf = (set: RecordSet, id: string): { practice: Practice; guardrail: G
 const byLocation = (a: Violation, b: Violation): number => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line);
 
 const shellWords = (words: string[]): string => words.map((f) => `'${f.replaceAll("'", "'\\''")}'`).join(" ");
+
+const patternOf = (dir: string): string =>
+  dir
+    .replace(/[*?[\]\\]/g, "\\$&")
+    .replace(/^[!#]/, "\\$&")
+    .replace(/ +$/, (spaces) => spaces.replaceAll(" ", "\\ "));
 
 const nextAction = (failures: Violation[], set: RecordSet, notes: Notes): string | null => {
   if (notes.tampered?.some((t) => t.detail === "no-allowed-signers") === true) {
@@ -72,9 +83,14 @@ const nextAction = (failures: Violation[], set: RecordSet, notes: Notes): string
     const files = [...new Set([...sources, ...others.filter((t) => t.sources === undefined && t.file !== ".warden/lock.json").map((t) => t.file)])];
     return `revert your change to ${files.join(", ")}, then run warden compile.`;
   }
+  if ((notes.hidden ?? []).length > 0) {
+    if (notes.base === undefined) throw new Error("a hidden note needs the base to name the next command");
+    const files = notes.hidden?.map((f) => `'${f.replaceAll("'", "'\\''")}'`).join(" ") ?? "";
+    return `run git update-index --no-skip-worktree -- ${files}, then git update-index --no-assume-unchanged -- ${files}, then run warden check --base ${notes.base}.`;
+  }
   if ((notes.unstaged ?? []).length > 0) {
     if (notes.base === undefined) throw new Error("an unstaged note needs the base to name the next command");
-    return `run git add -- ${shellWords(notes.unstaged ?? [])}, then run warden check --base ${notes.base}.`;
+    return `run git add${(notes.sparse ?? "off") === "off" ? "" : " --sparse"} -- ${shellWords(notes.unstaged ?? [])}, then run warden check --base ${notes.base}.`;
   }
   const parse = failures.filter((v) => v.guardrail === PARSE_ERROR).sort(byLocation)[0];
   if (parse !== undefined) return `fix the syntax error at ${parse.file}:${parse.line}.`;
@@ -86,6 +102,18 @@ const nextAction = (failures: Violation[], set: RecordSet, notes: Notes): string
   if (located.length === 0 && legacy !== undefined) {
     const { guardrail } = ownerOf(set, legacy.guardrail) as { guardrail: Guardrail };
     return runIt(guardrail);
+  }
+  const outside = [...new Set(failures.map((v) => v.file).filter((f) => notes.outside?.includes(f) === true))].sort();
+  if (outside.length > 0) {
+    const dirs = [...new Set(outside.map((f) => (dirname(f) === "." ? f : dirname(f))))];
+    const sparse = notes.sparse ?? "off";
+    const bring =
+      sparse === "cone" && dirs.every((d) => d === d.trim())
+        ? `git sparse-checkout add --skip-checks -- ${shellWords(dirs)}`
+        : sparse === "patterns"
+          ? `git sparse-checkout add -- ${shellWords(dirs.map(patternOf))}`
+          : `git update-index --no-skip-worktree -- ${shellWords(outside)}, then git checkout -- ${shellWords(outside)}`;
+    return `run ${bring} to bring ${outside.join(", ")} onto disk, then change the code at the lines above to match "Do this".`;
   }
   if (failures.length > 0) {
     return 'change the code at the lines above to match "Do this". Do not edit .warden/ or generated config; that is recorded as tampering.';

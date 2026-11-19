@@ -6,6 +6,8 @@ import { exampleProjectsRemoved } from "../src/compiler/examples.js";
 
 const home = mkdtempSync(join(tmpdir(), "warden-test-home-"));
 process.env.WARDEN_HOME = home;
+process.env.WARDEN_DAEMON = "off";
+process.env.CLAUDE_CONFIG_DIR = join(home, "claude");
 
 afterAll(async () => {
   await exampleProjectsRemoved();

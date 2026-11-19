@@ -5,7 +5,7 @@ import type { Kind, Tier } from "../records/types.js";
 
 export interface Evidence {
   at: string;
-  kind: "fired" | "cost" | "tampered" | "stalled" | "scaling" | "step";
+  kind: "fired" | "cost" | "tampered" | "stalled" | "scaling" | "step" | "registered" | "plugin" | "commit" | "change" | "gate-off";
   guardrail?: string;
   file?: string;
   status?: string;
@@ -45,9 +45,13 @@ export interface Evidence {
   passes?: Record<string, number>;
   cachedRules?: string[];
   steps?: Partial<Record<Step, number>>;
+  root?: string;
+  tree?: string;
+  scope?: "full" | "partial";
+  alert?: string;
 }
 
-export type Trigger = "agent-edit" | "git-commit" | "manual";
+export type Trigger = "agent-edit" | "git-commit" | "manual" | "daemon";
 
 export type Step = "rules-intact" | "tools-ready" | "rules" | "verdict";
 
@@ -68,7 +72,7 @@ export interface Measurement {
   f: number;
 }
 
-export type Outcome = "ran" | "tampered" | "unstaged" | "empty" | "error";
+export type Outcome = "ran" | "tampered" | "unstaged" | "empty" | "error" | "refused";
 
 export const RUN_TOTAL = "run";
 
@@ -154,4 +158,18 @@ export function readEvidenceTail(project: string, bytes: number): Evidence[] {
 
 export function readEvidence(project: string): Evidence[] {
   return readEvidenceTail(project, Number.POSITIVE_INFINITY);
+}
+
+export function readEvidenceFrom(project: string, offset: number): { events: Evidence[]; offset: number } {
+  const size = sizeOf(evidenceFile(project));
+  if (offset === 0 || size < offset) return { events: readEvidence(project), offset: size };
+  const fd = openSync(evidenceFile(project), "r");
+  try {
+    const buffer = Buffer.alloc(size - offset);
+    readSync(fd, buffer, 0, buffer.length, offset);
+    const end = buffer.lastIndexOf("\n") + 1;
+    return { events: parse(buffer.subarray(0, end).toString("utf8")), offset: offset + end };
+  } finally {
+    closeSync(fd);
+  }
 }

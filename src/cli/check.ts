@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, join, relative, resolve, sep } from "node:path";
 import { hookTriggers } from "../adapters/claude.js";
 import { PARSE_ERROR, type RunContext, type RunResult, type Violation } from "../adapters/types.js";
@@ -9,7 +10,8 @@ import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import type { Guardrail, Kind, RecordSet, Tier } from "../records/types.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, projectFiles, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, stageFile, stagedFiles, unstagedFiles, verifyBase } from "../runner/changed.js";
+import { commitsOf, covers, indexTree, stagedMismatch, checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, stageFile, sparseMode, stagedFiles, type StagedBlob, unstagedFiles, verifyBase, checkoutBlobs } from "../runner/changed.js";
+import { type Detection, heartbeatProblem, openAlerts } from "../runner/daemon.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { type Evidence, LOOP_TAIL_BYTES, type Outcome, RUN_TOTAL, type RunFailure, type Step, type Trigger, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
 import { type Format, type Notes, type Repeated, formatFeedback } from "../runner/feedback.js";
@@ -136,6 +138,39 @@ const runCached = async (
   return { perFile: [...results, ...parse], wholeProject: others, ran: [...fresh, ...others], cached: hits.size };
 };
 
+const judgeBlobs = async (root: string, set: RecordSet, gs: Guardrail[], blobs: StagedBlob[], ctx: RunContext): Promise<{ results: RunResult[]; shas: Map<string, string> }> => {
+  if (blobs.length === 0) return { results: [], shas: new Map() };
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "warden-blobs-")));
+  const remove = (): void => rmSync(dir, { recursive: true, force: true });
+  const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
+  const release = (): void => {
+    for (const s of signals) process.off(s, onSignal);
+  };
+  const onSignal = (signal: NodeJS.Signals): void => {
+    remove();
+    release();
+    process.kill(process.pid, signal);
+  };
+  for (const s of signals) process.on(s, onSignal);
+  try {
+    const paths = blobs.map((b) => b.path);
+    const at = checkoutBlobs(root, paths, dir);
+    const shas = new Map(paths.map((p) => [p, sha256(readFileSync(join(at, p)))]));
+    return { results: gs.length === 0 ? [] : await runGuardrails(set, gs, paths, { ...ctx, root: at }), shas };
+  } finally {
+    release();
+    remove();
+  }
+};
+
+const mergeResults = (results: RunResult[]): RunResult[] =>
+  [...new Set(results.map((r) => r.guardrail))].map((id) => {
+    const all = results.filter((r) => r.guardrail === id);
+    const violations = all.flatMap((r) => r.violations);
+    const status = all.some((r) => r.status === "killed") ? "killed" : violations.length > 0 ? "fail" : "pass";
+    return { ...(all[0] as RunResult), status, violations, ms: all.reduce((n, r) => n + r.ms, 0) };
+  });
+
 const failedOf = (failures: Violation[], notes: Notes): boolean =>
   failures.length > 0 || [notes.tampered, notes.killed, notes.unstaged].some((list) => (list ?? []).length > 0);
 
@@ -149,6 +184,16 @@ const report = (failures: Violation[], set: RecordSet, opts: CheckOptions, notes
     process.stdout.write(`${formatFeedback(failures, set, opts.format, notes)}\n`);
   }
   return failed ? 1 : 0;
+};
+
+const refuseForAlert = (alert: Detection, opts: CheckOptions): number => {
+  const message = `Warden's daemon holds an open tamper alert for this repository: ${alert.detail} ${alert.file} in ${alert.root}. Next action: ${alert.next}`;
+  if (opts.hook === "claude") {
+    process.stdout.write(`${JSON.stringify({ decision: "block", reason: message })}\n`);
+    return 0;
+  }
+  process.stderr.write(`${message}\n`);
+  return 1;
 };
 
 export const MAX_RECORDED_FAILURES = 10;
@@ -195,6 +240,11 @@ const nextOf = (message: string): string | undefined => {
   return at === -1 ? undefined : message.slice(at + "Next action: ".length).replace(/\.$/, "");
 };
 
+const treeOf = (root: string): { tree?: string } => {
+  const tree = indexTree(root);
+  return tree === undefined ? {} : { tree };
+};
+
 const baselineTotal = (b: Record<string, Record<string, number>>): number => Object.values(b).reduce((n, e) => n + Object.values(e).reduce((a, x) => a + x, 0), 0);
 
 const check = async (opts: CheckOptions, live: Live): Promise<number> => {
@@ -213,6 +263,8 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
       run,
       tier,
       trigger: live.trigger,
+      root,
+      ...(tier === "commit" ? treeOf(root) : {}),
       outcome,
       ...(outcome === "ran" && judged !== undefined ? { result: failedOf(failures, judged.notes) ? "fail" : "pass" } : {}),
       exit: code,
@@ -245,10 +297,23 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const set = await loadRecords(root, opts.wardenRoot);
   const { project, loopBreakerRepeats } = set.config;
   live.project = project;
+  if (tier === "commit") {
+    if (process.env.WARDEN_DAEMON === "off") appendEvidence(project, { at, kind: "gate-off", run, tier, trigger: live.trigger, root, ...(opts.base === undefined ? {} : { base: opts.base }) });
+    else {
+      const problem = heartbeatProblem();
+      if (problem !== undefined) {
+        process.stderr.write(`${problem}\n`);
+        const commit = headCommit(root);
+        appendEvidence(project, { at, kind: "cost", guardrail: RUN_TOTAL, run, tier, trigger: live.trigger, root, outcome: "refused", exit: 1, ms: performance.now() - live.started, steps: {}, files: 0, bytes: 0, next: nextOf(problem) as string, ...(commit === undefined ? {} : { commit }) });
+        return 1;
+      }
+    }
+  }
   const base = requireBase(opts.base ?? (opts.hook === "claude" ? hookBase(root) : undefined), set.config.base);
   verifyBase(root, base, checkBaseAction);
   refuseOwnBranch(root, base);
   live.base = { base, mergeBase: mergeBase(root, base) };
+  const alerts = openAlerts(root);
   openStep(live, "rules-intact");
   if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined) {
     throw new RecordError(LOCK_PATH, "", "not found; this project was never compiled. Next action: run warden compile.");
@@ -325,12 +390,19 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const onlyCommit = opts.trigger === "git-commit" && index !== undefined && !["index", "index.lock"].includes(basename(index));
   const committing = onlyCommit ? new Set(stagedFiles(root)) : undefined;
   const scanned = committing === undefined ? listed : listed.filter((f) => committing.has(f) || !unstaged.has(f));
+  let absent: StagedBlob[] = [];
   if (tier === "commit") {
     const differing = scanned.filter((f) => unstaged.has(f));
     if (differing.length > 0) {
-      const notes = { unstaged: differing, base };
+      const notes = { unstaged: differing, base, sparse: sparseMode(root) };
       return finish(project, "unstaged", scanned, report([], set, opts, notes), { set, notes });
     }
+    const mismatch = stagedMismatch(root, base);
+    if (mismatch.paths.length > 0) {
+      const notes = { unstaged: mismatch.paths, hidden: mismatch.hidden, base, sparse: sparseMode(root) };
+      return finish(project, "unstaged", scanned, report([], set, opts, notes), { set, notes });
+    }
+    if (opts.paths === undefined) absent = mismatch.absent;
   }
   const shas = new Map(scanned.map((f) => [f, sha256(readFileSync(join(root, f)))]));
   const where = { files: scanned.length, ...(scanned.length === 1 ? { file: scanned[0] } : {}) };
@@ -342,20 +414,23 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const ctx = { root, generatedDir: join(root, ".warden/generated"), onGroup };
   const lockSha = sha256(readFileSync(join(root, LOCK_PATH)));
   const ran = await runCached(set, guardrails, scanned, shas, ctx, project, { lockSha, warden: running, tier });
+  const { results: blobRun, shas: blobShas } = await judgeBlobs(root, set, guardrails.filter((g) => g.kind === "lint" && g.implementation.startsWith("eslint:")), absent, ctx);
+  for (const [path, sha] of blobShas) shas.set(path, sha);
+  const blobPaths = absent.map((b) => b.path);
   if (groups === 0) {
     openStep(live, "rules", { members: chosen.map((g) => g.id), ...where });
     closeStep(live, "done", { status: scanned.length === 0 ? "empty" : "cached" });
   }
   openStep(live, "verdict");
   const wanted = (r: RunResult): boolean => selected.has(r.guardrail) || !known.has(r.guardrail);
-  const perFile = ran.perFile.filter(wanted);
+  const perFile = mergeResults([...ran.perFile, ...blobRun]).filter(wanted);
   const wholeProject = ran.wholeProject.filter(wanted);
   const overBudget = [...perFile, ...wholeProject].filter((r) => r.overBudget === true).map((r) => ({ guardrail: r.guardrail, ms: r.ms, ...(r.shared?.budgetMs === undefined ? {} : { budgetMs: r.shared.budgetMs }) }));
   const killed = [...perFile, ...wholeProject]
     .filter((r) => r.status === "killed")
     .map((r) => ({ guardrail: r.guardrail, ms: r.ms, command: r.command as string }));
 
-  const exists = (f: string): boolean => existsSync(join(root, f));
+  const exists = (f: string): boolean => existsSync(join(root, f)) || blobPaths.includes(f);
   const changes = changesSinceMergeBase(root, base);
   const touched = (v: Violation): boolean => {
     const lines = changes.lines.get(v.file);
@@ -365,7 +440,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   };
   const baseline = readBaseline(root);
   const ratchetFrom = matchesHead(root, BASELINE_PATH) ? "head" : "uncommitted";
-  const narrow = applyBaseline(perFile, carryRenames(baseline, changes.renames), scanned, exists, touched);
+  const narrow = applyBaseline(perFile, carryRenames(baseline, changes.renames), [...scanned, ...blobPaths], exists, touched);
   const judged =
     tier === "edit"
       ? scanned
@@ -413,7 +488,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   let repeated: Repeated | undefined;
   for (const key of new Set(failures.map((v) => `${v.guardrail}\0${v.file}`))) {
     const [guardrail, file] = key.split("\0") as [string, string];
-    const detail = shas.get(file) ?? (file !== "" && exists(file) ? sha256(readFileSync(join(root, file))) : "");
+    const detail = shas.get(file) ?? (file !== "" && existsSync(join(root, file)) ? sha256(readFileSync(join(root, file))) : "");
     const triggered = trigger.has(file);
     appendEvidence(project, { at, kind: "fired", guardrail, file, status: "fail", detail, triggered });
     if (!triggered) continue;
@@ -422,10 +497,14 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
     const n = prior.filter(same).length + 1;
     if (n >= loopBreakerRepeats && (repeated === undefined || n > repeated.n)) repeated = { guardrail, file, n };
   }
-  const notes = { repeated, overBudget, killed };
+  const notes = { repeated, overBudget, killed, ...(blobPaths.length === 0 ? {} : { outside: blobPaths, sparse: sparseMode(root) }) };
   closeStep(live, failedOf(failures, notes) ? "fail" : "done");
-  const code = report(failures, set, opts, notes);
-  return finish(project, scanned.length === 0 && ran.ran.length === 0 ? "empty" : "ran", scanned, code, { set, failures, notes, extra: { guardrails: chosen.length, cached: ran.cached, rules: ruleTimes, passes: passTimes, cachedRules: chosen.filter((g) => ruleTimes[g.id] === undefined).map((g) => g.id), ratchet: [baselineTotal(baseline), baselineTotal(wide.next)], ratchetFrom } });
+  const scope = opts.paths === undefined && opts.rule === undefined ? "full" : "partial";
+  const tree = tier === "commit" && scope === "full" && !failedOf(failures, notes) ? indexTree(root) : undefined;
+  const coveredHere = (d: Detection): boolean => d.detail === "unchecked-commit" && tree !== undefined && commitsOf(root, [d.file]).some((c) => covers(root, { tree, mergeBase: live.base?.mergeBase }, c));
+  const alert = failedOf(failures, notes) ? undefined : alerts.find((d) => !coveredHere(d));
+  const code = alert === undefined ? report(failures, set, opts, notes) : refuseForAlert(alert, opts);
+  return finish(project, scanned.length === 0 && ran.ran.length === 0 ? "empty" : "ran", scanned, code, { set, failures, notes, extra: { scope, ...(alert === undefined ? {} : { alert: alert.detail, next: alert.next }), guardrails: chosen.length, cached: ran.cached, rules: ruleTimes, passes: passTimes, cachedRules: chosen.filter((g) => ruleTimes[g.id] === undefined).map((g) => g.id), ratchet: [baselineTotal(baseline), baselineTotal(wide.next)], ratchetFrom } });
 };
 
 export async function runCheck(opts: CheckOptions): Promise<number> {
