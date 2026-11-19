@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { resolve } from "node:path";
 import { RecordError } from "../records/load.js";
 
 const git = (root: string, args: string[]): { ok: boolean; out: string; err: string } => {
@@ -155,20 +156,56 @@ export const indexTree = (root: string): string | undefined => {
   return r.ok ? r.out.trim() : undefined;
 };
 
+export const commonDir = (root: string): string => resolve(root, must(root, ["rev-parse", "--git-common-dir"]).trim());
+
 export interface Committed {
   commit: string;
   tree: string;
+  parents: string[];
+  parentTree?: string;
 }
 
-export function localCommits(root: string, most: number): Committed[] {
-  const r = git(root, ["reflog", "show", `-n${most}`, "--format=%H%x09%T%x09%gs", "HEAD"]);
-  if (!r.ok) return [];
-  return r.out.split("\n").flatMap((line) => {
-    const [commit, tree, subject] = line.split("\t");
-    if (commit === undefined || tree === undefined || !(subject ?? "").startsWith("commit")) return [];
-    return [{ commit, tree }];
-  });
+export interface Worktree {
+  path: string;
+  head?: string;
 }
+
+export function worktrees(root: string): Worktree[] {
+  return must(root, ["worktree", "list", "--porcelain"])
+    .split("\n\n")
+    .flatMap((block) => {
+      const path = /^worktree (.+)$/m.exec(block)?.[1];
+      const head = /^HEAD ([0-9a-f]+)$/m.exec(block)?.[1];
+      return path === undefined ? [] : [{ path, ...(head === undefined ? {} : { head }) }];
+    });
+}
+
+export const repoTips = (root: string): string[] =>
+  [...new Set([...must(root, ["for-each-ref", "--format=%(objectname)", "refs/heads"]).split("\n").filter((l) => l !== ""), ...worktrees(root).flatMap((w) => (w.head === undefined ? [] : [w.head]))])].sort();
+
+export function newCommits(root: string, tips: string[], seen: string[]): Committed[] {
+  if (tips.length === 0) return [];
+  const range = [...tips, ...seen.filter((t) => hasCommit(root, t)).map((t) => `^${t}`)];
+  const commits = must(root, ["log", "--no-merges", "--format=%H %T %P", ...range, "--"])
+    .split("\n")
+    .filter((l) => l !== "")
+    .map((l) => {
+      const [commit, tree, ...parents] = l.split(" ") as [string, string, ...string[]];
+      return { commit, tree, parents: parents.filter((p) => p !== "") };
+    });
+  const parents = [...new Set(commits.flatMap((c) => c.parents))];
+  const trees = new Map(
+    parents.length === 0
+      ? []
+      : must(root, ["log", "--no-walk=unsorted", "--format=%H %T", ...parents, "--"])
+          .split("\n")
+          .filter((l) => l !== "")
+          .map((l) => l.split(" ") as [string, string]),
+  );
+  return commits.map((c) => ({ ...c, ...(c.parents[0] === undefined ? {} : { parentTree: trees.get(c.parents[0]) }) }));
+}
+
+export const isAncestor = (root: string, ancestor: string, of: string): boolean => git(root, ["merge-base", "--is-ancestor", ancestor, of]).ok;
 
 export function restoreAction(root: string, path: string): string {
   if (git(root, ["cat-file", "-e", `HEAD:${path}`]).ok) return `run git checkout HEAD -- .warden in ${root}`;

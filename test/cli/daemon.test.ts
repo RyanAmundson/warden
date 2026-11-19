@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { type Served, serve } from "../../src/cli/daemon.js";
-import { STALE_MS, heartbeatFile, heartbeatProblem } from "../../src/runner/daemon.js";
+import { STALE_MS, heartbeatFile, heartbeatProblem, stateFile } from "../../src/runner/daemon.js";
 import { type Evidence, appendEvidence, readEvidence } from "../../src/runner/evidence.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
@@ -103,7 +103,7 @@ afterEach(async () => {
 afterAll(restore);
 
 const start = async (): Promise<Served> => {
-  served = await serve(wardenRoot, 0, { intervalMs: 50, debounceMs: 20 });
+  served = await serve(wardenRoot, 0, { intervalMs: 200, debounceMs: 20 });
   await served.daemon.settled();
   return served;
 };
@@ -122,6 +122,10 @@ it("init records the root in Evidence, and the daemon watches every root found i
   await writeFile(join(other, ".warden/config.yaml"), 'project: "other"\n');
   appendEvidence("other", { at: new Date().toISOString(), kind: "cost", guardrail: "run", outcome: "ran", root: other });
   appendEvidence("gone", { at: new Date().toISOString(), kind: "cost", guardrail: "run", outcome: "ran", root: join(scratch, "missing") });
+  const broken = join(scratch, "broken");
+  await mkdir(join(broken, ".warden"), { recursive: true });
+  await writeFile(join(broken, ".warden/config.yaml"), 'project: "broken"\n');
+  appendEvidence("broken", { at: new Date().toISOString(), kind: "cost", guardrail: "run", outcome: "ran", root: broken });
   const s = await start();
   expect([...s.daemon.projects.keys()].sort()).toEqual([other, root].sort());
 });
@@ -136,7 +140,7 @@ it("binds 127.0.0.1, writes a heartbeat, removes only its own heartbeat on stop,
   expect((await get("/api/health", `localhost:${s.port}`)).status).toBe(200);
   await stop();
   expect(existsSync(heartbeatFile())).toBe(false);
-  await start();
+  served = await serve(wardenRoot, 0, { intervalMs: 60_000, debounceMs: 20 });
   await beat({ pid: 1, port: 9 });
   await stop();
   expect(existsSync(heartbeatFile())).toBe(true);
@@ -163,22 +167,38 @@ it("records hook and .warden changes as tamper Evidence once, with one next acti
   await writeFile(join(root, ".warden/generated/hooks/pre-commit"), "#!/bin/sh\nexit 0\n");
   await until("the hook edit is recorded", () => tampered().some((e) => e.detail === "generated-drift"));
   expect(tampered().find((e) => e.detail === "generated-drift")).toMatchObject({ file: ".warden/generated/hooks/pre-commit", root, next: "revert your change to .warden/generated/hooks/pre-commit" });
-  expect(readEvidence(PROJECT).some((e) => e.kind === "change" && e.file === ".warden/generated/hooks/pre-commit")).toBe(true);
-  await s.daemon.settled();
+  await until("the hook edit is recorded as a change", () => readEvidence(PROJECT).some((e) => e.kind === "change" && e.file === ".warden/generated/hooks/pre-commit"));
+  await s.daemon.rescan();
   expect(tampered().filter((e) => e.detail === "generated-drift")).toHaveLength(1);
   await rm(join(root, ".warden"), { recursive: true, force: true });
   await until("the removal is recorded", () => tampered().some((e) => e.detail === "removed"));
   expect(tampered().find((e) => e.detail === "removed")?.next).toBe(`run git checkout HEAD -- .warden in ${root}`);
 });
 
-it("records each commit and flags one that no passing commit-tier check stamped", async () => {
-  await start();
+const openOf = (s: Served): { detail: string; file: string }[] => [...s.daemon.projects.values()].flatMap((w) => [...w.open.values()]);
+
+const unchecked = (s: Served): string[] => openOf(s).filter((d) => d.detail === "unchecked-commit").map((d) => d.file);
+
+it("records each commit, flags one that no full check stamped, and closes the alert only when its own next action runs", async () => {
+  const s = await start();
   await writeFile(join(root, "src/b.ts"), "export const b = 2;\n");
   git(root, "add", "-A");
   commitUnhooked("skipped the hook");
   const skipped = git(root, "rev-parse", "HEAD").trim();
-  await until("the unchecked commit is flagged", () => tampered().some((e) => e.detail === "unchecked-commit" && e.file === skipped));
+  await until("the unchecked commit is flagged", () => unchecked(s).includes(skipped));
   expect(readEvidence(PROJECT).find((e) => e.kind === "commit" && e.commit === skipped)).toMatchObject({ status: "unchecked", root });
+  const alert = tampered().find((e) => e.file === skipped);
+  expect(alert?.next).toBe(`in a checkout of commit ${skipped.slice(0, 12)} with nothing staged, run warden check --base ${skipped.slice(0, 12)}^`);
+  const empty = warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", "main");
+  expect(empty).toMatchObject({ code: 1, err: expect.stringContaining(`unchecked-commit ${skipped}`) });
+  await s.daemon.rescan();
+  expect(unchecked(s)).toEqual([skipped]);
+  expect(warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", `${skipped.slice(0, 12)}^`).code).toBe(1);
+  await until("the commit's own check closes the alert", () => unchecked(s).length === 0);
+});
+
+it("a commit after a passing full check is recorded as checked", async () => {
+  const s = await start();
   await writeFile(join(root, "src/c.ts"), "export const c = 3;\n");
   git(root, "add", "-A");
   expect(warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", "main").code).toBe(0);
@@ -186,10 +206,123 @@ it("records each commit and flags one that no passing commit-tier check stamped"
   const checked = git(root, "rev-parse", "HEAD").trim();
   await until("the checked commit is recorded", () => readEvidence(PROJECT).some((e) => e.kind === "commit" && e.commit === checked));
   expect(readEvidence(PROJECT).find((e) => e.kind === "commit" && e.commit === checked)?.status).toBe("checked");
-  expect(tampered().filter((e) => e.detail === "unchecked-commit").map((e) => e.file)).toEqual([skipped]);
-  await stop();
+  await s.daemon.rescan();
+  expect(unchecked(s)).toEqual([]);
+});
+
+it("a path-limited check does not stamp a commit whose other staged files were never checked", async () => {
+  const s = await start();
+  await writeFile(join(root, "src/bad.ts"), "// a comment\nexport const bad = 1;\n");
+  git(root, "add", "-A");
+  expect(warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", "main").code).toBe(1);
+  expect(warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", "main", "src/a.ts").code).toBe(0);
+  expect(readEvidence(PROJECT).filter((e) => e.guardrail === "run" && e.tier === "commit").map((e) => e.scope)).toEqual(["full", "partial"]);
+  commitUnhooked("bypass");
+  const bypass = git(root, "rev-parse", "HEAD").trim();
+  await until("the bypass is flagged", () => unchecked(s).includes(bypass));
+});
+
+it("flags unchecked commits from another worktree and from a fast-forward of a commit made with plumbing", async () => {
+  const s = await start();
+  const wt = join(scratch, "wt");
+  git(root, "worktree", "add", "-q", wt, "-b", "side");
+  await writeFile(join(wt, "src/w.ts"), "export const w = 1;\n");
+  git(wt, "add", "-A");
+  git(wt, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "in a worktree");
+  const inWorktree = git(wt, "rev-parse", "HEAD").trim();
+  await until("the worktree commit is flagged", () => unchecked(s).includes(inWorktree));
+  await until("the worktree is watched", () => s.daemon.projects.has(wt));
+  await writeFile(join(root, "src/p.ts"), "export const p = 1;\n");
+  git(root, "add", "src/p.ts");
+  const tree = git(root, "write-tree").trim();
+  git(root, "rm", "-q", "--cached", "src/p.ts");
+  await rm(join(root, "src/p.ts"));
+  const plumbed = git(root, "commit-tree", tree, "-p", "HEAD", "-m", "plumbing").trim();
+  git(root, "merge", "-q", "--ff-only", plumbed);
+  await until("the fast-forwarded commit is flagged", () => unchecked(s).includes(plumbed));
+});
+
+it("keeps its checkpoint across a restart past 1 MB of Evidence, and without a checkpoint seeds one from the current tips", async () => {
   await start();
-  expect(tampered().filter((e) => e.detail === "unchecked-commit")).toHaveLength(1);
+  await stop();
+  await writeFile(join(root, "src/d.ts"), "export const d = 1;\n");
+  git(root, "add", "-A");
+  commitUnhooked("while the daemon was down");
+  const down = git(root, "rev-parse", "HEAD").trim();
+  const pad = "x".repeat(480);
+  for (let i = 0; i < 2300; i++) appendEvidence(PROJECT, { at: new Date().toISOString(), kind: "cost", guardrail: "run", tier: "edit", outcome: "ran", result: "pass", root, detail: pad });
+  expect(readFileSync(join(home, "evidence", `${PROJECT}.jsonl`)).length).toBeGreaterThan(1_100_000);
+  let s = await start();
+  expect(unchecked(s)).toEqual([down]);
+  await stop();
+  await rm(stateFile());
+  s = await start();
+  expect(unchecked(s)).toEqual([]);
+  expect(Object.values(JSON.parse(readFileSync(stateFile(), "utf8")).repos as Record<string, { tips: string[] }>).map((r) => r.tips)).toEqual([[down]]);
+  await writeFile(join(root, "src/e.ts"), "export const e = 1;\n");
+  git(root, "add", "-A");
+  commitUnhooked("after the seed");
+  const after = git(root, "rev-parse", "HEAD").trim();
+  await until("a commit after the seed is flagged", () => unchecked(s).includes(after));
+  expect(unchecked(s)).toEqual([after]);
+});
+
+it("judges a new root commit, which has no parent", async () => {
+  const s = await start();
+  const orphan = git(root, "commit-tree", git(root, "write-tree").trim(), "-m", "orphan").trim();
+  git(root, "branch", "orphan", orphan);
+  await until("the root commit is flagged", () => unchecked(s).includes(orphan));
+  expect(tampered().find((e) => e.file === orphan)?.next).toBe(`in a checkout of commit ${orphan.slice(0, 12)} with nothing staged, run warden check --base main`);
+});
+
+it("seeds the tips of a repository discovered after the daemon started", async () => {
+  const s = await start();
+  const other = join(scratch, "later");
+  await mkdir(join(other, "src"), { recursive: true });
+  await writeFile(join(other, "src/a.ts"), "export const a = 1;\n");
+  git(scratch, "init", "-q", "-b", "main", other);
+  git(other, "add", "-A");
+  git(other, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "seed");
+  expect(warden(other, {}, "init").code).toBe(0);
+  git(other, "add", "-A");
+  git(other, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "warden");
+  await writeFile(join(other, "src/b.ts"), "export const b = 1;\n");
+  git(other, "add", "-A");
+  git(other, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "after the lock, before discovery");
+  await until("the later repository is watched", () => s.daemon.projects.has(other));
+  await s.daemon.rescan();
+  expect(unchecked(s)).toEqual([]);
+});
+
+it("every check tier fails with the alert's next action while an alert is open, and passes once it is fixed", async () => {
+  const s = await start();
+  git(root, "config", "core.hooksPath", "elsewhere");
+  await until("the hook alert is open", () => openOf(s).some((d) => d.detail === "hook-unwired"));
+  const edit = warden(root, { WARDEN_DAEMON: undefined }, "check", "--tier", "edit", "--base", "main", "src/a.ts");
+  expect(edit).toMatchObject({ code: 1, err: expect.stringContaining("hook-unwired .warden/generated/hooks/pre-commit") });
+  expect(edit.err).toContain("Next action: make elsewhere/pre-commit an executable script");
+  expect(readEvidence(PROJECT).filter((e) => e.guardrail === "run").at(-1)).toMatchObject({ exit: 1, alert: "hook-unwired", result: "pass" });
+  git(root, "config", "core.hooksPath", ".warden/generated/hooks");
+  await until("the hook alert closes", () => openOf(s).length === 0);
+  expect(warden(root, { WARDEN_DAEMON: undefined }, "check", "--tier", "edit", "--base", "main", "src/a.ts").code).toBe(0);
+});
+
+it("an invalid Claude settings file is not recorded as tampering", async () => {
+  const s = await start();
+  await mkdir(claude, { recursive: true });
+  await writeFile(join(claude, "settings.json"), "{");
+  await s.daemon.rescan();
+  git(root, "config", "core.hooksPath", "elsewhere");
+  await until("scans continue past the invalid file", () => openOf(s).some((d) => d.detail === "hook-unwired"));
+  expect(tampered().map((e) => e.detail)).toEqual(["hook-unwired"]);
+});
+
+it("a startup failure after the port binds exits 2 with one next action", async () => {
+  await rm(join(home, "evidence"), { recursive: true, force: true });
+  await writeFile(join(home, "evidence"), "not a folder");
+  const r = warden(root, {}, "daemon", "--port", "0");
+  expect(r.code).toBe(2);
+  expect(r.err).toMatch(/^the daemon could not start: .*\. Next action: fix what that names under .*, then run warden daemon\n$/);
 });
 
 it("a commit-tier check refuses and records a missing, stale, future, dead, or malformed heartbeat", async () => {
@@ -202,11 +335,13 @@ it("a commit-tier check refuses and records a missing, stale, future, dead, or m
   expect(check()).toMatchObject({ code: 1, err: expect.stringContaining("in the future, so the daemon did not write it. Next action: start the daemon") });
   const dead = spawnSync("true").pid as number;
   await beat({ pid: dead });
-  expect(check()).toMatchObject({ code: 1, err: expect.stringContaining(`names process ${dead}, which is not running. Next action: start the daemon`) });
+  expect(check()).toMatchObject({ code: 1, err: expect.stringContaining(`names process ${dead}, which is not a running daemon. Next action: start the daemon`) });
   await mkdir(join(home, "daemon"), { recursive: true });
   await writeFile(heartbeatFile(), "null");
   expect(check()).toMatchObject({ code: 1, err: `${heartbeatFile()} does not hold a heartbeat. Next action: start the daemon: warden daemon install\n` });
-  expect(readEvidence(PROJECT).filter((e) => e.outcome === "refused").map((e) => [e.exit, e.next])).toEqual(Array(5).fill([1, "start the daemon: warden daemon install"]));
+  await beat({ pid: 1 });
+  expect(check()).toMatchObject({ code: 1, err: expect.stringContaining("names process 1, which is not a running daemon") });
+  expect(readEvidence(PROJECT).filter((e) => e.outcome === "refused").map((e) => [e.exit, e.next])).toEqual(Array(6).fill([1, "start the daemon: warden daemon install"]));
   await beat({});
   expect(check().code).toBe(0);
   expect(warden(root, { WARDEN_DAEMON: undefined }, "check", "--tier", "edit", "--base", "main").code).toBe(0);
@@ -228,8 +363,10 @@ it("WARDEN_DAEMON=off skips the gate but records it, and the daemon raises it un
   const s = await start();
   const alert = tampered().find((e) => e.detail === "gate-off");
   expect(alert?.next).toBe(`unset WARDEN_DAEMON, then run warden check --base main in ${root} with the daemon running`);
-  expect(warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", "main").code).toBe(0);
+  const blocked = warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", "main");
+  expect(blocked).toMatchObject({ code: 1, err: expect.stringContaining(`gate-off run `) });
   await until("the gated check closes the alert", () => [...(s.daemon.projects.get(root)?.open.values() ?? [])].every((d) => d.detail !== "gate-off"));
+  expect(warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", "main").code).toBe(0);
   expect(warden(root, { WARDEN_DAEMON: "off" }, "check", "--tier", "edit", "--base", "main").code).toBe(0);
   expect(readEvidence(PROJECT).filter((e) => e.kind === "gate-off")).toHaveLength(1);
 });

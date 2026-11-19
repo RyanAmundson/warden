@@ -4,26 +4,32 @@ import { basename, dirname, join, resolve } from "node:path";
 import { COMMIT_HOOK } from "../compiler/emit.js";
 import { LOCK_PATH, readLock } from "../compiler/lock.js";
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
-import { localCommits, restoreAction } from "./changed.js";
+import { commonDir, isAncestor, newCommits, repoTips, restoreAction, worktrees } from "./changed.js";
 import { claudeDir, commitHookItem, pluginAction, pluginState } from "./doctor.js";
-import { LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, evidenceProjects, readEvidenceTail, wardenHome } from "./evidence.js";
+import { LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, evidenceProjects, readEvidenceFrom, readEvidenceTail, wardenHome } from "./evidence.js";
 import { formatFeedback } from "./feedback.js";
 import { findTampering } from "./tamper.js";
 export const HEARTBEAT_MS = 10_000;
 export const STALE_MS = 30_000;
 export const SKEW_MS = 5_000;
-export const COMMITS_SCANNED = 50;
 export const START_DAEMON = "start the daemon: warden daemon install";
 export const heartbeatFile = () => join(wardenHome(), "daemon", "heartbeat.json");
+export const stateFile = () => join(wardenHome(), "daemon", "state.json");
 const writeAtomic = (file, text) => {
     mkdirSync(dirname(file), { recursive: true });
     const temp = `${file}.${process.pid}.tmp`;
     writeFileSync(temp, text);
     renameSync(temp, file);
 };
-const isHeartbeat = (value) => {
-    const v = value;
-    return typeof v === "object" && v !== null && typeof v.pid === "number" && typeof v.at === "string" && !Number.isNaN(Date.parse(v.at)) && typeof v.port === "number";
+const readOptional = (file) => {
+    try {
+        return readFileSync(file, "utf8");
+    }
+    catch (cause) {
+        if (cause.code === "ENOENT")
+            return undefined;
+        throw cause;
+    }
 };
 const parsed = (text) => {
     try {
@@ -33,20 +39,20 @@ const parsed = (text) => {
         return undefined;
     }
 };
+const isHeartbeat = (value) => {
+    const v = value;
+    return typeof v === "object" && v !== null && typeof v.pid === "number" && typeof v.at === "string" && !Number.isNaN(Date.parse(v.at)) && typeof v.port === "number";
+};
 export function readHeartbeat() {
-    let text;
-    try {
-        text = readFileSync(heartbeatFile(), "utf8");
-    }
-    catch (cause) {
-        if (cause.code === "ENOENT")
-            return undefined;
-        throw cause;
-    }
+    const text = readOptional(heartbeatFile());
+    if (text === undefined)
+        return undefined;
     const value = parsed(text);
     return isHeartbeat(value) ? value : null;
 }
 const alive = (pid) => {
+    if (pid <= 1)
+        return false;
     try {
         process.kill(pid, 0);
         return true;
@@ -68,8 +74,23 @@ export function heartbeatProblem(now = Date.now()) {
     if (age > STALE_MS)
         return `Warden's daemon heartbeat is ${Math.round(age / 1000)} s old; it is stale after ${STALE_MS / 1000} s. Next action: ${START_DAEMON}`;
     if (!alive(beat.pid))
-        return `Warden's daemon heartbeat names process ${beat.pid}, which is not running. Next action: ${START_DAEMON}`;
+        return `Warden's daemon heartbeat names process ${beat.pid}, which is not a running daemon. Next action: ${START_DAEMON}`;
     return undefined;
+}
+export function readState() {
+    const text = readOptional(stateFile());
+    if (text === undefined)
+        return { roots: {}, repos: {} };
+    const value = parsed(text);
+    if (typeof value !== "object" || value === null)
+        throw new RecordError(stateFile(), "", `is not valid JSON. Next action: delete ${stateFile()} and restart the daemon; it rebuilds the file from git and Evidence`);
+    return { roots: value.roots ?? {}, repos: value.repos ?? {} };
+}
+export function openAlerts(root) {
+    const repo = commonDir(root);
+    return Object.values(readState().roots)
+        .flatMap((r) => r.open)
+        .filter((d) => d.repo === repo);
 }
 export function discoverRoots() {
     const roots = evidenceProjects().flatMap((p) => readEvidenceTail(p, LOOP_TAIL_BYTES).flatMap((e) => (e.root === undefined ? [] : [e.root])));
@@ -80,77 +101,36 @@ const nextOf = (message) => {
     return at === -1 ? undefined : message.slice(at + "Next action: ".length).replace(/\.$/, "");
 };
 const now = () => new Date().toISOString();
-const pluginDetections = (root, project, mine) => {
-    const plugin = pluginState(root);
-    const records = mine.filter((e) => e.kind === "plugin");
-    if (records.at(-1)?.status !== plugin.state) {
-        const e = { at: now(), kind: "plugin", trigger: "daemon", root, status: plugin.state, file: plugin.file };
-        appendEvidence(project, e);
-        records.push(e);
-    }
-    if (plugin.state === "enabled" || !records.some((e) => e.status === "enabled"))
-        return [];
-    return [{ file: plugin.file, detail: `plugin-${plugin.state}`, next: pluginAction(plugin) }];
-};
 const isRun = (e) => e.kind === "cost" && e.guardrail === RUN_TOTAL;
-const gateOffDetections = (root, mine) => {
-    const off = mine.filter((e) => e.kind === "gate-off");
-    const offRuns = new Set(off.map((e) => e.run));
-    const gated = mine.filter((e) => isRun(e) && e.tier === "commit" && e.outcome !== "refused" && !offRuns.has(e.run)).at(-1);
-    return off
-        .filter((e) => gated === undefined || e.at > gated.at)
-        .map((e) => ({ file: `run ${e.run ?? ""}`, detail: "gate-off", next: `unset WARDEN_DAEMON, then run warden check --base ${e.base ?? "main"} in ${root} with the daemon running`, once: true }));
-};
-const commitDetections = (root, project, mine, base) => {
-    const before = new Set(mine.find((e) => e.kind === "watching")?.members ?? []);
-    const commits = localCommits(root, COMMITS_SCANNED);
-    const all = readEvidenceTail(project, LOOP_TAIL_BYTES);
-    const stamped = new Set(all.filter((e) => isRun(e) && e.tier === "commit" && e.exit === 0 && e.tree !== undefined).map((e) => e.tree));
-    const seen = new Set(mine.filter((e) => e.kind === "commit").map((e) => e.commit));
-    return commits
-        .filter((c) => !before.has(c.commit))
-        .flatMap((c) => {
-        const checked = stamped.has(c.tree);
-        if (!seen.has(c.commit)) {
-            appendEvidence(project, { at: now(), kind: "commit", trigger: "daemon", root, commit: c.commit, tree: c.tree, status: checked ? "checked" : "unchecked" });
-            seen.add(c.commit);
+const emptyIndex = () => ({ offset: 0, stamps: [], gateOff: [], offRuns: new Set(), lastGated: new Map() });
+const refresh = (index, project) => {
+    const { events, offset } = readEvidenceFrom(project, index.offset);
+    const ix = offset < index.offset ? emptyIndex() : index;
+    ix.offset = offset;
+    for (const e of events) {
+        if (e.kind === "gate-off") {
+            ix.gateOff.push(e);
+            ix.offRuns.add(e.run);
         }
-        return checked ? [] : [{ file: c.commit, detail: "unchecked-commit", next: `run warden check --base ${base} in ${root} with commit ${c.commit.slice(0, 12)} checked out and nothing else staged`, once: true }];
-    });
+        if (!isRun(e) || e.tier !== "commit")
+            continue;
+        if (e.tree !== undefined && e.scope === "full" && (e.result === "pass" || e.outcome === "empty"))
+            ix.stamps.push(e);
+        if (e.root !== undefined && e.outcome !== "refused" && !ix.offRuns.has(e.run))
+            ix.lastGated.set(e.root, e.at);
+    }
+    return ix;
 };
-export async function scanProject(root, wardenRoot, project) {
-    const all = readEvidenceTail(project, LOOP_TAIL_BYTES);
-    const mine = all.filter((e) => e.root === root);
-    const at = (d) => ({ project, root, ...d });
-    if (!mine.some((e) => e.kind === "watching")) {
-        const e = { at: now(), kind: "watching", trigger: "daemon", root, members: localCommits(root, COMMITS_SCANNED).map((c) => c.commit) };
-        appendEvidence(project, e);
-        mine.push(e);
-    }
-    if (!existsSync(join(root, ".warden/config.yaml")))
-        return [at({ file: ".warden/config.yaml", detail: "removed", next: restoreAction(root, ".warden/config.yaml") })];
-    const found = [];
-    const hook = commitHookItem(root);
-    if (hook.fix !== undefined)
-        found.push(at({ file: COMMIT_HOOK, detail: "hook-unwired", next: hook.fix }));
-    found.push(...gateOffDetections(root, mine).map(at));
-    try {
-        found.push(...pluginDetections(root, project, mine).map(at));
-        const set = await loadRecords(root, wardenRoot);
-        const base = existsSync(join(root, LOCK_PATH)) ? readLock(root).config.base : set.config.base;
-        found.push(...commitDetections(root, project, mine, base).map(at));
-        for (const t of await findTampering(set, wardenRoot, base)) {
-            const next = JSON.parse(formatFeedback([], set, "json", { tampered: [t] })).next.replace(/\.$/, "");
-            found.push(at({ file: t.file, detail: t.guardrail === undefined ? t.detail : `${t.detail} ${t.guardrail}`, next }));
-        }
-    }
-    catch (cause) {
-        if (!(cause instanceof RecordError))
-            throw cause;
-        found.push(at({ file: cause.file, detail: "record-error", next: nextOf(cause.message) ?? `run warden compile in ${root} and fix what it reports` }));
-    }
-    return found;
-}
+const stamped = (root, index, c) => {
+    if (c.parentTree === c.tree)
+        return true;
+    const parent = c.parents[0];
+    return index.stamps.some((s) => s.tree === c.tree && (parent === undefined || (s.mergeBase !== undefined && (s.mergeBase === parent || isAncestor(root, s.mergeBase, parent)))));
+};
+const uncheckedAlert = (c, base) => {
+    const short = c.commit.slice(0, 12);
+    return { file: c.commit, detail: "unchecked-commit", next: `in a checkout of commit ${short} with nothing staged, run warden check --base ${c.parents[0] === undefined ? base : `${short}^`}` };
+};
 const projectOf = (root) => {
     try {
         return parseConfig(".warden/config.yaml", readFileSync(join(root, ".warden/config.yaml"), "utf8")).project;
@@ -161,23 +141,106 @@ const projectOf = (root) => {
         return basename(root);
     }
 };
-const gitPath = (root, args) => resolve(root, execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim());
+const gitPath = (root, args) => resolve(root, execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim());
+const REPO_FILE = /^(config|packed-refs|HEAD|refs\/heads\/.+|worktrees\/[^/]+\/HEAD)$/;
+const named = (...names) => (name) => names.includes(name);
 const watchSpecs = (root) => [
     { path: join(root, ".warden"), recursive: true, changes: true },
-    { path: root, recursive: false, names: [".warden", ".claude"] },
-    { path: gitPath(root, ["rev-parse", "--git-common-dir"]), recursive: false, names: ["config"] },
-    { path: gitPath(root, ["rev-parse", "--git-path", "logs"]), recursive: false, names: ["HEAD"] },
+    { path: root, recursive: false, accept: named(".warden", ".claude") },
+    { path: gitPath(root, ["rev-parse", "--git-common-dir"]), recursive: true, accept: (name) => REPO_FILE.test(name) },
     { path: gitPath(root, ["rev-parse", "--git-path", "hooks"]), recursive: false },
-    { path: join(root, ".claude"), recursive: false, names: ["settings.json", "settings.local.json"] },
-    { path: claudeDir(), recursive: false, names: ["settings.json"] },
+    { path: join(root, ".claude"), recursive: false, accept: named("settings.json", "settings.local.json") },
+    { path: claudeDir(), recursive: false, accept: named("settings.json") },
 ];
 const key = (d) => `${d.root ?? ""}\0${d.file ?? ""}\0${d.detail ?? ""}`;
 export function startWatching(opts) {
     const projects = new Map();
+    const indexes = new Map();
+    const state = readState();
     const startedAt = now();
     const debounce = opts.debounceMs ?? 200;
     let stopped = false;
     const report = (cause) => (opts.onError ?? ((e) => process.stderr.write(`${e.message}\n`)))(cause instanceof Error ? cause : new Error(String(cause)));
+    const saveState = () => writeAtomic(stateFile(), `${JSON.stringify(state)}\n`);
+    const indexFor = (project) => {
+        const ix = refresh(indexes.get(project) ?? emptyIndex(), project);
+        indexes.set(project, ix);
+        return ix;
+    };
+    const owner = (w) => [...projects.values()].find((x) => x.repo === w.repo) === w;
+    const pluginFound = (w, own) => {
+        let plugin;
+        try {
+            plugin = pluginState(w.root);
+        }
+        catch (cause) {
+            if (!(cause instanceof RecordError))
+                throw cause;
+            report(cause);
+            return [...w.open.values()].filter((d) => d.detail.startsWith("plugin-"));
+        }
+        if (own.plugin !== plugin.state) {
+            appendEvidence(w.project, { at: now(), kind: "plugin", trigger: "daemon", root: w.root, status: plugin.state, file: plugin.file });
+            own.plugin = plugin.state;
+        }
+        if (plugin.state === "enabled")
+            own.pluginEnabled = true;
+        if (plugin.state === "enabled" || own.pluginEnabled !== true)
+            return [];
+        return [{ file: plugin.file, detail: `plugin-${plugin.state}`, next: pluginAction(plugin) }];
+    };
+    const gateOffFound = (w, ix) => {
+        const gated = ix.lastGated.get(w.root);
+        return ix.gateOff
+            .filter((e) => e.root === w.root && (gated === undefined || e.at > gated))
+            .map((e) => ({ file: `run ${e.run ?? ""}`, detail: "gate-off", next: `unset WARDEN_DAEMON, then run warden check --base ${e.base ?? "main"} in ${w.root} with the daemon running` }));
+    };
+    const commitFound = (w, base) => {
+        const tips = repoTips(w.root);
+        const ix = indexFor(w.project);
+        const known = state.repos[w.repo];
+        const fresh = newCommits(w.root, tips, known?.tips ?? tips).filter((c) => {
+            const checked = stamped(w.root, ix, c);
+            appendEvidence(w.project, { at: now(), kind: "commit", trigger: "daemon", root: w.root, commit: c.commit, tree: c.tree, status: checked ? "checked" : "unchecked" });
+            return !checked;
+        });
+        const pending = [...(known?.unchecked ?? []), ...fresh];
+        const unchecked = pending.filter((c, i) => pending.findIndex((x) => x.commit === c.commit) === i && !stamped(w.root, ix, c));
+        state.repos[w.repo] = { tips, unchecked };
+        return unchecked.map((c) => uncheckedAlert(c, base));
+    };
+    const scanRoot = async (w) => {
+        const own = (state.roots[w.root] ??= { open: [] });
+        const at = (d) => ({ project: w.project, root: w.root, repo: w.repo, ...d });
+        if (!existsSync(join(w.root, ".warden/config.yaml")))
+            return [at({ file: ".warden/config.yaml", detail: "removed", next: restoreAction(w.root, ".warden/config.yaml") })];
+        const ix = indexFor(w.project);
+        const found = [];
+        const hook = commitHookItem(w.root);
+        if (hook.fix !== undefined)
+            found.push(at({ file: COMMIT_HOOK, detail: "hook-unwired", next: hook.fix }));
+        found.push(...gateOffFound(w, ix).map(at), ...pluginFound(w, own).map(at));
+        if (w.filesChanged || w.base === undefined) {
+            w.filesChanged = false;
+            w.recordFound = [];
+            try {
+                const set = await loadRecords(w.root, opts.wardenRoot);
+                w.base = existsSync(join(w.root, LOCK_PATH)) ? readLock(w.root).config.base : set.config.base;
+                for (const t of await findTampering(set, opts.wardenRoot, w.base)) {
+                    const next = JSON.parse(formatFeedback([], set, "json", { tampered: [t] })).next.replace(/\.$/, "");
+                    w.recordFound.push(at({ file: t.file, detail: t.guardrail === undefined ? t.detail : `${t.detail} ${t.guardrail}`, next }));
+                }
+            }
+            catch (cause) {
+                if (!(cause instanceof RecordError))
+                    throw cause;
+                w.recordFound.push(at({ file: cause.file, detail: "record-error", next: nextOf(cause.message) ?? `run warden compile in ${w.root} and fix what it reports` }));
+            }
+        }
+        if (owner(w))
+            found.push(...commitFound(w, w.base ?? "main").map(at));
+        return [...found, ...w.recordFound];
+    };
     const schedule = (w) => {
         if (stopped)
             return;
@@ -189,19 +252,21 @@ export function startWatching(opts) {
     };
     const ensureWatchers = (w) => {
         const had = w.watchers.size;
-        for (const spec of watchSpecs(w.root)) {
+        for (const spec of w.specs) {
             if (w.watchers.has(spec.path) || !existsSync(spec.path))
                 continue;
             const watcher = watch(spec.path, { recursive: spec.recursive }, (_event, name) => {
-                if (spec.names !== undefined && (name === null || !spec.names.includes(name)))
+                if (spec.accept !== undefined && (name === null || !spec.accept(name)))
                     return;
                 if (spec.changes === true && name !== null && !name.includes(".warden-tmp-"))
                     w.changes.add(`.warden/${name}`);
+                w.filesChanged = true;
                 schedule(w);
             });
             watcher.on("error", () => {
                 watcher.close();
                 w.watchers.delete(spec.path);
+                w.filesChanged = true;
                 schedule(w);
             });
             w.watchers.set(spec.path, watcher);
@@ -218,18 +283,19 @@ export function startWatching(opts) {
             for (const file of w.changes)
                 appendEvidence(w.project, { at: now(), kind: "change", trigger: "daemon", root: w.root, file });
             w.changes.clear();
-            const found = await scanProject(w.root, opts.wardenRoot, w.project);
+            const found = await scanRoot(w);
             if (stopped)
                 return;
-            const recorded = new Set(readEvidenceTail(w.project, LOOP_TAIL_BYTES).filter((e) => e.kind === "tampered" && e.trigger === "daemon").map(key));
             const current = new Map(found.map((d) => [key(d), d]));
             for (const [k, d] of current) {
-                if (w.open.has(k) || (d.once === true && recorded.has(k)))
+                if (w.open.has(k))
                     continue;
                 appendEvidence(w.project, { at: now(), kind: "tampered", trigger: "daemon", root: w.root, file: d.file, detail: d.detail, next: d.next });
                 opts.onDetection?.(d);
             }
             w.open = current;
+            (state.roots[w.root] ??= { open: [] }).open = [...current.values()];
+            saveState();
         })()
             .catch(report)
             .finally(() => {
@@ -241,13 +307,34 @@ export function startWatching(opts) {
         });
         return w.scanning;
     };
+    const watchRoot = (root) => {
+        if (projects.has(root))
+            return;
+        const saved = state.roots[root]?.open ?? [];
+        const w = { root, project: projectOf(root), repo: commonDir(root), specs: watchSpecs(root), open: new Map(saved.map((d) => [key(d), d])), watchers: new Map(), changes: new Set(), filesChanged: true, recordFound: [] };
+        projects.set(root, w);
+        void scan(w);
+    };
+    const worktreeRoots = (w) => {
+        try {
+            return worktrees(w.root)
+                .map((t) => t.path)
+                .filter((p) => existsSync(join(p, ".warden/config.yaml")));
+        }
+        catch (cause) {
+            report(cause);
+            return [];
+        }
+    };
     const discover = () => {
-        for (const root of discoverRoots()) {
-            if (projects.has(root))
-                continue;
-            const w = { root, project: projectOf(root), open: new Map(), watchers: new Map(), changes: new Set() };
-            projects.set(root, w);
-            void scan(w);
+        const remembered = Object.keys(state.roots).filter((r) => existsSync(join(r, ".warden/config.yaml")));
+        for (const root of [...discoverRoots(), ...remembered, ...[...projects.values()].flatMap(worktreeRoots)]) {
+            try {
+                watchRoot(root);
+            }
+            catch (cause) {
+                report(cause);
+            }
         }
     };
     const heartbeat = () => {
@@ -258,14 +345,22 @@ export function startWatching(opts) {
     const tick = () => {
         try {
             heartbeat();
-            for (const w of projects.values())
-                if (existsSync(w.root) && ensureWatchers(w))
-                    schedule(w);
-            discover();
         }
         catch (cause) {
             report(cause);
         }
+        for (const w of projects.values()) {
+            try {
+                if (existsSync(w.root) && ensureWatchers(w)) {
+                    w.filesChanged = true;
+                    schedule(w);
+                }
+            }
+            catch (cause) {
+                report(cause);
+            }
+        }
+        discover();
     };
     const evidenceDir = join(wardenHome(), "evidence");
     mkdirSync(evidenceDir, { recursive: true });
@@ -285,6 +380,12 @@ export function startWatching(opts) {
         startedAt,
         heartbeat,
         discover,
+        rescan: async () => {
+            for (const w of projects.values())
+                w.filesChanged = true;
+            await Promise.all([...projects.values()].map(scan));
+            await Promise.all([...projects.values()].map(scan));
+        },
         settled: async () => {
             while ([...projects.values()].some((w) => w.scanning !== undefined || w.timer !== undefined))
                 await new Promise((r) => setTimeout(r, 20));
