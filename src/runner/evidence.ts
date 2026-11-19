@@ -1,7 +1,7 @@
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Tier } from "../records/types.js";
+import type { Kind, Tier } from "../records/types.js";
 
 export interface Evidence {
   at: string;
@@ -35,6 +35,7 @@ export interface Evidence {
   result?: "pass" | "fail";
   next?: string;
   failures?: RunFailure[];
+  kinds?: Partial<Record<Kind | "unknown", number>>;
   ratchet?: [number, number];
   step?: Step;
   state?: "start" | "done" | "fail";
@@ -77,6 +78,15 @@ export const evidenceFile = (project: string): string => join(wardenHome(), "evi
 export function appendEvidence(project: string, e: Evidence): void {
   mkdirSync(join(wardenHome(), "evidence"), { recursive: true });
   appendFileSync(evidenceFile(project), `${JSON.stringify(e)}\n`);
+}
+
+export function evidenceProjects(): string[] {
+  try {
+    return readdirSync(join(wardenHome(), "evidence")).filter((f) => f.endsWith(".jsonl")).map((f) => f.slice(0, -".jsonl".length));
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw cause;
+  }
 }
 
 export function readEvidence(project: string): Evidence[] {

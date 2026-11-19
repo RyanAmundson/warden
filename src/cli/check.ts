@@ -6,7 +6,7 @@ import { PARSE_ERROR, type RunContext, type RunResult, type Violation } from "..
 import { wardenVersion } from "../compiler/compile.js";
 import { LOCK_PATH, bundledTools, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
-import type { Guardrail, RecordSet, Tier } from "../records/types.js";
+import type { Guardrail, Kind, RecordSet, Tier } from "../records/types.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
 import { CHECK_BASE_ACTION, changedFiles, changesSinceMergeBase, containsHead, headCommit, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
@@ -147,6 +147,16 @@ const report = (failures: Violation[], set: RecordSet, opts: CheckOptions, notes
 
 export const MAX_RECORDED_FAILURES = 10;
 
+const kindCounts = (failures: Violation[], set: RecordSet): Partial<Record<Kind | "unknown", number>> => {
+  const kindOf = new Map(set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.map((g) => [g.id, g.kind] as const))));
+  const counts: Partial<Record<Kind | "unknown", number>> = {};
+  for (const v of failures) {
+    const kind = kindOf.get(v.guardrail) ?? "unknown";
+    counts[kind] = (counts[kind] ?? 0) + 1;
+  }
+  return counts;
+};
+
 interface Live {
   run: string;
   at: string;
@@ -206,6 +216,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
       bytes,
       ...(commit === undefined ? {} : { commit }),
       ...(recorded.length === 0 ? {} : { failures: recorded }),
+      ...(outcome === "ran" && judged !== undefined ? { kinds: kindCounts(failures, judged.set) } : {}),
       ...(feedback?.next == null ? {} : { next: feedback.next.replace(/\.$/, "") }),
       ...judged?.extra,
     });

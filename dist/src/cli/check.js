@@ -125,6 +125,15 @@ const report = (failures, set, opts, notes) => {
     return failed ? 1 : 0;
 };
 export const MAX_RECORDED_FAILURES = 10;
+const kindCounts = (failures, set) => {
+    const kindOf = new Map(set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.map((g) => [g.id, g.kind]))));
+    const counts = {};
+    for (const v of failures) {
+        const kind = kindOf.get(v.guardrail) ?? "unknown";
+        counts[kind] = (counts[kind] ?? 0) + 1;
+    }
+    return counts;
+};
 const closeStep = (live, state, extra = {}) => {
     if (live.open === undefined || live.project === undefined)
         return;
@@ -171,6 +180,7 @@ const check = async (opts, live) => {
             bytes,
             ...(commit === undefined ? {} : { commit }),
             ...(recorded.length === 0 ? {} : { failures: recorded }),
+            ...(outcome === "ran" && judged !== undefined ? { kinds: kindCounts(failures, judged.set) } : {}),
             ...(feedback?.next == null ? {} : { next: feedback.next.replace(/\.$/, "") }),
             ...judged?.extra,
         });
