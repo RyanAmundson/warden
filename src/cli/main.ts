@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "./require-node.js";
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
