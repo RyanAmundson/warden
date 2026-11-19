@@ -102,7 +102,7 @@ export function pluginState(root) {
     return found;
 }
 const PLUGIN_SCOPES = ["user", "project", "local", "managed"];
-const pluginVersionItem = (root) => {
+const pluginVersionItem = (root, plugin) => {
     const name = `Claude plugin ${PLUGIN}`;
     const result = spawnSync("claude", ["plugin", "list", "--json"], { cwd: root, encoding: "utf8", timeout: 5_000 });
     if (result.status !== 0) {
@@ -120,8 +120,10 @@ const pluginVersionItem = (root) => {
     const actual = installed
         .filter((entry) => entry?.id === PLUGIN && entry.enabled === true && (typeof entry.projectPath !== "string" || real(entry.projectPath) === real(root)))
         .sort((a, b) => PLUGIN_SCOPES.indexOf(b.scope) - PLUGIN_SCOPES.indexOf(a.scope))[0];
-    if (actual === undefined)
-        return { name, problem: "is enabled in settings but absent from Claude Code's installed plugin list", fix: PLUGIN_SETUP };
+    if (actual === undefined) {
+        const scope = plugin.file === join(root, ".claude/settings.local.json") ? "local" : plugin.file === join(root, ".claude/settings.json") ? "project" : "user";
+        return { name, problem: `is enabled in ${plugin.file} but absent from Claude Code's installed plugin list`, fix: `${PLUGIN_SETUP} --scope ${scope}` };
+    }
     if (!/^\d+\.\d+\.\d+$/.test(actual.version))
         return { name, problem: "does not report a release version", fix: `install a released version of ${PLUGIN}` };
     const expected = JSON.parse(readFileSync(join(findWardenRoot(), "package.json"), "utf8")).version;
@@ -173,7 +175,7 @@ export async function doctor(set, explicit = false) {
     }
     const plugin = explicit ? pluginState(set.root) : undefined;
     if (plugin?.state === "enabled")
-        items.push(pluginVersionItem(set.root));
+        items.push(pluginVersionItem(set.root, plugin));
     const note = plugin === undefined || plugin.state === "enabled" ? [] : [`note  Claude plugin ${PLUGIN} is ${plugin.state === "missing" ? "not installed" : `disabled in ${plugin.file}`}, so Claude Code edits are not checked; to check them, ${pluginAction(plugin)}`];
     const failed = items.find((i) => i.fix !== undefined);
     return {

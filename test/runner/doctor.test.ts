@@ -222,8 +222,8 @@ describe("doctor", () => {
     await writeFile(join(bin, "claude"), `#!/bin/sh
 case "$*" in
   'plugin list --json') cat "$CLAUDE_CONFIG_DIR/plugins.json" ;;
-  'plugin marketplace update warden') exit 0 ;;
-  'plugin update warden@warden --scope user') cp "$CLAUDE_CONFIG_DIR/current.json" "$CLAUDE_CONFIG_DIR/plugins.json" ;;
+  'plugin marketplace update warden'|'plugin marketplace add RyanAmundson/warden') exit 0 ;;
+  'plugin update warden@warden --scope user'|'plugin install warden@warden --scope project') cp "$CLAUDE_CONFIG_DIR/current.json" "$CLAUDE_CONFIG_DIR/plugins.json" ;;
   *) exit 2 ;;
 esac
 `, { mode: 0o755 });
@@ -244,6 +244,17 @@ esac
     const updated = await doctor(setWith(), true);
     expect(updated.lines).toContain(`ok    Claude plugin warden@warden ${current.version}`);
     expect(updated.next).toBeUndefined();
+
+    await mkdir(join(root, ".claude"));
+    await writeFile(join(root, ".claude/settings.json"), '{"enabledPlugins":{"warden@warden":true}}');
+    await writeFile(join(config, "plugins.json"), "[]");
+    await writeFile(join(config, "current.json"), JSON.stringify([{ id: "warden@warden", version: current.version, scope: "project", enabled: true, projectPath: root }]));
+    const absent = await doctor(setWith(), true);
+    const expected = "run claude plugin marketplace add RyanAmundson/warden, then claude plugin install warden@warden --scope project, then run warden doctor";
+    expect(absent.next).toBe(expected);
+    const [, add, install] = /^run (.*), then (.*), then run warden doctor$/.exec(absent.next!) ?? [];
+    execFileSync("sh", ["-c", `${add} && ${install}`], { cwd: root });
+    expect((await doctor(setWith(), true)).next).toBeUndefined();
   });
 
 });
