@@ -10,7 +10,8 @@ import { admit } from "./bench.js";
 import { checkConsistency } from "./consistency.js";
 import { COMMIT_HOOK, commitHook, stamp } from "./emit.js";
 import { runExamples } from "./examples.js";
-import { LOCK_PATH, commandSources, computeLock, packFiles, scriptsOf, sha256 } from "./lock.js";
+import { commandSources } from "./command-sources.js";
+import { LOCK_PATH, computeLock, packFiles, scriptsOf, sha256 } from "./lock.js";
 const sourceFiles = async (set, projectRoot, wardenRoot) => {
     const out = {};
     const config = await readText(join(projectRoot, ".warden/config.yaml"));
@@ -29,7 +30,7 @@ const sourceFiles = async (set, projectRoot, wardenRoot) => {
     const scripts = scriptsOf(projectRoot);
     for (const g of set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails))) {
         if (g.implementation.startsWith("cmd:"))
-            Object.assign(out, commandSources(projectRoot, targetOf(g), g.sources ?? [], scripts, [g.packDir === undefined ? "" : join(g.packDir, "pack.yaml"), `/guardrails/${g.id}/sources`]));
+            Object.assign(out, commandSources(projectRoot, targetOf(g), g.sources ?? [], scripts, { file: g.packDir === undefined ? "" : join(g.packDir, "pack.yaml"), id: g.id }));
     }
     return out;
 };

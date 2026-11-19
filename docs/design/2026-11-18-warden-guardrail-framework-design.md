@@ -282,20 +282,43 @@ Guardrail has a pack folder, so it runs as printed whatever its quoting,
 `warden doctor` checks that each named pack file exists, and every file in a
 bundled or local pack's folder but `.DS_Store` is hashed into the lock. The
 lock also hashes, under keys that start with `./`, each project file a `cmd`
-command runs: a path in program position (the first word, or the script
-argument of `sh`, `bash`, `node`, `tsx`, `npx tsx`, `python`, or `deno run`),
-resolved against any `cd <dir>` before it in the same command or subshell.
-It hashes the text of each npm script the command calls (`npm run`, `npm
-run-script`, `npm test`, `npm t`, `npm start`, flags allowed, with the `pre`
-and `post` scripts) and follows those scripts and their own npm calls to a
-fixed point. For a JS or TS script it also hashes each module the script
-reaches through static relative `import`, `export … from`, and `require`. A
-file that appears only as an argument is not hashed, so a command that reads
-the code under check does not lock it. Static analysis cannot see which data
-files a script reads, so a `cmd` Guardrail must list them in `sources`, a list
-of project paths that the lock hashes under the same `./` keys. Editing any of
-these files without recompiling is source drift, and recompiling after the
-edit, or dropping the file from the command or from `sources`, is loosening. A `cmd` command that is
+command runs. Compile parses the command as shell (`;`, `&&`, `||`, pipes,
+`( )`, `{ }`, `if`, `while`, `until`, `for`, `!`, `$( )`, backticks, and
+redirections) and resolves a fixed set of command words. The wrappers `nice`,
+`timeout`, `nohup`, `env`, `xargs`, `command`, `exec`, and `time` run the
+next program word. The interpreters `sh`, `bash`, `zsh`, `dash`, `node`,
+`tsx`, `npx tsx`, `npx ts-node`, `bun`, `deno run`, `python`, `pythonX.Y`,
+`perl`, and `ruby` run their script argument, and `awk -f` and `sed -f` run
+the file after `-f`; the lock hashes that file, with the files that node's
+`--require`, `--import`, and `--loader` name. A path in the first word, a
+file that `.` or `source` reads, and a bare first word that PATH or
+`node_modules/.bin` resolves inside the project and outside `node_modules`
+are hashed too. A path resolves against any `cd <dir>` before it, in the same
+command, subshell, or command substitution. The lock hashes the text of each
+npm script the command calls (`npm run`, `npm run-script`, `npm test`,
+`npm t`, `npm start`, flags allowed, with the `pre` and `post` scripts) and
+follows those scripts to a fixed point. For a JS or TS script, or one whose
+shebang runs node, it hashes each module the script reaches through static
+relative `import`, `export … from`, and `require`. Inside a hashed shell
+script, compile follows the invocations it resolves, best effort, and hashes
+their callees by the same rules; a form it cannot resolve in a script body
+never stops compile, so a callee reached through such a form must be listed
+under `sources:`. Shell builtins and known tools such as `cat`, `grep`,
+`git`, `eslint`, and `tsc` take their arguments as data, so a command that
+reads the code under check does not lock it. Any other command word, and any
+construct compile cannot resolve with certainty (`eval`, `case`, a
+here-document, an arithmetic expansion that holds a command, an unknown
+option, a program named through a variable, or an unknown program handed a
+project file), makes compile and check exit 2 with one next action: list the
+project files it runs in that Guardrail's `sources`, or, when it names no
+project file, rewrite it. `sources` covers only what it lists: a form is
+accepted only when every project file it leaves unresolved is listed, and
+listing one file never turns off refusal for the rest. Static analysis cannot
+see which data files a script reads, so a `cmd` Guardrail must list them in
+`sources` too. The lock hashes every listed file under the same `./` keys.
+Editing any of these files without recompiling is source drift, and
+recompiling after the edit, or dropping the file from the command or from
+`sources`, is loosening. A `cmd` command that is
 only `node "$WARDEN_PACK_DIR/<script>"` and plain arguments, in a pack that
 Warden ships, runs the script in a worker thread inside Warden rather than a
 new Node process, and the budget stops the worker. The script sees the project
