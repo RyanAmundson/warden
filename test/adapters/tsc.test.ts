@@ -7,14 +7,18 @@ import { PARSE_ERROR } from "../../src/adapters/types.js";
 import type { Guardrail, RecordSet } from "../../src/records/types.js";
 import { conformance } from "./conformance.js";
 
-const stub = vi.hoisted((): { path: string | undefined } => ({ path: undefined }));
+const stub = vi.hoisted((): { path: string | undefined; started: number } => ({ path: undefined, started: 0 }));
 
-vi.mock("../../src/adapters/cmd.js", async (original) => {
-  const actual = await original<typeof import("../../src/adapters/cmd.js")>();
+vi.mock("node:worker_threads", async (original) => {
+  const actual = await original<typeof import("node:worker_threads")>();
   return {
     ...actual,
-    spawnBudgeted: (file: string, args: string[], ...rest: [string, number | undefined]) =>
-      actual.spawnBudgeted(file, stub.path === undefined ? args : [stub.path, ...args.slice(1)], ...rest),
+    Worker: class extends actual.Worker {
+      constructor(url: URL, options?: import("node:worker_threads").WorkerOptions) {
+        super(stub.path ?? url, options);
+        stub.started += 1;
+      }
+    },
   };
 });
 
@@ -167,12 +171,15 @@ describe("tsc adapter", () => {
     }
   });
 
+  let fresh = tscAdapter;
+
   const withStubTsc = async (script: string, fn: (root: string) => Promise<void>): Promise<void> => {
     const root = await mkdtemp(join(tmpdir(), "warden-tsc-stub-"));
     try {
-      await writeFile(join(root, "package.json"), "{}");
-      await writeFile(join(root, "stub-tsc.js"), script);
-      stub.path = join(root, "stub-tsc.js");
+      await writeFile(join(root, "stub-tsc.mjs"), `import { parentPort } from "node:worker_threads";\nparentPort.on("message", () => { ${script} });\n`);
+      stub.path = join(root, "stub-tsc.mjs");
+      vi.resetModules();
+      fresh = (await import("../../src/adapters/tsc.js")).tscAdapter;
       await fn(root);
     } finally {
       stub.path = undefined;
@@ -182,27 +189,45 @@ describe("tsc adapter", () => {
 
   const g = guardrail("strict-null", "tsc:strictNullChecks");
 
-  it("throws with stderr when tsc crashes with an unexpected exit code", async () => {
-    await withStubTsc('process.stderr.write("boom reason\\n"); process.exit(3);', async (root) => {
-      await expect(tscAdapter.run([g], [], ctxFor(root))).rejects.toThrow(/boom reason/);
+  it("throws with the reason when the compiler throws, and the next run starts a fresh compiler", async () => {
+    await withStubTsc('throw new Error("boom reason");', async (root) => {
+      await expect(fresh.run([g], [], ctxFor(root))).rejects.toThrow(/^tsc ended with boom reason$/);
+    });
+    await withProject(async (root) => {
+      await emitInto(root, [g]);
+      const results = await fresh.run([g], [], ctxFor(root));
+      expect(results.flatMap((r) => r.violations.map((v) => `${v.file}:${v.line}`))).toEqual(["src/a.ts:3"]);
     });
   });
 
-  it("throws when tsc exits nonzero without any diagnostic", async () => {
-    await withStubTsc("process.exit(2);", async (root) => {
-      await expect(tscAdapter.run([g], [], ctxFor(root))).rejects.toThrow(/exited with 2/);
+  it("one compiler serves every run in a process", async () => {
+    vi.resetModules();
+    const { tscAdapter: adapter } = await import("../../src/adapters/tsc.js");
+    stub.started = 0;
+    await withProject(async (root) => {
+      await emitInto(root, [g]);
+      for (let i = 0; i < 3; i++) expect((await adapter.run([g], [], ctxFor(root))).flatMap((r) => r.violations.map((v) => v.line))).toEqual([3]);
+    });
+    expect(stub.started).toBe(1);
+  });
+
+  it("throws when the compiler stops without a reply", async () => {
+    await withStubTsc("process.exit(3);", async (root) => {
+      await expect(fresh.run([g], [], ctxFor(root))).rejects.toThrow(/^tsc ended with exit code 3$/);
     });
   });
 
-  it("throws when a signal ends tsc outside the budget kill", async () => {
-    await withStubTsc('process.kill(process.pid, "SIGKILL");', async (root) => {
-      await expect(tscAdapter.run([g], [], ctxFor(root))).rejects.toThrow(/SIGKILL/);
+  it("throws when the compiler reports errors but no diagnostic", async () => {
+    await withStubTsc('parentPort.postMessage({ stdout: "", code: 1 });', async (root) => {
+      await expect(fresh.run([g], [], ctxFor(root))).rejects.toThrow(/exited with 1/);
     });
   });
 
-  it("does not stall on large stderr output", async () => {
-    await withStubTsc('process.stderr.write("x".repeat(500000)); process.exit(3);', async (root) => {
-      await expect(tscAdapter.run([g], [], ctxFor(root))).rejects.toThrow(/exit code 3/);
+  it("a compiler still running at the budget is stopped and reported as killed", async () => {
+    await withStubTsc("for (;;);", async (root) => {
+      const results = await fresh.run([{ ...g, budgetMs: 100 }], [], ctxFor(root));
+      expect(results.map((r) => r.status)).toEqual(["killed", "killed"]);
+      expect(results[0]?.command).toBe("npx tsc -p .warden/generated/tsconfig.json --pretty false");
     });
   });
 });
