@@ -429,6 +429,12 @@ describe("compile", () => {
     expect(written).toContain(".warden/lock.json");
   });
 
+  it("a legacy Guardrail whose mustPass tree fails says to make the command pass on it", async () => {
+    await usePack(localPack(legacyGuardrail("test ! -e broken", ["        mustFail:", '          broken: "x\\n"', "        mustPass:", '          broken: "x\\n"'])));
+    const { findings } = await compile(root, wardenRoot);
+    expect(findings.map((f) => f.message)).toEqual([expect.stringContaining("so cmd:test ! -e broken passes on it, then run warden compile.")]);
+  });
+
   it("a legacy Guardrail whose mustFail tree passes fails compile", async () => {
     await usePack(localPack(legacyGuardrail("test ! -e broken", ["        mustFail:", '          ok.txt: "x\\n"', "        mustPass:", '          ok.txt: "x\\n"'])));
     const file = join(root, ".warden/packs/local/pack.yaml");

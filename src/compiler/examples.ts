@@ -76,7 +76,7 @@ export async function runExamples(set: RecordSet): Promise<Finding[]> {
             } else if (status === "over-budget") {
               findings.push({ code: "over-budget", record: g.id, message: `Guardrail ${g.id} ran longer than its ${g.budgetMs} ms budget on its ${label} example. Next action: make the ${label} example of Guardrail ${g.id} finish within ${g.budgetMs} ms ${then}` });
             } else if (status !== want) {
-              findings.push({ code: "example-failed", record: g.id, message: `Guardrail ${g.id} ${label} example did not ${want}. Next action: change the ${label} example of Guardrail ${g.id} in ${pack.file} so ${g.implementation} ${want}s on it, then run warden compile.` });
+              findings.push({ code: "example-failed", record: g.id, message: `Guardrail ${g.id} ${label} example did not ${want}. Next action: change the ${label} example of Guardrail ${g.id} in ${pack.file} so ${g.implementation} ${want === "pass" ? "passes" : "fails"} on it, then run warden compile.` });
             }
           }
         }

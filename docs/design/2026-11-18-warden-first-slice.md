@@ -37,7 +37,7 @@
 
 ```
 warden/
-  package.json            bin: warden -> dist/cli/main.js
+  package.json            bin: warden -> dist/src/cli/main.js
   tsconfig.json
   vitest.config.ts
   schema/records.schema.json
@@ -90,7 +90,7 @@ interface ProjectConfig {
 interface RecordSet { config: ProjectConfig; packs: Pack[]; root: string }
 ```
 
-`implementation` is `<adapter>:<tool rule>`: `eslint:<rule>` for `lint`, `tsc:<compiler flag>` for `type`, `cmd:<shell command>` for `legacy`. `options` passes the tool's rule options through unchanged. `mustFail` and `mustPass` are required unless `kind` is `legacy`. The schema has no field that disables, excludes, or overrides a lower pack's Practice, so "higher layers only tighten" holds by construction.
+`implementation` is `<adapter>:<tool rule>`: `eslint:<rule>` for `lint`, `tsc:<compiler flag>` for `type`, `cmd:<shell command>` for `legacy`. `options` passes the tool's rule options through unchanged. `mustFail` and `mustPass` are required for every kind, `legacy` included, and must run. The schema has no field that disables, excludes, or overrides a lower pack's Practice, so "higher layers only tighten" holds by construction.
 
 ---
 
@@ -267,7 +267,7 @@ Finding codes, exactly: `duplicate-term`, `duplicate-practice`, `duplicate-guard
 
 **Files:**
 - Create: `src/cli/main.ts`, `src/cli/init.ts`, `src/cli/explain.ts`, `src/cli/report.ts`
-- Test: `test/cli/cli.test.ts` (runs `node dist/cli/main.js` after `npm run build:dist`)
+- Test: `test/cli/cli.test.ts` (runs `node dist/src/cli/main.js` after `npm run build:dist`)
 
 **Interfaces:**
 - Produces:
@@ -281,7 +281,7 @@ Finding codes, exactly: `duplicate-term`, `duplicate-practice`, `duplicate-guard
 - [ ] **Step 4:** Run the tests. Expected: PASS.
 - [ ] **Step 5:** Run `npm run typecheck && npm test` once for the whole slice. Expected: both exit 0.
 - [ ] **Step 6:** Commit `warden CLI: init, compile, check, explain, report`, tag `v0.1.0`.
-- [ ] **Step 7: Warden adopts itself.** Run `node dist/cli/main.js init` in the Warden repository, commit `.warden/`, and add `scripts/self-check.sh` that installs the previous tag into a temp directory (`npm pack` of `git worktree add <tmp> <previous tag>`) and runs that build's `warden check` on the working copy. Add it as the `pre-commit` hook. Expected: `scripts/self-check.sh` exits 0 on a clean tree and exits 1 after adding `// x` to a source file. From `v0.1.0` on, every release is checked by the one before it.
+- [ ] **Step 7: Warden adopts itself.** Run `node dist/src/cli/main.js init` in the Warden repository, commit `.warden/`, and add `scripts/self-check.sh` that installs the previous tag into a temp directory (`npm pack` of `git worktree add <tmp> <previous tag>`) and runs that build's `warden check` on the working copy. Add it as the `pre-commit` hook. Expected: `scripts/self-check.sh` exits 0 on a clean tree and exits 1 after adding `// x` to a source file. From `v0.1.0` on, every release is checked by the one before it.
 
 ### Task 8: Context Manager adopts Warden
 

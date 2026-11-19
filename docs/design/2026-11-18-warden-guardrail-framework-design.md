@@ -323,10 +323,13 @@ learn to avoid it.
   budget: `edit` (per tool call), `commit`, and `boundary`. Budgets are
   settings in `config.yaml`; the values are Ryan's to tune.
 - **The runner times every run** and records it as `cost` Evidence.
-- **Over budget is a framework defect, not a pass.** The runner stops a
-  Guardrail at its budget, reports it as `over-budget`, and fails the run.
-  Raising a budget counts as loosening and needs Ryan's signature; the fix is
-  to make the Guardrail faster or move it to a later tier.
+- **Over budget is a framework defect.** A Guardrail that finishes over its
+  budget keeps its result: its violations count, and the run records the
+  overrun as a Warden defect without failing. A command that does not finish
+  is stopped at its budget and fails the run. Tier budgets are report-only:
+  `warden report` compares each tier's run times with its budget. Raising a
+  budget counts as loosening and needs Ryan's signature; the fix is to make
+  the Guardrail faster or move it to a later tier.
 - **Admission check.** `warden compile` runs each Guardrail on its examples
   and rejects one whose run exceeds its budget.
 - **Only changed paths.** `edit` and `commit` run on changed files only.
@@ -537,8 +540,8 @@ An independent builder read this design and asked six questions. Answers:
    covers `.warden/` only; the existing `Ryan-Approved:` and protected-paths
    mechanism keeps the files it covers until they migrate.
 3. **Existing scripts register as `legacy` Guardrails.** A `legacy` Guardrail
-   has no examples and reports its strength as "unproven". The example rules
-   apply to every other Guardrail. The report lists each `legacy` Guardrail,
+   carries runnable `mustFail` and `mustPass` examples like every other
+   Guardrail, so compile proves it. The report lists each `legacy` Guardrail,
    so the gap stays visible, and a `legacy` Guardrail cannot be added after
    the inventory.
 4. **`config-only-tightens` is checked both ways.** At compile time across
