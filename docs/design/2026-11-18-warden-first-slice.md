@@ -92,7 +92,7 @@ interface ProjectConfig {
 interface RecordSet { config: ProjectConfig; packs: Pack[]; root: string }
 ```
 
-`implementation` is `<adapter>:<tool rule>`: `eslint:<rule>` for `lint`, `tsc:<compiler flag>` for `type`, `cmd:<shell command>` for `legacy`. `options` passes the tool's rule options through unchanged. `mustFail` and `mustPass` are required for every kind, `legacy` included, and must run. The schema has no field that disables, excludes, or overrides a lower pack's Practice, so "higher layers only tighten" holds by construction.
+`implementation` is `<adapter>:<tool rule>`: `eslint:<rule>` for `lint`, `tsc:<compiler flag>` for `type`, `cmd:<shell command>` for `legacy`. A `cmd` command runs in the project root with `WARDEN_PACK_DIR` set to the absolute folder of the pack that owns the Guardrail, bundled or local, so it can run a script shipped in the pack: `cmd:node "$WARDEN_PACK_DIR/bin/clones.mjs"`. `warden doctor` resolves the variable and checks that each named pack file exists. `options` passes the tool's rule options through unchanged. `mustFail` and `mustPass` are required for every kind, `legacy` included, and must run. The schema has no field that disables, excludes, or overrides a lower pack's Practice, so "higher layers only tighten" holds by construction.
 
 ---
 

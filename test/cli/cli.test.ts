@@ -622,6 +622,29 @@ describe("warden CLI", () => {
     expect(warden("doctor").code).toBe(0);
   });
 
+  it("a local pack's cmd Guardrail runs a script shipped in its pack through compile admission, doctor, and check", async () => {
+    await mkdir(join(root, ".warden/packs/local/bin"), { recursive: true });
+    await writeFile(join(root, ".warden/packs/local/bin/no-broken.mjs"), 'import { existsSync } from "node:fs";\nprocess.exit(existsSync("broken") ? 1 : 0);\n');
+    await writeFile(
+      join(root, ".warden/packs/local/pack.yaml"),
+      ["id: local", "layer: 1", "terms: []", "practices:", "  - id: script-passes", "    statement: The script passes.", "    terms: []", "    paths: []", "    conflictsWith: []", "    guardrails:",
+        "      - id: local-script", "        kind: legacy", "        runs: [commit]", "        budgetMs: 5000", "        version: 1", "        implementation: 'cmd:node \"$WARDEN_PACK_DIR/bin/no-broken.mjs\"'",
+        "        mustFail:", '          broken: "x\\n"', "        mustPass:", '          ok.txt: "x\\n"', ""].join("\n"),
+    );
+    const initialized = warden("init", "--packs", "core,local");
+    expect(initialized.code, initialized.out + initialized.err).toBe(0);
+    expect(initialized.out).toContain('ok    cmd local-script: node "$WARDEN_PACK_DIR/bin/no-broken.mjs"\n');
+    git("add", "-A");
+    git("commit", "-q", "-m", "adopt");
+    expect(warden("check", "--base", "main").code).toBe(0);
+    await writeFile(join(root, "broken"), "x\n");
+    const failed = warden("check", "--base", "main");
+    expect(failed.code).toBe(1);
+    const next = /^Next action: run `(.+)` and fix what it reports\.$/m.exec(failed.out)?.[1] as string;
+    expect(next).toMatch(/^node ".+\/\.warden\/packs\/local\/bin\/no-broken\.mjs"$/);
+    expect(spawnSync("sh", ["-c", next], { cwd: root }).status).toBe(1);
+  });
+
   it("check --trigger git-commit records its trigger, and runs --format json shows it", () => {
     init();
     git("add", "-A");

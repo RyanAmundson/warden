@@ -1,3 +1,4 @@
+import { withPackDir } from "../adapters/cmd.js";
 import { PARSE_ERROR, type Violation } from "../adapters/types.js";
 import type { Guardrail, Practice, RecordSet } from "../records/types.js";
 import type { Tamper } from "./tamper.js";
@@ -65,8 +66,8 @@ const nextAction = (failures: Violation[], set: RecordSet, notes: Notes): string
   const located = failures.filter((v) => v.file !== "");
   const legacy = failures.find((v) => v.file === "" && ownerOf(set, v.guardrail)?.guardrail.implementation.startsWith("cmd:") === true);
   if (located.length === 0 && legacy !== undefined) {
-    const { implementation } = (ownerOf(set, legacy.guardrail) as { guardrail: Guardrail }).guardrail;
-    return `run \`${implementation.slice(implementation.indexOf(":") + 1)}\` and fix what it reports.`;
+    const { implementation, packDir } = (ownerOf(set, legacy.guardrail) as { guardrail: Guardrail }).guardrail;
+    return `run \`${withPackDir(implementation.slice(implementation.indexOf(":") + 1), packDir)}\` and fix what it reports.`;
   }
   if (failures.length > 0) {
     return 'change the code at the lines above to match "Do this". Do not edit .warden/ or generated config; that is recorded as tampering.';

@@ -8,9 +8,9 @@ const killGroup = (pid) => {
             throw cause;
     }
 };
-export const spawnBudgeted = (file, args, cwd, budgetMs, shell = false) => new Promise((resolve, reject) => {
+export const spawnBudgeted = (file, args, cwd, budgetMs, shell = false, env = {}) => new Promise((resolve, reject) => {
     const start = performance.now();
-    const child = spawn(file, args, { cwd, shell, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(file, args, { cwd, shell, env: { ...process.env, ...env }, detached: true, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     let output = "";
@@ -39,10 +39,13 @@ export const spawnBudgeted = (file, args, cwd, budgetMs, shell = false) => new P
     });
 });
 export const OUTPUT_LINES = 20;
+export const PACK_DIR = "WARDEN_PACK_DIR";
+export const withPackDir = (command, packDir) => (packDir === undefined ? command : command.replace(/\$\{?WARDEN_PACK_DIR\}?/g, () => packDir));
 const tail = (output) => output.trimEnd().split("\n").filter((l) => l !== "").slice(-OUTPUT_LINES);
 const runOne = async (g, ctx) => {
-    const command = g.implementation.slice(g.implementation.indexOf(":") + 1);
-    const { code, killed, ms, output } = await spawnBudgeted(command, [], ctx.root, ctx.unbudgeted === true ? undefined : g.budgetMs, true);
+    const run = g.implementation.slice(g.implementation.indexOf(":") + 1);
+    const command = withPackDir(run, g.packDir);
+    const { code, killed, ms, output } = await spawnBudgeted(run, [], ctx.root, ctx.unbudgeted === true ? undefined : g.budgetMs, true, g.packDir === undefined ? {} : { [PACK_DIR]: g.packDir });
     if (killed)
         return { guardrail: g.id, status: "killed", violations: [], ms, command };
     if (code === 0)

@@ -25,7 +25,9 @@ vi.mock("node:module", async (original) => {
 
 let root: string;
 
-const setWith = (...commands: string[]): RecordSet => ({
+const setWith = (...commands: string[]): RecordSet => setIn(undefined, ...commands);
+
+const setIn = (packDir: string | undefined, ...commands: string[]): RecordSet => ({
   root,
   config: { project: "p", base: "main", packs: [], tierBudgetMs: { edit: 1000, commit: 1000, boundary: 1000 }, loopBreakerRepeats: 3 },
   packs: [
@@ -42,7 +44,7 @@ const setWith = (...commands: string[]): RecordSet => ({
           terms: [],
           paths: [],
           conflictsWith: [],
-          guardrails: commands.map((command, i) => ({ id: `script-${i}`, kind: "legacy", runs: ["commit"], budgetMs: 1000, version: 1, implementation: `cmd:${command}` })),
+          guardrails: commands.map((command, i) => ({ id: `script-${i}`, kind: "legacy", runs: ["commit"], budgetMs: 1000, version: 1, implementation: `cmd:${command}`, packDir })),
         },
       ],
     },
@@ -121,6 +123,21 @@ describe("doctor", () => {
     } finally {
       missing.name = undefined;
     }
+  });
+
+  it("resolves WARDEN_PACK_DIR to the Guardrail's pack folder and names a pack script that is missing", async () => {
+    const pack = join(root, "pack");
+    await mkdir(join(pack, "bin"), { recursive: true });
+    await writeFile(join(pack, "bin/ok.mjs"), "");
+    await writeFile(join(pack, "bin/run.sh"), "#!/bin/sh\nexit 0\n");
+    await chmod(join(pack, "bin/run.sh"), 0o755);
+    const result = await doctor(setIn(pack, 'node "$WARDEN_PACK_DIR/bin/ok.mjs"', '"${WARDEN_PACK_DIR}/bin/run.sh"', "node $WARDEN_PACK_DIR/bin/gone.mjs"));
+    expect(result.lines.slice(4)).toEqual([
+      'ok    cmd script-0: node "$WARDEN_PACK_DIR/bin/ok.mjs"',
+      'ok    cmd script-1: "${WARDEN_PACK_DIR}/bin/run.sh"',
+      `FAIL  cmd script-2: node $WARDEN_PACK_DIR/bin/gone.mjs  ${pack}/bin/gone.mjs does not exist in the pack`,
+    ]);
+    expect(result.next).toBe(`create ${pack}/bin/gone.mjs, then run warden doctor`);
   });
 
   it("resolves a command given as a path from the project root", async () => {

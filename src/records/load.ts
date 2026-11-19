@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Ajv, type ErrorObject } from "ajv";
 import { parse } from "yaml";
 import schema from "../../schema/records.schema.json" with { type: "json" };
@@ -90,7 +90,10 @@ export async function readPack(projectRoot: string, wardenRoot: string, id: stri
     throw new RecordError(file, "/id", `pack id ${pack.id} does not match directory ${id}`);
   }
   pack.file = file;
-  for (const practice of pack.practices) practice.pack = pack.id;
+  for (const practice of pack.practices) {
+    practice.pack = pack.id;
+    for (const g of practice.guardrails) g.packDir = resolve(dirname(file));
+  }
   return { pack, source: inBundled !== undefined ? "bundled" : "local" };
 }
 

@@ -1,6 +1,7 @@
 import { accessSync, constants, existsSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { delimiter, join, resolve } from "node:path";
+import { withPackDir } from "../adapters/cmd.js";
 import { TOOLS } from "../compiler/lock.js";
 import type { RecordSet } from "../records/types.js";
 
@@ -36,9 +37,12 @@ const SHELL_WORDS = new Set([
   "!", "{", "}", "[[", ".", ":", "[", "alias", "bg", "break", "case", "cd", "command", "continue", "declare", "do", "done", "echo", "elif", "else", "esac", "eval", "exec", "exit", "export", "false", "fg", "fi", "for", "function", "getopts", "hash", "if", "jobs", "kill", "let", "local", "printf", "pwd", "read", "readonly", "return", "select", "set", "shift", "source", "test", "then", "time", "times", "trap", "true", "type", "typeset", "ulimit", "umask", "unalias", "unset", "until", "wait", "while",
 ]);
 
-const commandItem = (id: string, command: string, root: string, scripts: Record<string, unknown>): Item => {
+const commandItem = (id: string, command: string, root: string, scripts: Record<string, unknown>, packDir: string | undefined): Item => {
   const name = `cmd ${id}: ${command}`;
-  const words = command.trim().split(/\s+/);
+  const raw = command.trim().split(/\s+/);
+  const words = raw.map((w) => (withPackDir(w, packDir ?? "") === w ? w : withPackDir(w, packDir ?? "").replace(/^["']|["']$/g, "")));
+  const absent = words.find((w, i) => w !== raw[i] && !existsSync(w));
+  if (absent !== undefined) return { name, problem: `${absent} does not exist in the pack`, fix: `create ${absent}` };
   while (words.length > 1 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0] as string)) words.shift();
   const word = words[0] as string;
   const rest = words.join(" ");
@@ -71,7 +75,7 @@ export async function doctor(set: RecordSet): Promise<DoctorResult> {
   items.push(await toolItem("warden eslint plugin", () => import("../../eslint-plugin/index.js")));
   const scripts = scriptsOf(set.root);
   for (const g of set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails))) {
-    if (g.implementation.startsWith("cmd:")) items.push(commandItem(g.id, g.implementation.slice(4), set.root, scripts));
+    if (g.implementation.startsWith("cmd:")) items.push(commandItem(g.id, g.implementation.slice(4), set.root, scripts, g.packDir));
   }
   const failed = items.find((i) => i.fix !== undefined);
   return {

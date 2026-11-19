@@ -63,6 +63,11 @@ describe("cmd adapter", () => {
     expect(lines.slice(1)).toEqual([...Array.from({ length: 19 }, (_, i) => `out${i + 12}`), "err"]);
   });
 
+  it("runs a Guardrail with WARDEN_PACK_DIR set to its pack's folder", async () => {
+    const [r] = await cmdAdapter.run([{ ...legacy('cmd:test "$WARDEN_PACK_DIR" = /packs/p'), packDir: "/packs/p" }], [], ctx);
+    expect(r?.status).toBe("pass");
+  });
+
   it("emits nothing", () => {
     expect(cmdAdapter.emit([legacy("cmd:true")], emptySet)).toEqual({});
   });

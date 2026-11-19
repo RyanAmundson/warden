@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { RecordError, loadRecords } from "../../src/records/load.js";
 
@@ -20,6 +21,7 @@ describe("loadRecords", () => {
     expect(set.packs[0]?.id).toBe("core");
     expect(set.packs[0]?.layer).toBe(0);
     expect(set.packs[0]?.practices[0]?.pack).toBe("core");
+    expect(set.packs[0]?.practices[0]?.guardrails[0]?.packDir).toBe(resolve(wardenRoot, "packs/core"));
   });
 
   it("rejects YAML syntax errors", async () => {
