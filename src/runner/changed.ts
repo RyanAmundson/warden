@@ -174,6 +174,7 @@ export interface Restore {
   paths: string[];
   known: string[];
   stray: string[];
+  unstage: string[];
   aliased: boolean;
 }
 
@@ -191,7 +192,7 @@ export function changeSignatures(root: string, base: string, dir: string, allowe
   const judged = staged ? diff("--cached", at) : committed;
   const scope = [...new Set([...committed, ...judged])];
   const files = new Map<string, string>();
-  if (scope.length === 0) return { files, restore: { base: at, paths: [], known: [], stray: [], aliased: false } };
+  if (scope.length === 0) return { files, restore: { base: at, paths: [], known: [], stray: [], unstage: [], aliased: false } };
   const verify = ["-c", "gpg.ssh.program=ssh-keygen", "-c", "gpg.program=false", "-c", "gpg.x509.program=false", "-c", `gpg.ssh.allowedSignersFile=${allowedSignersFile}`, "--literal-pathspecs"];
   const mark = `\x01${randomUUID()}`;
   const log = must(root, [...verify, "log", "-z", "--topo-order", "--diff-merges=dense-combined", "--no-renames", "--ignore-submodules=none", "--relative", "--name-only", `--format=${mark}%G?`, `${at}..HEAD`, "--", ...scope]);
@@ -223,6 +224,8 @@ export function changeSignatures(root: string, base: string, dir: string, allowe
     return path;
   };
   const stray = [...new Set(paths.filter((p) => !known.includes(p)).map(onDisk).filter((p) => p !== undefined))].sort();
-  const aliased = new Set(paths.map((p) => p.toLowerCase())).size < paths.length;
-  return { files, restore: { base: at, paths, known, stray, aliased } };
+  const unstage = stray.filter((p) => lstatSync(join(root, p)).isSymbolicLink() && trackedFiles(root, [p]).has(p));
+  const indexed = icase ? names(must(root, ["ls-files", "-z", "--cached", "--", spec])) : [];
+  const aliased = new Set(paths.map((p) => p.toLowerCase())).size < paths.length || paths.some((p) => indexed.some((e) => e !== p && e.toLowerCase() === p.toLowerCase()));
+  return { files, restore: { base: at, paths, known, stray, unstage, aliased } };
 }

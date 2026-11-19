@@ -2369,7 +2369,7 @@ describe("signed .warden changes", () => {
       await symlink(dir, join(root, ".warden/sub"));
       const { code, out } = await check({}, false);
       expect(code).toBe(1);
-      expect(out).toContain("Next action: run git --literal-pathspecs clean -f -x -- '.warden/sub' && ");
+      expect(out).toContain("Next action: run git --literal-pathspecs clean -ff -x -- '.warden/sub' && ");
       await follow(out);
       expect((await readdir(dir)).sort()).toEqual(["-rf x", "file"]);
       expect(existsSync(join(root, ".warden/sub"))).toBe(false);
@@ -2386,7 +2386,7 @@ describe("signed .warden changes", () => {
     git("rm", "-r", "-q", "--cached", ".warden/sub");
     const { code, out } = await check({}, false);
     expect(code).toBe(1);
-    expect(out).toContain("Next action: run git --literal-pathspecs clean -f -x -- '.warden/sub/file' && ");
+    expect(out).toContain("Next action: run git --literal-pathspecs clean -ff -x -- '.warden/sub/file' && ");
     const dir = await outside();
     try {
       await rm(join(root, ".warden/sub"), { recursive: true });
@@ -2420,7 +2420,7 @@ describe("signed .warden changes", () => {
     await caseAlias();
     const { code, out } = await check({}, false);
     expect(code).toBe(1);
-    expect(out).toContain("Next action: run git --literal-pathspecs clean -f -x -- '.warden/sub/file' && ");
+    expect(out).toContain("Next action: run git --literal-pathspecs clean -ff -x -- '.warden/sub/file' && ");
     await fixes(false);
     expect(await readdir(join(root, ".warden/sub"))).toEqual(["keep"]);
   });
@@ -2438,13 +2438,71 @@ describe("signed .warden changes", () => {
       await symlink(dir, join(root, ".warden/sub"));
       const { code, out } = await check({}, false);
       expect(code).toBe(1);
-      expect(out).toContain("Next action: run git --literal-pathspecs clean -f -x -- '.warden/sub' && ");
+      expect(out).toContain("Next action: run git --literal-pathspecs clean -ff -x -- '.warden/sub' && ");
       await fixes(false);
       expect((await readdir(dir)).sort()).toEqual(["-rf x", "file"]);
       expect(existsSync(join(root, ".warden/sub"))).toBe(false);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it("a symlinked parent folder that is staged in the index is unstaged and removed, and the check converges", async () => {
+    await write(".warden/sub/file", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "add sub/file unsigned");
+    git("rm", "-r", "-q", "--cached", ".warden/sub");
+    await rm(join(root, ".warden/sub"), { recursive: true });
+    const dir = await outside();
+    try {
+      await symlink(dir, join(root, ".warden/sub"));
+      git("add", ".warden/sub");
+      const { code, out } = await check({}, false);
+      expect(code).toBe(1);
+      expect(out).toContain("Next action: run git --literal-pathspecs rm -q --cached --ignore-unmatch -- '.warden/sub' && git --literal-pathspecs clean -ff -x -- '.warden/sub' && ");
+      await fixes(false);
+      expect((await readdir(dir)).sort()).toEqual(["-rf x", "file"]);
+      expect(existsSync(join(root, ".warden/sub"))).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a nested git repository at a stray path is removed and the check converges", async () => {
+    await write(".warden/x", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "add x unsigned");
+    git("rm", "-q", "--cached", ".warden/x");
+    await rm(join(root, ".warden/x"));
+    await mkdir(join(root, ".warden/x"));
+    execFileSync("git", ["init", "-q"], { cwd: join(root, ".warden/x") });
+    await writeFile(join(root, ".warden/x/a"), "a\n");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    expect(out).toContain("Next action: run git --literal-pathspecs clean -ff -x -- '.warden/x' && ");
+    await fixes(false);
+    expect(existsSync(join(root, ".warden/x"))).toBe(false);
+  });
+
+  it("a stray path that differs only in case from a tracked file commits the index and the check converges", async (ctx) => {
+    if (!existsSync(join(root, ".WARDEN"))) ctx.skip();
+    git("config", "core.ignorecase", "true");
+    await write(".warden/sub/file", "signed\n");
+    git("add", "-A");
+    commitSigned("ryan", "signed file");
+    git("branch", "-f", "main", "HEAD");
+    await write("evil.txt", "evil\n");
+    const blob = git("hash-object", "-w", "evil.txt").trim();
+    await rm(join(root, "evil.txt"));
+    git("update-index", "--add", "--cacheinfo", `100644,${blob},.warden/Sub/file`);
+    git("commit", "-q", "-m", "unsigned case alias of a tracked file");
+    git("--literal-pathspecs", "rm", "-q", "--cached", ".warden/Sub/file");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    expect(out).toContain("&& git commit --allow-empty -m 'Restore .warden files changed without an allowed signature' to restore");
+    await fixes(false);
+    expect(await read(".warden/sub/file")).toBe("signed\n");
+    expect(git("ls-tree", "-r", "--name-only", "HEAD", ".warden").split("\n")).not.toContain(".warden/Sub/file");
   });
 
   it("the restore removes hostile untracked names literally and touches nothing else", async () => {
