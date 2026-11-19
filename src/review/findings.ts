@@ -62,7 +62,7 @@ const untrackedText = (root: string, file: string): string => {
   }
 };
 
-export function touchedLines(root: string, from: string, to: string): Touched {
+export function touchedLines(root: string, from: string, to: string, includeUntracked = true): Touched {
   const out: Touched = Object.create(null) as Touched;
   for (const ref of [from, to]) git(root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], ref);
   let file: string | undefined;
@@ -84,6 +84,7 @@ export function touchedLines(root: string, from: string, to: string): Touched {
     const count = m[2] === undefined ? 1 : Number(m[2]);
     if (count > 0) (out[file] ??= []).push([start, start + count - 1]);
   }
+  if (!includeUntracked) return out;
   for (const f of git(root, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0").filter((x) => x !== "")) {
     const text = untrackedText(root, f);
     const n = text.split("\n").length - (text.endsWith("\n") ? 1 : 0);

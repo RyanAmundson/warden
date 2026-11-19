@@ -1,6 +1,7 @@
 import type { ReviewRule } from "../records/types.js";
+import { codeReview } from "./code-review.js";
 import { componentQualityReview } from "./component-quality.js";
-import type { RawFinding } from "./findings.js";
+import type { RawFinding, Touched } from "./findings.js";
 import { ponytailReview } from "./ponytail.js";
 import { superpowersReview } from "./superpowers.js";
 import { uiQaReview } from "./ui-qa.js";
@@ -12,6 +13,8 @@ export interface ReviewScope {
   previous?: Pick<RawFinding, "n" | "title" | "file" | "line">[];
   requirements: string[];
   upholds: { id: string; statement: string }[];
+  pullRequest?: string;
+  committedChanges?: (base: string, head: string) => Touched;
   component?: { name: string; root: string };
   resolveCommit?: (abbreviation: string) => string;
 }
@@ -29,4 +32,4 @@ export interface ReviewAdapter {
   normalize(report: string, scope: ReviewScope): Normalized;
 }
 
-export const reviewAdapters = new Map<string, ReviewAdapter>([superpowersReview, ponytailReview, uiQaReview, componentQualityReview].map((adapter) => [adapter.id, adapter]));
+export const reviewAdapters = new Map<string, ReviewAdapter>([superpowersReview, ponytailReview, uiQaReview, componentQualityReview, codeReview].map((adapter) => [adapter.id, adapter]));

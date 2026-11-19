@@ -2,7 +2,9 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { loadRecords } from "../records/load.js";
 import { reviewAdapters } from "../review/adapter.js";
+import { codeReview, codeReviewBase, isPullRequestUrl } from "../review/code-review.js";
 import { exitCode, touchedLines, triage } from "../review/findings.js";
+import { isAncestor } from "../runner/changed.js";
 const FLAGS = [["capability", "--capability <id>"], ["base", "--base <ref>"], ["head", "--head <ref>"]];
 export function reviewOptions(sub, raw) {
     const missing = FLAGS.filter(([k]) => raw[k] === undefined).map(([, f]) => f);
@@ -41,6 +43,7 @@ const readFile = (path) => {
 const quote = (v) => (/^[\w./@%+=:,-]+$/.test(v) ? v : `'${v.replaceAll("'", "'\\''")}'`);
 const briefLine = (o, base, r) => [
     `warden review brief --capability ${o.capability} --base ${base} --head ${r.head}`,
+    ...(o.pullRequest === undefined ? [] : [`--pull-request ${quote(o.pullRequest)}`]),
     ...(o.component === undefined ? [] : [`--component ${quote(o.component)}`]),
     ...(r.previousHead === undefined ? [] : [`--previous-head ${r.previousHead}`]),
     ...(r.previousReport === undefined ? [] : [`--previous-report ${quote(r.previousReport)}`]),
@@ -69,12 +72,29 @@ async function prepare(root, wardenRoot, o) {
     if (adapter.id === "component-quality" && !/^[\w$.-]+$/.test(o.component ?? "")) {
         throw new Error("The component-quality adapter needs a component name. Next action: run the command again with --component <name>");
     }
+    if (adapter === codeReview && !isPullRequestUrl(o.pullRequest)) {
+        throw new Error("The code-review adapter needs a GitHub pull request URL. Next action: run the command again with --pull-request https://github.com/<owner>/<repo>/pull/<number>");
+    }
+    const committedDiffs = new Map();
+    const committedChanges = (from, to) => {
+        const key = `${from}..${to}`;
+        const previous = committedDiffs.get(key);
+        if (previous !== undefined)
+            return previous;
+        const changed = touchedLines(root, from, to, false);
+        committedDiffs.set(key, changed);
+        return changed;
+    };
     const scope = {
         base,
         head,
         requirements: o.requirements,
         upholds: capability.upholds.map((id) => ({ id, statement: practices.find((p) => p.id === id)?.statement ?? id })),
         ...(previousHead === undefined ? {} : { previousHead }),
+        ...(adapter !== codeReview || o.pullRequest === undefined ? {} : {
+            pullRequest: o.pullRequest,
+            committedChanges,
+        }),
         ...(adapter.id !== "component-quality" || o.component === undefined ? {} : {
             component: { name: o.component, root },
             resolveCommit: (abbreviation) => resolveRef(root, abbreviation),
@@ -83,9 +103,14 @@ async function prepare(root, wardenRoot, o) {
     return { capability, adapter, scope, previousHead };
 }
 const sameShape = (f) => typeof f === "object" && f !== null && typeof f.n === "number" && typeof f.title === "string";
-const previousFindings = (adapter, scope, head, report) => {
-    const earlier = { ...scope, head };
-    const normalized = adapter.normalize(readFile(report), earlier);
+const previousFindings = (root, adapter, scope, head, report) => {
+    const text = readFile(report);
+    const reportedBase = adapter === codeReview ? codeReviewBase(text) : undefined;
+    const base = reportedBase === undefined ? scope.base : resolveRef(root, reportedBase);
+    if (adapter === codeReview && !isAncestor(root, base, head)) {
+        throw new Error(`${report} names a base outside the previous head's history. Next action: confirm the report's pull request merge base, then run the brief again.`);
+    }
+    const normalized = adapter.normalize(text, { ...scope, base, head });
     if (normalized.reviewedHead !== head || normalized.findings.some(({ severity, flaky }) => severity === "environment" || flaky)) {
         throw new Error(`${report} does not contain a completed review of ${head}. Next action: pass --previous-report with a completed review of ${head}.`);
     }
@@ -110,7 +135,7 @@ export async function runBrief(root, wardenRoot, o) {
         }
     }
     if (o.previousReport !== undefined) {
-        scope.previous = previousFindings(adapter, scope, previousHead, o.previousReport);
+        scope.previous = previousFindings(root, adapter, scope, previousHead, o.previousReport);
     }
     const invocation = adapter.invocation(capability.review, scope);
     if (invocation.tool === "Workflow" && !existsSync(invocation.input.scriptPath)) {
@@ -123,10 +148,11 @@ const label = (f) => (f.blocks ? "BLOCK" : f.kind === "env" ? "ENV" : f.kind ===
 export async function runTriage(root, wardenRoot, o) {
     const { adapter, scope, previousHead } = await prepare(root, wardenRoot, o);
     if (previousHead !== undefined && o.previousReport !== undefined) {
-        scope.previous = previousFindings(adapter, scope, previousHead, o.previousReport);
+        scope.previous = previousFindings(root, adapter, scope, previousHead, o.previousReport);
     }
     const normalized = adapter.normalize(readFile(o.report), scope);
-    const touched = touchedLines(root, previousHead ?? scope.base, scope.head);
+    const from = previousHead ?? scope.base;
+    const touched = scope.committedChanges?.(from, scope.head) ?? touchedLines(root, from, scope.head);
     const round = previousHead === undefined ? 1 : 2;
     const retry = briefLine(o, scope.base, { head: scope.head, previousHead, previousReport: o.previousReport });
     const afterFix = briefLine(o, scope.base, { head: "HEAD", previousHead: scope.head, previousReport: o.report });

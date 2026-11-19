@@ -58,6 +58,8 @@ beforeAll(async () => {
       "    review: { adapter: ui-qa, model: opus }",
       "  - id: component-audit", "    kind: skill", "    serves: review", "    purpose: Audit a component.", "    when: Before landing component changes.", "    upholds: [small]", "    commands: [warden review]", "    replaces: []",
       "    review: { adapter: component-quality, model: opus }",
+      "  - id: pr-audit", "    kind: skill", "    serves: review", "    purpose: Audit a pull request.", "    when: Before landing a pull request.", "    upholds: [small]", "    commands: [warden review]", "    replaces: []",
+      "    review: { adapter: code-review, model: opus }",
       "  - id: plain", "    kind: tool", "    serves: other", "    purpose: Nothing.", "    when: Never.", "    upholds: []", "    commands: [warden review]", "    replaces: []", "",
     ].join("\n"),
   );
@@ -96,6 +98,63 @@ const triageRun = async (name: string, text: string, ...more: string[]): Promise
 };
 
 describe("warden review", () => {
+  it("briefs and triages GitHub Code Review for one pull request and exact scope", async () => {
+    const pullRequest = "https://github.com/example/project/pull/12";
+    const flags = ["--capability", "pr-audit", "--base", base, "--head", head, "--requirements", REQ];
+    const missing = run("review", "brief", ...flags);
+    expect(missing.code).toBe(2);
+    expect(missing.err).toContain("--pull-request");
+    const brief = run("review", "brief", ...flags, "--pull-request", pullRequest);
+    expect(brief.code).toBe(0);
+    expect(JSON.parse(brief.out).input.prompt).toContain(pullRequest);
+    const filename = join(home, "code-review.json");
+    const source = "The exported value is incorrect.";
+    const envelope = { pullRequest, reviewedBase: base, reviewedHead: head, nativeSummary: source, findings: [
+      { title: "Incorrect export", file: "a.ts", line: 2, source, correction: "Export the expected value." },
+    ] };
+    await writeFile(filename, JSON.stringify(envelope));
+    const failed = run("review", "triage", ...flags, "--pull-request", pullRequest, "--report", filename, "--format", "json");
+    expect(failed.code).toBe(1);
+    expect(JSON.parse(failed.out)).toMatchObject({ verdict: "fail", findings: [{ kind: "touched", blocks: true }] });
+    expect(JSON.parse(failed.out).next).toContain(`--pull-request ${pullRequest}`);
+    await writeFile(join(root, "not-committed.ts"), "export const extra = 1;\n");
+    for (const location of [{ file: "missing.ts", line: 2 }, { file: "a.ts", line: 50 }, { file: "not-committed.ts", line: 1 }]) {
+      const findings = [{ ...envelope.findings[0], ...location }];
+      await writeFile(filename, JSON.stringify({ ...envelope, findings }));
+      const invalid = run("review", "triage", ...flags, "--pull-request", pullRequest, "--report", filename, "--format", "json");
+      expect(invalid.code).toBe(2);
+      expect(JSON.parse(invalid.out)).toMatchObject({ verdict: "operational", findings: [{ kind: "env" }] });
+    }
+    await rm(join(root, "not-committed.ts"));
+    await writeFile(filename, JSON.stringify({ ...envelope, reviewedBase: head }));
+    const stale = run("review", "triage", ...flags, "--pull-request", pullRequest, "--report", filename, "--format", "json");
+    expect(stale.code).toBe(2);
+    expect(JSON.parse(stale.out)).toMatchObject({ verdict: "operational", findings: [{ kind: "env" }] });
+  });
+
+  it("reads the previous PR report against its own merge base after a rebase", async () => {
+    const pullRequest = "https://github.com/example/project/pull/12";
+    const baseTree = git("rev-parse", `${base}^{tree}`);
+    const headTree = git("rev-parse", `${head}^{tree}`);
+    const nextBase = git("commit-tree", baseTree, "-p", base, "-m", "Advance target");
+    const nextHead = git("commit-tree", headTree, "-p", nextBase, "-m", "Rebase topic");
+    const previous = join(home, "code-review-before-rebase.json");
+    const current = join(home, "code-review-after-rebase.json");
+    const source = "The exported value is incorrect.";
+    const issue = { title: "Incorrect export", file: "a.ts", line: 2, source, correction: "Export the expected value." };
+    const envelope = { pullRequest, reviewedBase: base, reviewedHead: head, nativeSummary: source, findings: [issue] };
+    await writeFile(previous, JSON.stringify(envelope));
+    await writeFile(current, JSON.stringify({ ...envelope, reviewedBase: nextBase, reviewedHead: nextHead, findings: [{ ...issue, earlier: 1 }] }));
+    const flags = ["--capability", "pr-audit", "--base", nextBase, "--head", nextHead, "--requirements", REQ,
+      "--pull-request", pullRequest, "--previous-head", head, "--previous-report", previous];
+    const brief = run("review", "brief", ...flags);
+    expect(brief.code).toBe(0);
+    expect(JSON.parse(brief.out).input.prompt).toContain("1. Incorrect export (a.ts:2)");
+    const retry = run("review", "triage", ...flags, "--report", current, "--format", "json");
+    expect(retry.code).toBe(1);
+    expect(JSON.parse(retry.out)).toMatchObject({ verdict: "fail", findings: [{ kind: "unfixed", blocks: true }] });
+  });
+
   it("tells the reader how to recover when Git is unavailable", () => {
     const r = spawnSync(process.execPath, [main, "review", "brief", ...flags("HEAD"), "--requirements", REQ], {
       cwd: root,

@@ -35,7 +35,7 @@ const untrackedText = (root, file) => {
         throw new Error("Git listed " + file + " as untracked, but Warden could not read it. Next action: check that " + file + " is readable or remove it, then run the review again");
     }
 };
-export function touchedLines(root, from, to) {
+export function touchedLines(root, from, to, includeUntracked = true) {
     const out = Object.create(null);
     for (const ref of [from, to])
         git(root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], ref);
@@ -60,6 +60,8 @@ export function touchedLines(root, from, to) {
         if (count > 0)
             (out[file] ??= []).push([start, start + count - 1]);
     }
+    if (!includeUntracked)
+        return out;
     for (const f of git(root, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0").filter((x) => x !== "")) {
         const text = untrackedText(root, f);
         const n = text.split("\n").length - (text.endsWith("\n") ? 1 : 0);

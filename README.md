@@ -31,6 +31,25 @@ install a newer `warden`:
    change.
 3. Install the plugin, as described next.
 
+## Review a GitHub pull request
+
+A Capability with `review: { adapter: code-review, model: opus }` uses Claude
+Code's native `code-review:code-review` skill. Install that plugin in the
+reviewer's harness. Pass the GitHub pull request URL, its current head, and
+the merge base of the PR's head and target branches:
+
+```bash
+warden review brief --capability pr-audit --pull-request "$pr" \
+  --base "$merge_base" --head "$head" --requirements requirements.md
+```
+
+Run the JSON invocation in Claude Code and save its report. The invocation
+keeps the review read-only and checks the pull request's scope before and
+after the skill runs. Triage uses the same flags with `warden review triage`
+and adds `--report report.json`. Missing or stale evidence returns exit 2. If
+the PR is rebased, use its new merge base and head. For a follow-up, pass
+`--previous-head` and `--previous-report` for the previous round.
+
 ## Resolve a conflict in .warden/baseline.json
 
 Every commit-tier check rewrites `.warden/baseline.json`, so parallel branches
