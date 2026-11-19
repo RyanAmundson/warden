@@ -667,6 +667,26 @@ describe("warden CLI", () => {
     expect(shown.filter((id) => !bundled.includes(id as string))).toEqual([]);
     expect(r.out).not.toContain("\x1b");
   });
+
+  it("warden --violations outside a terminal prints the violations screen once, from the baseline, before and without any Evidence", async () => {
+    init();
+    const r = warden("--violations");
+    expect(r.code, r.err).toBe(0);
+    expect(r.out).toMatch(/^ WARDEN .* v back\n/);
+    expect(r.out).toMatch(/\n VIOLATIONS BY PACK +baselined +new +last run\n/);
+    expect(r.out).toMatch(/\n core +█+ +1 +– *\n/);
+    expect(r.out).toMatch(/\n {3}warden-no-comments +█+ +1 +– *\n/);
+    expect(r.out).toContain(" Next action: press r to run warden check");
+    expect(r.out).not.toContain("\x1b");
+    await rm(join(root, ".warden/baseline.json"));
+    const bare = warden("--violations");
+    expect(bare.code, bare.err).toBe(0);
+    expect(bare.out).toMatch(/\n core +▏ +0 +– *\n/);
+    const narrow = spawnSync("node", [main, "--violations"], { cwd: root, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home, COLUMNS: "60" } });
+    expect(narrow.stdout.split("\n").every((l) => l.length <= 60)).toBe(true);
+    expect(narrow.stdout).toContain(`${"─".repeat(60)}\n`);
+    expect(warden("--violations", "--layers").err).toBe("--layers and --violations each open one screen. Next action: run warden with only one of them\n");
+  });
 });
 
 describe("the Claude Code plugin hook", () => {
