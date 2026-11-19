@@ -32,12 +32,13 @@ const refuseUnmatched = (s, rerun) => {
 };
 const WRITE_BATCH = 64;
 const writeTree = async (root, tree) => {
-    const entries = Object.entries(tree);
+    const entries = Object.entries(tree).map(([file, content]) => ({ path: join(root, file), content }));
+    const directories = [...new Set(entries.map(({ path }) => dirname(path)))];
+    for (let i = 0; i < directories.length; i += WRITE_BATCH) {
+        await Promise.all(directories.slice(i, i + WRITE_BATCH).map((dir) => mkdir(dir, { recursive: true })));
+    }
     for (let i = 0; i < entries.length; i += WRITE_BATCH) {
-        await Promise.all(entries.slice(i, i + WRITE_BATCH).map(async ([path, content]) => {
-            await mkdir(dirname(join(root, path)), { recursive: true });
-            await writeFile(join(root, path), content);
-        }));
+        await Promise.all(entries.slice(i, i + WRITE_BATCH).map(({ path, content }) => writeFile(path, content)));
     }
 };
 const measure = (project, s, cfg, rerun, signal) => withExampleProject(async (root, commit) => {
