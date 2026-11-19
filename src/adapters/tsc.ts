@@ -9,12 +9,13 @@ import { type Adapter, PARSE_ERROR, type RunContext, type RunResult, type Violat
 const BASELINE = "baseline-errors";
 const BASELINE_ID = `tsc:${BASELINE}`;
 const CONFIG_PATH = ".warden/generated/tsconfig.json";
-const DIAGNOSTIC = /^(.+)\((\d+),\d+\): error TS(\d+): (.*)$/;
+const DIAGNOSTIC = /^((.+)\((\d+),\d+\)): error TS(\d+): (.*)$/;
 
 const FLAG_CODES: Record<string, number[]> = {
   strictNullChecks: [2531, 2532, 2533, 18047, 18048],
   noImplicitAny: [7005, 7006, 7031],
-  noUnusedLocals: [6133, 6192, 6196, 6198, 6199, 6205],
+  noUnusedLocals: [6133, 6138, 6192, 6196, 6198, 6199],
+  noUnusedParameters: [6133, 6198, 6205],
   noImplicitReturns: [7030],
   noFallthroughCasesInSwitch: [7029],
   noImplicitThis: [2683],
@@ -87,11 +88,12 @@ const ask = (request: TscRequest, budgetMs: number | undefined): Promise<{ reply
 const run = async (gs: Guardrail[], _files: string[], ctx: RunContext): Promise<RunResult[]> => {
   const budgetMs = ctx.unbudgeted === true ? undefined : Math.min(...gs.map((g) => g.budgetMs));
   const project = join(relative(ctx.root, ctx.generatedDir), "tsconfig.json");
-  const { reply, ms } = await ask({ cwd: ctx.root, project }, budgetMs);
+  const { reply, ms } = await ask({ cwd: ctx.root, project, parameterCodes: FLAG_CODES.noUnusedParameters as number[] }, budgetMs);
   const killed = reply === undefined;
   const stdout = reply?.stdout ?? "";
-  const owners = new Map<number, string>();
-  for (const g of gs) for (const code of FLAG_CODES[flagOf(g)] ?? []) owners.set(code, g.id);
+  const owners = new Map<string, string>();
+  for (const g of gs) for (const code of FLAG_CODES[flagOf(g)] ?? []) owners.set(`${code}${flagOf(g) === "noUnusedParameters" ? "p" : ""}`, g.id);
+  const parameters = new Set(reply?.parameters ?? []);
   const baseline = gs.find((g) => flagOf(g) === BASELINE)?.id ?? BASELINE_ID;
   const byGuardrail = new Map<string, Violation[]>([[baseline, []], ...gs.map((g) => [g.id, []] as [string, Violation[]])]);
   const program: string[] = [];
@@ -104,14 +106,14 @@ const run = async (gs: Guardrail[], _files: string[], ctx: RunContext): Promise<
         continue;
       }
       if (m === null) throw new Error(`tsc printed an unparsable line: ${line}`);
-      const code = Number(m[3]);
-      const guardrail = code >= 1000 && code < 2000 ? PARSE_ERROR : (owners.get(code) ?? baseline);
+      const code = Number(m[4]);
+      const guardrail = code >= 1000 && code < 2000 ? PARSE_ERROR : (owners.get(`${code}${parameters.has(m[1] as string) ? "p" : ""}`) ?? baseline);
       if (!byGuardrail.has(guardrail)) byGuardrail.set(guardrail, []);
       (byGuardrail.get(guardrail) as Violation[]).push({
         guardrail,
-        file: m[1] as string,
-        line: Number(m[2]),
-        message: `TS${m[3]}: ${m[4]}`,
+        file: m[2] as string,
+        line: Number(m[3]),
+        message: `TS${m[4]}: ${m[5]}`,
       });
     }
   }

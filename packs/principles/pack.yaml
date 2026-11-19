@@ -69,7 +69,7 @@ practices:
         mustFail: "export class A {}\nexport class B {}\n"
         mustPass: "export class A {}\n"
   - id: no-unused-code
-    statement: Code declares nothing it does not use. No unused local, no useless constructor, and no unused private member.
+    statement: Code declares nothing it does not use. No unused local, no unused parameter or type parameter, no useless constructor, and no unused private member.
     terms: []
     paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"]
     conflictsWith: []
@@ -99,8 +99,16 @@ practices:
         implementation: "eslint:no-unused-private-class-members"
         mustFail: "export class A {\n  #x = 1;\n}\n"
         mustPass: "export class A {\n  #x = 1;\n  get x(): number {\n    return this.#x;\n  }\n}\n"
+      - id: principles-unused-parameters
+        kind: type
+        runs: [commit]
+        budgetMs: 60000
+        version: 1
+        implementation: "tsc:noUnusedParameters"
+        mustFail: "export const f = (unused: number): number => 1;\n"
+        mustPass: "export const f = (used: number): number => used;\n"
   - id: no-repeated-code
-    statement: No block of 8 or more significant lines appears twice. A significant line has a letter or digit and is not a comment; test, spec, story, and declaration files are not read.
+    statement: No block of 8 or more significant lines appears twice. A significant line has a letter or digit, and is not a comment or part of an import or export list; test, spec, story, and declaration files are not read.
     terms: []
     paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"]
     conflictsWith: []
@@ -118,7 +126,7 @@ practices:
           src/a.ts: "export default (n: number): number => n + 1;\n"
           src/b.ts: "import step from \"./a\";\nconsole.log(step(1));\n"
   - id: no-speculative-code
-    statement: Code builds nothing ahead of need. Every export is imported by another file, and an interface has more than one implementing class unless it sits in a port, the file named after its group folder inside a bracketed collection. Test, spec, story, and declaration files are not read.
+    statement: Code builds nothing ahead of need. Every export is imported by another file, and an interface has more than one implementing class unless it sits in a port, the file named after its group folder inside a bracketed collection. Test, spec, and story files count as users but are not checked, export-star barrels count as uses, and names a framework requires, such as metadata, GET, and loader, are exempt.
     terms: []
     paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"]
     conflictsWith: []
@@ -149,7 +157,7 @@ practices:
           src/square.ts: "import type { Shape } from \"./shape\";\nexport class Square implements Shape {\n  area(): number {\n    return 1;\n  }\n}\n"
           src/circle.ts: "import type { Shape } from \"./shape\";\nexport class Circle implements Shape {\n  area(): number {\n    return 3;\n  }\n}\n"
   - id: one-home-per-name
-    statement: Each exported name is declared in one file, and other files import it from there. Re-exports and default exports are not declarations; create files, test, spec, story, and declaration files are not read.
+    statement: Each exported name is declared in one file, and other files import it from there. Re-exports and default exports are not declarations; names a framework requires, such as metadata, GET, and loader, are exempt; create files, test, spec, story, and declaration files are not read.
     terms: []
     paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"]
     conflictsWith: []

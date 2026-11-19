@@ -130,25 +130,53 @@ each a `cmd` Guardrail of kind `runtime` at `boundary`:
   (YAGNI).
 - One name exported from two files (SSOT).
 - Unused parameters through `tsc`, once the adapter maps their codes.
-
-Shipped in `cm-wkqedr.27`: Practices `no-repeated-code`
-(`principles-duplicate-blocks`), `no-speculative-code`
-(`principles-unused-exports`, `principles-single-implementation`), and
-`one-home-per-name` (`principles-duplicate-exports`), each running a script
-from `packs/principles/bin/` through `$WARDEN_PACK_DIR`. The scripts share
-`project.mjs`, which lists files with `git ls-files` (or walks the folder
-outside git), skips test, spec, story, and declaration files, and parses with
-the TypeScript parser in one process. They print one `<file>:<line>` line per
-violation, which the `cmd` adapter reads as per-file violations, so they can be
-baselined. A port is the file named after its group folder inside a bracketed
-collection. Files named `create` are skipped by the SSOT check, because the
-architecture layout gives every group one. Unused parameters and
-`composition-and-narrow-interfaces` stay open: they wait on the `tsc` code
-mapping and on `cm-wkqedr.25`.
 - Practice `composition-and-narrow-interfaces` (Liskov and interface
   segregation): no class extends anything except `Error`, and an interface
   has at most 7 members. It uses `no-restricted-syntax` once
   `cm-wkqedr.25` lets packs share a rule, or a `warden/*` rule.
+
+### What shipped
+
+- Practices `no-repeated-code` (`principles-duplicate-blocks`),
+  `no-speculative-code` (`principles-unused-exports`,
+  `principles-single-implementation`), and `one-home-per-name`
+  (`principles-duplicate-exports`). Each runs a script from
+  `packs/principles/bin/` through `$WARDEN_PACK_DIR`.
+- The scripts share `project.mjs`. It lists files with `git ls-files`, or
+  walks the folder, without `node_modules`, when there is no git checkout or
+  no git. It parses with the TypeScript parser in one process.
+- Test, spec, and story files are read as users: their imports and
+  implementing classes count. Violations are never reported in them, and
+  the duplicate-block check does not read them. Declaration files are not
+  read.
+- `export * from` and `export * as` with a relative specifier count as a use
+  of every export of the file they name.
+- Import lists and export lists are not significant lines for the
+  duplicate-block check.
+- Both name checks skip export names that a framework requires by name:
+  Next.js page, layout, and route exports (`metadata`, `generateMetadata`,
+  `viewport`, `generateViewport`, `generateStaticParams`,
+  `generateImageMetadata`, `generateSitemaps`, `dynamic`, `dynamicParams`,
+  `revalidate`, `fetchCache`, `runtime`, `preferredRegion`, `maxDuration`,
+  the HTTP method handlers, `config`, `middleware`); React Router and Remix
+  route exports (`loader`, `action`, `clientLoader`, `clientAction`,
+  `meta`, `links`, `headers`, `handle`, `shouldRevalidate`,
+  `ErrorBoundary`, `HydrateFallback`, `Layout`); and SvelteKit (`load`,
+  `prerender`, `ssr`, `csr`, `trailingSlash`, `entries`). The list is
+  `FRAMEWORK_EXPORTS` in `project.mjs`.
+- A port is the file named after its group folder inside a bracketed
+  collection. Files named `create` are skipped by the SSOT check, because the
+  architecture layout gives every group one.
+- `principles-unused-parameters` is `tsc:noUnusedParameters` in Practice
+  `no-unused-code`. TS6133 and TS6198 come from both `noUnusedParameters`
+  and `noUnusedLocals`, so the `tsc` worker marks each one that starts inside
+  a parameter name or a type parameter list, and the adapter gives those to
+  the `noUnusedParameters` Guardrail and the rest to `noUnusedLocals`. TS6205
+  belongs to `noUnusedParameters`, and TS6138 to `noUnusedLocals`. Unused
+  locals stay with the ESLint Guardrail `principles-unused-locals`, so the
+  pack adds no `tsc:noUnusedLocals` Guardrail.
+- `composition-and-narrow-interfaces` stays open; it waits on
+  `cm-wkqedr.25`.
 
 ## Left to the builder
 

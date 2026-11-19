@@ -144,6 +144,35 @@ describe("tsc adapter", () => {
     });
   });
 
+  it("tells an unused parameter from an unused local when both flags are on", async () => {
+    await withProject(async (root) => {
+      const code = [
+        "export function f(p: number, { a, b }: { a: number; b: number }, [e]: number[]): number {",
+        "  const local = 1;",
+        "  const { x, y } = { x: 1, y: 2 };",
+        "  return b + e;",
+        "}",
+        "export const g = <T, U>(t: T): T => t;",
+        "export const k = <V>(): number => 1;",
+        "export function m<W, X>(): void {}",
+        "export function h({ c, d }: { c: number; d: number }): void {}",
+        "export class C {",
+        "  constructor(private readonly hidden: number, q: number) {}",
+        "}",
+        "export const z = (n = (() => { const inner = 1; return 2; })()): number => n;",
+        "",
+      ].join("\n");
+      await writeFile(join(root, "src/b.ts"), code);
+      const gs = [guardrail("params", "tsc:noUnusedParameters"), guardrail("locals", "tsc:noUnusedLocals")];
+      await emitInto(root, gs);
+      const results = await tscAdapter.run(gs, [], ctxFor(root));
+      const of = (id: string): string[] => (results.find((r) => r.guardrail === id)?.violations ?? []).map((v) => `${v.line} ${v.message.slice(0, 7)}`);
+      expect(of("params")).toEqual(["1 TS6133:", "1 TS6133:", "6 TS6133:", "7 TS6133:", "8 TS6205:", "9 TS6198:", "11 TS6133:"]);
+      expect(of("locals")).toEqual(["2 TS6133:", "3 TS6198:", "11 TS6138:", "13 TS6133:"]);
+      expect(results.find((r) => r.guardrail === "tsc:baseline-errors")?.violations).toEqual([]);
+    });
+  });
+
   it("sends syntax errors to the parse-error guardrail", async () => {
     await withProject(async (root) => {
       await writeFile(join(root, "src/b.ts"), "export const n = 1;\nconst = ;\n");

@@ -7,17 +7,30 @@ const ids = new Map();
 const seen = new Map();
 const violations = [];
 
+const LIST_START = /^(import[\s{*]|export\s+(type\s+)?\{|export\s+\*)/;
+const LIST_END = /(\bfrom\s*["'].*|^import\s*["'].*|\}\s*;?)$/;
+
+const outsideLists = () => {
+  let inList = false;
+  return ({ text }) => {
+    if (!inList && !LIST_START.test(text)) return true;
+    inList = !LIST_END.test(text);
+    return false;
+  };
+};
+
 const significant = (text) =>
   text
     .split("\n")
     .map((line, i) => ({ text: line.trim(), n: i + 1 }))
+    .filter(outsideLists())
     .filter(({ text }) => /[A-Za-z0-9]/.test(text) && !/^(\/\/|\/\*|\*)/.test(text))
     .map(({ text, n }) => {
       if (!ids.has(text)) ids.set(text, ids.size);
       return { id: ids.get(text), n };
     });
 
-for (const { file, text } of sourceFiles()) {
+for (const { file, text } of sourceFiles().filter((f) => f.reported)) {
   const lines = significant(text);
   let block;
   const flush = () => {

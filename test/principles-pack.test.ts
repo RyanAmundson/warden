@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runExamples } from "../src/compiler/examples.js";
 import { eslintAdapter } from "../src/adapters/eslint.js";
@@ -36,6 +37,7 @@ const ids = [
   "principles-unused-locals",
   "principles-useless-constructor",
   "principles-unused-private-members",
+  "principles-unused-parameters",
   "principles-duplicate-blocks",
   "principles-unused-exports",
   "principles-single-implementation",
@@ -166,6 +168,46 @@ describe("principles pack", () => {
       "src/[services]/y/create.ts": "export const create = 2;\n",
     };
     expect(await found("principles-duplicate-exports", tree)).toEqual(["src/b.ts:2: step is also exported from src/a.ts:1"]);
+  });
+
+  it("unused exports: a name behind an export-star barrel is used", async () => {
+    const tree = {
+      "src/parse.ts": "export const parse = 1;\n",
+      "src/lex.ts": "export const lex = 1;\n",
+      "src/index.ts": 'export * from "./parse.js";\nexport * as lexing from "./lex";\n',
+    };
+    expect((await scan("principles-unused-exports", tree))?.status).toBe("pass");
+  });
+
+  it("test files count as users and as implementations, and are never reported", async () => {
+    const tree = {
+      "src/parse.ts": "export const parse = 1;\n",
+      "src/clock.ts": "export interface Clock {\n  now(): number;\n}\nexport class SystemClock implements Clock {\n  now(): number {\n    return 1;\n  }\n}\n",
+      "src/parse.test.ts": 'import { parse } from "./parse";\nimport type { Clock } from "./clock";\nexport class FakeClock implements Clock {\n  now(): number {\n    return parse;\n  }\n}\nexport const helper = 1;\n',
+    };
+    expect((await scan("principles-unused-exports", { ...tree, "src/use.ts": 'import { SystemClock } from "./clock";\nconsole.log(SystemClock);\n' }))?.status).toBe("pass");
+    expect((await scan("principles-single-implementation", tree))?.status).toBe("pass");
+  });
+
+  it("duplicate blocks: import and export lists are not significant", async () => {
+    const list = (name: string): string =>
+      `import {\n${lines(8, (i) => `  hook${i},`)}\n} from "react";\nimport type { A } from "./a";\nexport {\n${lines(8, (i) => `  hook${i},`)}\n};\nexport const ${name} = 1;\n`;
+    expect((await scan("principles-duplicate-blocks", { "src/a.ts": list("a"), "src/b.ts": list("b") }))?.status).toBe("pass");
+  });
+
+  it("framework-required export names pass both name checks", async () => {
+    const page = "export const metadata = { title: 1 };\nexport const GET = (): number => 1;\nexport default 1;\n";
+    const tree = { "app/a/page.tsx": page, "app/b/page.tsx": page };
+    expect((await scan("principles-duplicate-exports", tree))?.status).toBe("pass");
+    expect((await scan("principles-unused-exports", tree))?.status).toBe("pass");
+  });
+
+  it("without git on the PATH a script walks the folder instead of failing", async () => {
+    await write("src/a.ts", "export const step = 1;\n");
+    await write("node_modules/x/a.ts", "export const step = 2;\n");
+    const script = join(wardenRoot, "packs/principles/bin/duplicate-exports.mjs");
+    const run = spawnSync(process.execPath, [script], { cwd: root, encoding: "utf8", env: { PATH: dirname(process.execPath) === "/usr/bin" ? "/nonexistent" : dirname(process.execPath) } });
+    expect([run.status, run.stderr]).toEqual([0, ""]);
   });
 
   it("a script given an argument exits 2 with one next action", async () => {

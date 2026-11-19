@@ -4,7 +4,7 @@ usage();
 
 const homes = new Map();
 
-for (const { file, ast } of parsed()) {
+for (const { file, ast } of parsed().filter((f) => f.reported)) {
   if (/(^|\/)create\.[^/]+$/.test(file)) continue;
   for (const { name, line } of declaredExports(ast)) append(homes, name, { file, line });
 }

@@ -14,9 +14,9 @@ const isPort = (file) => {
 
 const rightmost = (expr) => (ts.isPropertyAccessExpression(expr) ? expr.name.text : ts.isIdentifier(expr) ? expr.text : undefined);
 
-for (const { file, ast } of files) {
+for (const { file, ast, reported } of files) {
   for (const s of ast.statements) {
-    if (ts.isInterfaceDeclaration(s)) append(declared, s.name.text, { file, line: lineOf(ast, s), port: isPort(file) });
+    if (reported && ts.isInterfaceDeclaration(s)) append(declared, s.name.text, { file, line: lineOf(ast, s), port: isPort(file) });
     if (!ts.isClassDeclaration(s)) continue;
     for (const h of s.heritageClauses ?? []) {
       if (h.token !== ts.SyntaxKind.ImplementsKeyword) continue;

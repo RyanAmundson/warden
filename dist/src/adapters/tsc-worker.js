@@ -1,9 +1,23 @@
 import { resolve } from "node:path";
 import { parentPort } from "node:worker_threads";
 import ts from "typescript";
+const parameterNames = (file) => {
+    const out = [];
+    const visit = (node) => {
+        if (ts.isParameter(node))
+            out.push([node.name.getStart(file), node.name.end]);
+        const types = node.typeParameters;
+        if (types !== undefined)
+            out.push([types.pos - 1, types.end]);
+        ts.forEachChild(node, visit);
+    };
+    visit(file);
+    return out;
+};
+const atParameter = (d) => d.file !== undefined && d.start !== undefined && parameterNames(d.file).some(([from, to]) => d.start >= from && d.start < to);
 let reusedFor = "";
 const parsed = new Map();
-const check = ({ cwd, project }) => {
+const check = ({ cwd, project, parameterCodes }) => {
     const format = (ds) => ts.formatDiagnostics(ds, { getCanonicalFileName: (f) => f, getCurrentDirectory: () => cwd, getNewLine: () => "\n" });
     let fatal;
     const config = ts.getParsedCommandLineOfConfigFile(resolve(cwd, project), undefined, {
@@ -14,7 +28,7 @@ const check = ({ cwd, project }) => {
         },
     });
     if (config === undefined)
-        return { stdout: format(fatal === undefined ? [] : [fatal]), code: 1 };
+        return { stdout: format(fatal === undefined ? [] : [fatal]), code: 1, parameters: [] };
     const key = JSON.stringify(config.options);
     if (key !== reusedFor) {
         parsed.clear();
@@ -53,6 +67,7 @@ const check = ({ cwd, project }) => {
     }
     const diagnostics = ts.sortAndDeduplicateDiagnostics(all);
     const files = program.getSourceFiles().map((f) => `${f.fileName}\n`);
-    return { stdout: format(diagnostics) + files.join(""), code: diagnostics.some((d) => d.category === ts.DiagnosticCategory.Error) ? 1 : 0 };
+    const parameters = diagnostics.filter((d) => parameterCodes.includes(d.code) && atParameter(d)).map((d) => format([d]).slice(0, format([d]).indexOf("): ") + 1));
+    return { stdout: format(diagnostics) + files.join(""), code: diagnostics.some((d) => d.category === ts.DiagnosticCategory.Error) ? 1 : 0, parameters };
 };
 parentPort?.on("message", (request) => parentPort?.postMessage(check(request)));
