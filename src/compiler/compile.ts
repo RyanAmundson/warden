@@ -11,6 +11,7 @@ import { admit } from "./bench.js";
 import { checkConsistency, type Finding } from "./consistency.js";
 import { COMMIT_HOOK, commitHook, stamp } from "./emit.js";
 import { runExamples } from "./examples.js";
+import { checkCommands, emitSkills } from "./skills.js";
 import { LOCK_PATH, type Lock, computeLock, packFiles, sha256 } from "./lock.js";
 
 const sourceFiles = async (set: RecordSet, projectRoot: string, wardenRoot: string): Promise<Record<string, string>> => {
@@ -81,7 +82,11 @@ export async function expectedOutputs(set: RecordSet, projectRoot: string, warde
       .join(""),
   );
 
-  const emitted = { ...emitAll(set), [COMMIT_HOOK]: commitHook(version, set.config.base) };
+  const emitted: Record<string, string> = { ...emitAll(set), [COMMIT_HOOK]: commitHook(version, set.config.base) };
+  for (const [path, content] of Object.entries(emitSkills(set))) {
+    if (path in emitted) throw new Error(`more than one output is ${path}`);
+    emitted[path] = content;
+  }
   const files = Object.fromEntries(Object.entries(emitted).map(([key, content]) => [key, stamp(key, content, version, sourceHash)]));
   return { lock: computeLock(set, files, sources, version), files };
 }
@@ -97,7 +102,7 @@ const previousGuardrails = (text: string | undefined): Lock["guardrails"] | unde
 
 export async function compile(projectRoot: string, wardenRoot: string): Promise<{ findings: Finding[]; written: string[] }> {
   const set = await loadRecords(projectRoot, wardenRoot);
-  const findings = [...checkConsistency(set), ...(await runExamples(set))];
+  const findings = [...checkConsistency(set), ...(await runExamples(set)), ...(await checkCommands(set, wardenRoot))];
   if (findings.length > 0) return { findings, written: [] };
   const slow = await admit(set, await wardenVersion(wardenRoot));
   if (slow.length > 0) return { findings: slow, written: [] };

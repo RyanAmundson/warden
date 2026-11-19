@@ -1,11 +1,12 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
 import { RecordError } from "../records/load.js";
 import { PACK_VAR, brief } from "../adapters/cmd.js";
 import { COMMIT_HOOK } from "../compiler/emit.js";
+import { SKILLS_DIR } from "../compiler/skills.js";
 import { TOOLS, firstLine } from "../compiler/lock.js";
 import type { RecordSet } from "../records/types.js";
 
@@ -65,6 +66,22 @@ const commandItem = (id: string, command: string, root: string, scripts: Record<
     return { name, problem: `package.json has no "${script}" script`, fix: `add a "${script}" script to package.json` };
   }
   return { name };
+};
+
+const real = (file: string): string | undefined => {
+  try {
+    return realpathSync(file);
+  } catch {
+    return undefined;
+  }
+};
+
+const skillItem = (id: string, root: string): Item => {
+  const link = `.claude/skills/${id}`;
+  const target = real(join(root, SKILLS_DIR, id));
+  if (target === undefined) return { name: `skill ${id}`, problem: `${SKILLS_DIR}/${id} does not exist`, fix: "run warden compile" };
+  if (real(join(root, link)) === target) return { name: `skill ${id}` };
+  return { name: `skill ${id}`, problem: `${link} does not link to ${SKILLS_DIR}/${id}, so Claude Code cannot load the skill`, fix: `run mkdir -p .claude/skills && ln -s ../../${SKILLS_DIR}/${id} ${link}` };
 };
 
 const toolItem = async (name: string, load: () => unknown): Promise<Item> => {
@@ -141,6 +158,7 @@ export async function doctor(set: RecordSet, withCommitHook = false): Promise<Do
   for (const g of set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails))) {
     if (g.implementation.startsWith("cmd:")) items.push(commandItem(g.id, g.implementation.slice(4), set.root, scripts, g.packDir));
   }
+  for (const c of set.packs.flatMap((p) => p.capabilities)) if (c.kind === "skill") items.push(skillItem(c.id, set.root));
   if (withCommitHook) items.push(commitHookItem(set.root));
   const plugin = withCommitHook ? pluginState(set.root) : undefined;
   const note = plugin === undefined || plugin.state === "enabled" ? [] : [`note  Claude plugin ${PLUGIN} is ${plugin.state === "missing" ? "not installed" : `disabled in ${plugin.file}`}, so Claude Code edits are not checked; to check them, ${pluginAction(plugin)}`];

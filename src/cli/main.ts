@@ -35,7 +35,7 @@ for (const stream of [process.stdout, process.stderr]) {
   });
 }
 
-const program = new Command("warden").exitOverride();
+const program = new Command("warden").exitOverride().enablePositionalOptions().passThroughOptions();
 const root = (): string => {
   try {
     return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
