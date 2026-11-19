@@ -758,6 +758,21 @@ describe("warden CLI", () => {
     expect(r.out).toBe(`${(JSON.parse(await readFile(join(wardenRoot, "package.json"), "utf8")) as { version: string }).version}\n`);
   });
 
+  it("an unknown command exits 2 with one next action even with --help, and that action exits 0", () => {
+    const r = warden("nosuch", "--help");
+    expect(r.code).toBe(2);
+    expect(r.err).toBe("unknown command nosuch. Next action: run warden --help\n");
+    expect(warden("--help").code).toBe(0);
+  });
+
+  it("each root flag still works when it comes first", () => {
+    init();
+    for (const flag of ["--layers", "--violations", "--determinism", "--version", "--help"]) {
+      const r = warden(flag);
+      expect([flag, r.code, r.err]).toEqual([flag, 0, ""]);
+    }
+  });
+
   it("a bad option value exits 2 with one next action naming the command", () => {
     init();
     const r = warden("runs", "--format", "xml");

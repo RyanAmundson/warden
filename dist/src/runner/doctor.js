@@ -1,11 +1,12 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
 import { RecordError } from "../records/load.js";
 import { PACK_VAR, brief } from "../adapters/cmd.js";
 import { COMMIT_HOOK } from "../compiler/emit.js";
+import { SKILLS_DIR } from "../compiler/skills.js";
 import { TOOLS, firstLine } from "../compiler/lock.js";
 const wardenRequire = createRequire(import.meta.url);
 const executable = (file) => {
@@ -53,6 +54,23 @@ const commandItem = (id, command, root, scripts, packDir) => {
         return { name, problem: `package.json has no "${script}" script`, fix: `add a "${script}" script to package.json` };
     }
     return { name };
+};
+const real = (file) => {
+    try {
+        return realpathSync(file);
+    }
+    catch {
+        return undefined;
+    }
+};
+const skillItem = (id, root) => {
+    const link = `.claude/skills/${id}`;
+    const target = real(join(root, SKILLS_DIR, id));
+    if (target === undefined)
+        return { name: `skill ${id}`, problem: `${SKILLS_DIR}/${id} does not exist`, fix: "run warden compile" };
+    if (real(join(root, link)) === target)
+        return { name: `skill ${id}` };
+    return { name: `skill ${id}`, problem: `${link} does not link to ${SKILLS_DIR}/${id}, so Claude Code cannot load the skill`, fix: `run mkdir -p .claude/skills && ln -s ../../${SKILLS_DIR}/${id} ${link}` };
 };
 const toolItem = async (name, load) => {
     try {
@@ -118,6 +136,9 @@ export async function doctor(set, withCommitHook = false) {
         if (g.implementation.startsWith("cmd:"))
             items.push(commandItem(g.id, g.implementation.slice(4), set.root, scripts, g.packDir));
     }
+    for (const c of set.packs.flatMap((p) => p.capabilities))
+        if (c.kind === "skill")
+            items.push(skillItem(c.id, set.root));
     if (withCommitHook)
         items.push(commitHookItem(set.root));
     const plugin = withCommitHook ? pluginState(set.root) : undefined;

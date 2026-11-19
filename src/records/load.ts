@@ -106,6 +106,8 @@ export async function readPack(projectRoot: string, wardenRoot: string, id: stri
     practice.pack = pack.id;
     for (const g of practice.guardrails) g.packDir = resolve(dirname(file));
   }
+  pack.capabilities ??= [];
+  for (const capability of pack.capabilities) capability.pack = pack.id;
   return { pack, source: inBundled !== undefined ? "bundled" : "local" };
 }
 

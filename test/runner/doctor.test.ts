@@ -1,9 +1,11 @@
+import { execFileSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RecordSet } from "../../src/records/types.js";
 import { doctor } from "../../src/runner/doctor.js";
+import { skillPath } from "../../src/compiler/skills.js";
 
 const missing = vi.hoisted((): { name: string | undefined } => ({ name: undefined }));
 
@@ -36,6 +38,7 @@ const setIn = (packDir: string | undefined, ...commands: string[]): RecordSet =>
       file: join(root, "packs/local/pack.yaml"),
       layer: 1,
       terms: [],
+      capabilities: [],
       practices: [
         {
           id: "scripts-pass",
@@ -169,5 +172,23 @@ describe("doctor", () => {
     const result = await doctor(setWith("./scripts/check.sh", "./scripts/missing.sh"));
     expect(result.lines.slice(4)).toEqual(["ok    cmd script-0: ./scripts/check.sh", "FAIL  cmd script-1: ./scripts/missing.sh  ./scripts/missing.sh is not an executable file in the project"]);
     expect(result.next).toBe("create ./scripts/missing.sh as an executable file, then run warden doctor");
+  });
+
+  it("a skill without its .claude link fails doctor, and the printed command clears it", async () => {
+    const set = setWith();
+    (set.packs[0] as RecordSet["packs"][number]).capabilities = [
+      { id: "review-gate", kind: "skill", serves: "review", purpose: "p", when: "w", upholds: [], commands: [], replaces: [], pack: "local" },
+      { id: "where", kind: "tool", serves: "lookup", purpose: "p", when: "w", upholds: [], commands: [], replaces: [], pack: "local" },
+    ];
+    await mkdir(join(root, skillPath("review-gate"), ".."), { recursive: true });
+    await writeFile(join(root, skillPath("review-gate")), "---\n");
+    const before = await doctor(set);
+    expect(before.lines.slice(4)).toEqual([expect.stringMatching(/^FAIL  skill review-gate  /)]);
+    const command = /^run (.*), then run warden doctor$/.exec(before.next ?? "")?.[1];
+    expect(command).toBe("mkdir -p .claude/skills && ln -s ../../.warden/generated/skills/review-gate .claude/skills/review-gate");
+    execFileSync("sh", ["-c", command as string], { cwd: root });
+    const after = await doctor(set);
+    expect(after.next).toBeUndefined();
+    expect(after.lines.slice(4)).toEqual(["ok    skill review-gate"]);
   });
 });

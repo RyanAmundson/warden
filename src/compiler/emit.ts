@@ -9,6 +9,10 @@ export function stamp(path: string, content: string, version: string, sourceHash
     if (!isObject(body)) throw new Error(`${path} must hold a JSON object to carry a generated header`);
     return `${JSON.stringify({ "@generated": header, ...body }, null, 2)}\n`;
   }
+  if (path.endsWith(".md")) {
+    if (!content.startsWith("---\n")) throw new Error(`${path} must start with front matter to carry a generated header`);
+    return `---\ngenerated: '${header}'\n${content.slice(4)}`;
+  }
   if (/\.(js|mjs|ts)$/.test(path)) return `// ${header}\n${content}`;
   if (content.startsWith("#!")) return content.replace("\n", `\n# ${header}\n`);
   throw new Error(`cannot place a generated header in ${path}`);
