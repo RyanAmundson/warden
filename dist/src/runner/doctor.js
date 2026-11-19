@@ -5,8 +5,9 @@ import { homedir } from "node:os";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
 import { RecordError } from "../records/load.js";
 import { PACK_VAR, brief } from "../adapters/cmd.js";
+import { targetOf } from "../adapters/pack-code.js";
 import { COMMIT_HOOK } from "../compiler/emit.js";
-import { TOOLS, firstLine } from "../compiler/lock.js";
+import { TOOLS, firstLine, scriptsOf } from "../compiler/lock.js";
 const wardenRequire = createRequire(import.meta.url);
 const executable = (file) => {
     try {
@@ -16,12 +17,6 @@ const executable = (file) => {
     catch {
         return false;
     }
-};
-const scriptsOf = (root) => {
-    const file = join(root, "package.json");
-    if (!existsSync(file))
-        return {};
-    return JSON.parse(readFileSync(file, "utf8")).scripts ?? {};
 };
 const SHELL_WORDS = new Set([
     "!", "{", "}", "[[", ".", ":", "[", "alias", "bg", "break", "case", "cd", "command", "continue", "declare", "do", "done", "echo", "elif", "else", "esac", "eval", "exec", "exit", "export", "false", "fg", "fi", "for", "function", "getopts", "hash", "if", "jobs", "kill", "let", "local", "printf", "pwd", "read", "readonly", "return", "select", "set", "shift", "source", "test", "then", "time", "times", "trap", "true", "type", "typeset", "ulimit", "umask", "unalias", "unset", "until", "wait", "while",
@@ -116,7 +111,7 @@ export async function doctor(set, withCommitHook = false) {
     const scripts = scriptsOf(set.root);
     for (const g of set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails))) {
         if (g.implementation.startsWith("cmd:"))
-            items.push(commandItem(g.id, g.implementation.slice(4), set.root, scripts, g.packDir));
+            items.push(commandItem(g.id, targetOf(g), set.root, scripts, g.packDir));
     }
     if (withCommitHook)
         items.push(commitHookItem(set.root));

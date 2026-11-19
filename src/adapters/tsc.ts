@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { RecordError } from "../records/load.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
+import { targetOf } from "./pack-code.js";
 import type { TscReply, TscRequest } from "./tsc-worker.js";
 import { type Adapter, PARSE_ERROR, type RunContext, type RunResult, type Violation } from "./types.js";
 
@@ -31,18 +32,16 @@ const FLAG_CODES: Record<string, number[]> = {
 
 const PREREQUISITES: Record<string, string[]> = { exactOptionalPropertyTypes: ["strictNullChecks"] };
 
-const flagOf = (g: Guardrail): string => g.implementation.slice(g.implementation.indexOf(":") + 1);
-
 export const unmappedFlag = (g: Guardrail): string | undefined => {
   if (!g.implementation.startsWith("tsc:")) return undefined;
-  const flag = flagOf(g);
+  const flag = targetOf(g);
   return flag === BASELINE || flag in FLAG_CODES ? undefined : `tsc:${flag} has no known diagnostic codes, so its errors would count as tsc:${BASELINE}. Next action: change the implementation to one of ${Object.keys(FLAG_CODES).map((f) => `tsc:${f}`).join(", ")}, then run warden compile.`;
 };
 
 const emit = (gs: Guardrail[], _set: RecordSet): Record<string, string> => {
   const compilerOptions: Record<string, unknown> = { noEmit: true };
   for (const g of gs) {
-    if (flagOf(g) !== BASELINE) compilerOptions[flagOf(g)] = g.options === undefined ? true : g.options;
+    if (targetOf(g) !== BASELINE) compilerOptions[targetOf(g)] = g.options === undefined ? true : g.options;
   }
   for (const flag of Object.keys(compilerOptions)) {
     if (compilerOptions[flag]) for (const prerequisite of PREREQUISITES[flag] ?? []) compilerOptions[prerequisite] ??= true;
@@ -107,9 +106,9 @@ const run = async (gs: Guardrail[], _files: string[], ctx: RunContext): Promise<
   const killed = reply === undefined;
   const stdout = reply?.stdout ?? "";
   const owners = new Map<string, string>();
-  for (const g of gs) for (const code of FLAG_CODES[flagOf(g)] ?? []) owners.set(`${code}${flagOf(g) === "noUnusedParameters" ? "p" : ""}`, g.id);
+  for (const g of gs) for (const code of FLAG_CODES[targetOf(g)] ?? []) owners.set(`${code}${targetOf(g) === "noUnusedParameters" ? "p" : ""}`, g.id);
   const parameters = new Set(reply?.parameters ?? []);
-  const baseline = gs.find((g) => flagOf(g) === BASELINE)?.id ?? BASELINE_ID;
+  const baseline = gs.find((g) => targetOf(g) === BASELINE)?.id ?? BASELINE_ID;
   const byGuardrail = new Map<string, Violation[]>([[baseline, []], ...gs.map((g) => [g.id, []] as [string, Violation[]])]);
   const program: string[] = [];
   const optionsError = (line: string, m: RegExpExecArray | null): RecordError | undefined => {
@@ -120,7 +119,7 @@ const run = async (gs: Guardrail[], _files: string[], ctx: RunContext): Promise<
     if (m !== null && m[2] === project) {
       const key = /"([^"]+)"\s*:/.exec(readFileSync(join(ctx.root, project), "utf8").split("\n")[Number(m[3]) - 1] ?? "")?.[1] ?? "";
       const related = (flag: string): boolean => flag === key || (PREREQUISITES[flag] ?? []).includes(key) || (PREREQUISITES[key] ?? []).includes(flag);
-      const guilty = gs.filter((g) => g.options !== undefined && related(flagOf(g)));
+      const guilty = gs.filter((g) => g.options !== undefined && related(targetOf(g)));
       if (guilty.length > 0) {
         const names = guilty.map((g) => `${g.id} (${g.implementation} options ${JSON.stringify(g.options)})`).join(", ");
         return new RecordError(join(ctx.root, project), `/compilerOptions/${key}`, `${refusal} The Guardrail options of ${names} produce it. Next action: change or remove the options of ${guilty.map((g) => g.id).join(", ")} so tsc accepts them, then run warden compile and warden check again.`);

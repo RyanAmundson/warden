@@ -500,7 +500,7 @@ describe("ruling fixes", () => {
     expect(code).toBe(1);
     expect(out).toMatch(/^ {2}Reason: {3}stopped at \d+ ms: did not finish within its 200 ms budget$/m);
     expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([
-      "Next action: run `test ! -e slow || sleep 2.413; test ! -e broken` directly to see why it does not finish.",
+      `Next action: run \`export WARDEN_PACK_DIR=${join(root, ".warden/packs/legacy")}; test ! -e slow || sleep 2.413; test ! -e broken\` directly to see why it does not finish.`,
     ]);
     expect(out).not.toMatch(/blocked|cannot proceed/i);
   });
@@ -898,9 +898,9 @@ describe("final review: legacy feedback", () => {
     await write("b.ts", "const b = 1;\n");
     const { code, out } = await check();
     expect(code).toBe(1);
-    expect(out).toContain("  Output:   test ! -e broken || { echo broken thing; exit 1; } exited with 1\n            broken thing");
+    expect(out).toContain(`  Output:   export WARDEN_PACK_DIR=${join(root, ".warden/packs/legacy")}; test ! -e broken || { echo broken thing; exit 1; } exited with 1\n            broken thing`);
     expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([
-      "Next action: run `test ! -e broken || { echo broken thing; exit 1; }` and fix what it reports.",
+      `Next action: run \`export WARDEN_PACK_DIR=${join(root, ".warden/packs/legacy")}; test ! -e broken || { echo broken thing; exit 1; }\` and fix what it reports.`,
     ]);
   });
 
@@ -912,8 +912,155 @@ describe("final review: legacy feedback", () => {
     const { code, out } = await check();
     expect(code).toBe(1);
     const next = /^Next action: run `(.+)` and fix what it reports\.$/m.exec(out)?.[1] as string;
-    expect(next).toBe(`node "${join(root, ".warden/packs/legacy/bin/no-broken.mjs")}"`);
+    expect(next).toBe(`export WARDEN_PACK_DIR=${join(root, ".warden/packs/legacy")}; node "$WARDEN_PACK_DIR/bin/no-broken.mjs"`);
     expect(spawnSync("sh", ["-c", next], { cwd: root }).status).toBe(1);
+  });
+});
+
+describe("a cmd Guardrail's project scripts are locked", () => {
+  const lockedThenEdited = async (command: string, files: Record<string, string>, edit: [string, string], sources?: string[]): Promise<{ code: number; out: string }> => {
+    for (const [file, content] of Object.entries(files)) await write(file, content);
+    await write(".warden/config.yaml", config(["core", "local", "legacy"]));
+    const pack = legacyPack("commit", command, 5000);
+    await write(".warden/packs/legacy/pack.yaml", sources === undefined ? pack : pack.replace("        mustFail:", `        sources: ${JSON.stringify(sources)}\n        mustFail:`));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    git("add", "-A");
+    git("commit", "-q", "-m", "legacy");
+    git("branch", "-f", "main", "HEAD");
+    expect((await check()).code).toBe(0);
+    await write(edit[0], edit[1]);
+    return check();
+  };
+
+  it("a script run by sh with no extension is locked", async () => {
+    const { code } = await lockedThenEdited("test ! -e broken || sh scripts/check", { "scripts/check": "exit 1\n" }, ["scripts/check", "true\n"]);
+    expect(code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: "./scripts/check", detail: "source-drift" });
+  });
+
+  it("an npm script another npm script calls is locked, and the next action names the script in package.json", async () => {
+    const pkg = (inner: string): string => JSON.stringify({ scripts: { check: "npm run check:inner", "check:inner": inner } });
+    const { code, out } = await lockedThenEdited("test ! -e broken || npm run check", { "package.json": pkg("sh scripts/c.sh"), "scripts/c.sh": "exit 1\n" }, ["package.json", pkg("true")]);
+    expect(code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: "./package.json#scripts/check:inner", detail: "source-drift" });
+    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual(['Next action: revert your change to the "check:inner" script in package.json.']);
+  });
+
+  it("a module a locked script imports is locked", async () => {
+    const { code } = await lockedThenEdited("test ! -e broken || node scripts/c.mjs", { "scripts/c.mjs": 'import { ok } from "./lib.mjs";\nprocess.exit(ok ? 0 : 1);\n', "scripts/lib.mjs": "export const ok = false;\n" }, ["scripts/lib.mjs", "export const ok = true;\n"]);
+    expect(code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: "./scripts/lib.mjs", detail: "source-drift" });
+  });
+
+  it("an npm script named after a flag is locked", async () => {
+    const { code } = await lockedThenEdited("test ! -e broken || npm run --silent check", { "package.json": JSON.stringify({ scripts: { check: "sh scripts/c.sh" } }), "scripts/c.sh": "exit 1\n" }, ["scripts/c.sh", "true\n"]);
+    expect(code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: "./scripts/c.sh", detail: "source-drift" });
+  });
+
+  it("a script run after cd resolves against that folder and is locked", async () => {
+    const { code } = await lockedThenEdited("test ! -e broken || (cd scripts && sh c.sh)", { "scripts/c.sh": "exit 1\n" }, ["scripts/c.sh", "true\n"]);
+    expect(code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: "./scripts/c.sh", detail: "source-drift" });
+  });
+
+  it("a data file listed in sources is locked", async () => {
+    const { code } = await lockedThenEdited("test ! -e broken || sh scripts/c.sh", { "scripts/c.sh": 'test "$(cat scripts/target.txt)" = ok\n', "scripts/target.txt": "no\n" }, ["scripts/target.txt", "ok\n"], ["scripts/target.txt"]);
+    expect(code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: "./scripts/target.txt", detail: "source-drift" });
+  });
+
+  for (const command of ["sh -e scripts/c.sh", "env sh scripts/c.sh", 'test "$(sh scripts/c.sh)" = ok', "if sh scripts/c.sh; then exit 0; else exit 1; fi"]) {
+    it(`a script run through ${command} is locked`, async () => {
+      const { code } = await lockedThenEdited(`test ! -e broken || ${command}`, { "scripts/c.sh": "exit 1\n" }, ["scripts/c.sh", "echo ok\n"]);
+      expect(code).toBe(1);
+      expect(await tampered()).toContainEqual({ file: "./scripts/c.sh", detail: "source-drift" });
+    });
+  }
+
+  it("a script a locked shell script calls is locked, and a form its body does not model does not stop compile", async () => {
+    const { code } = await lockedThenEdited("test ! -e broken || sh scripts/c.sh", { "scripts/c.sh": 'eval "true"\nsh scripts/inner.sh\n', "scripts/inner.sh": "exit 1\n" }, ["scripts/inner.sh", "true\n"]);
+    expect(code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: "./scripts/inner.sh", detail: "source-drift" });
+  });
+
+  it("a project script a bare command finds on PATH is locked", async () => {
+    vi.stubEnv("PATH", `${join(root, "bin")}:${process.env.PATH ?? ""}`);
+    await mkdir(join(root, "bin"));
+    await writeFile(join(root, "bin/check-canon"), "exit 1\n", { mode: 0o755 });
+    const { code } = await lockedThenEdited("test ! -e broken || check-canon", {}, ["bin/check-canon", "true\n"]);
+    expect(code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: "./bin/check-canon", detail: "source-drift" });
+  });
+
+  for (const command of ["nice ./scripts/c.sh", "timeout 5 ./scripts/c.sh"]) {
+    it(`a script run through ${command} is locked`, async () => {
+      await write("scripts/c.sh", "exit 1\n");
+      await chmod(join(root, "scripts/c.sh"), 0o755);
+      const { code } = await lockedThenEdited(`test ! -e broken || ${command}`, {}, ["scripts/c.sh", "exit 0\n"]);
+      expect(code).toBe(1);
+      expect(await tampered()).toContainEqual({ file: "./scripts/c.sh", detail: "source-drift" });
+    });
+  }
+
+  it("a form compile cannot resolve exits 2 with one next action, and following it clears the refusal", async () => {
+    await write("scripts/a.php", "a\n");
+    await write(".warden/config.yaml", config(["core", "local", "legacy"]));
+    const pack = legacyPack("commit", "test ! -e broken || fakeinterp scripts/a.php", 5000);
+    await write(".warden/packs/legacy/pack.yaml", pack);
+    const refused = await compile(root, wardenRoot).catch((cause: unknown) => cause);
+    expect(refused).toMatchObject({ pointer: "/guardrails/legacy-script/implementation" });
+    expect(((refused as Error).message.match(/Next action:/g) ?? []).length).toBe(1);
+    const listed = pack.replace("        mustFail:", '        sources: ["scripts/a.php"]\n        mustFail:');
+    expect((refused as Error).message).toContain("scripts/a.php");
+    await write(".warden/packs/legacy/pack.yaml", listed);
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect(readLock(root).sources["./scripts/a.php"]).toBe(sha256("a\n"));
+    await write(".warden/packs/legacy/pack.yaml", pack);
+    const { code, err } = await check();
+    expect(code).toBe(2);
+    expect(err.match(/Next action:/g)).toHaveLength(1);
+  });
+
+  it("a form with no file to list names a rewrite, and the rewritten command compiles", async () => {
+    await write("scripts/c.sh", "exit 0\n");
+    await write(".warden/config.yaml", config(["core", "local", "legacy"]));
+    await write(".warden/packs/legacy/pack.yaml", legacyPack("commit", "test ! -e broken || eval 'sh scripts/c.sh'", 5000));
+    const refused = await compile(root, wardenRoot).catch((cause: unknown) => cause);
+    expect(refused).toMatchObject({ pointer: "/guardrails/legacy-script/implementation" });
+    expect(((refused as Error).message.match(/Next action:/g) ?? []).length).toBe(1);
+    await write(".warden/packs/legacy/pack.yaml", legacyPack("commit", "test ! -e broken || sh scripts/c.sh", 5000));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+  });
+
+  it("a listed source that is missing names one next action, and creating it clears the refusal", async () => {
+    await write(".warden/config.yaml", config(["core", "local", "legacy"]));
+    await write(".warden/packs/legacy/pack.yaml", legacyPack("commit", "test ! -e broken", 5000).replace("        mustFail:", '        sources: ["data.txt"]\n        mustFail:'));
+    const refused = await compile(root, wardenRoot).catch((cause: unknown) => cause);
+    expect(refused).toMatchObject({ pointer: "/guardrails/legacy-script/sources" });
+    expect(((refused as Error).message.match(/Next action:/g) ?? []).length).toBe(1);
+    await write("data.txt", "d\n");
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+  });
+
+  it("a malformed package.json stops compile with its name and one next action", async () => {
+    await write("package.json", "{ bad");
+    await write(".warden/config.yaml", config(["core", "local", "legacy"]));
+    await write(".warden/packs/legacy/pack.yaml", legacyPack("commit", "test ! -e broken", 5000));
+    const refused = await compile(root, wardenRoot).catch((cause: unknown) => cause);
+    expect(refused).toMatchObject({ file: "package.json" });
+    expect(((refused as Error).message.match(/Next action:/g) ?? []).length).toBe(1);
+    await write("package.json", "{}\n");
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+  });
+
+  it("a project file the command only reads as an argument is not locked, so editing it is not tampering", async () => {
+    const { code } = await lockedThenEdited('test ! -e broken && test "$(cat x.ts 2>/dev/null)" = "$(cat y.ts 2>/dev/null)"', { "x.ts": "export const v = 1;\n", "y.ts": "export const v = 1;\n" }, ["x.ts", "export const v = 2;\n"]);
+    expect(code).toBe(1);
+    expect(await tampered()).toEqual([]);
+    await write("y.ts", "export const v = 2;\n");
+    expect((await check()).code).toBe(0);
+    expect(Object.keys(readLock(root).sources).filter((k) => k.startsWith("./"))).toEqual([]);
   });
 });
 
@@ -921,16 +1068,31 @@ describe("a cmd Guardrail that runs a script in its pack", () => {
   it("runs WARDEN_PACK_DIR as the pack folder, names the resolved command, and treats a script edit as tampering", async () => {
     await write(".warden/packs/legacy/check.sh", "test ! -e broken || { echo broken thing; exit 1; }\n");
     await addLegacy("commit", 'sh "$WARDEN_PACK_DIR/check.sh"', 5000);
-    const script = join(root, ".warden/packs/legacy/check.sh");
     await write("broken", "x\n");
     const { code, out } = await check();
     expect(code).toBe(1);
-    expect(out).toContain(`  Output:   ${`sh "${script}"`.slice(0, COMMAND_CHARS)}`);
+    expect(out).toContain(`  Output:   ${`export WARDEN_PACK_DIR=${join(root, ".warden/packs/legacy")}; sh "$WARDEN_PACK_DIR/check.sh"`.slice(0, COMMAND_CHARS)}`);
     expect(out).toContain(` exited with 1\n            broken thing`);
     expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([`Next action: ${runIt({ id: "legacy-script", kind: "legacy", runs: ["commit"], budgetMs: 5000, version: 1, implementation: 'cmd:sh "$WARDEN_PACK_DIR/check.sh"', packDir: join(root, ".warden/packs/legacy") })}`]);
     await write(".warden/packs/legacy/check.sh", "true\n");
     expect((await check()).code).toBe(1);
     expect(await tampered()).toContainEqual({ file: ".warden/packs/legacy/check.sh", detail: "source-drift" });
+  });
+
+  it("hashes a project script the command names, so editing it is source drift, and recompiling it is loosening", async () => {
+    await write("scripts/check.sh", "test ! -e broken\n");
+    await addLegacy("commit", "test ! -e broken || sh scripts/check.sh", 5000);
+    expect(readLock(root).sources["./scripts/check.sh"]).toBe(sha256("test ! -e broken\n"));
+    git("add", "-A");
+    git("commit", "-q", "-m", "legacy");
+    git("branch", "-f", "main", "HEAD");
+    expect((await check()).code).toBe(0);
+    await write("scripts/check.sh", "true\n");
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: "./scripts/check.sh", detail: "source-drift" });
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: ".warden/lock.json", detail: "loosened" });
   });
 
   it("a script that exits 2 stops the check with exit 2 and the script's next action, not a Guardrail failure", async () => {
@@ -940,7 +1102,7 @@ describe("a cmd Guardrail that runs a script in its pack", () => {
     const { code, out, err } = await check();
     expect(code).toBe(2);
     expect(out).toBe("");
-    expect(err).toBe(`${join(root, ".warden/packs/legacy/pack.yaml")} /guardrails/legacy-script/implementation: sh "${join(root, ".warden/packs/legacy/check.sh")}" exited with 2, an error in its environment or usage, not a violation: git is not on PATH. Next action: install git so that it is on PATH.\n`);
+    expect(err).toBe(`${join(root, ".warden/packs/legacy/pack.yaml")} /guardrails/legacy-script/implementation: export WARDEN_PACK_DIR=${join(root, ".warden/packs/legacy")}; sh "$WARDEN_PACK_DIR/check.sh" exited with 2, an error in its environment or usage, not a violation: git is not on PATH. Next action: install git so that it is on PATH.\n`);
   });
 
   it("moving a base-locked cmd Guardrail from lint to runtime, as compile asks, is not tampering", async () => {

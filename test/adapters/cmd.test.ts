@@ -81,14 +81,16 @@ describe("cmd adapter", () => {
     expect(r?.status).toBe("pass");
   });
 
-  it("prints the command with its pack folder shell-quoted, so a folder with a space runs as printed", async () => {
-    const pack = await mkdtemp(join(tmpdir(), "warden pack's "));
+  it("prints the command after an export of its shell-quoted pack folder, so every quoting runs as printed", async () => {
+    const pack = await mkdtemp(join(tmpdir(), "warden pack's $(x) "));
     await writeFile(join(pack, "x.sh"), "echo ran\nexit 1\n");
-    const commands = ["sh $WARDEN_PACK_DIR/x.sh", 'sh "$WARDEN_PACK_DIR/x.sh"', 'sh "${WARDEN_PACK_DIR}"/x.sh'];
+    const commands = ["sh $WARDEN_PACK_DIR/x.sh", 'sh "$WARDEN_PACK_DIR/x.sh"', 'sh "${WARDEN_PACK_DIR}"/x.sh', "sh -c 'sh \"$WARDEN_PACK_DIR/x.sh\"'", 'sh "$(echo "$WARDEN_PACK_DIR")/x.sh"'];
     const results = await cmdAdapter.run(commands.map((c) => ({ ...legacy(`cmd:${c}`), packDir: pack })), [], ctx);
     const printed = results.map((r) => (r.violations[0]?.message.split("\n")[0] ?? "").replace(/ exited with \d+$/, ""));
-    expect(printed[0]).toBe(`sh '${pack.replaceAll("'", "'\\''")}'/x.sh`);
-    for (const command of printed) expect(spawnSync("sh", ["-c", command], { encoding: "utf8" })).toMatchObject({ status: 1, stdout: "ran\n" });
+    expect(printed).toEqual(commands.map((c) => `export WARDEN_PACK_DIR='${pack.replaceAll("'", "'\\''")}'; ${c}`));
+    const codes = results.map((r) => Number(/ exited with (\d+)$/.exec(r.violations[0]?.message.split("\n")[0] ?? "")?.[1]));
+    expect(codes).toEqual([127, 1, 1, 1, 1]);
+    printed.forEach((command, i) => expect(spawnSync("sh", ["-c", command], { encoding: "utf8" }).status).toBe(codes[i]));
     await rm(pack, { recursive: true });
   });
 
@@ -144,6 +146,8 @@ describe("cmd adapter", () => {
     expect(runIt(legacy("cmd:npm test"))).toBe("run `npm test` and fix what it reports.");
     const long = { ...legacy(`cmd:echo ${"x".repeat(300)}`), packDir: "/p/.warden/packs/local" };
     expect(runIt(long)).toBe("run the implementation command of Guardrail g in /p/.warden/packs/local/pack.yaml, from the project root with WARDEN_PACK_DIR=/p/.warden/packs/local, and fix what it reports.");
+    expect(runIt({ ...long, packDir: "/p/a b" })).toContain("with WARDEN_PACK_DIR='/p/a b', and");
+    expect(runIt({ ...legacy('cmd:sh "${WARDEN_PACK_DIR:-.}/x.sh"'), packDir: "/p/a b" })).toBe(`run \`export WARDEN_PACK_DIR='/p/a b'; sh "\${WARDEN_PACK_DIR:-.}/x.sh"\` and fix what it reports.`);
   });
 
   it("a command that exits 2 is an environment or usage error that keeps its last line's next action, or names one", async () => {
