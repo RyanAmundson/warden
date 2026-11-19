@@ -89,7 +89,7 @@ export const keyCuts = (name) => {
 const projectKey = (name, open) =>
   `<svg width="180" height="48" viewBox="0 0 120 32" aria-hidden="true"><rect x="1" y="4" width="26" height="24" rx="7" fill="${open ? "#F3D3CF" : "#C9A04A"}" stroke="${open ? "#8E1B14" : "#6E5013"}" stroke-width="0.6"/><circle cx="10" cy="16" r="3.5" fill="#F8F9FA" stroke="${open ? "#8E1B14" : "#6E5013"}" stroke-width="0.6"/><path d="${keyCuts(name)}" fill="${open ? "#F3D3CF" : "#C9A04A"}" stroke="${open ? "#8E1B14" : "#6E5013"}" stroke-width="0.6"${open ? ' stroke-dasharray="1.5 1"' : ""}/></svg>`;
 
-export const passed = (run) => run.outcome === "ran" && run.result === "pass";
+export const passed = (run) => run.outcome === "ran" && run.result === "pass" && run.alert === undefined;
 
 export const notPassing = (run) => !passed(run) && run.outcome !== "empty";
 
@@ -99,6 +99,7 @@ export const stoppedAt = (run) => {
 };
 
 export const outcome = (run) => {
+  if (run.outcome === "ran" && run.alert !== undefined) return { cls: "block", text: "Block · alert", icon: true };
   if (run.outcome === "ran" && run.result === "pass") return { cls: "pass", text: "Pass" };
   if (run.outcome === "ran" && run.result === "fail") {
     const first = run.failures?.[0];
@@ -277,8 +278,8 @@ const stepsList = (run) => {
     if (v === undefined) return `<li>${ICON_SKIP}<span class="no">${i + 1} ${s.label}</span><span class="no">not reached</span><span class="r no">–</span></li>`;
     sum += v;
     const failed = s.id === stop && run.outcome !== "ran";
-    const blocked = s.id === "verdict" && run.result === "fail";
-    const note = s.id === "rules" && run.rules !== undefined ? [...Object.entries(run.rules).map(([id, n]) => `${id} ${ms(n)} ms`), ...((run.cachedRules ?? []).length > 0 ? [`${run.cachedRules.length} cached`] : [])].join(" · ") || "no rule needed to run" : blocked ? `${plural(run.failures?.length ?? 0, "failure")}` : failed ? `stopped here: ${OUTCOME_TITLE[run.outcome] ?? run.outcome}` : "done";
+    const blocked = s.id === "verdict" && (run.result === "fail" || run.alert !== undefined);
+    const note = s.id === "rules" && run.rules !== undefined ? [...Object.entries(run.rules).map(([id, n]) => `${id} ${ms(n)} ms`), ...((run.cachedRules ?? []).length > 0 ? [`${run.cachedRules.length} cached`] : [])].join(" · ") || "no rule needed to run" : blocked ? (run.alert === undefined ? `${plural(run.failures?.length ?? 0, "failure")}` : `open tamper alert: ${run.alert}`) : failed ? `stopped here: ${OUTCOME_TITLE[run.outcome] ?? run.outcome}` : "done";
     return `<li>${failed || blocked ? ICON_FAIL : ICON_DONE}<span style="font-weight:650">${i + 1} ${s.label}</span><span class="wrap${failed || blocked ? " bad" : " muted"}">${esc(note)}</span><span class="r">${ms(v)} ms</span></li>`;
   });
   items.push(`<li><span></span><span class="muted">setup and records</span><span></span><span class="r">${ms(Math.max(0, (run.ms ?? 0) - sum))} ms</span></li>`);
@@ -331,7 +332,7 @@ ${selected ? runDetail(data.runs.project, selected) : ""}</div>`;
 
 export const streakOf = (runs, run) => {
   const i = runs.findIndex((r) => r.run === run.run);
-  const same = (r) => r.outcome === run.outcome && r.result === run.result && r.next === run.next;
+  const same = (r) => r.outcome === run.outcome && r.result === run.result && r.alert === run.alert && r.next === run.next;
   const out = [];
   for (let j = i; j >= 0 && j < runs.length && same(runs[j]); j++) out.push(runs[j]);
   return out;
@@ -342,8 +343,8 @@ const banner = (run) => {
   const o = outcome(run);
   const step = stoppedAt(run);
   const name = OUTCOME_TITLE[run.outcome] ?? run.outcome;
-  const title = run.outcome === "ran" ? `Blocked by ${plural(run.failures?.length ?? 0, "failure")}` : step ? `${name} at ${step.label}` : `${name} before the first step`;
-  const why = run.outcome === "ran" ? "The rules ran and found new violations in the changed files." : step ? `Warden stopped at step ${STEPS.indexOf(step) + 1} of 4, so no rule ran.` : "Warden stopped before its first step, so no rule ran.";
+  const title = run.alert !== undefined ? "Blocked by an open tamper alert" : run.outcome === "ran" ? `Blocked by ${plural(run.failures?.length ?? 0, "failure")}` : step ? `${name} at ${step.label}` : `${name} before the first step`;
+  const why = run.alert !== undefined ? `The rules passed, but the daemon holds an open tamper alert for this repository (${run.alert}), so the check exited ${run.exit ?? 1}.` : run.outcome === "ran" ? "The rules ran and found new violations in the changed files." : step ? `Warden stopped at step ${STEPS.indexOf(step) + 1} of 4, so no rule ran.` : "Warden stopped before its first step, so no rule ran.";
   return `<section class="banner ${run.outcome === "tampered" ? "red" : "amber"}" aria-labelledby="er-h"><div class="top">${tag(o)}<h2 id="er-h">${esc(title)}</h2></div><p>${esc(why)}</p>${run.next ? nextBox(run.next) : ""}</section>`;
 };
 
@@ -490,7 +491,7 @@ export const tamperPage = (state) => {
   return `<section class="banner red" role="alert" aria-labelledby="tp-h"><div class="top" style="justify-content:space-between"><div style="display:flex;flex-direction:column;gap:4px;min-width:0"><h1 id="tp-h">Tamper detected in ${esc(projects.join(" and "))}</h1><p>${plural(open.length, "open detection")}. The first: ${esc(first.detail)} on ${esc(first.file)}. ${esc(DETAIL_TEXT[first.detail.split(" ")[0]] ?? "")}</p></div></div>${nextBox(first.next)}</section>
 <div class="split">${kinds.some((k) => LOCK_KINDS.has(k)) ? `<section class="mod wide" aria-labelledby="tp-key"><div class="modh"><h2 class="h2" id="tp-key">The key no longer fits</h2><span class="muted">illustration; the files that changed are listed below</span></div><div class="pad">${LOCK_ART}</div></section>` : ""}
 <section class="mod narrow" aria-labelledby="tp-kinds"><div class="modh"><h2 class="h2" id="tp-kinds">What was found</h2></div><dl class="kinds">${kinds.map((k) => `<dt class="mono">${esc(k)}</dt><dd>${esc(DETAIL_TEXT[k] ?? "Reported by the daemon.")}</dd>`).join("")}</dl></section></div>
-<section class="mod" aria-labelledby="tp-open"><div class="modh"><h2 class="h2" id="tp-open">Open now · ${plural(open.length, "detection")}</h2><span class="muted">Each clears when the daemon's next scan no longer finds it</span></div><div class="scroll"><table><thead><tr><th scope="col">Project</th><th scope="col">File</th><th scope="col">Kind</th><th scope="col">Next action</th></tr></thead><tbody>${open.map((d) => `<tr class="held"><td>${esc(d.project)}</td><td class="mono">${esc(d.file)}</td><td class="mono">${esc(d.detail)}</td><td class="mono wrap">${esc(d.next)}</td></tr>`).join("")}</tbody></table></div></section>
+<section class="mod" aria-labelledby="tp-open"><div class="modh"><h2 class="h2" id="tp-open">Open now · ${plural(open.length, "detection")}</h2><span class="muted">Each clears when the daemon's next scan no longer finds it</span></div><div class="scroll"><table><thead><tr><th scope="col">Project</th><th scope="col">File</th><th scope="col">Kind</th><th scope="col">Next action</th></tr></thead><tbody>${open.map((d) => `<tr class="held"><td>${esc(d.project)}${d.repo ? `<div class="muted mono" title="${esc(d.repo)}">…/${esc(d.repo.replace(/\/\.git$/, "").split("/").slice(-2).join("/"))}</div>` : ""}</td><td class="mono">${esc(d.file)}</td><td class="mono">${esc(d.detail)}</td><td class="mono wrap">${esc(d.next)}</td></tr>`).join("")}</tbody></table></div></section>
 ${history}`;
 };
 

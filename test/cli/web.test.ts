@@ -210,6 +210,27 @@ describe("pages render from API responses", () => {
   });
 });
 
+describe("runs blocked by an open alert", () => {
+  const alertRun = run({ run: "r-alert", at: at(39), tier: "commit", trigger: "git-commit", exit: 1, result: "pass", scope: "full", alert: "source-drift", next: "revert your change to src/a.ts" });
+
+  it("shows a run blocked by an alert as blocked in the runs table and the run page, with the alert's next action", () => {
+    const runs = [alertRun, run()];
+    const list = renderApp(state("runs", { runs: { project: "context-manager", runs } }, { view: { run: "r-alert", outcome: "not", fresh: new Set() } }));
+    expect(list).toContain("1 not passing");
+    expect(list).toContain("Block · alert");
+    expect(list).toContain("open tamper alert: source-drift");
+    const page = renderApp(state("run", { runs: { project: "context-manager", runs } }, { view: { run: "r-alert", fresh: new Set() } }));
+    expect(page).toContain("Blocked by an open tamper alert");
+    expect(page).not.toContain(">Pass<");
+    expect(nextActions(page)).toEqual(["revert your change to src/a.ts"]);
+  });
+
+  it("names the repository of each open detection", () => {
+    const html = renderApp(state("tamper", { tamper: { ...tamper, open: [{ ...detection, repo: "/p/w/.git" }] } }));
+    expect(html).toContain('title="/p/w/.git">…/p/w</div>');
+  });
+});
+
 describe("UI QA fixes", () => {
   it("marks the selected run with aria-current and links each run to its detail", () => {
     const html = renderApp(state("runs", { runs: { project: "context-manager", runs: cmRuns } }, { view: { run: "r-block", outcome: "all", fresh: new Set() } }));
