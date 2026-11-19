@@ -152,10 +152,10 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
   return sources.length === 0 ? found : found.map((t) => (t.file === LOCK_PATH && t.detail === "loosened" ? { ...t, sources } : t));
 };
 
-const unsignedChanges = (root: string, base: string, wardenRoot: string): Tamper[] => {
+const unsignedChanges = (root: string, base: string, wardenRoot: string, staged: boolean): Tamper[] => {
   const signers = join(wardenRoot, SIGNERS_FILE);
   const listed = existsSync(signers) && readFileSync(signers, "utf8").trim() !== "";
-  const { files, base: mergeBase, dirty } = changeSignatures(root, base, ".warden", signers);
+  const { files, base: mergeBase, dirty } = changeSignatures(root, base, ".warden", signers, staged);
   const failed = [...files].filter(([file]) => file !== BASELINE_PATH);
   if (!listed) return failed.map(([file]): Tamper => ({ file, detail: "no-allowed-signers" }));
   if (failed.some(([, status]) => status !== "N") && spawnSync("ssh-keygen", ["-?"]).error !== undefined) {
@@ -164,7 +164,7 @@ const unsignedChanges = (root: string, base: string, wardenRoot: string): Tamper
   return failed.map(([file, status]): Tamper => ({ file, detail: status === "N" ? "unsigned" : "untrusted-signature", mergeBase, dirty }));
 };
 
-export async function findTampering(set: RecordSet, wardenRoot: string, base: string): Promise<Tamper[]> {
+export async function findTampering(set: RecordSet, wardenRoot: string, base: string, staged: boolean): Promise<Tamper[]> {
   const root = set.root;
   const lock = existsSync(join(root, LOCK_PATH)) ? readLock(root) : undefined;
   const found: Tamper[] = leftoverTemps(root, lock).map((file) => ({ file, detail: "leftover-temp" }));
@@ -188,5 +188,5 @@ export async function findTampering(set: RecordSet, wardenRoot: string, base: st
   }
 
   found.push(...projectWideEntries(readBaseline(root)).map((guardrail): Tamper => ({ file: BASELINE_PATH, detail: "loosened", guardrail })));
-  return [...found, ...loosened(root, base, lock), ...unsignedChanges(root, base, wardenRoot)];
+  return [...found, ...loosened(root, base, lock), ...unsignedChanges(root, base, wardenRoot, staged)];
 }

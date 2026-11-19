@@ -52,8 +52,9 @@ const nextAction = (failures: Violation[], set: RecordSet, notes: Notes): string
   const first = signed[0];
   if (first !== undefined) {
     const stash = (first.dirty ?? []).length === 0 ? "" : `git --literal-pathspecs stash push -u -- ${shellWords(first.dirty ?? [])} && `;
-    const restore = `git --literal-pathspecs restore --source=${first.mergeBase} --staged --worktree -- ${shellWords([...new Set(signed.map((t) => t.file))].sort())}`;
-    const commit = `git update-ref HEAD "$(git commit-tree "$(git write-tree)" -p HEAD -m 'Restore .warden files changed without an allowed signature')"`;
+    const paths = shellWords([...new Set(signed.map((t) => t.file))].sort());
+    const restore = `git --literal-pathspecs restore --source=${first.mergeBase} --staged --worktree -- ${paths}`;
+    const commit = "git commit --allow-empty -m 'Restore .warden files changed without an allowed signature'";
     return `run ${stash}${restore} && ${commit} to restore the .warden/ files changed without an allowed signature to the merge base, then run warden check again.`;
   }
   if (notes.tampered?.some((t) => t.detail === "base-moved") === true) {

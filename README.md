@@ -52,16 +52,25 @@ lock records the list's hash as a source, so a changed list shows up as source
 drift. `warden check` verifies signatures with `ssh-keygen`, whatever the
 repository's own `gpg.ssh` settings say. An unsigned change is reported as
 `unsigned`, and a signature from any other key as `untrusted-signature`. The
-next action restores every reported path to its merge-base content in one
-commit: files the branch added are removed, and files it deleted come back.
-It first stashes uncommitted and untracked changes in those paths, and every
-staged change, so the new commit holds only the restored content. It makes
-that commit with `git commit-tree` and `git update-ref`, which run no hooks,
-so the pre-commit hook does not block it. The restore also drops any signed
-edit to those paths made since the merge base; sign that edit again after the
-restore. A path needs a signature only while its content differs from the
-merge base, so unsigned commits that leave a path as it was at the merge base
-are not reported, and the restore commit passes.
+next action restores every reported path to its merge-base content and
+commits it with a plain `git commit`: files the branch added are removed, and
+files it deleted come back. It first stashes every uncommitted change to a
+tracked file, staged or not, and untracked files in the reported paths,
+because the pre-commit hook refuses a working copy that differs from the index
+and the commit must hold only the restore. Pop the stash afterwards. The
+commit uses `--allow-empty` so it is still made when a replace ref or a
+commit-graph file makes git's own view of `HEAD` already match the merge base.
+The restore also drops any signed edit to those paths made since the merge
+base; sign that edit again after the restore.
+
+A path needs a signature only while its content differs from the merge base,
+so unsigned commits that leave a path as it was at the merge base are not
+reported. Warden's pre-commit hook judges the staged tree, so it accepts a
+staged restore while `HEAD` still holds the unsigned commit, and it refuses a
+staged tree that keeps an unsigned commit's change. It cannot judge the
+signature of the commit being made, which does not exist yet: a staged
+`.warden/` change on top of signed history passes the hook, and the next check
+reports the commit if it is unsigned.
 
 The check ignores replace refs, grafts, the commit-graph file, and submodule
 `ignore` settings. It trusts its own process and the installed package. It

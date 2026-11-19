@@ -132,10 +132,10 @@ const loosened = (root, base, lock) => {
     const sources = Object.keys({ ...before.sources, ...lock.sources }).filter((k) => k.startsWith(".warden/") && before.sources?.[k] !== lock.sources[k]);
     return sources.length === 0 ? found : found.map((t) => (t.file === LOCK_PATH && t.detail === "loosened" ? { ...t, sources } : t));
 };
-const unsignedChanges = (root, base, wardenRoot) => {
+const unsignedChanges = (root, base, wardenRoot, staged) => {
     const signers = join(wardenRoot, SIGNERS_FILE);
     const listed = existsSync(signers) && readFileSync(signers, "utf8").trim() !== "";
-    const { files, base: mergeBase, dirty } = changeSignatures(root, base, ".warden", signers);
+    const { files, base: mergeBase, dirty } = changeSignatures(root, base, ".warden", signers, staged);
     const failed = [...files].filter(([file]) => file !== BASELINE_PATH);
     if (!listed)
         return failed.map(([file]) => ({ file, detail: "no-allowed-signers" }));
@@ -144,7 +144,7 @@ const unsignedChanges = (root, base, wardenRoot) => {
     }
     return failed.map(([file, status]) => ({ file, detail: status === "N" ? "unsigned" : "untrusted-signature", mergeBase, dirty }));
 };
-export async function findTampering(set, wardenRoot, base) {
+export async function findTampering(set, wardenRoot, base, staged) {
     const root = set.root;
     const lock = existsSync(join(root, LOCK_PATH)) ? readLock(root) : undefined;
     const found = leftoverTemps(root, lock).map((file) => ({ file, detail: "leftover-temp" }));
@@ -168,5 +168,5 @@ export async function findTampering(set, wardenRoot, base) {
             found.push({ file, detail: "generated-drift" });
     }
     found.push(...projectWideEntries(readBaseline(root)).map((guardrail) => ({ file: BASELINE_PATH, detail: "loosened", guardrail })));
-    return [...found, ...loosened(root, base, lock), ...unsignedChanges(root, base, wardenRoot)];
+    return [...found, ...loosened(root, base, lock), ...unsignedChanges(root, base, wardenRoot, staged)];
 }

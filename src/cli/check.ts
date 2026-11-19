@@ -282,7 +282,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
     throw new RecordError(first.file, `/guardrails/${first.record}/implementation`, first.message);
   }
 
-  const tampered = await findTampering(set, opts.wardenRoot, base);
+  const tampered = await findTampering(set, opts.wardenRoot, base, opts.trigger === "git-commit");
   if (tampered.length > 0) {
     for (const t of tampered) appendEvidence(project, { at, kind: "tampered", file: t.file, detail: t.detail, guardrail: t.guardrail });
     closeStep(live, "fail");

@@ -2020,21 +2020,27 @@ describe("signed .warden changes", () => {
     expect(code).toBe(1);
     expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
     expect(out.match(/Next action:/g)).toHaveLength(1);
-    expect(out).toContain(`Next action: run git --literal-pathspecs restore --source=${git("rev-parse", "main").trim()} --staged --worktree -- '.warden/notes.txt' && git update-ref HEAD "$(git commit-tree "$(git write-tree)" -p HEAD -m 'Restore .warden files changed without an allowed signature')" to restore the .warden/ files changed without an allowed signature to the merge base, then run warden check again.`);
+    expect(out).toContain(`Next action: run git --literal-pathspecs restore --source=${git("rev-parse", "main").trim()} --staged --worktree -- '.warden/notes.txt' && git commit --allow-empty -m 'Restore .warden files changed without an allowed signature' to restore the .warden/ files changed without an allowed signature to the merge base, then run warden check again.`);
     await follow(out);
     expect((await check()).code).toBe(0);
     expect(await read(".warden/notes.txt")).toBe("one\n");
   });
 
+  const commitEnv = async (): Promise<NodeJS.ProcessEnv> => {
+    const bin = join(root, ".git", "warden-bin");
+    await mkdir(bin, { recursive: true });
+    await writeFile(join(bin, "warden"), `#!/bin/sh\nexec '${process.execPath}' --preserve-symlinks --preserve-symlinks-main '${join(wardenRoot, "dist/src/cli/main.js")}' "$@"\n`, { mode: 0o755 });
+    git("config", "core.hooksPath", ".warden/generated/hooks");
+    git("config", "commit.gpgsign", "false");
+    return { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
+  };
+
   const follow = async (out: string): Promise<void> => {
     const action = /Next action: run (.*) to restore the \.warden\/ files/s.exec(out)?.[1];
     expect(action).toBeDefined();
-    const hooks = join(root, ".git", "refusing-hooks");
-    await mkdir(hooks, { recursive: true });
-    await writeFile(join(hooks, "pre-commit"), "#!/bin/sh\nexit 1\n");
-    await chmod(join(hooks, "pre-commit"), 0o755);
-    const env = { ...process.env, GIT_CONFIG_COUNT: "2", GIT_CONFIG_KEY_0: "core.hooksPath", GIT_CONFIG_VALUE_0: hooks, GIT_CONFIG_KEY_1: "commit.gpgsign", GIT_CONFIG_VALUE_1: "false", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
-    execFileSync("sh", ["-c", action as string], { cwd: root, env, stdio: "ignore" });
+    const r = spawnSync("sh", ["-c", action as string], { cwd: root, env: await commitEnv(), encoding: "utf8" });
+    expect(`${r.stdout}${r.stderr}`).not.toContain("TAMPERED");
+    expect(r.status, `${r.stdout}${r.stderr}`).toBe(0);
   };
 
   const fixes = async (stage = true): Promise<void> => {
@@ -2214,17 +2220,29 @@ describe("signed .warden changes", () => {
     expect((await check({}, false)).code).toBe(0);
   });
 
-  it("a staged change outside .warden is stashed, so the restore commit holds only the merge-base content", async () => {
+  it("a staged change outside .warden is stashed, so the restore commit holds only the restore", async () => {
     await write(".warden/notes.txt", "evil\n");
     git("commit", "-q", "-am", "c1 unsigned");
     await write("a.ts", "const a = 9;\n");
     git("add", "a.ts");
     const { code, out } = await check({}, false);
     expect(code).toBe(1);
-    expect(out).toContain("stash push -u -- 'a.ts' && ");
+    expect(out).toContain("git --literal-pathspecs stash push -u -- 'a.ts' && ");
     await follow(out);
     expect(git("diff", "--name-only", "HEAD~1", "HEAD").trim()).toBe(".warden/notes.txt");
     expect((await check({}, false)).code).toBe(0);
+  });
+
+  it("Warden's pre-commit hook still refuses a staged unsigned .warden change over an unsigned commit", async () => {
+    await write(".warden/notes.txt", "evil\n");
+    git("commit", "-q", "-am", "c1 unsigned");
+    const head = git("rev-parse", "HEAD").trim();
+    await write(".warden/notes.txt", "evil2\n");
+    git("add", "-A");
+    const r = spawnSync("git", ["commit", "-m", "c2"], { cwd: root, env: await commitEnv(), encoding: "utf8" });
+    expect(r.status).not.toBe(0);
+    expect(`${r.stdout}${r.stderr}`).toContain("TAMPERED .warden/notes.txt  unsigned");
+    expect(git("rev-parse", "HEAD").trim()).toBe(head);
   });
 
   it("a graft cannot hide an unsigned deletion", async () => {

@@ -170,29 +170,27 @@ export interface Signatures {
   dirty: string[];
 }
 
-export function changeSignatures(root: string, base: string, dir: string, allowedSignersFile: string): Signatures {
+export function changeSignatures(root: string, base: string, dir: string, allowedSignersFile: string, staged: boolean): Signatures {
   const at = mergeBase(root, base);
-  const paths = names(must(root, ["--literal-pathspecs", "diff", "-z", "--name-only", "--no-renames", "--ignore-submodules=none", "--relative", at, "HEAD", "--", dir]));
+  const diff = (...trees: string[]): string[] => names(must(root, ["--literal-pathspecs", "diff", "-z", "--name-only", "--no-renames", "--ignore-submodules=none", "--relative", ...trees, "--", dir]));
+  const committed = diff(at, "HEAD");
+  const paths = staged ? diff("--cached", at) : committed;
   const files = new Map<string, string>();
   if (paths.length === 0) return { files, base: at, dirty: [] };
   const verify = ["-c", "gpg.ssh.program=ssh-keygen", "-c", "gpg.program=false", "-c", "gpg.x509.program=false", "-c", `gpg.ssh.allowedSignersFile=${allowedSignersFile}`, "--literal-pathspecs"];
   const mark = `\x01${randomUUID()}`;
-  const log = must(root, [...verify, "log", "-z", "--topo-order", "--diff-merges=dense-combined", "--no-renames", "--ignore-submodules=none", "--relative", "--name-only", `--format=${mark}%G?%H`, `${at}..HEAD`, "--", ...paths]);
+  const log = must(root, [...verify, "log", "-z", "--topo-order", "--diff-merges=dense-combined", "--no-renames", "--ignore-submodules=none", "--relative", "--name-only", `--format=${mark}%G?`, `${at}..HEAD`, "--", ...paths]);
   const seen = new Set<string>();
-  const bad = new Set<string>();
   for (const entry of log.split(mark).slice(1)) {
     const end = entry.search(/[\n\0]/);
-    const [status, commit] = [entry[0] as string, entry.slice(1, end)];
+    const status = entry[0] as string;
     for (const path of names(entry.slice(end + 1).replace(/^\n/, ""))) {
       seen.add(path);
-      if (status === "G") continue;
-      bad.add(commit);
-      if (!files.has(path)) files.set(path, status);
+      if (status !== "G" && !files.has(path)) files.set(path, status);
     }
   }
-  for (const path of paths) if (!seen.has(path)) files.set(path, "N");
-  const local = [...names(must(root, ["diff", "-z", "--name-only", "--no-renames", "--ignore-submodules=none", "HEAD"])), ...names(must(root, ["ls-files", "-z", "--others", "--exclude-standard"]))];
-  const staged = names(must(root, ["diff", "-z", "--name-only", "--no-renames", "--ignore-submodules=none", "--cached", "HEAD"]));
-  const dirty = [...new Set([...local.filter((p) => files.has(p)), ...staged])];
-  return { files, base: at, dirty };
+  for (const path of paths) if (!seen.has(path) && committed.includes(path)) files.set(path, "N");
+  const tracked = names(must(root, ["diff", "-z", "--name-only", "--no-renames", "--ignore-submodules=none", "HEAD"]));
+  const untracked = names(must(root, ["ls-files", "-z", "--others", "--exclude-standard"])).filter((p) => files.has(p));
+  return { files, base: at, dirty: [...new Set([...tracked, ...untracked])] };
 }
