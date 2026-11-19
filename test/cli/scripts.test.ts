@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 const scripts = resolve(import.meta.dirname, "../../scripts");
 
 let repo: string;
+let home: string;
 
 const git = (...args: string[]): void => {
   execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
@@ -16,12 +17,13 @@ const git = (...args: string[]): void => {
 };
 
 const sh = (file: string, ...args: string[]): { code: number | null; out: string; err: string } => {
-  const r = spawnSync(file, args, { cwd: repo, encoding: "utf8" });
+  const r = spawnSync(file, args, { cwd: repo, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home } });
   return { code: r.status, out: r.stdout, err: r.stderr };
 };
 
 beforeEach(async () => {
   repo = await mkdtemp(join(tmpdir(), "warden-scripts-"));
+  home = await mkdtemp(join(tmpdir(), "warden-scripts-home-"));
   await mkdir(join(repo, "scripts"));
   await copyFile(join(scripts, "self-check.sh"), join(repo, "scripts/self-check.sh"));
   await copyFile(join(scripts, "install-hooks.sh"), join(repo, "scripts/install-hooks.sh"));
@@ -31,7 +33,10 @@ beforeEach(async () => {
   git("commit", "-q", "-m", "seed");
 });
 
-afterEach(() => rm(repo, { recursive: true, force: true }));
+afterEach(async () => {
+  await rm(repo, { recursive: true, force: true });
+  await rm(home, { recursive: true, force: true });
+});
 
 describe("self-check.sh", () => {
   it("refuses unstaged changes to tracked files", async () => {
@@ -57,6 +62,7 @@ describe("self-check.sh", () => {
       "process.stdout.write(`release ${readFileSync(join(here, \"release.txt\"), \"utf8\")}`);",
       "process.stdout.write(`pack ${readFileSync(join(here, \"packs/core/pack.yaml\"), \"utf8\")}`);",
       "process.stdout.write(`args ${process.argv.slice(2).join(\" \")}\\n`);",
+      "process.stdout.write(`home ${process.env.WARDEN_HOME}\\n`);",
       "",
     ].join("\n");
     const manifest = { name: "warden", version: "0.0.0", bin: { warden: "bin.js" }, scripts: { build: "exit 1", prepare: "true" }, files: ["bin.js", "release.txt", "packs"] };
@@ -74,7 +80,7 @@ describe("self-check.sh", () => {
     git("add", "-A");
     const r = sh("scripts/self-check.sh", "t1");
     expect(r.code, r.err).toBe(0);
-    expect(r.out).toBe("release old\npack new\nargs check --base main --trigger git-commit\n");
+    expect(r.out).toBe(`release old\npack new\nargs check --base main --trigger git-commit\nhome ${home}\n`);
   });
 
   it("refuses a dist that differs from a fresh compile, stale files included, with one next action", async () => {

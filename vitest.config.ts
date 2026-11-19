@@ -5,5 +5,6 @@ export default defineConfig({
     include: ["test/**/*.test.ts"],
     exclude: ["packs/**", "test/fixtures/**", "node_modules/**"],
     maxWorkers: 2,
+    setupFiles: ["test/setup.ts"],
   },
 });
