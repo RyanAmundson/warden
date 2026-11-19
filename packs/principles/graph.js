@@ -1,5 +1,5 @@
 import { posix } from "node:path";
-import { declaredExports, parsed } from "./code.js";
+import { append, declaredExports, parsed } from "./code.js";
 
 const stemOf = (file) => file.replace(/\.[mc]?[jt]sx?$/, "").replace(/\/index$/, "");
 
@@ -8,16 +8,16 @@ const unusedExports = (input) => {
   const files = parsed(input, input.all);
   const checked = new Set(input.files);
   const importers = new Map();
+  const namespaceMembers = new Map();
   const stems = new Map(files.map(({ file }) => [stemOf(file), file]));
   const starred = new Set();
-  const star = (from, spec) => {
+  const targetOf = (from, spec) => {
     const resolved = input.imports.get(from)?.find(({ specifier }) => specifier === spec);
-    if (resolved !== undefined) {
-      starred.add(resolved.target);
-      return;
-    }
-    if (!spec.startsWith(".")) return;
-    const target = stems.get(stemOf(posix.normalize(posix.join(posix.dirname(from), spec))));
+    if (resolved !== undefined) return resolved.target;
+    return spec.startsWith(".") ? stems.get(stemOf(posix.normalize(posix.join(posix.dirname(from), spec)))) : undefined;
+  };
+  const star = (from, spec) => {
+    const target = targetOf(from, spec);
     if (target !== undefined) starred.add(target);
   };
   const use = (name, file) => importers.set(name, (importers.get(name) ?? new Set()).add(file));
@@ -45,7 +45,19 @@ const unusedExports = (input) => {
   const dynamic = (file, ast) => {
     const named = new Set();
     const calls = [];
-    const visit = (node) => {
+    const declarations = [];
+    const identifiers = new Map();
+    const receivers = new Set();
+    const visit = (node, parent) => {
+      if (ts.isIdentifier(node)) append(identifiers, node.text, { node, parent });
+      if (ts.isCallExpression(node)) receivers.add(ts.skipOuterExpressions(node.expression));
+      if (ts.isTaggedTemplateExpression(node)) receivers.add(ts.skipOuterExpressions(node.tag));
+      if (ts.isVariableStatement(node) && !node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)) {
+        for (const { name, initializer } of node.declarationList.declarations) {
+          const call = awaited(initializer);
+          if (call !== undefined && ts.isIdentifier(name)) declarations.push({ name, call });
+        }
+      }
       const call = loaded(node);
       if (call !== undefined && call === node) calls.push(call);
       if (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name) && awaited(node.initializer) !== undefined) {
@@ -73,9 +85,24 @@ const unusedExports = (input) => {
         if (node.qualifier !== undefined) use(leftmost(node.qualifier), file);
         else if (ts.isLiteralTypeNode(node.argument) && ts.isStringLiteral(node.argument.literal)) star(file, node.argument.literal.text);
       }
-      ts.forEachChild(node, visit);
+      ts.forEachChild(node, (child) => visit(child, node));
     };
     visit(ast);
+    for (const { name, call } of declarations) {
+      const target = targetOf(file, call.arguments[0].text);
+      if (target === undefined || target === file) continue;
+      const accesses = identifiers.get(name.text).filter(({ node }) => node !== name).map(({ node, parent }) => {
+        if (receivers.has(parent)) return undefined;
+        if (ts.isPropertyAccessExpression(parent) && parent.expression === node) return parent.name.text;
+        if (ts.isElementAccessExpression(parent) && parent.expression === node && ts.isStringLiteralLike(parent.argumentExpression)) return parent.argumentExpression.text;
+        return undefined;
+      });
+      if (accesses.includes(undefined)) continue;
+      named.add(call);
+      const used = namespaceMembers.get(target) ?? new Set();
+      for (const member of accesses) used.add(member);
+      namespaceMembers.set(target, used);
+    }
     for (const call of calls) if (!named.has(call)) star(file, call.arguments[0].text);
   };
   for (const { file, text, ast } of files) {
@@ -93,7 +120,7 @@ const unusedExports = (input) => {
   const imported = new Set();
   for (const [from, edges] of input.imports) for (const { target } of edges) if (target !== from) imported.add(target);
   const unused = (name, file) => {
-    if (!imported.has(file) || starred.has(file)) return false;
+    if (!imported.has(file) || starred.has(file) || namespaceMembers.get(file)?.has(name)) return false;
     const by = importers.get(name);
     return by === undefined || (by.size === 1 && by.has(file));
   };

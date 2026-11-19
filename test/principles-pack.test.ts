@@ -303,6 +303,38 @@ export class Factory {
     expect(await found("principles-unused-exports", tree)).toEqual(["src/dialog/index.ts:2: unused is exported, but no other file imports it."]);
   });
 
+  it.each([
+    ['const dialog = await import("./dialog"); console.log(dialog.open, dialog["close"]);', ["src/dialog.ts:3"]],
+    ['const dialog = await import("./dialog"); console.log(dialog);', []],
+    ['const dialog = await import("./dialog"); console.log(dialog[process.argv[2]!]);', []],
+    ['export const dialog = await import("./dialog");', []],
+    ['const dialog = await import("./dialog"); { const dialog = { spare: 4 }; console.log(dialog.spare); } console.log(dialog.open);', []],
+  ])("unused exports: uses of an awaited namespace in %s", async (use, expected) => {
+    const result = await scan("principles-unused-exports", {
+      "src/dialog.ts": "export const open = 1;\nexport const close = 2;\nexport const spare = 3;\n",
+      "src/use.ts": use,
+    });
+    expect(result?.violations.map((v) => `${v.file}:${v.line}`)).toEqual(expected);
+  });
+
+  it("unused exports: an awaited namespace counts members only in its resolved module", async () => {
+    await write("tsconfig.json", JSON.stringify({ compilerOptions: { paths: { "@app/*": ["./src/*"] } } }));
+    const result = await scan("principles-unused-exports", {
+      "src/dialog.ts": "export const open = 1;\nexport const spare = 2;\n",
+      "src/panel.ts": "export const close = 1;\nexport const open = 2;\n",
+      "src/use.ts": 'import { close } from "./panel";\nconst dialog = await import("@app/dialog");\nconsole.log(close, dialog.open);\n',
+    });
+    expect(result?.violations.map((v) => `${v.file}:${v.line}`)).toEqual(["src/dialog.ts:2", "src/panel.ts:2"]);
+  });
+
+  it.each(["dialog.open()", "(dialog.open)?.()", 'dialog["open"]`name`'])("unused exports: %s receives the full module namespace", async (access) => {
+    const result = await scan("principles-unused-exports", {
+      "src/dialog.mjs": "export const close = 7;\nexport function open() { return this.close; }\n",
+      "src/use.mjs": `const dialog = await import("./dialog.mjs");\nconsole.log(${access});\n`,
+    });
+    expect(result?.status).toBe("pass");
+  });
+
   it("unused exports: a file outside the Practice's paths still counts as a user", async () => {
     await reconfigure(`  - id: principles\n    paths: ["**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"]\n`);
     const tree = { "src/util.ts": "export const a = 1;\nexport const b = 2;\n", "src/use.ts": 'import { a } from "./util";\nconsole.log(a);\n', "src/App.jsx": 'import { b } from "./util";\nconsole.log(b);\n' };
