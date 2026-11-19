@@ -116,7 +116,9 @@ export const outcome = (run) => {
 
 const tag = ({ cls, text, icon }) => `<span class="tag ${cls}">${icon ? ICON_X : ""}${esc(text)}</span>`;
 
-const nextBox = (text) => `<div class="next"><span class="lbl">Next action</span><code>${esc(text)}</code><button class="btnr" type="button" data-copy="${esc(text)}">Copy</button></div>`;
+let quiet = false;
+
+const nextBox = (text) => quiet ? "" : `<div class="next"><span class="lbl">Next action</span><code>${esc(text)}</code><button class="btnr" type="button" data-copy="${esc(text)}">Copy</button></div>`;
 
 export const durationBar = (run) => {
   let sum = 0;
@@ -189,7 +191,7 @@ export const lostBanner = (state) => {
   const retry = Math.round((state.health?.intervalMs ?? 10000) / 1000);
   return `<section class="banner amber lost" role="alert" aria-labelledby="dl-h">
 <div><h2 id="dl-h">The Warden daemon stopped answering</h2>
-<p>No heartbeat since ${esc(clock(state.health?.heartbeatAt))}, so this page stopped updating at ${esc(clock(state.frozenAt))}. Commit checks refuse to run until the daemon is back; edit checks still run and still write evidence. Reconnecting every ${retry} seconds.</p>
+<p>No heartbeat since ${esc(clock(state.health?.heartbeatAt))}, so this page stopped updating at ${esc(clock(state.frozenAt))}. Commit checks refuse to run until the daemon is back; edit checks still run and still write evidence. ${state.streamClosed ? "The event stream closed, so the page no longer reconnects on its own." : `Reconnecting every ${retry} seconds.`}</p>
 <div><button class="btn" type="button" data-action="reconnect">Reconnect now</button></div></div>
 ${nextBox("run warden daemon install")}
 </section>`;
@@ -201,21 +203,23 @@ export const apiError = (err) => `<section class="banner amber" role="alert" ari
 ${nextBox(err.next)}
 </section>`;
 
+const slot = (html) => `<span class="slot">${html}</span>`;
+
 const alertsSection = (data) => {
   const rows = [];
   const byProject = new Map();
   for (const d of data.tamper.open) byProject.set(d.project, [...(byProject.get(d.project) ?? []), d]);
   for (const [project, list] of byProject) {
     const first = list[0];
-    rows.push(`<div class="alert lit red">${tag({ cls: "tamper", text: "Tamper", icon: true })}<div><strong>${esc(project)}</strong> · ${plural(list.length, "open detection")}: ${esc(first.detail)} on <span class="mono">${esc(first.file)}</span>${list.length > 1 ? ` and ${plural(list.length - 1, "more")}` : ""}<div class="why">Next action: <span class="mono">${esc(first.next)}</span></div></div><a href="${href("tamper")}">Open tamper detections</a></div>`);
+    rows.push(`<div class="alert lit red">${slot(tag({ cls: "tamper", text: "Tamper", icon: true }))}<div><strong>${esc(project)}</strong> · ${plural(list.length, "open detection")}: ${esc(first.detail)} on <span class="mono">${esc(first.file)}</span>${list.length > 1 ? ` and ${plural(list.length - 1, "more")}` : ""}${quiet ? "" : `<div class="why">Next action: <span class="mono">${esc(first.next)}</span></div>`}</div><a href="${href("tamper")}">Open tamper detections</a></div>`);
   }
   for (const p of data.projects) {
     const run = p.lastRun;
     if (!run || !notPassing(run)) continue;
     const o = outcome(run);
-    rows.push(`<div class="alert lit">${tag(o)}<div><strong>${esc(p.project)}</strong> · the last ${esc(run.tier ?? "")} check, at ${esc(clock(run.at))}, did not pass${run.next ? `<div class="why">Next action: <span class="mono">${esc(run.next)}</span></div>` : ""}</div><a href="${href("run", { project: p.project, run: run.run })}">Open the run</a></div>`);
+    rows.push(`<div class="alert lit">${slot(tag(o))}<div><strong>${esc(p.project)}</strong> · the last ${esc(run.tier ?? "")} check, at ${esc(clock(run.at))}, did not pass${run.next && !quiet ? '<div class="why">Its next action is on the project card below</div>' : ""}</div><a href="${href("run", { project: p.project, run: run.run })}">Open the run</a></div>`);
   }
-  if (rows.length === 0) rows.push(`<div class="alert">${tag({ cls: "idle", text: "Clear" })}<div class="muted">No open tamper detections, and every project's last run passed or found no changes.</div><a href="${href("tamper")}">Tamper history</a></div>`);
+  if (rows.length === 0) rows.push(`<div class="alert">${slot(tag({ cls: "idle", text: "Clear" }))}<div class="muted">No open tamper detections, and every project's last run passed or found no changes.</div><a href="${href("tamper")}">Tamper history</a></div>`);
   return `<section class="mod" aria-labelledby="ov-alerts"><div class="modh"><h2 class="h2" id="ov-alerts">Alerts</h2><span class="muted">Open tamper detections and last runs that did not pass</span></div>${rows.join("")}</section>`;
 };
 
@@ -259,7 +263,7 @@ export const overviewPage = (state) => {
   if (data.projects.length === 0) return emptyState(state.page);
   const all = data.projects.flatMap((p) => (data.runs[p.project] ?? []).map((r) => ({ ...r, project: p.project })));
   const stream = all.filter((r) => !view.filter || r.project === view.filter).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 25);
-  const now = new Date(state.now ?? Date.now());
+  const now = new Date(state.loadedAt ?? state.now ?? Date.now());
   const controls = `<label class="lbl" for="ov-proj">Project</label><select id="ov-proj" data-action="filter"><option value="">All projects</option>${data.projects.map((p) => `<option value="${esc(p.project)}"${view.filter === p.project ? " selected" : ""}>${esc(p.project)}</option>`).join("")}</select><button class="btn" type="button" data-action="pause" aria-pressed="${view.paused ? "true" : "false"}">${view.paused ? "Resume live" : "Pause live"}</button>`;
   const cols = ["time", "project", "trigger", "tier", "changed", "outcome", "bar", "ms", "ratchet"];
   return `${header("Overview", `${plural(data.projects.length, "project")} watched · updated ${esc(clock(now.toISOString()))} · ${esc(now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }))}${view.paused ? " · live updates paused" : ""}`, controls)}
@@ -290,7 +294,7 @@ const failuresTable = (run) => {
   const list = run.failures ?? [];
   if (list.length === 0) return "";
   return `<div class="pad lbl">Failures · ${num(list.length)}</div><div class="scroll"><table><thead><tr><th scope="col">File</th><th scope="col" class="r">Line</th><th scope="col">Guardrail</th><th scope="col">Practice</th></tr></thead><tbody>${list
-    .map((f) => `<tr><td class="mono">${esc(f.file === "" ? "project" : f.file)}</td><td class="r">${esc(f.line ?? "")}</td><td class="mono">${esc(f.guardrail)}</td><td>${esc(f.practice)}</td></tr>${f.doThis ? `<tr><td colspan="4" class="wrap muted">Do this: ${esc(f.doThis)}</td></tr>` : ""}`)
+    .map((f) => `<tr><td class="mono wrap path">${esc(f.file === "" ? "project" : f.file)}</td><td class="r">${esc(f.line ?? "")}</td><td class="mono">${esc(f.guardrail)}</td><td>${esc(f.practice)}</td></tr>${f.doThis ? `<tr><td colspan="4" class="wrap muted">Do this: ${esc(f.doThis)}</td></tr>` : ""}`)
     .join("")}</tbody></table></div>`;
 };
 
@@ -385,13 +389,13 @@ export const layersPage = (state) => {
         .map(
           (k) =>
             `<tr class="kind"><td>${KIND_RANK[k.kind] ?? ""}</td><td>${esc(k.kind)}</td><td colspan="6" class="note">${esc(KIND_TEXT[k.kind] ?? "")} · ${k.rules.length === 0 ? "none yet" : plural(k.rules.length, "rule")}</td></tr>${k.rules
-              .map((r) => `<tr class="sub"><td></td><td class="mono" style="padding-left:30px">${esc(r.guardrail)}</td><td>${esc(r.pack)}</td><td>${esc(r.practice)}</td><td>${esc(r.adapter)}</td><td>${esc(r.runs.join(", "))}</td><td class="r">${esc(r.median)}</td><td>${r.promote ? tag({ cls: "err", text: "Promote" }) : ""}</td></tr>`)
+              .map((r) => `<tr class="sub"><td></td><td class="mono" style="padding-left:30px" title="${esc(r.guardrail)}">${esc(r.guardrail)}</td><td title="${esc(r.pack)}">${esc(r.pack)}</td><td title="${esc(r.practice)}">${esc(r.practice)}</td><td title="${esc(r.adapter)}">${esc(r.adapter)}</td><td title="${esc(r.runs.join(", "))}">${esc(r.runs.join(", "))}</td><td class="r">${esc(r.median)}</td><td>${r.promote ? tag({ cls: "err", text: "Promote" }) : ""}</td></tr>`)
               .join("")}`,
         )
         .join("");
       const name = esc(b.band.replace(/^./, (c) => c.toUpperCase()));
       const id = esc(b.band);
-      return `<section class="mod" aria-labelledby="ly-${id}"><div class="modh"><div style="flex-direction:row;align-items:center;gap:10px">${marks[b.band] ?? ""}<h2 class="h2" id="ly-${id}">${name}</h2><span class="muted">${esc(BAND_TEXT[b.band] ?? "")}</span></div><span class="muted">${plural(count, "rule")}</span></div><div class="scroll"><table>${count === 0 ? "" : '<thead><tr><th scope="col">Rank</th><th scope="col">Kind or Guardrail</th><th scope="col">Pack</th><th scope="col">Practice</th><th scope="col">Adapter</th><th scope="col">Runs at</th><th scope="col" class="r">Median</th><th scope="col"><span class="lbl">Weak</span></th></tr></thead>'}<tbody>${rows}</tbody></table></div></section>`;
+      return `<section class="mod" aria-labelledby="ly-${id}"><div class="modh"><div style="flex-direction:row;align-items:center;gap:10px">${marks[b.band] ?? ""}<h2 class="h2" id="ly-${id}">${name}</h2><span class="muted">${esc(BAND_TEXT[b.band] ?? "")}</span></div><span class="muted">${plural(count, "rule")}</span></div><div class="scroll"><table class="bandt"><colgroup><col style="width:56px"><col style="width:24%"><col style="width:10%"><col style="width:15%"><col style="width:10%"><col style="width:11%"><col style="width:8%"><col style="width:96px"></colgroup>${count === 0 ? "" : '<thead><tr><th scope="col">Rank</th><th scope="col">Kind or Guardrail</th><th scope="col">Pack</th><th scope="col">Practice</th><th scope="col">Adapter</th><th scope="col">Runs at</th><th scope="col" class="r">Median</th><th scope="col"><span class="lbl">Weak</span></th></tr></thead>'}<tbody>${rows}</tbody></table></div></section>`;
     })
     .join("");
   const rulesOf = (id) => l.bands.flatMap((b) => b.kinds.flatMap((k) => k.rules.filter((r) => r.pack === id)));
@@ -503,6 +507,15 @@ export const mainHtml = (state) => {
   if (state.error) return apiError(state.error);
   if (!state.data) return '<p class="muted">Loading…</p>';
   return (RENDER[state.page] ?? overviewPage)(state);
+};
+
+export const frozenHtml = (state) => {
+  quiet = true;
+  try {
+    return mainHtml(state);
+  } finally {
+    quiet = false;
+  }
 };
 
 export const renderApp = (state) => {

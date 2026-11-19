@@ -118,3 +118,46 @@ it("shows the lost state when the daemon stops answering fetches", async () => {
   await vi.advanceTimersByTimeAsync(300);
   expect(html).toContain("stopped answering");
 });
+
+it("goes lost when the event stream errors, and leaves it when the stream opens again", async () => {
+  const es = await boot("/");
+  up = false;
+  es.readyState = 0;
+  es.fire("error");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(html).toContain("stopped answering");
+  expect(html).toContain("Reconnecting every 10 seconds");
+  up = true;
+  es.readyState = 1;
+  es.fire("open");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(html).not.toContain("stopped answering");
+});
+
+it("says the page no longer reconnects when the browser closed the stream", async () => {
+  const es = await boot("/");
+  es.readyState = 2;
+  es.fire("error");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(html).toContain("no longer reconnects on its own");
+});
+
+it("names an unknown project instead of showing another one", async () => {
+  bodies["/api/projects"] = { projects: [{ project: "warden", roots: ["/p/w"], lastRun: null, openAlerts: 0 }] };
+  bodies["/api/runs"] = { project: "warden", runs: [] };
+  await boot("/run?project=gone&run=r-1");
+  expect(html).toContain("The daemon watches no project named gone");
+  expect(html).toContain("<code>pick a project under Watched projects</code>");
+  expect(html).not.toContain("among the last");
+});
+
+it("enters the lost state from a page that could not be drawn", async () => {
+  bodies["/api/projects"] = { projects: [{ project: "warden", roots: ["/p/w"], lastRun: null, openAlerts: 0 }] };
+  bodies["/api/runs"] = { project: "warden" };
+  const es = await boot("/runs?project=warden");
+  expect(html).toContain("This page could not");
+  es.readyState = 0;
+  es.fire("error");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(html).toContain("stopped answering");
+});

@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -9,7 +9,7 @@ import { type Served, serve } from "../../src/cli/daemon.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
 
-const { renderApp }: { renderApp: (state: unknown) => string } = await import(pathToFileURL(join(wardenRoot, "web/render.js")).href);
+const { renderApp, frozenHtml }: { renderApp: (state: unknown) => string; frozenHtml: (state: unknown) => string } = await import(pathToFileURL(join(wardenRoot, "web/render.js")).href);
 
 const at = (minutes: number): string => new Date(Date.UTC(2026, 10, 18, 17, 0) + minutes * 60000).toISOString();
 
@@ -138,6 +138,14 @@ describe("pages render from API responses", () => {
     expect(nextActions(html)).toEqual(["start the daemon: warden daemon install"]);
     const stops = renderApp(state("determinism", { determinism, runs: { "context-manager": [refused, ...cmRuns], warden: [] } }));
     expect(stops).toMatch(/context-manager<\/td><td class="r">0<\/td><td class="r">1<\/td><td class="r">2<\/td>/);
+  });
+
+  it("renders the sparse-checkout next action of a commit run whose failing file is not on disk", () => {
+    const next = "run git sparse-checkout add --skip-checks -- 'packs/core' to bring packs/core/a.ts onto disk, then change the code at the lines above to match \"Do this\"";
+    const sparse = run({ run: "r-sparse", at: at(45), tier: "commit", trigger: "git-commit", result: "fail", exit: 1, treeOid: "abc", failures: [{ file: "packs/core/a.ts", line: 3, guardrail: "warden-no-comments", practice: "no-comments" }], next });
+    const html = renderApp(state("run", { runs: { project: "context-manager", runs: [sparse, ...cmRuns] } }, { view: { run: "r-sparse", fresh: new Set() } }));
+    expect(html).toContain("Blocked by 1 failure");
+    expect(nextActions(html).map((n) => n.replaceAll("&#39;", "'").replaceAll("&quot;", '"'))).toEqual([next]);
   });
 
   it("renders a run that stopped before its first step", () => {
@@ -273,6 +281,90 @@ describe("UI QA fixes", () => {
   });
 });
 
+describe("review and UI QA round 2", () => {
+  const lost = (page: string, data: Record<string, unknown>, extra: Record<string, unknown> = {}) => {
+    const live = state(page, data, extra);
+    return renderApp({ ...live, lost: true, frozen: frozenHtml(live), frozenAt: at(41) });
+  };
+
+  it("shows only the banner's next action while the daemon is lost, over a real failing page", () => {
+    const overview = lost("overview", { tamper, runs: { "context-manager": cmRuns, warden: [] } });
+    expect(renderApp(state("overview", { tamper, runs: { "context-manager": cmRuns, warden: [] } }))).toContain(`<code>${ERROR_NEXT}</code>`);
+    expect(overview).toContain("context-manager");
+    expect(nextActions(overview)).toEqual(["run warden daemon install"]);
+    expect(overview).not.toContain("Next action:");
+    expect(overview.match(/next action/gi)).toHaveLength(1);
+    const runPage = lost("run", { runs: { project: "context-manager", runs: cmRuns } }, { view: { run: "r-block", fresh: new Set() } });
+    expect(runPage).toContain("Blocked by 1 failure");
+    expect(nextActions(runPage)).toEqual(["run warden daemon install"]);
+  });
+
+  it("shows each overview run's next action once", () => {
+    const html = renderApp(state("overview", { tamper: { open: [], recent: [] }, runs: { "context-manager": cmRuns, warden: [] } }));
+    expect(nextActions(html)).toEqual([ERROR_NEXT]);
+    expect(html).not.toContain(`Next action: <span class="mono">${ERROR_NEXT}`);
+  });
+
+  it("gives every layer band table the same fixed columns", async () => {
+    const html = renderApp(state("layers", { layers }));
+    const tables = [...html.matchAll(/<table class="bandt">(<colgroup>.*?<\/colgroup>)/g)].map((m) => m[1]);
+    expect(tables).toHaveLength(3);
+    expect(new Set(tables).size).toBe(1);
+    expect(await readFile(join(wardenRoot, "web/app.css"), "utf8")).toContain(".bandt{table-layout:fixed");
+  });
+
+  it("keeps the Weak column wide enough for the Promote tag", () => {
+    const html = renderApp(state("layers", { layers }));
+    expect(html).toContain("Promote");
+    for (const m of html.matchAll(/<colgroup>(.*?)<\/colgroup>/g)) expect(m[1]).toMatch(/<col style="width:96px"><\/colgroup>|<col style="width:96px">$/);
+  });
+
+  it("wraps long band cells instead of clipping them", async () => {
+    const css = await readFile(join(wardenRoot, "web/app.css"), "utf8");
+    expect(css).toContain(".bandt td{white-space:normal}");
+    expect(css).not.toMatch(/\.bandt td\{[^}]*overflow:hidden/);
+  });
+
+  it("breaks words anywhere only in the Failures File cell and keeps the Median on one line", async () => {
+    const css = await readFile(join(wardenRoot, "web/app.css"), "utf8");
+    expect(css.match(/^[^{}]*\btd[^{}]*\{[^}]*overflow-wrap:anywhere/gm)).toEqual(["td.path{overflow-wrap:anywhere"]);
+    expect(css).toContain(".bandt td.r{white-space:nowrap}");
+    const html = renderApp(state("run", { runs: { project: "context-manager", runs: cmRuns } }, { view: { run: "r-block", fresh: new Set() } }));
+    expect(html).toContain('<td class="mono wrap path">');
+  });
+
+  it("stacks each alert tag above its text below 780 px, so the link stays beside the text", async () => {
+    const css = await readFile(join(wardenRoot, "web/app.css"), "utf8");
+    expect(css.slice(css.indexOf("@media (max-width:779px)"))).toContain(".alert>.slot{flex-basis:100%}");
+  });
+
+  it("puts every overview alert tag in a fixed-width slot", async () => {
+    const html = renderApp(state("overview", { tamper, runs: { "context-manager": cmRuns, warden: [] } }));
+    const rows = html.match(/<div class="alert[^"]*">/g) ?? [];
+    expect(rows.length).toBeGreaterThan(1);
+    expect(html.match(/<div class="alert[^"]*"><span class="slot"><span class="tag /g)).toHaveLength(rows.length);
+    expect(await readFile(join(wardenRoot, "web/app.css"), "utf8")).toMatch(/\.alert>\.slot\{flex:0 0 \d+px/);
+  });
+
+  it("names the time the data loaded, not the time of the last draw", () => {
+    const html = renderApp(state("overview", { tamper, runs: { "context-manager": cmRuns, warden: [] } }, { loadedAt: Date.parse(at(10)) }));
+    expect(html).toContain(`updated ${new Date(Date.parse(at(10))).toTimeString().slice(0, 8)}`);
+  });
+
+  it("says the page no longer reconnects when the event stream closed", () => {
+    const html = renderApp({ ...state("overview", {}), lost: true, streamClosed: true, frozen: "", frozenAt: at(41) });
+    expect(html).toContain("no longer reconnects on its own");
+    expect(html).not.toContain("Reconnecting every");
+  });
+
+  it("escapes the project name in the sidebar", () => {
+    const evil = [{ ...projects[0], project: "<x-inj>" }];
+    const html = renderApp({ ...state("tamper", { tamper: { open: [], recent: [] } }), projects: evil });
+    expect(html).toContain("&lt;x-inj&gt;");
+    expect(html).not.toContain("<x-inj>");
+  });
+});
+
 describe("the daemon serves the web UI", () => {
   let scratch: string;
   let served: Served;
@@ -333,6 +425,28 @@ describe("the daemon serves the web UI", () => {
     });
     expect(res.status).toBe(403);
     expect(JSON.parse(res.body).next).toBe(`open http://127.0.0.1:${served.port}/ directly`);
+  });
+
+  it("answers a page with a 500 and its next action when the web folder is missing", async () => {
+    const bare = join(scratch, "bare-warden");
+    await mkdir(bare, { recursive: true });
+    await writeFile(join(bare, "package.json"), JSON.stringify({ version: "0.0.0" }));
+    const other = await serve(bare, 0);
+    try {
+      const res = await new Promise<{ status: number; body: string }>((done, fail) => {
+        request({ host: "127.0.0.1", port: other.port, path: "/runs" }, (r) => {
+          let body = "";
+          r.on("data", (c: Buffer) => (body += c.toString("utf8")));
+          r.on("end", () => done({ status: r.statusCode ?? 0, body }));
+        })
+          .on("error", fail)
+          .end();
+      });
+      expect(res.status).toBe(500);
+      expect(JSON.parse(res.body).next).toBe("reinstall Warden so its web folder is present");
+    } finally {
+      await other.close();
+    }
   });
 
   it("still answers an unknown path with a JSON 404", async () => {

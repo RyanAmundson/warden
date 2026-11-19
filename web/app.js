@@ -1,4 +1,4 @@
-import { beatText, mainHtml, pageTitle, renderApp } from "/render.js";
+import { beatText, frozenHtml, pageTitle, renderApp } from "/render.js";
 
 const params = new URLSearchParams(location.search);
 const page = location.pathname.replace(/^\/+|\/+$/g, "") || "overview";
@@ -57,7 +57,11 @@ const render = () => {
 
 const goLost = () => {
   if (state.lost) return;
-  state.frozen = mainHtml(state);
+  try {
+    state.frozen = frozenHtml(state);
+  } catch {
+    state.frozen = "";
+  }
   state.frozenAt = new Date().toISOString();
   state.lost = true;
   render();
@@ -70,8 +74,14 @@ const load = async () => {
     if (seq !== loads) return;
     state.health = health;
     state.projects = projects;
-    if (state.project === undefined || !projects.some((p) => p.project === state.project)) state.project = projects[0]?.project;
     const needsProject = ["runs", "run", "layers", "violations"].includes(page);
+    if (needsProject && state.project !== undefined && projects.length > 0 && !projects.some((p) => p.project === state.project)) {
+      state.data = null;
+      state.lost = false;
+      state.error = { status: 404, error: `The daemon watches no project named ${state.project}`, next: "pick a project under Watched projects" };
+      return render();
+    }
+    if (state.project === undefined || !projects.some((p) => p.project === state.project)) state.project = projects[0]?.project;
     const loaded = needsProject && state.project === undefined ? {} : await (LOAD[page] ?? LOAD.overview)(projects, state.project);
     if (seq !== loads) return;
     const data = { projects, ...loaded };
@@ -81,6 +91,8 @@ const load = async () => {
     state.data = data;
     state.error = null;
     state.lost = false;
+    state.streamClosed = false;
+    state.loadedAt = Date.now();
     lastBeat = Date.now();
     render();
     const detail = jump && document.getElementById("detail");
@@ -112,7 +124,10 @@ const connect = () => {
     if (state.lost) load();
   });
   events.addEventListener("error", () => {
-    if (events.readyState !== EventSource.OPEN) goLost();
+    state.streamClosed = events.readyState === EventSource.CLOSED;
+    if (events.readyState === EventSource.OPEN) return;
+    if (state.lost) render();
+    else goLost();
   });
   events.addEventListener("evidence", schedule);
   events.addEventListener("tamper", schedule);
