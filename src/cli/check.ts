@@ -10,7 +10,7 @@ import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import type { Guardrail, Kind, RecordSet, Tier } from "../records/types.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, projectFiles, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { commitsOf, covers, indexTree, stagedMismatch, checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, stageFile, sparseCheckout, stagedFiles, type StagedBlob, unstagedFiles, verifyBase, checkoutBlobs } from "../runner/changed.js";
+import { commitsOf, covers, indexTree, stagedMismatch, checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, stageFile, sparseMode, stagedFiles, type StagedBlob, unstagedFiles, verifyBase, checkoutBlobs } from "../runner/changed.js";
 import { type Detection, heartbeatProblem, openAlerts } from "../runner/daemon.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { type Evidence, LOOP_TAIL_BYTES, type Outcome, RUN_TOTAL, type RunFailure, type Step, type Trigger, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
@@ -142,22 +142,23 @@ const judgeBlobs = async (root: string, set: RecordSet, gs: Guardrail[], blobs: 
   if (blobs.length === 0) return { results: [], shas: new Map() };
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "warden-blobs-")));
   const remove = (): void => rmSync(dir, { recursive: true, force: true });
+  const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
+  const release = (): void => {
+    for (const s of signals) process.off(s, onSignal);
+  };
   const onSignal = (signal: NodeJS.Signals): void => {
     remove();
-    process.off("SIGINT", onSignal);
-    process.off("SIGTERM", onSignal);
+    release();
     process.kill(process.pid, signal);
   };
-  process.on("SIGINT", onSignal);
-  process.on("SIGTERM", onSignal);
+  for (const s of signals) process.on(s, onSignal);
   try {
     const paths = blobs.map((b) => b.path);
     const at = checkoutBlobs(root, paths, dir);
     const shas = new Map(paths.map((p) => [p, sha256(readFileSync(join(at, p)))]));
     return { results: gs.length === 0 ? [] : await runGuardrails(set, gs, paths, { ...ctx, root: at }), shas };
   } finally {
-    process.off("SIGINT", onSignal);
-    process.off("SIGTERM", onSignal);
+    release();
     remove();
   }
 };
@@ -496,7 +497,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
     const n = prior.filter(same).length + 1;
     if (n >= loopBreakerRepeats && (repeated === undefined || n > repeated.n)) repeated = { guardrail, file, n };
   }
-  const notes = { repeated, overBudget, killed, ...(blobPaths.length === 0 ? {} : { outside: { files: blobPaths, sparse: sparseCheckout(root) } }) };
+  const notes = { repeated, overBudget, killed, ...(blobPaths.length === 0 ? {} : { outside: { files: blobPaths, sparse: sparseMode(root) } }) };
   closeStep(live, failedOf(failures, notes) ? "fail" : "done");
   const scope = opts.paths === undefined && opts.rule === undefined ? "full" : "partial";
   const tree = tier === "commit" && scope === "full" && !failedOf(failures, notes) ? indexTree(root) : undefined;

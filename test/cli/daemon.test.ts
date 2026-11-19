@@ -582,6 +582,30 @@ it("a violation in a file outside the sparse set names the sparse-checkout step 
   expect(warden(root, {}, "check", "--base", "main").code).toBe(0);
 });
 
+it.each([false, true])("the printed sparse-checkout step brings a bracketed folder onto disk (cone %s)", async (cone) => {
+  await mkdir(join(root, "docs/[id]"), { recursive: true });
+  await writeFile(join(root, "docs/[id]/k.ts"), "export const k = 1;\n");
+  git(root, "add", "-A");
+  commitUnhooked("k");
+  git(root, "switch", "-q", "-c", "feat");
+  await writeFile(join(root, "docs/[id]/k.ts"), "// bad\nexport const k = 1;\n");
+  git(root, "add", "-A");
+  commitUnhooked("bad");
+  sparseOut(cone);
+  expect(existsSync(join(root, "docs/[id]/k.ts"))).toBe(false);
+  await writeFile(join(root, "src/a.ts"), "export const a = 2;\n");
+  git(root, "add", "src/a.ts");
+  const r = warden(root, {}, "check", "--base", "main");
+  expect(r.code).toBe(1);
+  const step = /Next action: run (git sparse-checkout add .*) to bring docs\/\[id\]\/k\.ts onto disk/.exec(r.out)?.[1];
+  expect(step).toBe(cone ? "git sparse-checkout add --skip-checks -- 'docs/[id]'" : "git sparse-checkout add -- 'docs/\\[id\\]'");
+  execFileSync("sh", ["-c", step as string], { cwd: root, stdio: "ignore" });
+  expect(readFileSync(join(root, "docs/[id]/k.ts"), "utf8")).toContain("// bad");
+  await writeFile(join(root, "docs/[id]/k.ts"), "export const k = 1;\n");
+  git(root, "add", "docs/[id]/k.ts");
+  expect(warden(root, {}, "check", "--base", "main").code).toBe(0);
+});
+
 const countingGit = async (extra = ""): Promise<{ bin: string; log: string }> => {
   const bin = join(scratch, "gitbin");
   const log = join(scratch, "git.log");
@@ -614,7 +638,7 @@ it("judging files missing from disk runs the same number of git processes for 2 
   expect(await spawns()).toBeLessThanOrEqual(few);
 });
 
-it("an interrupted check removes its folder of copied blobs", async () => {
+it.each(["SIGINT", "SIGHUP"] as const)("a check interrupted by %s removes its folder of copied blobs", async (signal) => {
   git(root, "switch", "-q", "-c", "feat");
   await writeFile(join(root, "src/a.ts"), "export const a = 5;\n");
   git(root, "add", "-A");
@@ -628,8 +652,8 @@ it("an interrupted check removes its folder of copied blobs", async () => {
   const child = spawn("node", [main, "check", "--base", "main"], { cwd: root, env: { ...process.env, WARDEN_HOME: home, HOME: userHome, CLAUDE_CONFIG_DIR: claude, PATH: `${bin}:${process.env.PATH}`, TMPDIR: temp }, stdio: "ignore" });
   const exited = new Promise<NodeJS.Signals | null>((done) => child.on("exit", (_code, signal) => done(signal)));
   await until("the blobs are copied", () => existsSync(marker));
-  child.kill("SIGINT");
-  expect(await exited).toBe("SIGINT");
+  child.kill(signal);
+  expect(await exited).toBe(signal);
   expect(readdirSync(temp).filter((f) => f.startsWith("warden-blobs-"))).toEqual([]);
 });
 

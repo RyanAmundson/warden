@@ -222,7 +222,10 @@ export function checkoutBlobs(root, paths, dir) {
     execFileSync("git", ["--literal-pathspecs", "checkout-index", `--prefix=${dir}/`, "--ignore-skip-worktree-bits", "-z", "--stdin"], { cwd: root, env: env(), input: paths.map((p) => `${p}\0`).join(""), stdio: ["pipe", "ignore", "pipe"] });
     return join(dir, must(root, ["rev-parse", "--show-prefix"]).trim());
 }
-export const sparseCheckout = (root) => git(root, ["config", "--bool", "core.sparseCheckout"]).out.trim() === "true";
+export const sparseMode = (root) => {
+    const on = (key) => git(root, ["config", "--bool", key]).out.trim() === "true";
+    return !on("core.sparseCheckout") ? "off" : on("core.sparseCheckoutCone") ? "cone" : "patterns";
+};
 export function stagedMismatch(root, base) {
     const literal = (args) => names(must(root, ["--literal-pathspecs", ...args]));
     const staged = literal(["diff", "-z", "--cached", "--name-only", "--relative", "--no-renames", "--diff-filter=AM", mergeBase(root, base)]);

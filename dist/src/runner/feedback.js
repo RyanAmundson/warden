@@ -66,7 +66,13 @@ const nextAction = (failures, set, notes) => {
     }
     const outside = [...new Set(failures.map((v) => v.file).filter((f) => notes.outside?.files.includes(f) === true))].sort();
     if (outside.length > 0) {
-        const bring = notes.outside?.sparse === true ? `git sparse-checkout add -- ${shellWords([...new Set(outside.map((f) => (dirname(f) === "." ? f : dirname(f))))])}` : `git update-index --no-skip-worktree -- ${shellWords(outside)}, then git checkout -- ${shellWords(outside)}`;
+        const dirs = [...new Set(outside.map((f) => (dirname(f) === "." ? f : dirname(f))))];
+        const sparse = notes.outside?.sparse ?? "off";
+        const bring = sparse === "cone"
+            ? `git sparse-checkout add --skip-checks -- ${shellWords(dirs)}`
+            : sparse === "patterns"
+                ? `git sparse-checkout add -- ${shellWords(dirs.map((d) => d.replace(/[*?[\]\\]/g, "\\$&")))}`
+                : `git update-index --no-skip-worktree -- ${shellWords(outside)}, then git checkout -- ${shellWords(outside)}`;
         return `run ${bring} to bring ${outside.join(", ")} onto disk, then change the code at the lines above to match "Do this".`;
     }
     if (failures.length > 0) {

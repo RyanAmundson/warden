@@ -278,7 +278,12 @@ export function checkoutBlobs(root: string, paths: string[], dir: string): strin
   return join(dir, must(root, ["rev-parse", "--show-prefix"]).trim());
 }
 
-export const sparseCheckout = (root: string): boolean => git(root, ["config", "--bool", "core.sparseCheckout"]).out.trim() === "true";
+export type SparseMode = "cone" | "patterns" | "off";
+
+export const sparseMode = (root: string): SparseMode => {
+  const on = (key: string): boolean => git(root, ["config", "--bool", key]).out.trim() === "true";
+  return !on("core.sparseCheckout") ? "off" : on("core.sparseCheckoutCone") ? "cone" : "patterns";
+};
 
 export function stagedMismatch(root: string, base: string): StagedMismatch {
   const literal = (args: string[]): string[] => names(must(root, ["--literal-pathspecs", ...args]));
