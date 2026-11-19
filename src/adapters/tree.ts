@@ -54,7 +54,7 @@ const compilerOptions = async (root: string): Promise<import("typescript").Compi
   if (error !== undefined) {
     throw new RecordError(file, "", `does not parse: ${ts.flattenDiagnosticMessageText(error.messageText, "\n")}. Next action: fix ${file}, then run the same warden command again.`);
   }
-  return { ...ts.parseJsonConfigFileContent(config, ts.sys, root).options, allowJs: true };
+  return { ...ts.parseJsonConfigFileContent(config, { ...ts.sys, readDirectory: () => [] }, root).options, allowJs: true };
 };
 
 export async function importGraph(root: string, files: string[], read: (file: string) => string): Promise<Map<string, Edge[]>> {

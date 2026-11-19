@@ -160,6 +160,7 @@ describe("tsc adapter", () => {
         "  constructor(private readonly hidden: number, q: number) {}",
         "}",
         "export const z = (n = (() => { const inner = 1; return 2; })()): number => n;",
+        "export type Infer<Q> = Q extends Array<infer R> ? 1 : 2;",
         "",
       ].join("\n");
       await writeFile(join(root, "src/b.ts"), code);
@@ -167,7 +168,7 @@ describe("tsc adapter", () => {
       await emitInto(root, gs);
       const results = await tscAdapter.run(gs, [], ctxFor(root));
       const of = (id: string): string[] => (results.find((r) => r.guardrail === id)?.violations ?? []).map((v) => `${v.line} ${v.message.slice(0, 7)}`);
-      expect(of("params")).toEqual(["1 TS6133:", "1 TS6133:", "6 TS6133:", "7 TS6133:", "8 TS6205:", "9 TS6198:", "11 TS6133:"]);
+      expect(of("params")).toEqual(["1 TS6133:", "1 TS6133:", "6 TS6133:", "7 TS6133:", "8 TS6205:", "9 TS6198:", "11 TS6133:", "14 TS6133:"]);
       expect(of("locals")).toEqual(["2 TS6133:", "3 TS6198:", "11 TS6138:", "13 TS6133:"]);
       expect(results.find((r) => r.guardrail === "tsc:baseline-errors")?.violations).toEqual([]);
     });

@@ -205,6 +205,65 @@ describe("principles pack", () => {
     expect((await scan("principles-single-implementation", tree))?.status).toBe("pass");
   });
 
+  const reconfigure = async (principles: string): Promise<void> => {
+    await write(".warden/config.yaml", config.replace(`  - id: principles\n    paths: ${paths}\n`, principles));
+    set = await loadRecords(root, wardenRoot);
+    guardrails = set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails));
+  };
+
+  it("single implementation: a test double is never the implementation it names, and a factory that returns an object counts", async () => {
+    const client = "export interface Client {\n  get(): number;\n}\n";
+    const fake = 'import type { Client } from "./client";\nexport class FakeClient implements Client {\n  get(): number {\n    return 2;\n  }\n}\n';
+    const factory = `${client}export const createClient = (): Client => ({ get: () => 1 });\n`;
+    expect((await scan("principles-single-implementation", { "src/client.ts": factory, "src/client.test.ts": fake }))?.status).toBe("pass");
+    await rm(join(root, "src"), { recursive: true });
+    written.clear();
+    expect((await scan("principles-single-implementation", { "src/client.ts": client, "src/client.test.ts": fake }))?.status).toBe("pass");
+    await rm(join(root, "src"), { recursive: true });
+    written.clear();
+    const real = 'import type { Client } from "./client";\nexport class RealClient implements Client {\n  get(): number {\n    return 1;\n  }\n}\n';
+    const literal = `${client}export const fixed: Client = { get: () => 3 };\nexport const other = { get: () => 4 } satisfies Client;\n`;
+    expect((await scan("principles-single-implementation", { "src/client.ts": literal, "src/real.ts": real }))?.status).toBe("pass");
+  });
+
+  it("duplicate exports: a name the project declares as a contract export may repeat, and the Do this names that declaration", async () => {
+    const plugin = "export const start = (): number => 1;\n";
+    const tree = { "src/a/main.ts": plugin, "src/b/main.ts": plugin };
+    const failed = await scan("principles-duplicate-exports", tree);
+    expect(failed?.violations.map((v) => v.doThis)).toEqual([
+      "Import start from src/a/main.ts instead of declaring it here, or rename it here if it means something different. If a contract requires each of these files to export start, ask the project owner to add start to contractExports in the settings of pack principles in .warden/config.yaml, then run warden compile.",
+    ]);
+    await reconfigure(`  - id: principles\n    paths: ${paths}\n    settings:\n      contractExports: [start]\n`);
+    expect((await scan("principles-duplicate-exports", {}))?.status).toBe("pass");
+    expect((await scan("principles-unused-exports", { "src/host.ts": 'import { stop } from "./a/main";\nconsole.log(stop);\n', "src/a/main.ts": `${plugin}export const stop = 1;\n` }))?.status).toBe("pass");
+  });
+
+  it("unused exports: names used through import(), and import types, count as uses", async () => {
+    const tree = {
+      "src/dialog.ts": "export const useA = 1;\nexport const B = 2;\nexport const C = 3;\nexport interface D {\n  n: number;\n}\nexport const E = 5;\nexport const spare = 6;\n",
+      "src/lazy.ts": "export const F = 7;\n",
+      "src/use.ts": [
+        'import { spare } from "./dialog";',
+        'export const a = import("./dialog").then(({ useA }) => useA);',
+        'const { B } = await import("./dialog");',
+        'export const c = (await import("./dialog")).C;',
+        'export let d: import("./dialog").D | undefined;',
+        'export const e = import("./dialog").then((m) => m.E);',
+        'export const load = (): Promise<unknown> => import("./lazy");',
+        "console.log(spare, B);",
+        "",
+      ].join("\n"),
+      "src/main.ts": 'import { a, c, d, e, load } from "./use";\nconsole.log(a, c, d, e, load);\n',
+    };
+    expect((await scan("principles-unused-exports", tree))?.status).toBe("pass");
+  });
+
+  it("unused exports: a file outside the Practice's paths still counts as a user", async () => {
+    await reconfigure(`  - id: principles\n    paths: ["**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"]\n`);
+    const tree = { "src/util.ts": "export const a = 1;\nexport const b = 2;\n", "src/use.ts": 'import { a } from "./util";\nconsole.log(a);\n', "src/App.jsx": 'import { b } from "./util";\nconsole.log(b);\n' };
+    expect((await scan("principles-unused-exports", tree))?.status).toBe("pass");
+  });
+
   it("duplicate blocks: import and export lists are not significant", async () => {
     const list = (name: string): string =>
       `import {\n${lines(8, (i) => `  hook${i},`)}\n} from "react";\nimport type { A } from "./a";\nexport {\n${lines(8, (i) => `  hook${i},`)}\n};\nexport const ${name} = 1;\n`;
@@ -230,8 +289,8 @@ describe("principles pack", () => {
     const files = projectFiles(root, set.config.packs.flatMap((p) => p.paths));
     const results = await runGuardrails(set, [g], files, { root, generatedDir: join(root, ".warden/generated") });
     expect(results[0]?.violations.map((v) => [v.file, v.line, v.doThis])).toEqual([
-      ["src/b.ts", 1, "Import step from src/a.ts instead of declaring it here, or rename it here if it means something different."],
-      ["src/c.ts", 1, "Import step from src/a.ts instead of declaring it here, or rename it here if it means something different."],
+      ["src/b.ts", 1, "Import step from src/a.ts instead of declaring it here, or rename it here if it means something different. If a contract requires each of these files to export step, ask the project owner to add step to contractExports in the settings of pack principles in .warden/config.yaml, then run warden compile."],
+      ["src/c.ts", 1, "Import step from src/a.ts instead of declaring it here, or rename it here if it means something different. If a contract requires each of these files to export step, ask the project owner to add step to contractExports in the settings of pack principles in .warden/config.yaml, then run warden compile."],
     ]);
     const { baseline } = await measureBaseline(set, [g]);
     expect(baseline).toEqual({ "principles-duplicate-exports": { "src/b.ts": 1, "src/c.ts": 1 } });

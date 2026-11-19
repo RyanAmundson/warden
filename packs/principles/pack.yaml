@@ -1,6 +1,11 @@
 id: principles
 layer: 2
 terms: []
+settings:
+  type: object
+  additionalProperties: false
+  properties:
+    contractExports: { type: array, items: { type: string, minLength: 1 }, default: [] }
 practices:
   - id: small-functions
     statement: Functions stay small. Complexity at most 10, so at most 9 decisions such as if, loop, case, ?:, &&, ||, and ??; at most 3 levels of nesting, 50 lines, and 4 parameters.
@@ -157,7 +162,7 @@ practices:
           src/square.ts: "import type { Shape } from \"./shape\";\nexport class Square implements Shape {\n  area(): number {\n    return 1;\n  }\n}\n"
           src/circle.ts: "import type { Shape } from \"./shape\";\nexport class Circle implements Shape {\n  area(): number {\n    return 3;\n  }\n}\n"
   - id: one-home-per-name
-    statement: Each exported name is declared in one file, and other files import it from there. Re-exports and default exports are not declarations; names a framework requires, such as metadata, GET, and loader, are exempt; create files, test, spec, story, and declaration files are not read.
+    statement: Each exported name is declared in one file, and other files import it from there. Re-exports and default exports are not declarations; names a framework requires, such as metadata, GET, and loader, and names the project lists in the contractExports setting, are exempt; create files, test, spec, story, and declaration files are not read.
     terms: []
     paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"]
     conflictsWith: []

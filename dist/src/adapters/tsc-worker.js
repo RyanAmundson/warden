@@ -9,6 +9,8 @@ const parameterNames = (file) => {
         const types = node.typeParameters;
         if (types !== undefined)
             out.push([types.pos - 1, types.end]);
+        if (ts.isInferTypeNode(node))
+            out.push([node.getStart(file), node.end]);
         ts.forEachChild(node, visit);
     };
     visit(file);

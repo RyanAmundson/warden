@@ -98,7 +98,8 @@ const load = async (e: Entry): Promise<unknown> => {
 const isFinding = (f: unknown): boolean => {
   if (typeof f !== "object" || f === null) return false;
   const { file, message, line, endLine, doThis } = f as Record<string, unknown>;
-  return typeof file === "string" && typeof message === "string" && [line, endLine].every((n) => n === undefined || typeof n === "number") && (doThis === undefined || typeof doThis === "string");
+  const lines = (line === undefined && endLine === undefined) || (Number.isInteger(line) && (endLine === undefined || (Number.isInteger(endLine) && (endLine as number) >= (line as number))));
+  return typeof file === "string" && typeof message === "string" && lines && (doThis === undefined || typeof doThis === "string");
 };
 
 const tree = async ({ entry, input }: TreeJob): Promise<unknown> => {

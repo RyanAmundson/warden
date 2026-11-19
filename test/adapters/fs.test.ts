@@ -115,6 +115,9 @@ describe("fs adapter", () => {
     ["returns no list", "export default { mentions: () => undefined };\n", "Guardrail g: fs:local/mentions in PACK/fs.js returned undefined that is not a finding of the form { file, message, line?, endLine?, doThis? }. Next action: fix mentions in PACK/fs.js, then run warden compile."],
     ["reads a file it was not given", "export default { mentions: ({ read }) => [{ file: \"src/a.ts\", message: read(\"../../etc/hosts\") }] };\n", "threw: ../../etc/hosts is not one of the files the check was given"],
     ["returns a malformed finding", "export default { mentions: () => [{ file: 1 }] };\n", "returned a list with an item that is not a finding"],
+    ["returns an endLine before its line", "export default { mentions: () => [{ file: \"src/a.ts\", line: 5, endLine: 2, message: \"m\" }] };\n", "returned a list with an item that is not a finding"],
+    ["returns an endLine without a line", "export default { mentions: () => [{ file: \"src/a.ts\", endLine: 2, message: \"m\" }] };\n", "returned a list with an item that is not a finding"],
+    ["returns a fractional line", "export default { mentions: () => [{ file: \"src/a.ts\", line: 1.5, message: \"m\" }] };\n", "returned a list with an item that is not a finding"],
   ])("names the pack file and the Guardrail, with one next action, when a pack check %s", async (_name, code, message) => {
     const pack = await shippedPack("fs", code);
     try {

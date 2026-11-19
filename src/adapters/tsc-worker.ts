@@ -20,6 +20,7 @@ const parameterNames = (file: ts.SourceFile): [number, number][] => {
     if (ts.isParameter(node)) out.push([node.name.getStart(file), node.name.end]);
     const types = (node as { typeParameters?: ts.NodeArray<ts.TypeParameterDeclaration> }).typeParameters;
     if (types !== undefined) out.push([types.pos - 1, types.end]);
+    if (ts.isInferTypeNode(node)) out.push([node.getStart(file), node.end]);
     ts.forEachChild(node, visit);
   };
   visit(file);

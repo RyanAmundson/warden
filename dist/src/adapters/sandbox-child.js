@@ -64,7 +64,8 @@ const isFinding = (f) => {
     if (typeof f !== "object" || f === null)
         return false;
     const { file, message, line, endLine, doThis } = f;
-    return typeof file === "string" && typeof message === "string" && [line, endLine].every((n) => n === undefined || typeof n === "number") && (doThis === undefined || typeof doThis === "string");
+    const lines = (line === undefined && endLine === undefined) || (Number.isInteger(line) && (endLine === undefined || (Number.isInteger(endLine) && endLine >= line)));
+    return typeof file === "string" && typeof message === "string" && lines && (doThis === undefined || typeof doThis === "string");
 };
 const tree = async ({ entry, input }) => {
     const check = await load(entry);

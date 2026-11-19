@@ -133,8 +133,8 @@ Cross-file checks as tree checks shipped in the pack, each an `fs` or
 - Unused parameters through `tsc`, once the adapter maps their codes.
 - Practice `composition-and-narrow-interfaces` (Liskov and interface
   segregation): no class extends anything except `Error`, and an interface
-  has at most 7 members. It uses `no-restricted-syntax` once
-  `cm-wkqedr.25` lets packs share a rule, or a `warden/*` rule.
+  has at most 7 members. It uses `no-restricted-syntax` or a `warden/*`
+  rule.
 
 ### What shipped
 
@@ -158,6 +158,23 @@ Cross-file checks as tree checks shipped in the pack, each an `fs` or
   implementing classes count. Violations are never reported in them, and
   the duplicate-block check does not read them. Declaration files are not
   read.
+- The unused-export check reads users from every code file Warden lists for
+  the project, including files outside the Practice's paths, such as
+  `.jsx`, and reports only in files on those paths.
+- `import()` counts as a use: of each name destructured from it or read from
+  its awaited result or its `then` callback, and otherwise of every export
+  of the file it names. A type `import("./x").Name` counts as a use of
+  `Name`.
+- A single-implementation finding names a class outside test files. An
+  interface also counts as implemented by each function outside test files
+  whose return type it is, each variable it types that holds an object
+  literal, and each object literal that `satisfies` it, so a factory that
+  returns an object is a second implementation.
+- A project lists names that a host contract requires every such file to
+  export, such as a plugin's `start`, in the pack's `contractExports`
+  setting on its entry in `.warden/config.yaml`. Both name checks skip
+  them. A change to the setting is recorded as loosening, like any other
+  setting. The SSOT check's Do this names the setting.
 - `export * from` and `export * as` with a relative specifier count as a use
   of every export of the file they name.
 - Import lists and export lists are not significant lines for the
@@ -184,8 +201,8 @@ Cross-file checks as tree checks shipped in the pack, each an `fs` or
   belongs to `noUnusedParameters`, and TS6138 to `noUnusedLocals`. Unused
   locals stay with the ESLint Guardrail `principles-unused-locals`, so the
   pack adds no `tsc:noUnusedLocals` Guardrail.
-- `composition-and-narrow-interfaces` stays open; it waits on
-  `cm-wkqedr.25`.
+- `composition-and-narrow-interfaces` is not built yet. Its engine
+  dependency, `cm-wkqedr.25`, is closed.
 
 ## Left to the builder
 
