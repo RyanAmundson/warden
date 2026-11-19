@@ -45,8 +45,9 @@ agent edits under `.warden`:
 ## Sign changes to .warden
 
 When `.warden/allowed_signers` exists on the base branch, every commit since
-the merge base that last changed a file under `.warden/` must carry a git SSH
-signature from a key in that base-branch list. `warden check` verifies it with
+the merge base that changed a file under `.warden/` must carry a git SSH
+signature from a key in that base-branch list. A file whose working copy
+matches the base again needs no signature. `warden check` verifies it with
 `ssh-keygen`, whatever the repository's own `gpg.ssh` settings say. An
 unsigned change is reported as `unsigned`, and a signature from any other key
 as `untrusted-signature`. `.warden/baseline.json` is exempt, because a check

@@ -6,7 +6,7 @@ import { LOCK_FORMAT, LOCK_PATH, type Lock, canonicalJson, readLock, sha256 } fr
 import { RecordError, readText } from "../records/load.js";
 import { type BenchSettings, type Kind, type RecordSet, kindRank } from "../records/types.js";
 import { BASELINE_PATH, type Baseline, carryRenames, projectWideEntries, readBaseline } from "./baseline.js";
-import { changesSinceMergeBase, containsHead, historyOf, lastChangeSignatures, lastCommittedText, showAtMergeBase } from "./changed.js";
+import { changeSignatures, changesSinceMergeBase, containsHead, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
 
 export interface Tamper {
   file: string;
@@ -156,7 +156,7 @@ const unsignedChanges = (root: string, base: string): Tamper[] => {
   const dir = mkdtempSync(join(tmpdir(), "warden-signers-"));
   try {
     writeFileSync(join(dir, "allowed_signers"), signers);
-    return [...lastChangeSignatures(root, base, ".warden", join(dir, "allowed_signers"))]
+    return [...changeSignatures(root, base, ".warden", join(dir, "allowed_signers"))]
       .filter(([file, status]) => file !== BASELINE_PATH && status !== "G")
       .map(([file, status]): Tamper => ({ file, detail: status === "N" ? "unsigned" : "untrusted-signature" }));
   } finally {

@@ -148,18 +148,22 @@ export function showAtMergeBase(root: string, base: string, path: string): strin
   return must(root, ["show", spec]);
 }
 
-export function lastChangeSignatures(root: string, base: string, dir: string, allowedSignersFile: string): Map<string, string> {
+export function changeSignatures(root: string, base: string, dir: string, allowedSignersFile: string): Map<string, string> {
   const at = mergeBase(root, base);
   const listed = (args: string[]): string[] => names(must(root, ["--literal-pathspecs", "diff", "-z", "--name-only", "--no-renames", "--relative", ...args, "--", dir]));
-  const pending = new Set(listed(["HEAD"]));
-  const paths = listed([at, "HEAD"]).filter((p) => !pending.has(p));
+  const remaining = new Set(listed([at]));
+  const paths = listed([at, "HEAD"]).filter((p) => remaining.has(p));
   const status = new Map<string, string>();
   if (paths.length === 0) return status;
-  const verify = ["-c", "gpg.ssh.program=ssh-keygen", "-c", "gpg.program=false", "-c", "gpg.x509.program=false", "-c", `gpg.ssh.allowedSignersFile=${allowedSignersFile}`, "--literal-pathspecs"];
+  const verify = ["--no-replace-objects", "-c", "gpg.ssh.program=ssh-keygen", "-c", "gpg.program=false", "-c", "gpg.x509.program=false", "-c", `gpg.ssh.allowedSignersFile=${allowedSignersFile}`, "--literal-pathspecs"];
   const log = must(root, [...verify, "log", "-z", "--topo-order", "--diff-merges=dense-combined", "--no-renames", "--relative", "--name-only", "--format=%x01%G?", `${at}..HEAD`, "--", ...paths]);
+  const seen = new Set<string>();
   for (const entry of log.split("\x01").slice(1)) {
-    for (const path of names(entry.slice(2).replace(/^\n/, ""))) if (!status.has(path)) status.set(path, entry[0] as string);
+    for (const path of names(entry.slice(2).replace(/^\n/, ""))) {
+      seen.add(path);
+      if (entry[0] !== "G" && !status.has(path)) status.set(path, entry[0] as string);
+    }
   }
-  for (const path of paths) if (!status.has(path)) status.set(path, "N");
+  for (const path of paths) if (!seen.has(path)) status.set(path, "N");
   return status;
 }

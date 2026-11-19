@@ -6,7 +6,7 @@ import { LOCK_FORMAT, LOCK_PATH, canonicalJson, readLock, sha256 } from "../comp
 import { RecordError, readText } from "../records/load.js";
 import { kindRank } from "../records/types.js";
 import { BASELINE_PATH, carryRenames, projectWideEntries, readBaseline } from "./baseline.js";
-import { changesSinceMergeBase, containsHead, historyOf, lastChangeSignatures, lastCommittedText, showAtMergeBase } from "./changed.js";
+import { changeSignatures, changesSinceMergeBase, containsHead, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
 const SETTINGS_FILES = [".claude/settings.json", ".claude/settings.local.json"];
 const SIGNERS_PATH = ".warden/allowed_signers";
 const isObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -139,7 +139,7 @@ const unsignedChanges = (root, base) => {
     const dir = mkdtempSync(join(tmpdir(), "warden-signers-"));
     try {
         writeFileSync(join(dir, "allowed_signers"), signers);
-        return [...lastChangeSignatures(root, base, ".warden", join(dir, "allowed_signers"))]
+        return [...changeSignatures(root, base, ".warden", join(dir, "allowed_signers"))]
             .filter(([file, status]) => file !== BASELINE_PATH && status !== "G")
             .map(([file, status]) => ({ file, detail: status === "N" ? "unsigned" : "untrusted-signature" }));
     }

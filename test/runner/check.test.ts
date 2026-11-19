@@ -1985,6 +1985,64 @@ describe("signed .warden changes", () => {
     expect(await tampered()).toEqual([]);
   });
 
+  it("an unsigned commit stays unsigned while its file has other uncommitted edits", async () => {
+    await write(".warden/allowed_signers", signers("ryan", "agent"));
+    git("commit", "-q", "-am", "add my key");
+    await write(".warden/allowed_signers", `${signers("ryan", "agent")} `);
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/allowed_signers", detail: "unsigned" }]);
+  });
+
+  it("a later signed commit does not vouch for an earlier unsigned one", async () => {
+    await write(".warden/allowed_signers", signers("ryan", "agent"));
+    git("commit", "-q", "-am", "add my key");
+    await write(".warden/allowed_signers", `${signers("ryan", "agent")}\n`);
+    git("add", "-A");
+    commitSigned("ryan", "tidy");
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/allowed_signers", detail: "unsigned" }]);
+  });
+
+  it.each(["openpgp", "x509"])("a %s program in the repository config cannot vouch for a change", async (format) => {
+    const fake = join(keys, `fake-${format}`);
+    const armor = format === "x509" ? "SIGNED MESSAGE" : "PGP SIGNATURE";
+    await writeFile(fake, `#!/bin/sh\nfor a in "$@"; do if [ "$a" = "--verify" ]; then printf "[GNUPG:] NEWSIG\\n[GNUPG:] GOODSIG ABCDEF ryan\\n[GNUPG:] VALIDSIG ABCDEF 2026-01-01 0 4 0 1 8 00 ABCDEF\\n[GNUPG:] TRUST_ULTIMATE 0 pgp\\n"; exit 0; fi; done\ncat >/dev/null\necho "[GNUPG:] SIG_CREATED " >&2\nprintf -- "-----BEGIN ${armor}-----\\nfake\\n-----END ${armor}-----\\n"\n`);
+    await chmod(fake, 0o755);
+    git("config", "gpg.program", fake);
+    git("config", "gpg.x509.program", fake);
+    await write(".warden/allowed_signers", signers("ryan", "agent"));
+    git("add", "-A");
+    git("-c", `gpg.format=${format}`, "commit", "-q", "-S", "-m", "add my key");
+    expect(git("log", "-1", "--format=%G?").trim()).toBe("G");
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/allowed_signers", detail: "unsigned" }]);
+  });
+
+  it("an ssh program in the repository config cannot vouch for a key", async () => {
+    const fake = join(keys, "fakessh");
+    await writeFile(fake, '#!/bin/sh\ncat >/dev/null\ncase "$*" in *find-principals*) echo ryan ;; *) echo \'Good "git" signature for ryan with ED25519 key SHA256:x\' ;; esac\n');
+    await chmod(fake, 0o755);
+    await write(".warden/allowed_signers", signers("ryan", "agent"));
+    git("add", "-A");
+    commitSigned("agent", "add my key");
+    git("config", "gpg.ssh.program", fake);
+    expect(git("-c", `gpg.ssh.allowedSignersFile=${join(keys, "none")}`, "log", "-1", "--format=%G?").trim()).toBe("G");
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/allowed_signers", detail: "untrusted-signature" }]);
+  });
+
+  it("a replace ref cannot stand a signed commit in for an unsigned one", async () => {
+    await write(".warden/allowed_signers", signers("ryan", "agent"));
+    git("commit", "-q", "-am", "add my key");
+    const unsigned = git("rev-parse", "HEAD").trim();
+    git("-c", "gpg.format=ssh", "-c", "gpg.ssh.program=ssh-keygen", "-c", `user.signingkey=${join(keys, "ryan")}`, "commit", "-q", "--amend", "-S", "--no-edit");
+    const signed = git("rev-parse", "HEAD").trim();
+    git("reset", "-q", "--hard", unsigned);
+    git("replace", unsigned, signed);
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/allowed_signers", detail: "unsigned" }]);
+  });
+
   it("a lowered baseline needs no signature", async () => {
     await write("a.ts", "const a = 1;\n");
     expect((await check()).code).toBe(0);
