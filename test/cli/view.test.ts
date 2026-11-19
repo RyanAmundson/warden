@@ -469,7 +469,7 @@ it("renders the violations screen at 120 columns: a bar per pack and Guardrail, 
   const row = (label: string): string => lines.find((l) => l.startsWith(` ${label} `)) as string;
   expect(row("core")).toMatch(/^ core +█+▓ +30,114 +2 +16:13 commit$/);
   expect(row("  warden-no-comments")).toMatch(/^ {3}warden-no-comments +█+▓ +29,923 +1$/);
-  expect(row("  warden-no-suppressions")).toMatch(/^ {3}warden-no-suppressions +▓ +191 +1$/);
+  expect(row("  warden-no-suppressions")).toMatch(/^ {3}warden-no-suppressions +█▓ +191 +1$/);
   expect(row("principles")).toMatch(/^ principles +█+ +8,402 +0 +16:13 commit$/);
   expect(row("  principles-small-files")).toMatch(/^ {3}principles-small-files +█+ +8,402 +0$/);
   expect(row("architecture")).toMatch(/^ architecture +▏ +0 +0 +16:13 commit$/);
@@ -551,4 +551,35 @@ it("liveView opens on the screen it is given", async () => {
   await vi.waitFor(() => expect(output.text).toContain(" VIOLATIONS BY PACK"));
   input.emit("data", Buffer.from("q"));
   await done;
+});
+
+const fourPacks = (): ViewModel => {
+  const ids = ["core", "principles", "architecture", "collection-folders"];
+  const layers = ids.flatMap((pack) => Array.from({ length: 5 }, (_, i) => ({ pack, guardrail: `${pack}-rule-${i}`, practice: `p${i}`, kind: "lint" as const, adapter: "eslint", runs: ["commit" as const], median: "4 ms" })));
+  return { ...violated([]), packs: ids, layers, rules: layers.map((l, i) => ({ guardrail: l.guardrail, strength: "proven", fired: 0, median: "4 ms", budgetMs: 2000, baselined: i * 100 })) };
+};
+
+it("a short terminal drops the Guardrail rows so every enabled pack still shows", () => {
+  const lines = renderViolations(fourPacks(), { cols: 120, rows: 24 });
+  expect(lines.length).toBeLessThanOrEqual(24);
+  for (const pack of ["core", "principles", "architecture", "collection-folders"]) expect(lines).toContainEqual(expect.stringMatching(new RegExp(`^ ${pack} +[█▏]`)));
+  expect(lines.filter((l) => /rule-\d/.test(l))).toEqual([]);
+  expect(lines.join("\n")).not.toContain("hidden");
+  const tall = renderViolations(fourPacks(), { cols: 120, rows: 40 });
+  expect(tall.filter((l) => /rule-\d/.test(l))).toHaveLength(20);
+});
+
+it("when even the pack rows do not fit, the last line says how many are hidden and how to see them", () => {
+  const lines = renderViolations(fourPacks(), { cols: 120, rows: 8 });
+  expect(lines.length).toBeLessThanOrEqual(8);
+  expect(lines).toContainEqual(expect.stringMatching(/^ core /));
+  expect(lines).toContain(" 3 packs hidden. Next action: run warden --violations | cat");
+});
+
+it("a long pack label is cut so its counts stay, and a small baselined count still draws a bar", () => {
+  const long = renderViolations({ ...violated([]), packs: ["a-very-long-pack-name-that-is-wide"], layers: [{ pack: "a-very-long-pack-name-that-is-wide", guardrail: "g", practice: "p", kind: "lint", adapter: "eslint", runs: ["commit"], median: "1 ms" }], rules: [{ guardrail: "g", strength: "proven", fired: 0, median: "1 ms", budgetMs: 1, baselined: 5 }] }, { cols: 40, rows: 20 });
+  for (const l of long) expect(l.length, l).toBeLessThanOrEqual(40);
+  expect(long).toContainEqual(expect.stringMatching(/^ a-very.*… █+ +5 +–$/));
+  const small = renderViolations(violated([], { "warden-no-comments": 100000, "warden-no-suppressions": 3 }), { cols: 120, rows: 40 });
+  expect(small).toContainEqual(expect.stringMatching(/^ {3}warden-no-suppressions +█ +3 +–/));
 });

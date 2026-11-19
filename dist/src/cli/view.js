@@ -306,29 +306,33 @@ export function renderViolations(model, size) {
         const bar = width - 1 - labelW - 1 - right("", "", "").length;
         return { rows, right, labelW, bar };
     };
-    const chosen = [layout(true, true), layout(false, true), layout(false, false)].find((l) => l.bar >= MIN_BAR) ?? layout(false, false);
-    const barW = Math.max(1, chosen.bar);
-    const most = Math.max(0, ...chosen.rows.map((r) => r.old + (r.fresh ?? 0)));
-    const scale = most === 0 ? 0 : barW / most;
-    const body = chosen.rows.map((r) => {
-        const fresh = r.fresh ?? 0;
-        const n = fresh === 0 ? 0 : Math.max(1, Math.round(fresh * scale));
-        const b = Math.min(Math.round(r.old * scale), barW - n);
-        const bar = b + n === 0 ? "▏" : `${"█".repeat(b)}${"▓".repeat(n)}`;
-        return clip(`${` ${r.label.padEnd(chosen.labelW)} ${bar}`.padEnd(width - chosen.right("", "", "").length)}${chosen.right(count(r.old), newText(r.fresh), r.last)}`, width);
-    });
     const latest = packs.filter((p) => (p.fresh ?? 0) > 0 && p.run !== undefined).map((p) => p.run).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1);
     const capped = packs.some((p) => (p.run?.failures ?? []).length >= MAX_RECORDED_FAILURES);
     const next = runs.length === 0 ? " Next action: press r to run warden check" : latest?.next === undefined ? "" : ` Next action: ${latest.next}`;
-    const top = [spread(` WARDEN  ${model.project} · base ${model.base} · v${model.version}`, "q quit  r rerun  v back", width), rule, clip(`${" VIOLATIONS BY PACK".padEnd(width - chosen.right("", "", "").length)}${chosen.right("baselined", "new", "last run")}`, width)];
     const bottom = [
         rule,
         ...(width >= LEGEND.join("  ").length ? [LEGEND.join("  ")] : LEGEND).map((l) => clip(l, width)),
         ...(capped ? wrap(` New counts are the first ${MAX_RECORDED_FAILURES} failures a run records.`, width, 2) : []),
         ...(next === "" ? [] : wrap(next, width, 3)),
     ];
-    const room = Math.max(0, size.rows - top.length - bottom.length);
-    return [...top, ...body.slice(0, room), ...bottom].map((l) => visible(l).trimEnd());
+    const room = Math.max(0, size.rows - 3 - bottom.length);
+    const fallback = layout(false, false);
+    const chosen = [layout(true, true), layout(false, true), fallback].find((l) => l.bar >= MIN_BAR && l.rows.length <= Math.max(room, packs.length)) ?? { ...fallback, labelW: Math.max(1, fallback.labelW - MIN_BAR + fallback.bar), bar: MIN_BAR };
+    const barW = Math.max(1, Math.min(chosen.bar, width - 2 - chosen.labelW - chosen.right("", "", "").length));
+    const most = Math.max(0, ...chosen.rows.map((r) => r.old + (r.fresh ?? 0)));
+    const scale = most === 0 ? 0 : barW / most;
+    const body = chosen.rows.map((r) => {
+        const fresh = r.fresh ?? 0;
+        const n = fresh === 0 ? 0 : Math.max(1, Math.round(fresh * scale));
+        const b = Math.min(r.old === 0 ? 0 : Math.max(1, Math.round(r.old * scale)), barW - n);
+        const bar = b + n === 0 ? "▏" : `${"█".repeat(b)}${"▓".repeat(n)}`;
+        return clip(`${` ${clip(r.label, chosen.labelW).padEnd(chosen.labelW)} ${bar}`.padEnd(width - chosen.right("", "", "").length)}${chosen.right(count(r.old), newText(r.fresh), r.last)}`, width);
+    });
+    const top = [spread(` WARDEN  ${model.project} · base ${model.base} · v${model.version}`, "q quit  r rerun  v back", width), rule, clip(`${" VIOLATIONS BY PACK".padEnd(width - chosen.right("", "", "").length)}${chosen.right("baselined", "new", "last run")}`, width)];
+    const kept = body.length > room ? Math.max(0, room - 1) : body.length;
+    const hidden = body.length - kept;
+    const shown = hidden > 0 ? [...body.slice(0, kept), clip(` ${hidden} pack${hidden === 1 ? "" : "s"} hidden. Next action: run warden --violations | cat`, width)] : body;
+    return [...top, ...shown, ...bottom].map((l) => visible(l).trimEnd());
 }
 export const plainViolations = (model, cols = 80) => `${renderViolations(model, { cols, rows: 200 }).join("\n")}\n`;
 export const plainLayers = (model, cols = 80) => `${renderLayers(model, { cols, rows: 60 }).join("\n")}\n`;
