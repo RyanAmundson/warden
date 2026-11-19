@@ -1,5 +1,7 @@
 # Warden First Slice Implementation Plan
 
+> **Superseded in part (2026-11-18):** Warden no longer writes Claude Code deny rules or hooks into `.claude/settings.json`. They ship as the Claude Code plugin in this repository; see the README.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A standalone `warden` CLI that compiles normalized rule records into an ESLint pass and Claude Code deny rules, ratchets every Guardrail from a baseline, detects tampering through a lock, and is adopted by Context Manager.

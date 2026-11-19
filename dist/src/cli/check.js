@@ -25,6 +25,11 @@ const requireBase = (base, configured) => {
         return base;
     throw new RecordError("", "/base", `--base is missing; Warden takes the base branch from the command, never from the editable config. Next action: run warden check --base ${configured}`);
 };
+const olderThan = (a, b) => {
+    const [x, y] = [a, b].map((v) => v.split(".").map(Number));
+    const i = x.findIndex((n, j) => n !== y[j]);
+    return i !== -1 && x[i] < (y[i] ?? 0);
+};
 const hookBase = (root) => {
     if (!existsSync(join(root, LOCK_PATH)))
         throw new RecordError(LOCK_PATH, "", "is missing, so the edit hook has no base branch. Next action: run warden compile");
@@ -119,7 +124,7 @@ const report = (failures, set, opts, notes) => {
     }
     return failed ? 1 : 0;
 };
-const MAX_RECORDED_FAILURES = 10;
+export const MAX_RECORDED_FAILURES = 10;
 const closeStep = (live, state, extra = {}) => {
     if (live.open === undefined || live.project === undefined)
         return;
@@ -194,9 +199,13 @@ const check = async (opts, live) => {
         throw new RecordError(LOCK_PATH, "", "not found; this project was never compiled. Next action: run warden compile.");
     }
     const running = await wardenVersion(opts.wardenRoot);
-    const lockedBy = existsSync(join(root, LOCK_PATH)) ? readLock(root).warden : running;
-    if (lockedBy !== running) {
+    const working = existsSync(join(root, LOCK_PATH)) ? readLock(root) : undefined;
+    const lockedBy = working?.warden ?? running;
+    if (lockedBy !== running && !olderThan(lockedBy, running)) {
         throw new RecordError(LOCK_PATH, "/warden", `was written by Warden ${lockedBy}; this is Warden ${running}. Next action: install Warden ${lockedBy}, the release that wrote the lock, then run warden check --base ${base} again.`);
+    }
+    if (lockedBy !== running || Object.keys(working?.generated ?? {}).some((key) => key.includes("#"))) {
+        throw new RecordError(LOCK_PATH, "/warden", `was written by Warden ${lockedBy}, an older release than this Warden ${running}. Next action: run warden compile, stage .warden, and commit.`);
     }
     const unknown = unknownAdapters(set);
     if (unknown.length > 0) {
