@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -640,6 +640,22 @@ describe("warden CLI", () => {
     expect(r.out).toContain(" WARDEN  ");
     expect(r.out).toContain(" NOW  ");
     expect(r.out).not.toContain("\x1b");
+  });
+
+  it("a closed stdout ends init and runs --follow quietly with the exit code of the work done", async () => {
+    const closed = (...args: string[]): Promise<{ code: number | null; err: string }> =>
+      new Promise((done) => {
+        const child = spawn("node", [main, ...args], { cwd: root, env: { ...process.env, WARDEN_HOME: home }, stdio: ["ignore", "pipe", "pipe"] });
+        child.stdout.destroy();
+        let err = "";
+        child.stderr.on("data", (chunk: Buffer) => {
+          err += chunk.toString();
+        });
+        child.on("close", (code) => done({ code, err }));
+      });
+    expect(await closed("init")).toEqual({ code: 0, err: "" });
+    expect(existsSync(join(root, ".warden/baseline.json"))).toBe(true);
+    expect(await closed("runs", "--follow")).toEqual({ code: 0, err: "" });
   });
 
   it("--version prints the version in Warden's package", async () => {

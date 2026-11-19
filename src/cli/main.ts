@@ -33,6 +33,14 @@ const oneOf = <T extends string>(command: string, name: string, value: string, a
   return value as T;
 };
 
+const outputClosed = new AbortController();
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on("error", (cause: NodeJS.ErrnoException) => {
+    if (cause.code !== "EPIPE") throw cause;
+    outputClosed.abort();
+  });
+}
+
 const program = new Command("warden").exitOverride();
 const root = (): string => {
   try {
@@ -126,7 +134,7 @@ program
       limit: Number(o.limit),
       format: oneOf("runs", "format", o.format, ["text", "json"] as const),
       follow: o.follow === true,
-      signal: stop.signal,
+      signal: AbortSignal.any([stop.signal, outputClosed.signal]),
       ...(o.html === undefined ? {} : { html: o.html }),
     });
   });

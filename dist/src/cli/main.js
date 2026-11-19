@@ -30,6 +30,14 @@ const oneOf = (command, name, value, allowed) => {
         throw new Error(`--${name} must be one of ${allowed.join(", ")}. Next action: run warden ${command} --help`);
     return value;
 };
+const outputClosed = new AbortController();
+for (const stream of [process.stdout, process.stderr]) {
+    stream.on("error", (cause) => {
+        if (cause.code !== "EPIPE")
+            throw cause;
+        outputClosed.abort();
+    });
+}
 const program = new Command("warden").exitOverride();
 const root = () => {
     try {
@@ -118,7 +126,7 @@ program
         limit: Number(o.limit),
         format: oneOf("runs", "format", o.format, ["text", "json"]),
         follow: o.follow === true,
-        signal: stop.signal,
+        signal: AbortSignal.any([stop.signal, outputClosed.signal]),
         ...(o.html === undefined ? {} : { html: o.html }),
     });
 });
