@@ -42,7 +42,10 @@ const program = new Command("warden").exitOverride().enablePositionalOptions().p
 const root = (): string => {
   try {
     return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-  } catch {
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error("Git is not available. Next action: install git and put it on PATH, then run the command again");
+    }
     throw new Error(`${process.cwd()} is not a git repository; run warden inside the project's git checkout`);
   }
 };

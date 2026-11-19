@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { classify, exitCode, touchedLines, triage, type RawFinding, type Touched } from "../../src/review/findings.js";
 
 const raw = (over: Partial<RawFinding> = {}): RawFinding => ({
@@ -61,22 +61,36 @@ describe("classify", () => {
 });
 
 describe("touchedLines", () => {
+  let root: string;
+  const fixture = () => {
+    root = mkdtempSync(join(tmpdir(), "warden-findings-"));
+    return root;
+  };
+
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
   it("touchedLines reads new-side ranges, including untracked files", () => {
-    const root = mkdtempSync(join(tmpdir(), "warden-findings-"));
+    const root = fixture();
     const git = (...a: string[]) => execFileSync("git", a, { cwd: root, stdio: "ignore", env: { ...process.env, GIT_CONFIG_GLOBAL: join(root, "no-config") } });
     git("init", "-q");
     git("config", "user.email", "a@b.c");
     git("config", "user.name", "a");
+    git("config", "diff.interHunkContext", "3");
     writeFileSync(join(root, "a.ts"), "1\n2\n3\n4\n5\n");
+    const quoted = 'quote" and café.ts';
+    writeFileSync(join(root, quoted), "1\n2\n3\n4\n5\n");
     git("add", ".");
     git("commit", "-q", "-m", "base");
     writeFileSync(join(root, "a.ts"), "1\n2\nX\n4\n5\n");
+    writeFileSync(join(root, quoted), "1\n++ b/other.ts\n3\n4\nY\n");
     git("commit", "-q", "-am", "change");
     writeFileSync(join(root, "b.ts"), "x\ny\n");
-    expect(touchedLines(root, "HEAD~1", "HEAD")).toEqual({ "a.ts": [[3, 3]], "b.ts": [[1, 2]] });
+    expect(touchedLines(root, "HEAD~1", "HEAD")).toEqual({ "a.ts": [[3, 3]], "b.ts": [[1, 2]], [quoted]: [[2, 2], [5, 5]] });
+    symlinkSync("missing.ts", join(root, "link.ts"));
+    expect(touchedLines(root, "HEAD~1", "HEAD")["link.ts"]).toEqual([[1, 1]]);
   });
   it("touchedLines fails with a next action when a ref is missing", () => {
-    const root = mkdtempSync(join(tmpdir(), "warden-findings-"));
+    const root = fixture();
     execFileSync("git", ["init", "-q"], { cwd: root });
     expect(() => touchedLines(root, "nope", "HEAD")).toThrow("run git rev-parse --verify nope to find the missing ref, then run the review again");
   });

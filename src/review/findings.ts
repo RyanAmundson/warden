@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync, readlinkSync } from "node:fs";
 import { join } from "node:path";
 
 export type Severity = "critical" | "important" | "minor" | "environment";
@@ -16,10 +16,10 @@ export interface RawFinding {
   flaky: boolean;
   correction: string;
 }
-export type FindingKind = "env" | "flake" | "unfixed" | "spec-unmet" | "pre-existing" | "regression" | "touched" | "untouched";
+export type Kind = "env" | "flake" | "unfixed" | "spec-unmet" | "pre-existing" | "regression" | "touched" | "untouched";
 export type Action = "fix-environment" | "rerun-alone" | "back-to-builder" | "file-task";
 export interface ReviewFinding extends RawFinding {
-  kind: FindingKind;
+  kind: Kind;
   action: Action;
   blocks: boolean;
 }
@@ -40,12 +40,42 @@ const git = (root: string, args: string[], missing?: string): string => {
   }
 };
 
+const pathOf = (header: string): string => {
+  const path = header.replace(/\t$/, "");
+  if (!path.startsWith('"')) return path;
+  return JSON.parse(path.replace(/\\([0-7]{3}|.)/g, (escaped, code: string) => {
+    if (code === "a") return "\\u0007";
+    if (code === "v") return "\\u000b";
+    if (code.length === 3) return "\\u" + Number.parseInt(code, 8).toString(16).padStart(4, "0");
+    return escaped;
+  })) as string;
+};
+
+const untrackedText = (root: string, file: string): string => {
+  const path = join(root, file);
+  try {
+    return lstatSync(path).isSymbolicLink() ? readlinkSync(path) : readFileSync(path, "utf8");
+  } catch {
+    throw new Error("Git listed " + file + " as untracked, but Warden could not read it. Next action: check that " + file + " is readable or remove it, then run the review again");
+  }
+};
+
 export function touchedLines(root: string, from: string, to: string): Touched {
-  const out: Touched = {};
+  const out: Touched = Object.create(null) as Touched;
   for (const ref of [from, to]) git(root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], ref);
   let file: string | undefined;
-  for (const l of git(root, ["diff", "-U0", "--no-color", from, to]).split("\n")) {
-    if (l.startsWith("+++ ")) file = l === "+++ /dev/null" ? undefined : l.slice(6);
+  let header = false;
+  const patch = git(root, ["-c", "core.quotePath=false", "diff", "-U0", "--inter-hunk-context=0", "--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/", from, to, "--"]);
+  for (const l of patch.split("\n")) {
+    if (l.startsWith("diff --git ")) {
+      file = undefined;
+      header = true;
+    }
+    if (header && l.startsWith("+++ ")) {
+      const path = pathOf(l.slice(4));
+      file = path.startsWith("b/") ? path.slice(2) : undefined;
+      header = false;
+    }
     const m = /^@@ -\S+ \+(\d+)(?:,(\d+))? @@/.exec(l);
     if (m === null || file === undefined) continue;
     const start = Number(m[1]);
@@ -53,7 +83,7 @@ export function touchedLines(root: string, from: string, to: string): Touched {
     if (count > 0) (out[file] ??= []).push([start, start + count - 1]);
   }
   for (const f of git(root, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0").filter((x) => x !== "")) {
-    const text = readFileSync(join(root, f), "utf8");
+    const text = untrackedText(root, f);
     const n = text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
     if (n > 0) out[f] = [[1, n]];
   }
@@ -62,13 +92,13 @@ export function touchedLines(root: string, from: string, to: string): Touched {
 
 const located = (raw: RawFinding, touched: Touched): boolean => {
   if (raw.file === undefined) return true;
-  const ranges = touched[raw.file];
+  const ranges = Object.hasOwn(touched, raw.file) ? touched[raw.file] : undefined;
   if (ranges === undefined) return false;
   const line = raw.line;
   return line === undefined || ranges.some(([a, b]) => line >= a && line <= b);
 };
 
-const kinds = (raw: RawFinding, touched: Touched, round: number): [FindingKind, Action, boolean] => {
+const kinds = (raw: RawFinding, touched: Touched, round: number): [Kind, Action, boolean] => {
   if (raw.severity === "environment") return ["env", "fix-environment", false];
   if (raw.flaky) return ["flake", "rerun-alone", false];
   if (raw.earlier !== undefined) return ["unfixed", "back-to-builder", true];

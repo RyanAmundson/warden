@@ -89,6 +89,16 @@ const triageRun = async (name: string, text: string, ...more: string[]): Promise
 };
 
 describe("warden review", () => {
+  it("tells the reader how to recover when Git is unavailable", () => {
+    const r = spawnSync(process.execPath, [main, "review", "brief", ...flags("HEAD"), "--requirements", REQ], {
+      cwd: root,
+      env: { ...process.env, WARDEN_HOME: home, PATH: home },
+      encoding: "utf8",
+    });
+    expect(r.status).toBe(2);
+    expect(nextActionOf(r.stderr)).toBe("install git and put it on PATH, then run the command again");
+  });
+
   it("brief prints the Agent invocation for the resolved head", () => {
     const r = run("review", "brief", ...flags("HEAD"), "--requirements", REQ);
     expect(r.code).toBe(0);
