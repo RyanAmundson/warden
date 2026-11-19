@@ -9,7 +9,7 @@ import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import type { Guardrail, Kind, RecordSet, Tier } from "../records/types.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
+import { checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, stageFile, stagedFiles, unstagedFiles, verifyBase } from "../runner/changed.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { type Evidence, LOOP_TAIL_BYTES, type Outcome, RUN_TOTAL, type RunFailure, type Step, type Trigger, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
 import { type Format, type Notes, type Repeated, formatFeedback } from "../runner/feedback.js";
@@ -315,9 +315,11 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   if (guardrailsOf(set, "eslint:warden/no-comments").some((g) => selected.has(g.id))) for (const g of directives) if (g.runs.includes(tier)) selected.add(g.id);
   const lintChosen = chosen.some((g) => g.kind === "lint");
   const guardrails = selectGuardrails(set, undefined).filter((g) => (lintChosen && g.kind === "lint") || selected.has(g.id));
-  const scanned = scannedFiles(root, base, opts.paths);
+  const listed = scannedFiles(root, base, opts.paths);
+  const unstaged = new Set(tier === "commit" ? unstagedFiles(root) : []);
+  const committing = opts.trigger === "git-commit" ? new Set(stagedFiles(root)) : undefined;
+  const scanned = committing === undefined ? listed : listed.filter((f) => committing.has(f) || !unstaged.has(f));
   if (tier === "commit") {
-    const unstaged = new Set(unstagedFiles(root));
     const differing = scanned.filter((f) => unstaged.has(f));
     if (differing.length > 0) {
       const notes = { unstaged: differing, base };

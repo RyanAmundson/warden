@@ -104,6 +104,8 @@ export const stageFile = (root: string, path: string): void => {
 
 export const unstagedFiles = (root: string): string[] => names(must(root, ["diff", "-z", "--name-only", "--relative"]));
 
+export const stagedFiles = (root: string): string[] => names(must(root, ["diff", "-z", "--name-only", "--relative", "--cached", "HEAD"]));
+
 export function lastCommittedText(root: string, path: string): string | undefined {
   if (!isRepository(root)) return undefined;
   const head = git(root, ["show", `HEAD:./${path}`]);
@@ -164,33 +166,43 @@ export function showAtMergeBase(root: string, base: string, path: string): strin
   return must(root, ["show", spec]);
 }
 
-export interface Signatures {
-  files: Map<string, string>;
+export interface Restore {
   base: string;
-  dirty: string[];
+  paths: string[];
+  known: string[];
 }
 
-export function changeSignatures(root: string, base: string, dir: string, allowedSignersFile: string, staged: boolean): Signatures {
+export interface Signatures {
+  files: Map<string, string>;
+  restore: Restore;
+}
+
+export function changeSignatures(root: string, base: string, dir: string, allowedSignersFile: string, staged: boolean, alongside: string[]): Signatures {
   const at = mergeBase(root, base);
-  const diff = (...trees: string[]): string[] => names(must(root, ["--literal-pathspecs", "diff", "-z", "--name-only", "--no-renames", "--ignore-submodules=none", "--relative", ...trees, "--", dir]));
+  const spec = `:(literal${git(root, ["config", "--bool", "core.ignorecase"]).out.trim() === "true" ? ",icase" : ""})${dir}`;
+  const diff = (...trees: string[]): string[] => names(must(root, ["diff", "-z", "--name-only", "--no-renames", "--ignore-submodules=none", "--relative", ...trees, "--", spec]));
   const committed = diff(at, "HEAD");
-  const paths = staged ? diff("--cached", at) : committed;
+  const judged = staged ? diff("--cached", at) : committed;
+  const scope = [...new Set([...committed, ...judged])];
   const files = new Map<string, string>();
-  if (paths.length === 0) return { files, base: at, dirty: [] };
+  if (scope.length === 0) return { files, restore: { base: at, paths: [], known: [] } };
   const verify = ["-c", "gpg.ssh.program=ssh-keygen", "-c", "gpg.program=false", "-c", "gpg.x509.program=false", "-c", `gpg.ssh.allowedSignersFile=${allowedSignersFile}`, "--literal-pathspecs"];
   const mark = `\x01${randomUUID()}`;
-  const log = must(root, [...verify, "log", "-z", "--topo-order", "--diff-merges=dense-combined", "--no-renames", "--ignore-submodules=none", "--relative", "--name-only", `--format=${mark}%G?`, `${at}..HEAD`, "--", ...paths]);
+  const log = must(root, [...verify, "log", "-z", "--topo-order", "--diff-merges=dense-combined", "--no-renames", "--ignore-submodules=none", "--relative", "--name-only", `--format=${mark}%G?`, `${at}..HEAD`, "--", ...scope]);
   const seen = new Set<string>();
+  const bad = new Map<string, string>();
   for (const entry of log.split(mark).slice(1)) {
     const end = entry.search(/[\n\0]/);
     const status = entry[0] as string;
     for (const path of names(entry.slice(end + 1).replace(/^\n/, ""))) {
       seen.add(path);
-      if (status !== "G" && !files.has(path)) files.set(path, status);
+      if (status !== "G" && !bad.has(path)) bad.set(path, status);
     }
   }
-  for (const path of paths) if (!seen.has(path) && committed.includes(path)) files.set(path, "N");
-  const tracked = names(must(root, ["diff", "-z", "--name-only", "--no-renames", "--ignore-submodules=none", "HEAD"]));
-  const untracked = names(must(root, ["ls-files", "-z", "--others", "--exclude-standard"])).filter((p) => files.has(p));
-  return { files, base: at, dirty: [...new Set([...tracked, ...untracked])] };
+  for (const path of committed) if (!seen.has(path)) bad.set(path, "N");
+  for (const path of judged) if (bad.has(path)) files.set(path, bad.get(path) as string);
+  const paths = [...new Set([...bad.keys(), ...scope.filter((p) => alongside.includes(p))])].sort();
+  const listed = (args: string[]): string[] => (paths.length === 0 ? [] : names(must(root, ["--literal-pathspecs", ...args, "--", ...paths])));
+  const known = [...new Set([...listed(["ls-tree", "-r", "-z", "--name-only", "--full-tree", at]), ...listed(["ls-files", "-z", "--cached"])])].sort();
+  return { files, restore: { base: at, paths, known } };
 }

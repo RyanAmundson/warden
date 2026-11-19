@@ -52,25 +52,31 @@ lock records the list's hash as a source, so a changed list shows up as source
 drift. `warden check` verifies signatures with `ssh-keygen`, whatever the
 repository's own `gpg.ssh` settings say. An unsigned change is reported as
 `unsigned`, and a signature from any other key as `untrusted-signature`. The
-next action restores every reported path to its merge-base content and
-commits it with a plain `git commit`: files the branch added are removed, and
-files it deleted come back. It first stashes every uncommitted change to a
-tracked file, staged or not, and untracked files in the reported paths,
-because the pre-commit hook refuses a working copy that differs from the index
-and the commit must hold only the restore. Pop the stash afterwards. The
-commit uses `--allow-empty` so it is still made when a replace ref or a
-commit-graph file makes git's own view of `HEAD` already match the merge base.
-The restore also drops any signed edit to those paths made since the merge
-base; sign that edit again after the restore.
+next action restores every path changed without an allowed signature, plus
+`.warden/baseline.json` when the branch changed it, to its merge-base
+content with `git restore`, then commits only those paths with
+`git commit --only`. Files the branch added are removed, and files it deleted
+come back. Other staged and unstaged work stays where it is. An untracked file
+at a restored path is replaced by the merge-base content. The commit uses
+`--allow-empty` so it is still made when a replace ref or a commit-graph file
+makes git's own view of `HEAD` already match the merge base. The restore also
+drops any signed edit to those paths made since the merge base; sign that
+edit again after the restore. When another tamper finding names a file
+outside the restored paths, such as an untracked pack file, the check names
+that file first and the restore after it.
 
 A path needs a signature only while its content differs from the merge base,
 so unsigned commits that leave a path as it was at the merge base are not
-reported. Warden's pre-commit hook judges the staged tree, so it accepts a
-staged restore while `HEAD` still holds the unsigned commit, and it refuses a
-staged tree that keeps an unsigned commit's change. It cannot judge the
-signature of the commit being made, which does not exist yet: a staged
-`.warden/` change on top of signed history passes the hook, and the next check
-reports the commit if it is unsigned.
+reported. Warden's pre-commit hook judges the index the commit uses, the
+temporary index during `git commit --only`, so it accepts a staged restore
+while `HEAD` still holds the unsigned commit. It refuses a staged tree that
+keeps an unsigned commit's change, and its next action restores every
+unsigned path in `HEAD` or the index. Working-copy changes to files outside
+the commit do not refuse it. It cannot judge the signature of the commit
+being made, which does not exist yet: a staged `.warden/` change on top of
+signed history passes the hook, and the next check reports the commit if it
+is unsigned. Where git ignores case (`core.ignorecase`), the check also
+matches case variants of `.warden`, such as `.WARDEN/`.
 
 The check ignores replace refs, grafts, the commit-graph file, and submodule
 `ignore` settings. It trusts its own process and the installed package. It

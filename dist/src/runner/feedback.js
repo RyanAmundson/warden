@@ -15,26 +15,23 @@ const nextAction = (failures, set, notes) => {
     if (notes.tampered?.some((t) => t.detail === "no-allowed-signers") === true) {
         return "reinstall Warden from a release that ships its allowed_signers file, then run warden check again.";
     }
-    const signed = notes.tampered?.filter((t) => t.mergeBase !== undefined) ?? [];
-    const first = signed[0];
-    if (first !== undefined) {
-        const stash = (first.dirty ?? []).length === 0 ? "" : `git --literal-pathspecs stash push -u -- ${shellWords(first.dirty ?? [])} && `;
-        const paths = shellWords([...new Set(signed.map((t) => t.file))].sort());
-        const restore = `git --literal-pathspecs restore --source=${first.mergeBase} --staged --worktree -- ${paths}`;
-        const commit = "git commit --allow-empty -m 'Restore .warden files changed without an allowed signature'";
-        return `run ${stash}${restore} && ${commit} to restore the .warden/ files changed without an allowed signature to the merge base, then run warden check again.`;
+    const restore = notes.tampered?.find((t) => t.restore !== undefined)?.restore;
+    const others = (notes.tampered ?? []).filter((t) => t.restore === undefined);
+    if (restore !== undefined && others.every((t) => [t.file, ...(t.sources ?? [])].every((f) => restore.paths.includes(f)))) {
+        const back = restore.known.length === 0 ? "" : `git --literal-pathspecs restore --source=${restore.base} --staged --worktree -- ${shellWords(restore.known)} && `;
+        return `run ${back}git --literal-pathspecs commit --only --allow-empty -m 'Restore .warden files changed without an allowed signature' -- ${shellWords(restore.paths)} to restore the .warden/ files changed without an allowed signature to the merge base, then run warden check again.`;
     }
-    if (notes.tampered?.some((t) => t.detail === "base-moved") === true) {
+    if (others.some((t) => t.detail === "base-moved")) {
         return "revert the base change in .warden/config.yaml and run warden compile.";
     }
-    const weakened = notes.tampered?.find((t) => t.detail === "weakened-kind");
+    const weakened = others.find((t) => t.detail === "weakened-kind");
     if (weakened !== undefined)
         return `restore kind ${weakened.was} on ${weakened.guardrail} and run warden compile.`;
-    if (notes.tampered !== undefined && notes.tampered.length > 0) {
-        const sources = notes.tampered.flatMap((t) => t.sources ?? []);
+    if (others.length > 0) {
+        const sources = others.flatMap((t) => t.sources ?? []);
         if (sources.length === 0)
-            return `revert your change to ${[...new Set(notes.tampered.map((t) => t.file))].join(", ")}.`;
-        const files = [...new Set([...sources, ...notes.tampered.filter((t) => t.sources === undefined && t.file !== ".warden/lock.json").map((t) => t.file)])];
+            return `revert your change to ${[...new Set(others.map((t) => t.file))].join(", ")}.`;
+        const files = [...new Set([...sources, ...others.filter((t) => t.sources === undefined && t.file !== ".warden/lock.json").map((t) => t.file)])];
         return `revert your change to ${files.join(", ")}, then run warden compile.`;
     }
     if ((notes.unstaged ?? []).length > 0) {

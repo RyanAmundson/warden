@@ -2020,7 +2020,7 @@ describe("signed .warden changes", () => {
     expect(code).toBe(1);
     expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
     expect(out.match(/Next action:/g)).toHaveLength(1);
-    expect(out).toContain(`Next action: run git --literal-pathspecs restore --source=${git("rev-parse", "main").trim()} --staged --worktree -- '.warden/notes.txt' && git commit --allow-empty -m 'Restore .warden files changed without an allowed signature' to restore the .warden/ files changed without an allowed signature to the merge base, then run warden check again.`);
+    expect(out).toContain(`Next action: run git --literal-pathspecs restore --source=${git("rev-parse", "main").trim()} --staged --worktree -- '.warden/notes.txt' && git --literal-pathspecs commit --only --allow-empty -m 'Restore .warden files changed without an allowed signature' -- '.warden/notes.txt' to restore the .warden/ files changed without an allowed signature to the merge base, then run warden check again.`);
     await follow(out);
     expect((await check()).code).toBe(0);
     expect(await read(".warden/notes.txt")).toBe("one\n");
@@ -2056,7 +2056,8 @@ describe("signed .warden changes", () => {
     const { code, out } = await check();
     expect(code).toBe(1);
     expect(out.match(/Next action:/g)).toHaveLength(1);
-    expect(out).toContain(`Next action: run git --literal-pathspecs stash push -u -- '.warden/notes.txt' && git --literal-pathspecs restore --source=${git("rev-parse", "main").trim()} `);
+    expect(out).toContain(`Next action: run git --literal-pathspecs restore --source=${git("rev-parse", "main").trim()} `);
+    expect(out).not.toContain("stash");
     expect(sha).not.toBe(git("rev-parse", "main").trim());
     await follow(out);
     expect((await check()).code).toBe(0);
@@ -2155,13 +2156,12 @@ describe("signed .warden changes", () => {
     expect((await check({}, false)).code).toBe(0);
   });
 
-  it("an untracked file in a path the restore brings back is stashed, so the restore applies", async () => {
+  it("an untracked file in a path the restore brings back is replaced by the merge-base content", async () => {
     git("rm", "-q", ".warden/notes.txt");
     git("commit", "-q", "-m", "delete notes");
     await write(".warden/notes.txt", "local\n");
     const { code, out } = await check({}, false);
     expect(code).toBe(1);
-    expect(out).toContain("git --literal-pathspecs stash push -u -- '.warden/notes.txt' && ");
     await follow(out);
     expect((await check({}, false)).code).toBe(0);
     expect(await read(".warden/notes.txt")).toBe("one\n");
@@ -2220,17 +2220,116 @@ describe("signed .warden changes", () => {
     expect((await check({}, false)).code).toBe(0);
   });
 
-  it("a staged change outside .warden is stashed, so the restore commit holds only the restore", async () => {
+  it("a staged change outside .warden stays staged and out of the restore commit", async () => {
     await write(".warden/notes.txt", "evil\n");
     git("commit", "-q", "-am", "c1 unsigned");
     await write("a.ts", "const a = 9;\n");
     git("add", "a.ts");
     const { code, out } = await check({}, false);
     expect(code).toBe(1);
-    expect(out).toContain("git --literal-pathspecs stash push -u -- 'a.ts' && ");
+    expect(out).not.toContain("stash");
     await follow(out);
     expect(git("diff", "--name-only", "HEAD~1", "HEAD").trim()).toBe(".warden/notes.txt");
+    expect(git("diff", "--cached", "--name-only").trim()).toBe("a.ts");
     expect((await check({}, false)).code).toBe(0);
+  });
+
+  const hookCommit = async (message: string): Promise<string> => {
+    const r = spawnSync("git", ["commit", "-m", message], { cwd: root, env: await commitEnv(), encoding: "utf8" });
+    expect(r.status).not.toBe(0);
+    return `${r.stdout}${r.stderr}`;
+  };
+
+  it("an untracked pack file beside an unsigned change is named first, and the restore after it is accepted by the hook", async () => {
+    await write(".warden/notes.txt", "evil\n");
+    git("commit", "-q", "-am", "c1 unsigned");
+    await write(".warden/packs/local/extra.yaml", "x: 1\n");
+    const first = await check({}, false);
+    expect(first.code).toBe(1);
+    expect(first.out.match(/Next action:/g)).toHaveLength(1);
+    expect(first.out).toContain("Next action: revert your change to .warden/packs/local/extra.yaml.");
+    await rm(join(root, ".warden/packs/local/extra.yaml"));
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    await follow(out);
+    expect((await check({}, false)).code).toBe(0);
+  });
+
+  it("a partial staged restore refused by the hook gets a hook action that restores every unsigned path", async () => {
+    await write(".warden/notes.txt", "evil\n");
+    await write(".warden/b.txt", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "two unsigned");
+    git("restore", "--source=main", "--staged", "--worktree", "--", ".warden/notes.txt");
+    const refused = await hookCommit("partial");
+    expect(refused).toContain("TAMPERED .warden/b.txt  unsigned");
+    expect(refused).toContain("-- '.warden/b.txt' '.warden/notes.txt' to restore");
+    await follow(refused);
+    expect((await check({}, false)).code).toBe(0);
+    expect(existsSync(join(root, ".warden/b.txt"))).toBe(false);
+  });
+
+  it("a staged git rm of an unsigned added file gets a restore that commits the deletion", async () => {
+    await write(".warden/b.txt", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "add b unsigned");
+    git("rm", "-q", ".warden/b.txt");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    await follow(out);
+    expect((await check({}, false)).code).toBe(0);
+    expect(git("stash", "list")).toBe("");
+  });
+
+  it("the hook's action after a staged git rm under .warden works", async () => {
+    await write(".warden/b.txt", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "add b unsigned");
+    await write(".warden/notes.txt", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "notes unsigned");
+    git("rm", "-q", ".warden/b.txt");
+    await follow(await hookCommit("undo b"));
+    expect((await check({}, false)).code).toBe(0);
+  });
+
+  it("a staged deletion outside .warden stays staged while the restore commits", async () => {
+    await write(".warden/notes.txt", "evil\n");
+    git("commit", "-q", "-am", "c1 unsigned");
+    git("rm", "-q", "a.ts");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    await follow(out);
+    expect(git("status", "--short")).toContain("D  a.ts");
+    const after = await check({}, false);
+    if (after.code !== 0) {
+      expect(after.out).toContain("Next action: run git add -- '.warden/baseline.json', then run warden check --base main.");
+      git("add", "--", ".warden/baseline.json");
+    }
+    expect((await check({}, false)).code).toBe(0);
+  });
+
+  it("an unsigned commit that also raises the baseline gets a restore that includes the baseline", async () => {
+    const before = await read(".warden/baseline.json");
+    await write(".warden/notes.txt", "evil\n");
+    await write(".warden/baseline.json", `${JSON.stringify({ ...JSON.parse(before), "local/no-broken": { "a.ts": 5 } }, null, 2)}\n`);
+    git("add", "-A");
+    git("commit", "-q", "-m", "raise");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    expect(out).toContain("-- '.warden/baseline.json' '.warden/notes.txt' to restore");
+    await follow(out);
+    expect(await read(".warden/baseline.json")).toBe(before);
+    expect((await check({}, false)).code).toBe(0);
+  });
+
+  it("an unsigned change under a case variant of .warden is unsigned where git ignores case", async () => {
+    git("config", "core.ignorecase", "true");
+    const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: root, input: "x: 1\n", encoding: "utf8" }).trim();
+    git("update-index", "--add", "--cacheinfo", `100644,${blob},.WARDEN/packs/local/extra.yaml`);
+    git("commit", "-q", "-m", "case variant");
+    expect((await check({}, false)).code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: ".WARDEN/packs/local/extra.yaml", detail: "unsigned" });
   });
 
   it("Warden's pre-commit hook still refuses a staged unsigned .warden change over an unsigned commit", async () => {

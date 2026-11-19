@@ -8,7 +8,7 @@ import { LOCK_FORMAT, LOCK_PATH, bundledTools, canonicalJson, readLock, sha256 }
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
+import { checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, stageFile, stagedFiles, unstagedFiles, verifyBase } from "../runner/changed.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
 import { formatFeedback } from "../runner/feedback.js";
@@ -282,9 +282,11 @@ const check = async (opts, live) => {
                 selected.add(g.id);
     const lintChosen = chosen.some((g) => g.kind === "lint");
     const guardrails = selectGuardrails(set, undefined).filter((g) => (lintChosen && g.kind === "lint") || selected.has(g.id));
-    const scanned = scannedFiles(root, base, opts.paths);
+    const listed = scannedFiles(root, base, opts.paths);
+    const unstaged = new Set(tier === "commit" ? unstagedFiles(root) : []);
+    const committing = opts.trigger === "git-commit" ? new Set(stagedFiles(root)) : undefined;
+    const scanned = committing === undefined ? listed : listed.filter((f) => committing.has(f) || !unstaged.has(f));
     if (tier === "commit") {
-        const unstaged = new Set(unstagedFiles(root));
         const differing = scanned.filter((f) => unstaged.has(f));
         if (differing.length > 0) {
             const notes = { unstaged: differing, base };
