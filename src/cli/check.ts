@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { basename, join, relative, resolve, sep } from "node:path";
 import { hookTriggers } from "../adapters/claude.js";
 import { PARSE_ERROR, type RunContext, type RunResult, type Violation } from "../adapters/types.js";
 import { wardenVersion } from "../compiler/compile.js";
@@ -9,7 +9,7 @@ import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import type { Guardrail, Kind, RecordSet, Tier } from "../records/types.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, projectFiles, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
+import { checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, stageFile, stagedFiles, unstagedFiles, verifyBase } from "../runner/changed.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { type Evidence, LOOP_TAIL_BYTES, type Outcome, RUN_TOTAL, type RunFailure, type Step, type Trigger, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
 import { type Format, type Notes, type Repeated, formatFeedback } from "../runner/feedback.js";
@@ -286,7 +286,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
     throw new RecordError(first.file, `/guardrails/${first.record}/implementation`, first.message);
   }
 
-  const tampered = await findTampering(set, opts.wardenRoot, base);
+  const tampered = await findTampering(set, opts.wardenRoot, base, opts.trigger === "git-commit");
   if (tampered.length > 0) {
     for (const t of tampered) appendEvidence(project, { at, kind: "tampered", file: t.file, detail: t.detail, guardrail: t.guardrail });
     closeStep(live, "fail");
@@ -319,9 +319,13 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   if (guardrailsOf(set, "eslint:warden/no-comments").some((g) => selected.has(g.id))) for (const g of directives) if (g.runs.includes(tier)) selected.add(g.id);
   const lintChosen = chosen.some((g) => g.kind === "lint");
   const guardrails = selectGuardrails(set, undefined).filter((g) => (lintChosen && g.kind === "lint" && !wholeTree(g)) || selected.has(g.id));
-  const scanned = scannedFiles(root, base, opts.paths);
+  const listed = scannedFiles(root, base, opts.paths);
+  const unstaged = new Set(tier === "commit" ? unstagedFiles(root) : []);
+  const index = process.env.GIT_INDEX_FILE;
+  const onlyCommit = opts.trigger === "git-commit" && index !== undefined && !["index", "index.lock"].includes(basename(index));
+  const committing = onlyCommit ? new Set(stagedFiles(root)) : undefined;
+  const scanned = committing === undefined ? listed : listed.filter((f) => committing.has(f) || !unstaged.has(f));
   if (tier === "commit") {
-    const unstaged = new Set(unstagedFiles(root));
     const differing = scanned.filter((f) => unstaged.has(f));
     if (differing.length > 0) {
       const notes = { unstaged: differing, base };
@@ -374,7 +378,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
         ].filter((f) => f !== "");
   const wide = applyBaseline(wholeProject, narrow.next, judged, exists, touched);
   const failures = [...narrow.failures, ...wide.failures];
-  if (tier !== "edit" && canonicalJson(wide.next) !== canonicalJson(baseline)) {
+  if (tier !== "edit" && !onlyCommit && canonicalJson(wide.next) !== canonicalJson(baseline)) {
     writeBaseline(root, wide.next);
     if (tier === "commit") {
       stageFile(root, BASELINE_PATH);

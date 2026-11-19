@@ -78,7 +78,10 @@ export async function loadView(root: string, wardenRoot: string): Promise<ViewMo
 export interface Size {
   cols: number;
   rows: number;
+  plain?: boolean;
 }
+
+const runCheck = (size: Size): string => (size.plain === true ? "run warden check" : "press r to run warden check");
 
 interface Shown {
   record?: Evidence;
@@ -126,8 +129,17 @@ const wrap = (text: string, width: number, most: number): string[] => {
 const count = (n: number): string => n.toLocaleString("en-US");
 
 const header = (model: ViewModel, hints: string[], width: number): string => {
-  const left = ` WARDEN  ${model.project} · base ${model.base} · v${model.version}`;
-  return spread(left, hints.find((h) => left.length + 1 + h.length <= width) ?? (hints.at(-1) as string), width);
+  const name = ` WARDEN  ${model.project}`;
+  const lefts = [`${name} · base ${model.base} · v${model.version}`, `${name} · v${model.version}`, name];
+  const keyed = hints.filter((h) => h.startsWith("q quit  r rerun"));
+  const rest = hints.filter((h) => !keyed.includes(h));
+  const fits = (left: string, h: string): boolean => left.length + 1 + h.length <= width;
+  for (const left of lefts) {
+    const h = keyed.find((k) => fits(left, k));
+    if (h !== undefined) return spread(left, h, width);
+  }
+  const left = lefts[0] as string;
+  return spread(left, rest.find((h) => fits(left, h)) ?? (rest.at(-1) as string), width);
 };
 
 const DETAIL = 25;
@@ -203,11 +215,11 @@ const verdictCell = (e: Evidence): string => {
   return e.outcome === "ran" ? "? no result recorded" : `· ${e.outcome ?? ""}`;
 };
 
-const footer = (shown: Shown | undefined, live: boolean): string => {
-  if (shown?.interrupted === true) return " Next action: press r to run warden check";
+const footer = (shown: Shown | undefined, live: boolean, size: Size): string => {
+  if (shown?.interrupted === true) return ` Next action: ${runCheck(size)}`;
   if (live) return " Running warden check…";
   const record = shown?.record;
-  if (record === undefined) return " Next action: press r to run warden check";
+  if (record === undefined) return ` Next action: ${runCheck(size)}`;
   if (record.next !== undefined) return ` Next action: ${record.next}`;
   if (record.result === "pass") return " The last run passed; nothing to do.";
   if (record.outcome === "empty") return " The last run found no changed files; nothing to do.";
@@ -245,8 +257,8 @@ export function render(model: ViewModel, size: Size, selected: number): string[]
     const where = shown.record === undefined ? shown.steps.find((e) => e.files !== undefined) : shown.record;
     return [` NOW  ${tier === "" ? "" : `${tier} `}check`, ...(where === undefined ? [] : [target(where)]), ...(trigger === undefined ? [] : [`triggered by ${TRIGGER[trigger] ?? trigger}`]), ...(shown.interrupted === true ? ["interrupted"] : []), ...(shown.record?.ms === undefined ? [] : [msText(shown.record.ms)])].join(" · ");
   })();
-  const top = [header(model, ["q quit  r rerun  l layers  v violations  d determinism", "q quit  r rerun  l  v  d", "q quit"], width), rule, clip(head, width), ...stepLines(shown, model.tools, width), ""];
-  const bottom = [rule, ...wrap(footer(shown, live), width, 3)];
+  const top = [header(model, ["q quit  r rerun  l layers  v violations  d determinism", "q quit  r rerun  l layers  v viol  d det", "l layers  v viol  d det", "q quit"], width), rule, clip(head, width), ...stepLines(shown, model.tools, width), ""];
+  const bottom = [rule, ...wrap(footer(shown, live, size), width, 3)];
   const room = Math.max(0, size.rows - top.length - bottom.length - 3);
   const ruleRows = Math.min(model.rules.length, Math.ceil(room / 2));
   const runRows = Math.max(0, room - ruleRows);
@@ -298,7 +310,7 @@ const LAYER_TEXT: Record<Kind, string> = {
 const DETERMINISTIC = new Set<Kind>(BANDS[0]?.kinds);
 
 export function renderLayers(model: ViewModel, size: Size): string[] {
-  const width = Math.max(40, size.cols);
+  const width = Math.max(20, size.cols);
   const rule = "─".repeat(width);
   const inner = width - 5;
   const boxed = (left: string, right = ""): string => ` │ ${spread(left, right, inner).padEnd(inner)} │`;
@@ -326,7 +338,7 @@ export function renderLayers(model: ViewModel, size: Size): string[] {
     weakest === undefined || DETERMINISTIC.has(weakest.strongestKind)
       ? " Weakest practice: none. Every practice is held by a deterministic rule."
       : ` Weakest practice: ${weakest.practice}, held only by ${weakest.strongestKind}. Next action: add a type, lint, or runtime Guardrail to ${weakest.practice}`;
-  const top = [header(model, ["q quit  r rerun  l runs  v violations  d determinism", "q quit  r rerun  l  v  d", "q quit"], width), rule, spread(" LAYERS  strongest first · a rule can only move up", "rules  proven", width - 1)];
+  const top = [header(model, ["q quit  r rerun  l runs  v violations  d determinism", "q quit  r rerun  l runs  v viol  d det", "l runs  v viol  d det", "q quit"], width), rule, spread(" LAYERS  strongest first · a rule can only move up", "rules  proven", width - 1)];
   const bottom = [clip(` PACKS   ${packs}`, width), rule, ...wrap(verdict, width, 3)];
   const room = Math.max(0, size.rows - top.length - bottom.length);
   return [...top, ...body.slice(0, room), ...bottom].map((l) => visible(l).trimEnd());
@@ -337,7 +349,7 @@ const MIN_BAR = 8;
 const LEGEND = [" █ baselined, allowed until touched", " ▓ new in the last run, blocking"];
 
 export function renderViolations(model: ViewModel, size: Size): string[] {
-  const width = Math.max(40, size.cols);
+  const width = Math.max(20, size.cols);
   const rule = "─".repeat(width);
   const runs = runRecords(model.evidence);
   const baselined = new Map(model.rules.map((r) => [r.guardrail, r.baselined]));
@@ -362,7 +374,7 @@ export function renderViolations(model: ViewModel, size: Size): string[] {
   };
   const latest = packs.filter((p) => (p.fresh ?? 0) > 0 && p.run !== undefined).map((p) => p.run as Evidence).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1);
   const capped = packs.some((p) => (p.run?.failures ?? []).length >= MAX_RECORDED_FAILURES);
-  const next = runs.length === 0 ? " Next action: press r to run warden check" : latest?.next === undefined ? "" : ` Next action: ${latest.next}`;
+  const next = runs.length === 0 ? ` Next action: ${runCheck(size)}` : latest?.next === undefined ? "" : ` Next action: ${latest.next}`;
   const legend = (width >= LEGEND.join("  ").length ? [LEGEND.join("  ")] : LEGEND).map((l) => clip(l, width));
   const partial = capped ? wrap(` New counts are the first ${MAX_RECORDED_FAILURES} failures a run records.`, width, 2) : [];
   const action = next === "" ? [] : wrap(next, width, 3);
@@ -380,7 +392,7 @@ export function renderViolations(model: ViewModel, size: Size): string[] {
     const bar = b + n === 0 ? "▏" : `${"█".repeat(b)}${"▓".repeat(n)}`;
     return clip(`${` ${clip(r.label, chosen.labelW).padEnd(chosen.labelW)} ${bar}`.padEnd(width - chosen.right("", "", "").length)}${chosen.right(count(r.old), newText(r.fresh), r.last)}`, width);
   });
-  const top = [header(model, ["q quit  r rerun  v back  d determinism", "q quit  r rerun  v  d", "q quit"], width), rule, clip(`${" VIOLATIONS BY PACK".padEnd(width - chosen.right("", "", "").length)}${chosen.right("baselined", "new", "last run")}`, width)];
+  const top = [header(model, ["q quit  r rerun  v back  d determinism", "q quit  r rerun  v back  d det", "v back  d det", "q quit"], width), rule, clip(`${" VIOLATIONS BY PACK".padEnd(width - chosen.right("", "", "").length)}${chosen.right("baselined", "new", "last run")}`, width)];
   const kept = body.length > room ? Math.max(0, room - 1) : body.length;
   const hidden = body.length - kept;
   const note = ` ${hidden} pack${hidden === 1 ? "" : "s"} hidden.${action.length === 0 ? " Next action: run warden --violations | cat" : ""}`;
@@ -412,7 +424,7 @@ const segments = (counts: number[], scale: number, barW: number): number[] => {
 };
 
 export function renderDeterminism(model: ViewModel, size: Size): string[] {
-  const width = Math.max(40, size.cols);
+  const width = Math.max(20, size.cols);
   const rule = "─".repeat(width);
   const projects = [...model.projects].sort((a, b) => Number(b.project === model.project) - Number(a.project === model.project) || a.project.localeCompare(b.project));
   const rows = projects.map((p) => ({ label: visible(`${p.project === model.project ? "▸" : " "} ${p.project}`), counts: p.run === undefined ? undefined : bandCounts(p.run) }));
@@ -449,7 +461,7 @@ export function renderDeterminism(model: ViewModel, size: Size): string[] {
   const nonDet = rows.flatMap((r) => (r.counts === undefined ? [] : [{ label: r.label.slice(2), n: known(r.counts) - det(r.counts), total: r.counts.reduce((a, b) => a + b, 0) }])).sort((a, b) => b.n - a.n)[0];
   const ran = rows.some((r) => r.counts !== undefined);
   const verdict = !ran
-    ? " No project has a completed run. Next action: press r to run warden check"
+    ? ` No project has a completed run. Next action: ${runCheck(size)}`
     : nonDet === undefined || nonDet.n === 0
       ? " No project has a judgment or prose failure in its last completed run."
       : ` Most non-deterministic failures: ${nonDet.label}, ${count(nonDet.n)} of ${count(nonDet.total)} in its last completed run.`;
@@ -470,15 +482,15 @@ export function renderDeterminism(model: ViewModel, size: Size): string[] {
   return [...top, ...shown, ...bottom].map((l) => visible(l).trimEnd());
 }
 
-const plain = (lines: string[]): string => `${lines.join("\n").replaceAll("press r to run warden check", "run warden check")}\n`;
+const plain = (lines: string[]): string => `${lines.join("\n")}\n`;
 
-export const plainDeterminism = (model: ViewModel, cols = 80): string => plain(renderDeterminism(model, { cols, rows: 200 }));
+export const plainDeterminism = (model: ViewModel, cols = 80): string => plain(renderDeterminism(model, { plain: true, cols, rows: 200 }));
 
-export const plainViolations = (model: ViewModel, cols = 80): string => plain(renderViolations(model, { cols, rows: 200 }));
+export const plainViolations = (model: ViewModel, cols = 80): string => plain(renderViolations(model, { plain: true, cols, rows: 200 }));
 
-export const plainLayers = (model: ViewModel, cols = 80): string => plain(renderLayers(model, { cols, rows: 60 }));
+export const plainLayers = (model: ViewModel, cols = 80): string => plain(renderLayers(model, { plain: true, cols, rows: 60 }));
 
-export const plainView = (model: ViewModel, cols = 80): string => plain(render(model, { cols, rows: 40 }, 0));
+export const plainView = (model: ViewModel, cols = 80): string => plain(render(model, { plain: true, cols, rows: 40 }, 0));
 
 export const ENTER = "\x1b[?1049h\x1b[?25l";
 

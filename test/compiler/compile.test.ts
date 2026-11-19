@@ -80,7 +80,7 @@ describe("compile", () => {
     expect(Array.isArray(rules.entries)).toBe(true);
     const lock = readLock(root);
     expect(Object.keys(lock.generated)).toEqual([".warden/generated/eslint.rules.json", ".warden/generated/hooks/pre-commit"]);
-    expect(Object.keys(lock.sources).sort()).toEqual([".warden/config.yaml", ...(await readdir(join(wardenRoot, "packs/core/fixtures"))).map((f) => `packs/core/fixtures/${f}`).sort(), "packs/core/pack.yaml"]);
+    expect(Object.keys(lock.sources).sort()).toEqual([".warden/config.yaml", "allowed_signers", ...(await readdir(join(wardenRoot, "packs/core/fixtures"))).map((f) => `packs/core/fixtures/${f}`).sort(), "packs/core/pack.yaml"]);
     expect(lock.guardrails["warden-no-comments"]).toEqual({
       kind: "lint",
       budgetMs: 5000,

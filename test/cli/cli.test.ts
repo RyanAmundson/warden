@@ -274,7 +274,13 @@ describe("warden CLI", () => {
     expect(r.code).toBe(2);
     expect(r.err).toContain("Next action: run warden init --base origin/main");
     expect(warden("init", "--base", "origin/main").code).toBe(0);
-    await adoptedBase("origin/main");
+    expect(await readFile(join(root, ".warden/config.yaml"), "utf8")).toContain('base: "origin/main"');
+    git("add", "-A");
+    git("commit", "-q", "-m", "adopt");
+    const adopted = warden("check", "--base", "origin/main");
+    expect(adopted.err).toBe("");
+    expect(adopted.code).toBe(1);
+    expect(adopted.out).toContain("Next action: run git --literal-pathspecs restore --source=");
     expect(execFileSync("git", ["branch", "--list"], { cwd: root, encoding: "utf8" }).replace(/[* ]/g, "").split("\n").filter(Boolean)).toEqual(["feat"]);
   });
 
@@ -745,7 +751,7 @@ describe("warden CLI", () => {
     init();
     const r = warden("--violations");
     expect(r.code, r.err).toBe(0);
-    expect(r.out).toMatch(/^ WARDEN .* (v back {2}d determinism|v {2}d)\n/);
+    expect(r.out).toMatch(/^ WARDEN .* v back {2}d (determinism|det)\n/);
     expect(r.out).toMatch(/\n VIOLATIONS BY PACK +baselined +new +last run\n/);
     expect(r.out).toMatch(/\n core +█+ +1 +– *\n/);
     expect(r.out).toMatch(/\n {3}warden-no-comments +█+ +1 +– *\n/);
