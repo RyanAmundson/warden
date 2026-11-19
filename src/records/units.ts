@@ -1,14 +1,10 @@
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { pathToFileURL } from "node:url";
 import { projectFiles } from "../runner/baseline.js";
 import { matchesPath } from "./paths.js";
-import type { RecordSet } from "./types.js";
+import type { RecordSet, UnitDeclaration } from "./types.js";
 
-export interface Unit {
-  id: string;
-  term?: string;
-  kind: string;
-  folder: string;
+export interface Unit extends UnitDeclaration {
   document: string;
 }
 
@@ -23,7 +19,11 @@ interface ArchitectureGroups {
   kebab(id: string): string;
 }
 
-export async function deriveUnits(set: RecordSet, wardenRoot: string): Promise<Unit[]> {
+export async function loadUnits(set: RecordSet, wardenRoot: string): Promise<Unit[]> {
+  const { units: declared, unitKinds } = set.config;
+  if (declared !== undefined) {
+    return declared.map((unit) => ({ ...unit, document: posix.join(unit.folder, unitKinds![unit.kind]!.document) }));
+  }
   const architecture = set.config.packs.find((pack) => pack.id === "architecture");
   const collections = (architecture?.settings?.groupCollections ?? []) as Collection[];
   if (architecture === undefined || collections.length === 0) return [];

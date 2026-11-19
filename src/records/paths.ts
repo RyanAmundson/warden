@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { matchesGlob } from "node:path";
 
 export const pathGroups = (practicePaths: string[], configPaths: string[]): string[][] => {
@@ -44,3 +45,15 @@ export const folderOf = (glob: string): string | undefined => {
 };
 
 export const backslashFix = (glob: string): string => glob.replace(/\\([[\]])|\\/g, (_, c: string | undefined) => (c === "[" ? "[[]" : (c ?? "")));
+
+
+export function ignoresPathCase(root: string): boolean {
+  try {
+    return execFileSync("git", ["config", "--bool", "--get", "core.ignorecase"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim() === "true";
+  } catch (cause) {
+    if ((cause as { status?: number }).status === 1) return false;
+    throw cause;
+  }
+}
+
+export const pathCaseKey = (path: string, ignoreCase: boolean): string => ignoreCase ? path.normalize("NFC").toLowerCase() : path;

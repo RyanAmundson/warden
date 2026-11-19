@@ -18,6 +18,7 @@ import { DEFAULT_PORT, installDaemon, runDaemon, uninstallDaemon } from "./daemo
 import { runDispute } from "./dispute.js";
 import { runExplain } from "./explain.js";
 import { runDoctor, runInit } from "./init.js";
+import { runNewUnit } from "./new-unit.js";
 import { runPacks } from "./packs.js";
 import { runReport } from "./report.js";
 import { type ReviewOptions, reviewOptions, runBrief, runTriage } from "./review.js";
@@ -121,6 +122,15 @@ program
 program.command("where <term-unit-or-path>").description("locate a Unit and its document").action(async (query: string) => {
   process.exitCode = await runWhere(root(), findWardenRoot(), query);
 });
+
+program.command("new").description("scaffold Warden records")
+  .command("unit <id> <folder>")
+  .description("create a Unit record and its required document")
+  .requiredOption("--kind <kind>", "Unit kind declared in .warden/config.yaml")
+  .option("--term <term>", "Term that also identifies the Unit")
+  .action(async (id: string, folder: string, { kind, term }: { kind: string; term?: string }) => {
+    process.exitCode = await runNewUnit(root(), findWardenRoot(), { id, folder, kind, ...(term === undefined ? {} : { term }) });
+  });
 
 program.command("explain <id>").description("explain a Practice or Guardrail").action(async (id: string) => {
   process.exitCode = await runExplain(root(), findWardenRoot(), id);

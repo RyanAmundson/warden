@@ -65,10 +65,24 @@ export interface Pack {
   settings?: Record<string, unknown>;
 }
 
+export interface UnitDeclaration {
+  id: string;
+  kind: string;
+  folder: string;
+  term?: string;
+}
+
+export interface UnitKind {
+  document: string;
+  sections: string[];
+}
+
 export interface ProjectConfig {
   project: string;
   base: string;
   packs: { id: string; paths: string[]; settings?: Record<string, unknown> }[];
+  unitKinds?: Record<string, UnitKind>;
+  units?: UnitDeclaration[];
   tierBudgetMs: Record<Tier, number>;
   loopBreakerRepeats: number;
   bench?: Partial<BenchSettings>;
@@ -91,4 +105,5 @@ export interface RecordSet {
   config: ProjectConfig;
   packs: Pack[];
   root: string;
+  unitIgnoreCase?: boolean;
 }

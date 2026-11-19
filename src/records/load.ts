@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { Ajv, type ErrorObject } from "ajv";
 import { parse } from "yaml";
 import schema from "../../schema/records.schema.json" with { type: "json" };
-import { backslashFix } from "./paths.js";
+import { backslashFix, ignoresPathCase, pathCaseKey } from "./paths.js";
 import type { Pack, ProjectConfig, RecordSet } from "./types.js";
 
 export const findWardenRoot = (): string => {
@@ -84,6 +84,30 @@ function refuseBackslashes(file: string, pointer: string, paths: string[]): void
     if (!glob.includes("\\")) return;
     throw new RecordError(file, `${pointer}/${i}`, `path ${glob} holds a backslash, which Node's glob matcher does not read as an escape. Next action: write ${backslashFix(glob)} in place of ${glob} in ${file}, then run warden compile.`);
   });
+}
+
+export function validateUnits(file: string, config: ProjectConfig, packs: Pack[], ignoreCase: boolean): void {
+  const terms = new Set(packs.flatMap((pack) => pack.terms.map((term) => term.id)));
+  const ids = new Set<string>();
+  const folders = new Set<string>();
+  for (const [i, unit] of (config.units ?? []).entries()) {
+    const pointer = `/units/${i}`;
+    if (ids.has(unit.id)) throw new RecordError(file, `${pointer}/id`, `Unit ${unit.id} is declared more than once.`);
+    ids.add(unit.id);
+    const folder = unit.folder;
+    if (folder !== "." && (/[\\:\p{Cc}]/u.test(folder) || folder.split("/").some((part) => part === "" || part === "." || part === ".."))) {
+      throw new RecordError(file, `${pointer}/folder`, "Use a project-relative folder with forward slashes, or . for the project root.");
+    }
+    const key = pathCaseKey(folder, ignoreCase);
+    if (folders.has(key)) throw new RecordError(file, `${pointer}/folder`, `Folder ${folder} already has a Unit.`);
+    folders.add(key);
+    if (!Object.hasOwn(config.unitKinds ?? {}, unit.kind)) {
+      throw new RecordError(file, `${pointer}/kind`, `Define Unit kind ${unit.kind} under unitKinds in ${file}.`);
+    }
+    if (unit.term !== undefined && !terms.has(unit.term)) {
+      throw new RecordError(file, `${pointer}/term`, `Unit ${unit.id} names undeclared Term ${unit.term}.`);
+    }
+  }
 }
 
 export function parseConfig(file: string, text: string): ProjectConfig {
@@ -175,5 +199,7 @@ export async function loadRecords(projectRoot: string, wardenRoot: string): Prom
     if (settings !== undefined) entry.settings = settings;
     packs.push(pack);
   }
-  return { config, packs: packs.sort((a, b) => a.layer - b.layer), root: projectRoot };
+  const unitIgnoreCase = config.units !== undefined && ignoresPathCase(projectRoot);
+  validateUnits(configFile, config, packs, unitIgnoreCase);
+  return { config, packs: packs.sort((a, b) => a.layer - b.layer), root: projectRoot, ...(unitIgnoreCase ? { unitIgnoreCase } : {}) };
 }

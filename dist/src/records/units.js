@@ -1,8 +1,12 @@
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { pathToFileURL } from "node:url";
 import { projectFiles } from "../runner/baseline.js";
 import { matchesPath } from "./paths.js";
-export async function deriveUnits(set, wardenRoot) {
+export async function loadUnits(set, wardenRoot) {
+    const { units: declared, unitKinds } = set.config;
+    if (declared !== undefined) {
+        return declared.map((unit) => ({ ...unit, document: posix.join(unit.folder, unitKinds[unit.kind].document) }));
+    }
     const architecture = set.config.packs.find((pack) => pack.id === "architecture");
     const collections = (architecture?.settings?.groupCollections ?? []);
     if (architecture === undefined || collections.length === 0)

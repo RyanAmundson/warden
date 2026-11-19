@@ -2,7 +2,7 @@
 
 Warden is a guardrail compiler. It turns a project's records in `.warden/`
 into tool configs, a lock, and checks that run at each edit, commit, and
-boundary. Warden writes only under `.warden/` in a project.
+boundary. Warden stores configuration and generated controls under `.warden/`.
 
 ## Install
 
@@ -170,10 +170,35 @@ Codex asks you to review the plugin's hooks before they run. Once trusted:
 - A missing or older global `warden` blocks patches and commits with the
   install command, as in Claude Code.
 
-With the architecture pack enabled, `warden where <term-or-path>` looks up
-the owning group and its expected `CONTRACT.md` from the declared group
-collections. You can also pass the group folder name. A path resolves to the
-nearest group, and can point to a file you are about to create.
+## Unit records
+
+Declare Unit kinds and Unit ownership in `.warden/config.yaml`. A kind fixes the
+document name and section order. A Unit names the kind and owns a project-relative
+folder. Use `.` for the project root and nest Units to give a subfolder a more
+specific owner. A Unit can also name a Term from an enabled pack.
+
+```yaml
+unitKinds:
+  contract:
+    document: CONTRACT.md
+    sections: [Purpose, Owns, Interfaces, Invariants]
+units:
+  - id: core
+    kind: contract
+    folder: src/core
+```
+
+`warden where <term-or-unit-or-path>` prints the Unit ID and document path.
+Paths resolve to the nearest enclosing Unit, including paths to files you
+are about to create. Projects that omit `units` continue to look up groups
+and their `CONTRACT.md` files from the architecture pack's group collections.
+
+To scaffold a Unit and its required document together, run
+`warden new unit metrics src/metrics --kind contract`. The command appends
+the record to `units` and creates `src/metrics/CONTRACT.md` with sections in
+the declared order. It refuses to overwrite a document. Add `units: []` for
+a project starting without any declared Units. Run `warden compile` after
+adding a Unit record, then sign the commit that changes `.warden/`.
 
 ## Git pre-commit hook
 
