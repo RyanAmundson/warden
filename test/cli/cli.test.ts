@@ -749,7 +749,7 @@ describe("warden CLI", () => {
     expect(r.out).toMatch(/\n VIOLATIONS BY PACK +baselined +new +last run\n/);
     expect(r.out).toMatch(/\n core +█+ +1 +– *\n/);
     expect(r.out).toMatch(/\n {3}warden-no-comments +█+ +1 +– *\n/);
-    expect(r.out).toContain(" Next action: press r to run warden check");
+    expect(r.out).toContain(" Next action: run warden check");
     expect(r.out).not.toContain("\x1b");
     await rm(join(root, ".warden/baseline.json"));
     const bare = warden("--violations");
@@ -769,7 +769,7 @@ describe("warden CLI", () => {
     const before = warden("--determinism");
     expect(before.code, before.err).toBe(0);
     expect(before.out).toMatch(/\n ▸ \S+ +no completed run yet\n/);
-    expect(before.out).toContain(" No project has a completed run. Next action: press r to run warden check");
+    expect(before.out).toContain(" No project has a completed run. Next action: run warden check");
     await writeFile(join(root, "src/add.ts"), "// eslint-disable-next-line\nexport const add = (a: number, b: number) => a + b;\n");
     expect(warden("check", "--base", "main").code).toBe(1);
     const run = (await readFile(join(home, "evidence", `${project}.jsonl`), "utf8")).trim().split("\n").map((l) => JSON.parse(l) as { guardrail?: string; outcome?: string; kinds?: Record<string, number> }).filter((e) => e.guardrail === "run").at(-1);

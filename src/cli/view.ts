@@ -358,12 +358,10 @@ export function renderViolations(model: ViewModel, size: Size): string[] {
   const latest = packs.filter((p) => (p.fresh ?? 0) > 0 && p.run !== undefined).map((p) => p.run as Evidence).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1);
   const capped = packs.some((p) => (p.run?.failures ?? []).length >= MAX_RECORDED_FAILURES);
   const next = runs.length === 0 ? " Next action: press r to run warden check" : latest?.next === undefined ? "" : ` Next action: ${latest.next}`;
-  const bottom = [
-    rule,
-    ...(width >= LEGEND.join("  ").length ? [LEGEND.join("  ")] : LEGEND).map((l) => clip(l, width)),
-    ...(capped ? wrap(` New counts are the first ${MAX_RECORDED_FAILURES} failures a run records.`, width, 2) : []),
-    ...(next === "" ? [] : wrap(next, width, 3)),
-  ];
+  const legend = (width >= LEGEND.join("  ").length ? [LEGEND.join("  ")] : LEGEND).map((l) => clip(l, width));
+  const partial = capped ? wrap(` New counts are the first ${MAX_RECORDED_FAILURES} failures a run records.`, width, 2) : [];
+  const action = next === "" ? [] : wrap(next, width, 3);
+  const bottom = [[rule, ...legend, ...partial, ...action], [rule, ...legend, ...action], [rule, ...action], action].find((b) => 4 + b.length <= size.rows) ?? action;
   const room = Math.max(0, size.rows - 3 - bottom.length);
   const fallback = layout(false, false);
   const chosen = [layout(true, true), layout(false, true), fallback].find((l) => l.bar >= MIN_BAR && l.rows.length <= Math.max(room, packs.length)) ?? { ...fallback, labelW: Math.max(1, fallback.labelW - MIN_BAR + fallback.bar), bar: MIN_BAR };
@@ -380,8 +378,11 @@ export function renderViolations(model: ViewModel, size: Size): string[] {
   const top = [spread(` WARDEN  ${model.project} · base ${model.base} · v${model.version}`, "q quit  r rerun  v back  d determinism", width), rule, clip(`${" VIOLATIONS BY PACK".padEnd(width - chosen.right("", "", "").length)}${chosen.right("baselined", "new", "last run")}`, width)];
   const kept = body.length > room ? Math.max(0, room - 1) : body.length;
   const hidden = body.length - kept;
-  const shown = hidden > 0 ? [...body.slice(0, kept), clip(` ${hidden} pack${hidden === 1 ? "" : "s"} hidden. Next action: run warden --violations | cat`, width)] : body;
-  return [...top, ...shown, ...bottom].map((l) => visible(l).trimEnd());
+  const note = ` ${hidden} pack${hidden === 1 ? "" : "s"} hidden.${action.length === 0 ? " Next action: run warden --violations | cat" : ""}`;
+  const shown = hidden > 0 && room > 0 ? [...body.slice(0, kept), clip(note, width)] : hidden > 0 ? [] : body;
+  const lines = [...top, ...shown, ...bottom];
+  const fitted = lines.length <= size.rows ? lines : [...top.slice(0, Math.max(0, size.rows - action.length)), ...action].slice(0, size.rows);
+  return fitted.map((l) => visible(l).trimEnd());
 }
 
 const BAND_MARKS = ["█", "▒", "░"];
@@ -464,13 +465,15 @@ export function renderDeterminism(model: ViewModel, size: Size): string[] {
   return [...top, ...shown, ...bottom].map((l) => visible(l).trimEnd());
 }
 
-export const plainDeterminism = (model: ViewModel, cols = 80): string => `${renderDeterminism(model, { cols, rows: 200 }).join("\n")}\n`;
+const plain = (lines: string[]): string => `${lines.join("\n").replaceAll("press r to run warden check", "run warden check")}\n`;
 
-export const plainViolations = (model: ViewModel, cols = 80): string => `${renderViolations(model, { cols, rows: 200 }).join("\n")}\n`;
+export const plainDeterminism = (model: ViewModel, cols = 80): string => plain(renderDeterminism(model, { cols, rows: 200 }));
 
-export const plainLayers = (model: ViewModel, cols = 80): string => `${renderLayers(model, { cols, rows: 60 }).join("\n")}\n`;
+export const plainViolations = (model: ViewModel, cols = 80): string => plain(renderViolations(model, { cols, rows: 200 }));
 
-export const plainView = (model: ViewModel, cols = 80): string => `${render(model, { cols, rows: 40 }, 0).join("\n")}\n`;
+export const plainLayers = (model: ViewModel, cols = 80): string => plain(renderLayers(model, { cols, rows: 60 }));
+
+export const plainView = (model: ViewModel, cols = 80): string => plain(render(model, { cols, rows: 40 }, 0));
 
 export const ENTER = "\x1b[?1049h\x1b[?25l";
 

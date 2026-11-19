@@ -582,7 +582,8 @@ it("when even the pack rows do not fit, the last line says how many are hidden a
   const lines = renderViolations(fourPacks(), { cols: 120, rows: 8 });
   expect(lines.length).toBeLessThanOrEqual(8);
   expect(lines).toContainEqual(expect.stringMatching(/^ core /));
-  expect(lines).toContain(" 3 packs hidden. Next action: run warden --violations | cat");
+  expect(lines).toContain(" 3 packs hidden.");
+  expect(lines.filter((l) => l.includes("Next action:"))).toEqual([" Next action: press r to run warden check"]);
 });
 
 it("a long pack label is cut so its counts stay, and a small baselined count still draws a bar", () => {
@@ -742,4 +743,31 @@ it("at 40 columns seven-digit counts shorten so the last column still shows", ()
   expect(lines).toContainEqual(expect.stringMatching(/^ {3}trq-b\S* +[█▒░]+ +1\.2M +300k +4 +0$/));
   expect(lines).toContainEqual(expect.stringMatching(/^ {3}older +· +0 +0 +0 +1$/));
   expect(renderDeterminism(big, { cols: 120, rows: 24 })).toContainEqual(expect.stringMatching(/ 1,234,567 +300,000 +4 +0 +80%$/));
+});
+
+const failingFourPacks = (): ViewModel => ({ ...fourPacks(), evidence: [{ ...counted, rules: { "core-rule-0": 1 }, failures: [{ file: "a.ts", line: 1, guardrail: "core-rule-0", practice: "p0" }] }] });
+
+it("with packs hidden and a failing run, the screen gives exactly one next action at every short height", () => {
+  for (let rows = 7; rows <= 9; rows += 1) {
+    const lines = renderViolations(failingFourPacks(), { cols: 120, rows });
+    expect(lines.filter((l) => l.includes("Next action:")), `${rows} rows`).toEqual([' Next action: change the code at the lines above to match "Do this"']);
+    expect(lines.join("\n"), `${rows} rows`).toMatch(/\d packs? hidden\./);
+  }
+});
+
+it("the violations screen never draws more lines than the terminal holds, and keeps its next action", () => {
+  for (const view of [failingFourPacks(), fourPacks()]) {
+    for (let rows = 1; rows <= 12; rows += 1) {
+      const lines = renderViolations(view, { cols: 120, rows });
+      expect(lines.length, `${rows} rows`).toBeLessThanOrEqual(rows);
+      expect(lines.filter((l) => l.includes("Next action:")), `${rows} rows`).toHaveLength(1);
+    }
+  }
+});
+
+it("plain output outside a terminal never tells the reader to press r", () => {
+  for (const out of [plainViolations(violated([])), plainDeterminism(model([])), plainView(model([]))]) {
+    expect(out).toContain("Next action: run warden check");
+    expect(out).not.toContain("press r");
+  }
 });
