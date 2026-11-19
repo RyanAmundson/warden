@@ -30,7 +30,7 @@ export async function guardrailIds(pack: string, paths: string): Promise<string[
   }
 }
 
-export async function bench(pack: string, paths: string, opts: { pack?: string; rule?: string }, { signal, onTestFinished }: TestContext): Promise<{ code: number; out: string }> {
+export async function bench(pack: string, paths: string, opts: { rule: string }, { signal, onTestFinished }: TestContext): Promise<{ code: number; out: string }> {
   let out = "";
   const spy = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
     out += String(chunk);
