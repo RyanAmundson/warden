@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { join, relative, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { RecordError } from "../records/load.js";
 import { pathGroups } from "../records/paths.js";
 import { benchSettings } from "../records/types.js";
@@ -36,6 +36,39 @@ export const packFiles = async (base, dir) => {
             return [];
         throw cause;
     }
+};
+export const scriptsOf = (root) => {
+    const file = join(root, "package.json");
+    if (!existsSync(file))
+        return {};
+    return JSON.parse(readFileSync(file, "utf8")).scripts ?? {};
+};
+const NPM_SCRIPT = /\bnpm\s+(?:run\s+([^\s;&|()<>`-][^\s;&|()<>`]*)|test(?![\w:-]))/g;
+export const PROJECT_SOURCE = "./";
+const SCRIPT = /\.(?:sh|bash|zsh|[cm]?js|[cm]?ts|jsx|tsx|py|rb|pl)$/;
+export const commandSources = (root, command, scripts = scriptsOf(root)) => {
+    const out = {};
+    let text = command;
+    for (const m of command.matchAll(NPM_SCRIPT)) {
+        const name = m[1] ?? "test";
+        const body = scripts[name];
+        if (typeof body !== "string")
+            continue;
+        out[`${PROJECT_SOURCE}package.json#scripts/${name}`] = body;
+        text += `\n${body}`;
+    }
+    for (const word of text.split(/[\s;&|()<>`]+/)) {
+        const path = word.replace(/["']/g, "").replace(/^[^=/]*=/, "");
+        if (path === "" || path.includes("$"))
+            continue;
+        const full = resolve(root, path);
+        const key = relative(root, full);
+        const stat = statSync(full, { throwIfNoEntry: false });
+        if (key === "" || key.startsWith("..") || isAbsolute(key) || stat?.isFile() !== true || !(SCRIPT.test(key) || (stat.mode & 0o111) !== 0))
+            continue;
+        out[`${PROJECT_SOURCE}${key.split(sep).join("/")}`] = readFileSync(full, "utf8");
+    }
+    return out;
 };
 export const LOCK_PATH = ".warden/lock.json";
 export const sha256 = (content) => createHash("sha256").update(content).digest("hex");

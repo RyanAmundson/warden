@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { targetOf } from "../adapters/pack-code.js";
 import { RecordError, loadRecords, readText } from "../records/load.js";
 import { BASELINE_PATH, measureBaseline, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { hasCommit, isRepository } from "../runner/changed.js";
@@ -9,7 +10,7 @@ import { admit } from "./bench.js";
 import { checkConsistency } from "./consistency.js";
 import { COMMIT_HOOK, commitHook, stamp } from "./emit.js";
 import { runExamples } from "./examples.js";
-import { LOCK_PATH, computeLock, packFiles, sha256 } from "./lock.js";
+import { LOCK_PATH, commandSources, computeLock, packFiles, scriptsOf, sha256 } from "./lock.js";
 const sourceFiles = async (set, projectRoot, wardenRoot) => {
     const out = {};
     const config = await readText(join(projectRoot, ".warden/config.yaml"));
@@ -24,6 +25,11 @@ const sourceFiles = async (set, projectRoot, wardenRoot) => {
             for (const key of await packFiles(base, dir))
                 out[key] = (await readText(join(base, key)));
         }
+    }
+    const scripts = scriptsOf(projectRoot);
+    for (const g of set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails))) {
+        if (g.implementation.startsWith("cmd:"))
+            Object.assign(out, commandSources(projectRoot, targetOf(g), scripts));
     }
     return out;
 };

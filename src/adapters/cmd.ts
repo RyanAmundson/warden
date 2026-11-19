@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { Worker } from "node:worker_threads";
 import { RecordError, findWardenRoot } from "../records/load.js";
 import type { Guardrail } from "../records/types.js";
+import { targetOf } from "./pack-code.js";
 import type { Adapter, RunContext, RunResult } from "./types.js";
 
 export interface Spawned {
@@ -122,30 +123,8 @@ export const PACK_VAR = /\$(?:\{WARDEN_PACK_DIR\}|WARDEN_PACK_DIR(?![A-Za-z0-9_]
 
 const shellWord = (path: string): string => (/^[\w./-]+$/.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`);
 
-export const withPackDir = (command: string, packDir: string | undefined): string => {
-  if (packDir === undefined) return command;
-  let out = "";
-  let quote: string | undefined;
-  for (let i = 0; i < command.length; ) {
-    const rest = command.slice(i);
-    const found = quote === "'" ? null : new RegExp(`^${PACK_VAR.source}`).exec(rest);
-    if (found !== null) {
-      out += quote === '"' ? packDir.replace(/["\\$`]/g, "\\$&") : shellWord(packDir);
-      i += found[0].length;
-      continue;
-    }
-    const c = command[i] as string;
-    if (c === "\\" && quote !== "'") {
-      out += rest.slice(0, 2);
-      i += 2;
-      continue;
-    }
-    if ((c === '"' || c === "'") && (quote === undefined || quote === c)) quote = quote === undefined ? c : undefined;
-    out += c;
-    i += 1;
-  }
-  return out;
-};
+export const withPackDir = (command: string, packDir: string | undefined): string =>
+  packDir === undefined || !new RegExp(PACK_VAR.source).test(command) ? command : `export ${PACK_DIR}=${shellWord(packDir)}; ${command}`;
 
 export const COMMAND_CHARS = 200;
 
@@ -155,7 +134,7 @@ export const brief = (command: string): string => {
 };
 
 export const runIt = (g: Guardrail): string => {
-  const command = withPackDir(g.implementation.slice(g.implementation.indexOf(":") + 1), g.packDir);
+  const command = withPackDir(targetOf(g), g.packDir);
   if (brief(command) === command.trim()) return `run \`${command}\` and fix what it reports.`;
   const where = g.packDir === undefined ? "" : ` in ${join(g.packDir, "pack.yaml")}, from the project root with ${PACK_DIR}=${g.packDir}`;
   return `run the implementation command of Guardrail ${g.id}${where}, and fix what it reports.`;
@@ -164,7 +143,7 @@ export const runIt = (g: Guardrail): string => {
 const tail = (output: string): string[] => output.trimEnd().split("\n").filter((l) => l !== "").slice(-OUTPUT_LINES);
 
 const runOne = async (g: Guardrail, ctx: RunContext): Promise<RunResult> => {
-  const run = g.implementation.slice(g.implementation.indexOf(":") + 1);
+  const run = targetOf(g);
   const command = withPackDir(run, g.packDir);
   const budgetMs = ctx.unbudgeted === true ? undefined : g.budgetMs;
   const env: Record<string, string> = g.packDir === undefined ? {} : { [PACK_DIR]: g.packDir };

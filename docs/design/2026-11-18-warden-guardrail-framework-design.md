@@ -276,10 +276,17 @@ A Guardrail's `implementation` names its adapter and the tool's own rule:
 `cmd:npm run check:canon`. An `options` field passes the tool's rule options
 through unchanged. A `cmd` command runs with `WARDEN_PACK_DIR` set to the
 folder of the Guardrail's pack, so a pack can ship a script and run it as
-`cmd:node "$WARDEN_PACK_DIR/check.js"`; failures and next actions show the
-command with the folder substituted and shell-quoted, `warden doctor` checks
-that each named pack file exists, and every file in a bundled or local pack's
-folder but `.DS_Store` is hashed into the lock. A `cmd` command that is
+`cmd:node "$WARDEN_PACK_DIR/check.js"`; failures and next actions print the
+command after `export WARDEN_PACK_DIR=<folder, shell-quoted>;`, so it runs as
+printed whatever its quoting, `warden doctor` checks that each named pack file
+exists, and every file in a bundled or local pack's folder but `.DS_Store` is
+hashed into the lock. The lock also hashes, under keys that start with `./`,
+every project script a `cmd` command names (a file with a script extension
+such as `.sh`, `.js`, `.ts`, or `.py`, or an executable file), and the text of each
+`npm run <script>` or `npm test` script it calls together with the project
+files that script names, one level deep. Editing one of those files without
+recompiling is source drift, and recompiling after the edit, or dropping the
+file from the command, is loosening. A `cmd` command that is
 only `node "$WARDEN_PACK_DIR/<script>"` and plain arguments, in a pack that
 Warden ships, runs the script in a worker thread inside Warden rather than a
 new Node process, and the budget stops the worker. The script sees the project

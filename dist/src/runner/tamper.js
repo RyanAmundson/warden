@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { expectedOutputs } from "../compiler/compile.js";
-import { LOCK_FORMAT, LOCK_PATH, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
+import { LOCK_FORMAT, LOCK_PATH, PROJECT_SOURCE, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError, readText } from "../records/load.js";
 import { kindRank } from "../records/types.js";
 import { BASELINE_PATH, carryRenames, projectWideEntries, readBaseline } from "./baseline.js";
@@ -121,7 +121,7 @@ const loosened = (root, base, lock) => {
         if (weaker)
             found.push({ file: LOCK_PATH, detail: "loosened", guardrail: id });
     }
-    const editedCode = Object.keys(before.sources ?? {}).filter((k) => /^\.warden\/packs\/[^/]+\/./.test(k) && !k.endsWith("/pack.yaml") && before.sources[k] !== lock.sources[k]);
+    const editedCode = Object.keys(before.sources ?? {}).filter((k) => ((/^\.warden\/packs\/[^/]+\/./.test(k) && !k.endsWith("/pack.yaml")) || k.startsWith(PROJECT_SOURCE)) && before.sources[k] !== lock.sources[k]);
     if (editedCode.length > 0)
         found.push({ file: LOCK_PATH, detail: "loosened" });
     const { renames } = changesSinceMergeBase(root, base);
@@ -136,7 +136,7 @@ const loosened = (root, base, lock) => {
                 found.push({ file: BASELINE_PATH, detail: "loosened", guardrail: id });
         }
     }
-    const sources = Object.keys({ ...before.sources, ...lock.sources }).filter((k) => k.startsWith(".warden/") && before.sources?.[k] !== lock.sources[k]);
+    const sources = Object.keys({ ...before.sources, ...lock.sources }).filter((k) => (k.startsWith(".warden/") || (k.startsWith(PROJECT_SOURCE) && k in (before.sources ?? {}))) && before.sources?.[k] !== lock.sources[k]);
     return sources.length === 0 ? found : found.map((t) => (t.file === LOCK_PATH && t.detail === "loosened" ? { ...t, sources } : t));
 };
 const unsignedChanges = (root, base, wardenRoot, staged) => {

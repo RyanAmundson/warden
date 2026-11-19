@@ -8,7 +8,7 @@ import type { Adapter } from "../../src/adapters/types.js";
 import { compile, expectedOutputs } from "../../src/compiler/compile.js";
 import { runExamples } from "../../src/compiler/examples.js";
 import { loadRecords } from "../../src/records/load.js";
-import { readLock } from "../../src/compiler/lock.js";
+import { commandSources, readLock } from "../../src/compiler/lock.js";
 import { adapters } from "../../src/runner/run.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
@@ -582,5 +582,28 @@ describe("compile admission bench", () => {
     await writeFile(join(root, ".warden/packs/local/pack.yaml"), localPack(fakeGuardrail("linear", 2)));
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
     expect(benched.length).toBeGreaterThan(0);
+  });
+});
+
+describe("commandSources", () => {
+  it("names each project script a command or its npm script runs, and the npm script's own text, but not a data file it tests", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "warden-command-sources-"));
+    try {
+      await mkdir(join(dir, "scripts"));
+      await writeFile(join(dir, "scripts/a.sh"), "a\n");
+      await writeFile(join(dir, "scripts/b.js"), "b\n");
+      await writeFile(join(dir, "scripts/c.mjs"), "c\n");
+      await writeFile(join(dir, "data.txt"), "d\n");
+      await writeFile(join(dir, "package.json"), JSON.stringify({ scripts: { check: "node scripts/b.js", test: "node --import=./scripts/c.mjs x" } }));
+      expect(commandSources(dir, 'sh "scripts/a.sh" && npm run check; npm test; node "$WARDEN_PACK_DIR/a.sh" ../outside scripts; test -e data.txt')).toEqual({
+        "./scripts/a.sh": "a\n",
+        "./package.json#scripts/check": "node scripts/b.js",
+        "./scripts/b.js": "b\n",
+        "./package.json#scripts/test": "node --import=./scripts/c.mjs x",
+        "./scripts/c.mjs": "c\n",
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

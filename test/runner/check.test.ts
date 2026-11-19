@@ -912,7 +912,7 @@ describe("final review: legacy feedback", () => {
     const { code, out } = await check();
     expect(code).toBe(1);
     const next = /^Next action: run `(.+)` and fix what it reports\.$/m.exec(out)?.[1] as string;
-    expect(next).toBe(`node "${join(root, ".warden/packs/legacy/bin/no-broken.mjs")}"`);
+    expect(next).toBe(`export WARDEN_PACK_DIR=${join(root, ".warden/packs/legacy")}; node "$WARDEN_PACK_DIR/bin/no-broken.mjs"`);
     expect(spawnSync("sh", ["-c", next], { cwd: root }).status).toBe(1);
   });
 });
@@ -921,16 +921,31 @@ describe("a cmd Guardrail that runs a script in its pack", () => {
   it("runs WARDEN_PACK_DIR as the pack folder, names the resolved command, and treats a script edit as tampering", async () => {
     await write(".warden/packs/legacy/check.sh", "test ! -e broken || { echo broken thing; exit 1; }\n");
     await addLegacy("commit", 'sh "$WARDEN_PACK_DIR/check.sh"', 5000);
-    const script = join(root, ".warden/packs/legacy/check.sh");
     await write("broken", "x\n");
     const { code, out } = await check();
     expect(code).toBe(1);
-    expect(out).toContain(`  Output:   ${`sh "${script}"`.slice(0, COMMAND_CHARS)}`);
+    expect(out).toContain(`  Output:   ${`export WARDEN_PACK_DIR=${join(root, ".warden/packs/legacy")}; sh "$WARDEN_PACK_DIR/check.sh"`.slice(0, COMMAND_CHARS)}`);
     expect(out).toContain(` exited with 1\n            broken thing`);
     expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([`Next action: ${runIt({ id: "legacy-script", kind: "legacy", runs: ["commit"], budgetMs: 5000, version: 1, implementation: 'cmd:sh "$WARDEN_PACK_DIR/check.sh"', packDir: join(root, ".warden/packs/legacy") })}`]);
     await write(".warden/packs/legacy/check.sh", "true\n");
     expect((await check()).code).toBe(1);
     expect(await tampered()).toContainEqual({ file: ".warden/packs/legacy/check.sh", detail: "source-drift" });
+  });
+
+  it("hashes a project script the command names, so editing it is source drift, and recompiling it is loosening", async () => {
+    await write("scripts/check.sh", "test ! -e broken\n");
+    await addLegacy("commit", "test ! -e broken || sh scripts/check.sh", 5000);
+    expect(readLock(root).sources["./scripts/check.sh"]).toBe(sha256("test ! -e broken\n"));
+    git("add", "-A");
+    git("commit", "-q", "-m", "legacy");
+    git("branch", "-f", "main", "HEAD");
+    expect((await check()).code).toBe(0);
+    await write("scripts/check.sh", "true\n");
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: "./scripts/check.sh", detail: "source-drift" });
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: ".warden/lock.json", detail: "loosened" });
   });
 
   it("a script that exits 2 stops the check with exit 2 and the script's next action, not a Guardrail failure", async () => {
@@ -940,7 +955,7 @@ describe("a cmd Guardrail that runs a script in its pack", () => {
     const { code, out, err } = await check();
     expect(code).toBe(2);
     expect(out).toBe("");
-    expect(err).toBe(`${join(root, ".warden/packs/legacy/pack.yaml")} /guardrails/legacy-script/implementation: sh "${join(root, ".warden/packs/legacy/check.sh")}" exited with 2, an error in its environment or usage, not a violation: git is not on PATH. Next action: install git so that it is on PATH.\n`);
+    expect(err).toBe(`${join(root, ".warden/packs/legacy/pack.yaml")} /guardrails/legacy-script/implementation: export WARDEN_PACK_DIR=${join(root, ".warden/packs/legacy")}; sh "$WARDEN_PACK_DIR/check.sh" exited with 2, an error in its environment or usage, not a violation: git is not on PATH. Next action: install git so that it is on PATH.\n`);
   });
 
   it("moving a base-locked cmd Guardrail from lint to runtime, as compile asks, is not tampering", async () => {
