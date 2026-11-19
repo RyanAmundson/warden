@@ -85,13 +85,14 @@ async function refuseEscapes(packDir: string, entry: string, packFile: string, p
 }
 
 const namesJunk = (text: string): boolean => {
-  let decoded = text;
-  try {
-    decoded = decodeURIComponent(text);
-  } catch {
-    decoded = text;
-  }
-  return !/[*?[]/.test(decoded) && isOsJunk(basename(decoded));
+  const decoded = text.replace(/(?:%[0-9a-f]{2})+/gi, (run) => {
+    try {
+      return decodeURIComponent(run);
+    } catch {
+      return run;
+    }
+  });
+  return isOsJunk(basename(decoded)) || isOsJunk(basename(decoded.split(/[?#]/, 1)[0] as string));
 };
 
 export async function packEntry(g: Guardrail, adapter: string): Promise<PackEntry> {
