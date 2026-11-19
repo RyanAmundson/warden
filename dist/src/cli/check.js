@@ -324,7 +324,7 @@ const check = async (opts, live) => {
             const notes = { unstaged: differing, base };
             return finish(project, "unstaged", scanned, report([], set, opts, notes), { set, notes });
         }
-        const mismatch = stagedMismatch(root);
+        const mismatch = stagedMismatch(root, base);
         if (mismatch.paths.length > 0) {
             const notes = { unstaged: mismatch.paths, hidden: mismatch.hidden, base };
             return finish(project, "unstaged", scanned, report([], set, opts, notes), { set, notes });

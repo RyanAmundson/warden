@@ -493,7 +493,9 @@ export function startWatching(opts: DaemonOptions): Daemon {
     if (file === null || !file.endsWith(".jsonl") || file.endsWith(".1.jsonl")) return;
     const project = file.slice(0, -".jsonl".length);
     opts.onEvidence?.(project);
-    for (const w of projects.values()) if (w.project === project) schedule(w);
+    const known = [...projects.values()].filter((w) => w.project === project);
+    for (const w of known) schedule(w);
+    if (known.length === 0 && !stopped) discover();
   });
   tick();
   const interval = setInterval(tick, opts.intervalMs ?? HEARTBEAT_MS);

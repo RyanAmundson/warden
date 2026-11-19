@@ -415,6 +415,54 @@ it("a commit-tier check in a sparse checkout ignores files an earlier branch com
   expect(warden(root, {}, "check", "--base", "main").code).toBe(0);
 });
 
+it("a conflict-resolution merge in a sparse checkout passes when the other parent changed a file outside the sparse set", async () => {
+  await mkdir(join(root, "docs"), { recursive: true });
+  await writeFile(join(root, "docs/x.md"), "hi\n");
+  git(root, "add", "-A");
+  commitUnhooked("docs");
+  git(root, "switch", "-q", "-c", "feat");
+  await writeFile(join(root, "src/a.ts"), "export const a = 2;\n");
+  git(root, "add", "-A");
+  commitUnhooked("feat a");
+  git(root, "switch", "-q", "main");
+  await writeFile(join(root, "src/a.ts"), "export const a = 3;\n");
+  await writeFile(join(root, "docs/x.md"), "hi\nmore\n");
+  git(root, "add", "-A");
+  commitUnhooked("main a and docs");
+  git(root, "switch", "-q", "feat");
+  git(root, "sparse-checkout", "set", "--no-cone", "/*", "!/docs/");
+  expect(() => git(root, "-c", "core.hooksPath=/dev/null", "merge", "-q", "--no-edit", "main")).toThrow();
+  expect(existsSync(join(root, "docs/x.md"))).toBe(false);
+  await writeFile(join(root, "src/a.ts"), "export const a = 4;\n");
+  git(root, "add", "src/a.ts");
+  expect(warden(root, {}, "check", "--base", "main").code).toBe(0);
+});
+
+it("a skip-worktree file with clean content on disk does not hide a bad blob committed without the hook", async () => {
+  git(root, "switch", "-q", "-c", "feat");
+  await writeFile(join(root, "src/a.ts"), "// bad comment\nexport const a = 1;\n");
+  git(root, "add", "-A");
+  commitUnhooked("bad");
+  await writeFile(join(root, "src/a.ts"), "export const a = 1;\n");
+  git(root, "update-index", "--skip-worktree", "src/a.ts");
+  const r = warden(root, {}, "check", "--base", "main");
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("Next action: run git update-index --no-skip-worktree -- 'src/a.ts'");
+});
+
+it("a repository registered while the daemon runs is watched without waiting for the next tick", async () => {
+  served = await serve(wardenRoot, 0, { intervalMs: 60_000, debounceMs: 20 });
+  await served.daemon.settled();
+  const other = join(scratch, "late");
+  await mkdir(join(other, "src"), { recursive: true });
+  await writeFile(join(other, "src/a.ts"), "export const a = 1;\n");
+  git(scratch, "init", "-q", "-b", "main", other);
+  git(other, "add", "-A");
+  git(other, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "seed");
+  expect(warden(other, {}, "init").code).toBe(0);
+  await until("the late repository is watched", () => served?.daemon.projects.has(other) === true);
+});
+
 it("a commit-tier check judges a skip-worktree or assume-unchanged blob, not the file on disk", async () => {
   const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: root, input: "// bad comment\nexport const a = 1;\n", encoding: "utf8" }).trim();
   git(root, "update-index", "--cacheinfo", `100644,${blob},src/a.ts`);
