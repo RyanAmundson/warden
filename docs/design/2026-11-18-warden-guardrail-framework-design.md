@@ -279,7 +279,8 @@ Guardrail's pack, so a pack can ship a script and run it as
 `cmd:node {pack}/check.js`; failures, next actions, and `warden doctor` show
 the command with `{pack}` resolved, and every file in a local pack's folder is
 hashed into the lock. A `cmd` Guardrail reports one project-wide result, so
-compile refuses one whose kind is `lint`. Because every adapter normalizes to the same Violation, the
+compile refuses one whose kind is `lint`; moving such a Guardrail from `lint`
+to `runtime` is not weakening, since its `lint` result never failed. Because every adapter normalizes to the same Violation, the
 baseline, cache, budgets, Evidence, and report work the same for every tool.
 
 | Adapter | Emits | Runs |

@@ -861,6 +861,21 @@ describe("a cmd Guardrail that runs a script in its pack", () => {
     expect((await check()).code).toBe(1);
     expect(await tampered()).toContainEqual({ file: ".warden/packs/legacy/check.sh", detail: "source-drift" });
   });
+
+  it("moving a base-locked cmd Guardrail from lint to runtime, as compile asks, is not tampering", async () => {
+    await write(".warden/config.yaml", config(["core", "local", "legacy"]));
+    await write(".warden/packs/legacy/pack.yaml", legacyPack("commit", "test ! -e broken", 5000).replace("kind: legacy", "kind: runtime"));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    const lock = JSON.parse(await read(".warden/lock.json")) as { guardrails: Record<string, { kind: string }> };
+    (lock.guardrails["legacy-script"] as { kind: string }).kind = "lint";
+    await write(".warden/lock.json", `${JSON.stringify(lock, null, 2)}\n`);
+    git("add", "-A");
+    git("commit", "-q", "-m", "cmd lint");
+    git("branch", "-f", "main", "HEAD");
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect((await check()).code).toBe(0);
+    expect(await tampered()).toEqual([]);
+  });
 });
 
 describe("final review: project-wide baseline", () => {
