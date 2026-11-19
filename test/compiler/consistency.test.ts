@@ -145,6 +145,14 @@ describe("checkConsistency", () => {
     expect(codes(set)).toEqual([]);
   });
 
+  it("a negated glob overlaps every path it does not exclude", () => {
+    const set = build(
+      [pack("a", 1, [practice("p1", "a", { conflictsWith: ["p2"] })]), pack("b", 2, [practice("p2", "b")])],
+      { a: ["!**/sources/**"], b: ["docs/**"] },
+    );
+    expect(codes(set)).toEqual(["conflict-overlap"]);
+  });
+
   it("narrows conflict paths by a practice's own paths", () => {
     const set = build(
       [

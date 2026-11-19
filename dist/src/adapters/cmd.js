@@ -124,6 +124,18 @@ export const withPackDir = (command, packDir) => {
     }
     return out;
 };
+export const COMMAND_CHARS = 200;
+export const brief = (command) => {
+    const line = command.trim().split("\n")[0];
+    return line.length > COMMAND_CHARS || line !== command.trim() ? `${line.slice(0, COMMAND_CHARS)} …` : line;
+};
+export const runIt = (g) => {
+    const command = withPackDir(g.implementation.slice(g.implementation.indexOf(":") + 1), g.packDir);
+    if (brief(command) === command.trim())
+        return `run \`${command}\` and fix what it reports.`;
+    const where = g.packDir === undefined ? "" : ` in ${join(g.packDir, "pack.yaml")}, from the project root with ${PACK_DIR}=${g.packDir}`;
+    return `run the implementation command of Guardrail ${g.id}${where}, and fix what it reports.`;
+};
 const tail = (output) => output.trimEnd().split("\n").filter((l) => l !== "").slice(-OUTPUT_LINES);
 const runOne = async (g, ctx) => {
     const run = g.implementation.slice(g.implementation.indexOf(":") + 1);
@@ -138,13 +150,13 @@ const runOne = async (g, ctx) => {
         return { guardrail: g.id, status: "pass", violations: [], ms };
     if (code === 2) {
         const last = tail(output).at(-1) ?? "";
-        const said = last.includes("Next action:") ? last : `${last === "" ? "it printed nothing" : last}. Next action: run \`${command}\` and fix what it reports.`;
+        const said = last.includes("Next action:") ? last : `${last === "" ? "it printed nothing" : last}. Next action: ${runIt(g)}`;
         throw new RecordError(g.packDir === undefined ? "" : join(g.packDir, "pack.yaml"), `/guardrails/${g.id}/implementation`, `${command} exited with 2, an error in its environment or usage, not a violation: ${said}`);
     }
     return {
         guardrail: g.id,
         status: "fail",
-        violations: [{ guardrail: g.id, file: "", line: 0, message: [`${command} exited with ${code}`, ...tail(output)].join("\n") }],
+        violations: [{ guardrail: g.id, file: "", line: 0, message: [`${brief(command)} exited with ${code}`, ...tail(output)].join("\n") }],
         ms,
     };
 };

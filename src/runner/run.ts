@@ -1,5 +1,6 @@
 import { cmdAdapter } from "../adapters/cmd.js";
 import { eslintAdapter } from "../adapters/eslint.js";
+import { fsAdapter, graphAdapter } from "../adapters/tree.js";
 import { tscAdapter } from "../adapters/tsc.js";
 import type { Adapter, RunContext, RunResult } from "../adapters/types.js";
 import { statSync } from "node:fs";
@@ -8,7 +9,7 @@ import { RecordError } from "../records/load.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
 import type { Finding } from "../compiler/consistency.js";
 
-export const adapters = new Map<string, Adapter>([eslintAdapter, tscAdapter, cmdAdapter].map((a) => [a.id, a]));
+export const adapters = new Map<string, Adapter>([eslintAdapter, tscAdapter, cmdAdapter, fsAdapter, graphAdapter].map((a) => [a.id, a]));
 
 export const prefixOf = (g: Guardrail): string => g.implementation.slice(0, g.implementation.indexOf(":"));
 
@@ -26,6 +27,8 @@ export const unknownAdapters = (set: RecordSet): (Finding & { file: string })[] 
       })),
   );
 };
+
+export const wholeTree = (g: Guardrail): boolean => adapters.get(prefixOf(g))?.wholeTree === true;
 
 export const refuseUnknownAdapters = (set: RecordSet): void => {
   const [unknown] = unknownAdapters(set);

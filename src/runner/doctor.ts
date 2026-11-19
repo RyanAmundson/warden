@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
 import { RecordError } from "../records/load.js";
-import { PACK_VAR } from "../adapters/cmd.js";
+import { PACK_VAR, brief } from "../adapters/cmd.js";
 import { COMMIT_HOOK } from "../compiler/emit.js";
 import { TOOLS, firstLine } from "../compiler/lock.js";
 import type { RecordSet } from "../records/types.js";
@@ -42,7 +42,7 @@ const SHELL_WORDS = new Set([
 ]);
 
 const commandItem = (id: string, command: string, root: string, scripts: Record<string, unknown>, packDir: string | undefined): Item => {
-  const name = `cmd ${id}: ${command}`;
+  const name = `cmd ${id}: ${brief(command)}`;
   const raw = command.trim().split(/\s+/);
   const words = raw.map((w) => {
     const expanded = packDir === undefined ? w : w.replace(PACK_VAR, () => packDir);

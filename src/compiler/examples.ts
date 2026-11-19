@@ -1,15 +1,16 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, matchesGlob, posix } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { adapters, runGuardrails, unknownAdapters } from "../runner/run.js";
-import { pathGroups } from "../records/paths.js";
+import { enabledOn, pathGroups } from "../records/paths.js";
+import { exampleSet } from "../records/load.js";
 import type { Example, Guardrail, RecordSet } from "../records/types.js";
 import { type Adapter, PARSE_ERROR } from "../adapters/types.js";
 import type { Finding } from "./consistency.js";
 
 const TSCONFIG = JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", skipLibCheck: true }, include: ["**/*.ts"] });
 
-const literal = (glob: string): string => glob.split("*", 1)[0] ?? "";
+const literal = (glob: string): string => (glob.startsWith("!") ? "" : (glob.split("*", 1)[0] ?? ""));
 
 export const examplePrefix = (group: string[] | undefined): string => (group ?? []).map(literal).reduce((a, b) => (b.length > a.length ? b : a), "");
 
@@ -22,8 +23,6 @@ const ownedBy = (owned: Set<string>) => (key: string): boolean => {
   const first = path.split("/")[0];
   return first === "node_modules" || first === ".warden" || [...owned].some((o) => path === o || path.startsWith(`${o}/`));
 };
-
-export const enabledOn = (file: string, groups: string[][]): boolean => groups.length === 0 || groups.some((g) => g.every((glob) => matchesGlob(file, glob)));
 
 interface Unremoved {
   project: string;
@@ -74,7 +73,8 @@ export async function withExampleProject<T>(fn: (project: string) => Promise<T>,
   }
 }
 
-export async function runExamples(set: RecordSet): Promise<Finding[]> {
+export async function runExamples(project: RecordSet): Promise<Finding[]> {
+  const set = exampleSet(project);
   const unknown = unknownAdapters(set).map(({ code, record, message }) => ({ code, record, message }));
   if (unknown.length > 0) return unknown;
   const findings: Finding[] = [];

@@ -94,6 +94,23 @@ const benchLoosened = (was: BenchSettings | undefined, now: BenchSettings | unde
   was !== undefined &&
   (now === undefined || now.linearMax > was.linearMax || now.constantMs > was.constantMs || now.minMarginalMs > was.minMarginalMs || now.maxFiles < was.maxFiles);
 
+const globWidens = (now: string, was: string): boolean => {
+  const [a, b] = [now.split(/(\{[^{}]*\})/), was.split(/(\{[^{}]*\})/)];
+  if (a.length !== b.length) return false;
+  const [kept, dropped] = now.startsWith("!") ? [b, a] : [a, b];
+  return a.every((part, i) => {
+    if (part === b[i]) return true;
+    if (i % 2 === 0) return false;
+    const members = new Set((kept[i] as string).slice(1, -1).split(","));
+    return (dropped[i] as string).slice(1, -1).split(",").every((m) => members.has(m));
+  });
+};
+
+export const widens = (now: string, was: string): boolean => {
+  const [a, b] = [now.split(" & "), was.split(" & ")];
+  return a.length === b.length && a.every((glob, i) => globWidens(glob, b[i] as string));
+};
+
 const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
   const before = readBaseLock(root, base);
   if (before === undefined) return [];
@@ -113,17 +130,6 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
     found.push({ file: LOCK_PATH, detail: "loosened" });
   }
   const covers = (now: string[], was: string[]): boolean => was.every((x) => now.includes(x));
-  const widens = (now: string, was: string): boolean => {
-    const [a, b] = [now.split(/(\{[^{}]*\})/), was.split(/(\{[^{}]*\})/)];
-    if (a.length !== b.length) return false;
-    return a.every((part, i) => {
-      const old = b[i] as string;
-      if (part === old) return true;
-      if (i % 2 === 0) return false;
-      const members = new Set(part.slice(1, -1).split(","));
-      return old.slice(1, -1).split(",").every((m) => members.has(m));
-    });
-  };
   const pathsCover = (now: string[], was: string[]): boolean => was.every((x) => now.some((y) => widens(y, x)));
   for (const [id, g] of Object.entries(before.guardrails)) {
     const now = lock.guardrails[id];
@@ -136,9 +142,11 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
       now.budgetMs > g.budgetMs ||
       !covers(now.runs, g.runs) ||
       !pathsCover(now.paths, g.paths) ||
-      (!stronger && (now.implementation !== g.implementation || canonicalJson(now.options) !== canonicalJson(g.options)));
+      (!stronger && (now.implementation !== g.implementation || canonicalJson(now.options) !== canonicalJson(g.options) || canonicalJson(now.settings ?? null) !== canonicalJson(g.settings ?? null)));
     if (weaker) found.push({ file: LOCK_PATH, detail: "loosened", guardrail: id });
   }
+  const editedCode = Object.keys(before.sources ?? {}).filter((k) => /^\.warden\/packs\/[^/]+\/./.test(k) && !k.endsWith("/pack.yaml") && before.sources[k] !== lock.sources[k]);
+  if (editedCode.length > 0) found.push({ file: LOCK_PATH, detail: "loosened" });
   const { renames } = changesSinceMergeBase(root, base);
   const baseBaseline = carryRenames(JSON.parse(showAtMergeBase(root, base, BASELINE_PATH) ?? "{}") as Baseline, renames);
   for (const [id, entries] of Object.entries(carryRenames(readBaseline(root), renames))) {

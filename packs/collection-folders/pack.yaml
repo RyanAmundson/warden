@@ -12,11 +12,11 @@ practices:
     conflictsWith: []
     guardrails:
       - id: warden-collection-holds-only-folders
-        kind: runtime
+        kind: lint
         runs: [edit, commit]
         budgetMs: 2000
-        version: 1
-        implementation: 'cmd:node "$WARDEN_PACK_DIR/holds-only-folders.cjs"'
+        version: 2
+        implementation: "fs:collection-folders/holds-only-folders"
         mustFail:
           "src/[widgets]/button/index.ts": "export const button = 1;\n"
           "src/[widgets]/notes.ts": "export const notes = 1;\n"
@@ -30,11 +30,11 @@ practices:
     conflictsWith: []
     guardrails:
       - id: warden-collections-do-not-nest
-        kind: runtime
+        kind: lint
         runs: [edit, commit]
         budgetMs: 2000
-        version: 1
-        implementation: 'cmd:node "$WARDEN_PACK_DIR/do-not-nest.cjs"'
+        version: 2
+        implementation: "fs:collection-folders/do-not-nest"
         mustFail:
           "src/[widgets]/[parts]/knob/index.ts": "export const knob = 1;\n"
         mustPass:
@@ -46,11 +46,11 @@ practices:
     conflictsWith: []
     guardrails:
       - id: warden-collection-names-are-plural-kebab-case
-        kind: runtime
+        kind: lint
         runs: [edit, commit]
         budgetMs: 2000
         version: 2
-        implementation: 'cmd:node "$WARDEN_PACK_DIR/plural-kebab-case.cjs"'
+        implementation: "fs:collection-folders/plural-kebab-case"
         mustFail:
           "src/[Widget]/button/index.ts": "export const button = 1;\n"
         mustPass:
@@ -63,11 +63,11 @@ practices:
     conflictsWith: []
     guardrails:
       - id: warden-collection-items-share-one-shape
-        kind: runtime
+        kind: lint
         runs: [edit, commit]
         budgetMs: 2000
-        version: 1
-        implementation: 'cmd:node "$WARDEN_PACK_DIR/items-share-one-shape.cjs"'
+        version: 2
+        implementation: "fs:collection-folders/items-share-one-shape"
         mustFail:
           "src/[widgets]/button/index.ts": "export const button = 1;\n"
           "src/[widgets]/card/index.ts": "export const card = 1;\n"

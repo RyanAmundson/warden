@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ESLint } from "eslint";
+import { COMMAND_CHARS, runIt } from "../../src/adapters/cmd.js";
 import { eslintAdapter } from "../../src/adapters/eslint.js";
 import { PARSE_ERROR, type RunResult } from "../../src/adapters/types.js";
 import { runCheck } from "../../src/cli/check.js";
@@ -882,7 +883,7 @@ describe("unknown adapter at check time", () => {
     const { code, err } = await check();
     expect(code).toBe(2);
     expect(err).toBe(
-      `${file} /guardrails/extra-no-debugger/implementation: Guardrail extra-no-debugger names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...> in ${file}, then run warden compile.\n`,
+      `${file} /guardrails/extra-no-debugger/implementation: Guardrail extra-no-debugger names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd, fs, graph. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...>, fs:<...>, graph:<...> in ${file}, then run warden compile.\n`,
     );
     await write(".warden/packs/extra/pack.yaml", (await read(".warden/packs/extra/pack.yaml")).replace("eslnt:", "eslint:"));
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
@@ -924,8 +925,9 @@ describe("a cmd Guardrail that runs a script in its pack", () => {
     await write("broken", "x\n");
     const { code, out } = await check();
     expect(code).toBe(1);
-    expect(out).toContain(`  Output:   sh "${script}" exited with 1\n            broken thing`);
-    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([`Next action: run \`sh "${script}"\` and fix what it reports.`]);
+    expect(out).toContain(`  Output:   ${`sh "${script}"`.slice(0, COMMAND_CHARS)}`);
+    expect(out).toContain(` exited with 1\n            broken thing`);
+    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([`Next action: ${runIt({ id: "legacy-script", kind: "legacy", runs: ["commit"], budgetMs: 5000, version: 1, implementation: 'cmd:sh "$WARDEN_PACK_DIR/check.sh"', packDir: join(root, ".warden/packs/legacy") })}`]);
     await write(".warden/packs/legacy/check.sh", "true\n");
     expect((await check()).code).toBe(1);
     expect(await tampered()).toContainEqual({ file: ".warden/packs/legacy/check.sh", detail: "source-drift" });
@@ -954,6 +956,98 @@ describe("a cmd Guardrail that runs a script in its pack", () => {
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
     expect((await check()).code).toBe(0);
     expect(await tampered()).toEqual([]);
+  });
+});
+
+describe("a whole-tree Guardrail", () => {
+  const treePack = [
+    "id: tree",
+    "layer: 2",
+    "terms: []",
+    "practices:",
+    "  - id: no-flag",
+    "    statement: No flag file sits beside the code.",
+    "    terms: []",
+    "    paths: []",
+    "    conflictsWith: []",
+    "    guardrails:",
+    "      - id: tree-flagged",
+    "        kind: lint",
+    "        runs: [commit]",
+    "        budgetMs: 5000",
+    "        version: 1",
+    "        implementation: \"fs:tree/flagged\"",
+    "        mustFail:",
+    "          flag.ts: \"export const flag = 1;\\n\"",
+    "          a.ts: \"export const a = 1;\\n\"",
+    "        mustPass:",
+    "          a.ts: \"export const a = 1;\\n\"",
+    "",
+  ].join("\n");
+  const flagged = 'export default {\n  flagged: ({ files, all }) => (all.includes("flag.ts") ? files.filter((f) => f !== "flag.ts").map((file) => ({ file, message: "flag.ts is present.", doThis: "Delete flag.ts." })) : []),\n};\n';
+  const addTree = async (): Promise<void> => {
+    await write(".warden/config.yaml", config(["core", "local", "tree"]));
+    await write(".warden/packs/tree/pack.yaml", treePack);
+    await write(".warden/packs/tree/fs.js", flagged);
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+  };
+
+  it("fails at the commit tier on a file the change did not touch, with the check's next action", async () => {
+    await addTree();
+    await write("flag.ts", "export const flag = 1;\n");
+    const { code, out } = await check({ format: "json" });
+    expect(code).toBe(1);
+    const { failures } = JSON.parse(out) as { failures: { file: string; doThis: string }[] };
+    expect(failures.map((f) => [f.file, f.doThis])).toEqual([["a.ts", "Delete flag.ts."]]);
+  });
+
+  it("at the commit tier judges only staged files, so an untracked file does not block an unrelated commit", async () => {
+    await addTree();
+    git("add", "-A");
+    git("commit", "-q", "-m", "tree");
+    git("branch", "-f", "main", "HEAD");
+    await write("flag.ts", "export const flag = 1;\n");
+    await write("a.ts", "export const a = 2;\n");
+    git("add", "a.ts");
+    expect((await check({}, false)).code).toBe(0);
+    git("add", "flag.ts");
+    expect((await check({}, false)).code).toBe(1);
+  });
+
+  it("changing a pack's settings and recompiling is loosening", async () => {
+    await write(".warden/config.yaml", config(["core", "local", "tree"]).replace('  - id: tree\n    paths: ["**/*.ts"]', '  - id: tree\n    paths: ["**/*.ts"]\n    settings: { flag: flag.ts }'));
+    await write(".warden/packs/tree/pack.yaml", `${treePack}settings:\n  type: object\n  properties:\n    flag: { type: string, default: flag.ts }\n`);
+    await write(".warden/packs/tree/fs.js", flagged);
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    git("add", "-A");
+    git("commit", "-q", "-m", "settings");
+    git("branch", "-f", "main", "HEAD");
+    expect((await check()).code).toBe(0);
+    await write(".warden/config.yaml", (await read(".warden/config.yaml")).replace("flag: flag.ts", "flag: none.ts"));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    const loosened = await check();
+    expect(loosened.code).toBe(1);
+    expect(loosened.out.split("\n").filter((l) => l.startsWith("TAMPERED"))).toEqual(["TAMPERED .warden/lock.json  loosened tree-flagged"]);
+    expect(await tampered()).toContainEqual({ file: ".warden/lock.json", detail: "loosened" });
+  });
+
+  it("editing a local pack's shipped code and recompiling is loosening", async () => {
+    await addTree();
+    git("add", "-A");
+    git("commit", "-q", "-m", "tree");
+    git("branch", "-f", "main", "HEAD");
+    expect((await check()).code).toBe(0);
+    await write(".warden/packs/tree/fs.js", "export default { flagged: () => [] };\n");
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: ".warden/lock.json", detail: "loosened" });
+  });
+
+  it("compile baselines the violations a new whole-tree Guardrail finds, file by file", async () => {
+    await write("flag.ts", "export const flag = 1;\n");
+    await addTree();
+    expect(JSON.parse(await read(".warden/baseline.json"))).toEqual({ "warden-no-comments": { "a.ts": 1 }, "tree-flagged": { "a.ts": 1 } });
+    expect((await check()).code).toBe(0);
   });
 });
 

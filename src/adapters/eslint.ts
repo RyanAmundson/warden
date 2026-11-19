@@ -1,35 +1,41 @@
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
-import type { ESLint, Linter } from "eslint";
+import type { ESLint, Linter, Rule } from "eslint";
 import { RecordError } from "../records/load.js";
 import { pathGroups } from "../records/paths.js";
 import type { Guardrail, Practice, RecordSet } from "../records/types.js";
+import { packEntry, targetOf } from "./pack-code.js";
+import { inSandbox } from "./sandbox.js";
 import { type Adapter, PARSE_ERROR, type RunContext, type RunResult, type Violation } from "./types.js";
 
 const RULES_PATH = ".warden/generated/eslint.rules.json";
 
 export const BATCH_FILES = 500;
 
-const ruleId = (g: Guardrail): string => g.implementation.slice(g.implementation.indexOf(":") + 1);
+const isPluginRule = (rule: string): boolean => rule.includes("/");
+
+const ruleId = (g: Guardrail): string => (isPluginRule(targetOf(g)) ? targetOf(g) : `${g.id}/${targetOf(g)}`);
 
 const ruleValue = (options: unknown): unknown =>
   options === undefined ? "error" : Array.isArray(options) ? ["error", ...options] : ["error", options];
 
-const owner = (g: Guardrail, set: RecordSet): { practice?: Practice; paths: (string | string[])[] } => {
+const owner = (g: Guardrail, set: RecordSet): { practice?: Practice; paths: (string | string[])[]; settings?: Record<string, unknown>; file?: string } => {
   for (const pack of set.packs) {
     for (const practice of pack.practices) {
       if (!practice.guardrails.some((x) => x.id === g.id)) continue;
       const entry = set.config.packs.find((p) => p.id === pack.id);
-      return { practice, paths: pathGroups(practice.paths, entry ? entry.paths : []).map((grp) => (grp.length === 1 ? (grp[0] as string) : grp)) };
+      const paths = pathGroups(practice.paths, entry ? entry.paths : []).map((grp) => (grp.length === 1 ? (grp[0] as string) : grp));
+      return { practice, paths, file: pack.file, ...(entry?.settings === undefined ? {} : { settings: entry.settings }) };
     }
   }
   return { paths: [] };
 };
 
-const wardenValue = (g: Guardrail, practice: Practice | undefined): unknown => {
-  if (practice === undefined) throw new Error(`guardrail ${g.id} uses a warden rule but belongs to no practice`);
+const pluginValue = (g: Guardrail, practice: Practice | undefined, settings: Record<string, unknown> | undefined): unknown => {
+  if (practice === undefined) throw new Error(`guardrail ${g.id} uses a plugin rule but belongs to no practice`);
   const extra = typeof g.options === "object" && g.options !== null && !Array.isArray(g.options) ? g.options : {};
-  return ["error", { practice: practice.id, statement: practice.statement, ...extra }];
+  return ["error", { practice: practice.id, statement: practice.statement, ...(settings === undefined ? {} : { settings }), ...extra }];
 };
 
 const emit = (gs: Guardrail[], set: RecordSet): Record<string, string> => {
@@ -37,13 +43,18 @@ const emit = (gs: Guardrail[], set: RecordSet): Record<string, string> => {
   for (const g of gs) {
     const other = users.get(ruleId(g));
     if (other !== undefined) {
-      throw new RecordError("", `/guardrails/${g.id}/implementation`, `ESLint rule ${ruleId(g)} is already the implementation of Guardrail ${other}`);
+      const file = owner(g, set).file ?? "";
+      throw new RecordError(file, `/guardrails/${g.id}/implementation`, `ESLint rule ${ruleId(g)} is already the implementation of Guardrail ${other}, and a plugin rule carries one Practice. Next action: remove Guardrail ${g.id} from ${file}, then run warden compile.`);
     }
     users.set(ruleId(g), g.id);
+    if (!isPluginRule(targetOf(g)) && (g.id === "warden" || set.packs.some((p) => p.id === g.id))) {
+      const file = owner(g, set).file ?? "";
+      throw new RecordError(file, `/guardrails/${g.id}/id`, `Guardrail id ${g.id} is also the ESLint namespace of a pack's rules. Next action: rename Guardrail ${g.id} in ${file}, then run warden compile.`);
+    }
   }
   const entries = gs.map((g) => {
-    const { practice, paths } = owner(g, set);
-    const value = ruleId(g).startsWith("warden/") ? wardenValue(g, practice) : ruleValue(g.options);
+    const { practice, paths, settings } = owner(g, set);
+    const value = isPluginRule(targetOf(g)) ? pluginValue(g, practice, settings) : ruleValue(g.options);
     return { files: paths, rules: { [ruleId(g)]: value } };
   });
   return { [RULES_PATH]: `${JSON.stringify({ entries }, null, 2)}\n` };
@@ -110,16 +121,38 @@ const rewrite = (source: string, m: Linter.LintMessage, id: string): string | un
   return `${joined(before, after).trimEnd()}\n${hint(removed)}`;
 };
 
+const shippedDoThis = (shipped: Set<string>, id: string, message: string): string | undefined => {
+  const at = message.indexOf(". ");
+  return shipped.has(id.slice(0, id.indexOf("/"))) && at !== -1 ? message.slice(at + 2) : undefined;
+};
+
 const doThisFor = (doThis: string | undefined): { doThis?: string } => (doThis === undefined ? {} : { doThis });
 
-const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<RunResult[]> => {
-  const { entries } = JSON.parse(await readFile(join(ctx.generatedDir, "eslint.rules.json"), "utf8"));
-  const [{ ESLint: Linting }, { default: tseslint }, { plugin }] = await Promise.all([import("eslint"), import("typescript-eslint"), import("../../eslint-plugin/index.js")]);
+const shippedRule = (g: Guardrail): boolean => isPluginRule(targetOf(g)) && !targetOf(g).startsWith("warden/");
+
+interface Linted {
+  results: ESLint.LintResult[];
+  ms: number;
+}
+
+const lintInProcess = async (gs: Guardrail[], entries: Linter.Config[], files: string[], ctx: RunContext): Promise<Linted> => {
+  const [{ ESLint: Linting }, { default: tseslint }, { plugin }, { builtinRules }] = await Promise.all([import("eslint"), import("typescript-eslint"), import("../../eslint-plugin/index.js"), import("eslint/use-at-your-own-risk")]);
+  const plugins: Record<string, ESLint.Plugin> = { warden: plugin };
+  for (const g of gs) {
+    const target = targetOf(g);
+    if (isPluginRule(target)) continue;
+    const core = builtinRules.get(target);
+    if (core === undefined) {
+      const file = g.packDir === undefined ? "pack.yaml" : join(g.packDir, "pack.yaml");
+      throw new RecordError(file, `/guardrails/${g.id}/implementation`, `ESLint has no core rule ${target}. Next action: set implementation of Guardrail ${g.id} to an ESLint core rule in ${file}, then run warden compile.`);
+    }
+    plugins[g.id] = { rules: { [target]: core } };
+  }
   const eslint = new Linting({
     cwd: ctx.root,
     overrideConfigFile: true,
     overrideConfig: [
-      { plugins: { warden: plugin } },
+      { plugins },
       { files: ["**/*.{ts,tsx,mts,cts}"], languageOptions: { parser: tseslint.parser } },
       { linterOptions: { noInlineConfig: true } },
       { ignores: ["!**/node_modules/"] },
@@ -136,6 +169,39 @@ const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<R
     results.push(...(await eslint.lintFiles(files.slice(i, i + BATCH_FILES))));
     ms += performance.now() - start;
   }
+  return { results, ms };
+};
+
+const lintInSandbox = async (gs: Guardrail[], entries: Linter.Config[], files: string[], ctx: RunContext): Promise<Linted> => {
+  const codes = await Promise.all(gs.map((g) => packEntry(g, "eslint")));
+  const texts = Object.fromEntries(files.map((f) => [f, readFileSync(join(ctx.root, f), "utf8")]));
+  const unread = (file: string): string => {
+    throw new Error(`pack ESLint rules read no files, but one asked for ${file}`);
+  };
+  const byPack = new Map<string, typeof codes>();
+  for (const c of codes) byPack.set(c.packDir, [...(byPack.get(c.packDir) ?? []), c]);
+  const start = performance.now();
+  const results: ESLint.LintResult[] = [];
+  for (const pack of byPack.values()) {
+    const ids = new Set(pack.map((c) => `${c.namespace}/${c.name}`));
+    const config = entries.filter((e) => Object.keys(e.rules ?? {}).every((r) => ids.has(r)));
+    results.push(...(await inSandbox<{ results: ESLint.LintResult[] }>(pack[0] as (typeof codes)[number], { kind: "eslint", root: ctx.root, entries: pack, config, texts }, unread, ctx.signal)).results);
+  }
+  return { results, ms: performance.now() - start };
+};
+
+const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<RunResult[]> => {
+  const all = (JSON.parse(await readFile(join(ctx.generatedDir, "eslint.rules.json"), "utf8")) as { entries: Linter.Config[] }).entries;
+  const entriesFor = (subset: Guardrail[]): Linter.Config[] => {
+    const owned = new Set(subset.map(ruleId));
+    return all.filter((e) => Object.keys(e.rules ?? {}).every((r) => owned.has(r)));
+  };
+  const local = gs.filter((g) => !shippedRule(g));
+  const shipped = gs.filter(shippedRule);
+  const shippedNamespaces = new Set(shipped.map((g) => targetOf(g).split("/", 1)[0] as string));
+  const runs = [...(local.length === 0 ? [] : [await lintInProcess(local, entriesFor(local), files, ctx)]), ...(shipped.length === 0 ? [] : [await lintInSandbox(shipped, entriesFor(shipped), files, ctx)])];
+  const results = runs.flatMap((r) => r.results);
+  const ms = runs.reduce((sum, r) => sum + r.ms, 0);
   const byRule = new Map<string, Violation[]>();
   for (const g of gs) byRule.set(ruleId(g), []);
   const owner = new Map(gs.map((g) => [ruleId(g), g.id]));
@@ -151,7 +217,8 @@ const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<R
     for (const m of result.messages) {
       if (m.ruleId === NO_COMMENTS && suppressed.has(`${m.line}:${m.column}`)) continue;
       if (m.ruleId === null && m.fatal === true) {
-        parseErrors.push({ guardrail: PARSE_ERROR, file: relative(ctx.root, result.filePath), line: m.line, message: m.message });
+        const parsed = { guardrail: PARSE_ERROR, file: relative(ctx.root, result.filePath), line: m.line, message: m.message };
+        if (!parseErrors.some((p) => p.file === parsed.file && p.line === parsed.line)) parseErrors.push(parsed);
         continue;
       }
       const id = m.ruleId === null ? undefined : m.ruleId;
@@ -165,7 +232,7 @@ const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<R
         line: m.line,
         endLine: m.endLine ?? m.line,
         message: m.message,
-        ...doThisFor(rewrite(source, m, id as string)),
+        ...doThisFor(rewrite(source, m, id as string) ?? shippedDoThis(shippedNamespaces, id as string, m.message)),
       });
     }
   }

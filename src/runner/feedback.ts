@@ -1,4 +1,4 @@
-import { withPackDir } from "../adapters/cmd.js";
+import { runIt } from "../adapters/cmd.js";
 import { PARSE_ERROR, type Violation } from "../adapters/types.js";
 import type { Guardrail, Practice, RecordSet } from "../records/types.js";
 import type { Tamper } from "./tamper.js";
@@ -90,7 +90,7 @@ const nextAction = (failures: Violation[], set: RecordSet, notes: Notes): string
   const legacy = failures.find((v) => v.file === "" && ownerOf(set, v.guardrail)?.guardrail.implementation.startsWith("cmd:") === true);
   if (located.length === 0 && legacy !== undefined) {
     const { guardrail } = ownerOf(set, legacy.guardrail) as { guardrail: Guardrail };
-    return `run \`${withPackDir(guardrail.implementation.slice(guardrail.implementation.indexOf(":") + 1), guardrail.packDir)}\` and fix what it reports.`;
+    return runIt(guardrail);
   }
   if (failures.length > 0) {
     return 'change the code at the lines above to match "Do this". Do not edit .warden/ or generated config; that is recorded as tampering.';
@@ -143,7 +143,7 @@ export function formatFeedback(failures: Violation[], set: RecordSet, format: Fo
     return JSON.stringify({ failures: items, tampered, unstaged: notes.unstaged, repeated: notes.repeated, overBudget: notes.overBudget, killed: notes.killed, next });
   }
 
-  const lines: string[] = tampered.map((t) => `TAMPERED ${t.file}  ${t.detail}`);
+  const lines: string[] = tampered.map((t) => `TAMPERED ${t.file}  ${t.detail}${t.guardrail === undefined ? "" : ` ${t.guardrail}`}`);
   lines.push(...(notes.unstaged ?? []).map((f) => `UNSTAGED ${f}  the commit tier judges what you stage; this working copy differs from the index`));
   for (const item of items) {
     lines.push(`FAIL ${item.file === "" ? "project" : `${item.file}:${item.line}`}  ${item.practice}`);

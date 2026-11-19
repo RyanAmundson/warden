@@ -1,11 +1,12 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, matchesGlob, posix } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { adapters, runGuardrails, unknownAdapters } from "../runner/run.js";
-import { pathGroups } from "../records/paths.js";
+import { enabledOn, pathGroups } from "../records/paths.js";
+import { exampleSet } from "../records/load.js";
 import { PARSE_ERROR } from "../adapters/types.js";
 const TSCONFIG = JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", skipLibCheck: true }, include: ["**/*.ts"] });
-const literal = (glob) => glob.split("*", 1)[0] ?? "";
+const literal = (glob) => (glob.startsWith("!") ? "" : (glob.split("*", 1)[0] ?? ""));
 export const examplePrefix = (group) => (group ?? []).map(literal).reduce((a, b) => (b.length > a.length ? b : a), "");
 const exampleFile = (group) => `${examplePrefix(group)}warden-example.ts`;
 const SCAFFOLD = ["package.json", "tsconfig.json"];
@@ -14,7 +15,6 @@ const ownedBy = (owned) => (key) => {
     const first = path.split("/")[0];
     return first === "node_modules" || first === ".warden" || [...owned].some((o) => path === o || path.startsWith(`${o}/`));
 };
-export const enabledOn = (file, groups) => groups.length === 0 || groups.some((g) => g.every((glob) => matchesGlob(file, glob)));
 const unremoved = (failures) => new Error(`Warden could not remove ${failures.length === 1 ? "its example project" : `${failures.length} example projects:`} ${failures.map((f) => `${f.project} (${f.cause})`).join(", ")}. Next action: delete ${failures.map((f) => f.project).join(" and ")}, then run the command again.`);
 const removals = new Set();
 export const exampleProjectsRemoved = async () => {
@@ -56,7 +56,8 @@ export async function withExampleProject(fn, removeLater = false) {
         }
     }
 }
-export async function runExamples(set) {
+export async function runExamples(project) {
+    const set = exampleSet(project);
     const unknown = unknownAdapters(set).map(({ code, record, message }) => ({ code, record, message }));
     if (unknown.length > 0)
         return unknown;
