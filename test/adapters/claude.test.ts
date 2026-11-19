@@ -2,7 +2,7 @@ import { mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { refusal, shellCommands, skipsCommitHook } from "../../src/adapters/claude.js";
+import { hookTriggers, refusal, shellCommands, skipsCommitHook } from "../../src/adapters/claude.js";
 
 const skips = (command: string): (string | undefined)[] => shellCommands(command).map(skipsCommitHook).filter((f) => f !== undefined);
 
@@ -69,6 +69,14 @@ describe("refusal", () => {
     const reason = refusal(root, JSON.stringify({ tool_name: "Bash", tool_input: { command: "git commit -an -m x" } })) as string;
     expect(reason.match(/Next action/g)).toHaveLength(1);
     expect(reason).toContain("with -a in place of -an");
+  });
+
+  it("reads every file a Codex apply_patch adds, updates, deletes, or moves to", () => {
+    const command = ["*** Begin Patch", "*** Add File: a.ts", "+x", "*** Update File: b.ts", "*** Move to: c.ts", "*** Delete File: d.ts", "*** End Patch"].join("\n");
+    expect(hookTriggers(root, JSON.stringify({ tool_name: "apply_patch", tool_input: { command } }))).toEqual(["a.ts", "b.ts", "c.ts", "d.ts"]);
+    const moved = ["*** Begin Patch", "*** Update File: src/a.ts", "*** Move to: .warden/a.ts", "*** End Patch"].join("\n");
+    expect(refusal(root, JSON.stringify({ tool_name: "apply_patch", tool_input: { command: moved } }))).toContain(".warden/a.ts is a Warden record");
+    expect(() => hookTriggers(root, JSON.stringify({ tool_name: "apply_patch", tool_input: { command: "*** Begin Patch\n*** End Patch" } }))).toThrow("names no file to patch. Next action: update Codex");
   });
 
   it("refuses input that is not a hook payload", () => {
