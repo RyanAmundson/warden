@@ -186,6 +186,7 @@ export interface Committed {
 export interface Worktree {
   path: string;
   head?: string;
+  detached?: boolean;
 }
 
 const UNBORN = /^0+$/;
@@ -196,7 +197,7 @@ export function worktrees(root: string): Worktree[] {
     .flatMap((block) => {
       const path = /^worktree (.+)$/m.exec(block)?.[1];
       const head = /^HEAD ([0-9a-f]+)$/m.exec(block)?.[1];
-      return path === undefined ? [] : [{ path, ...(head === undefined || UNBORN.test(head) ? {} : { head }) }];
+      return path === undefined ? [] : [{ path, ...(head === undefined || UNBORN.test(head) ? {} : { head }), ...(/^detached$/m.test(block) ? { detached: true } : {}) }];
     });
 }
 
@@ -310,6 +311,27 @@ export function commitsOf(root: string, shas: string[]): Committed[] {
   const known = shas.filter((sha) => hasCommit(root, sha));
   return known.length === 0 ? [] : described(root, ["--no-walk=unsorted", ...known]);
 }
+
+export const lockVersionAt = (root: string, commit: string): string | undefined => {
+  const r = git(root, ["show", `${commit}:.warden/lock.json`]);
+  if (!r.ok) return undefined;
+  try {
+    const version = (JSON.parse(r.out) as { warden?: unknown }).warden;
+    return typeof version === "string" ? version : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+export const reachableFrom = (root: string, sha: string, tips: string[]): boolean =>
+  execFileSync("git", ["rev-list", "-1", "--ignore-missing", "--stdin", sha], { cwd: root, env: env(), encoding: "utf8", input: tips.map((t) => `^${t}\n`).join(""), stdio: ["pipe", "pipe", "pipe"] }).trim() === "";
+
+export const holdersOf = (root: string, sha: string): string[] => [
+  ...must(root, ["for-each-ref", "--contains", sha, "--format=%(refname)"]).split("\n").filter((l) => l !== ""),
+  ...worktrees(root)
+    .filter((w) => w.detached === true && w.head !== undefined && isAncestor(root, sha, w.head))
+    .map((w) => `the detached HEAD of worktree ${w.path}`),
+];
 
 export const isAncestor = (root: string, ancestor: string, of: string): boolean => git(root, ["merge-base", "--is-ancestor", ancestor, of]).ok;
 

@@ -2,7 +2,8 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmod, copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { commitHookItem } from "../../src/runner/doctor.js";
 
 const scripts = resolve(import.meta.dirname, "../../scripts");
 
@@ -53,7 +54,7 @@ describe("self-check.sh", () => {
     expect(sh("scripts/self-check.sh", "v0.1.0").code).toBe(1);
   });
 
-  it("judges with the tagged release's code over the working copy's packs and names the base", async () => {
+  it("judges with the tagged release's code over the working copy's packs, from a worktree marked as the self-check's, and names the base", async () => {
     const bin = [
       "#!/usr/bin/env node",
       "const { readFileSync, realpathSync } = require(\"node:fs\");",
@@ -65,7 +66,7 @@ describe("self-check.sh", () => {
       "process.stdout.write(`home ${process.env.WARDEN_HOME}\\n`);",
       "",
     ].join("\n");
-    const manifest = { name: "warden", version: "0.0.0", bin: { warden: "bin.js" }, scripts: { build: "exit 1", prepare: "true" }, files: ["bin.js", "release.txt", "packs"] };
+    const manifest = { name: "warden", version: "0.0.0", bin: { warden: "bin.js" }, scripts: { build: "exit 1", prepare: "true", prepack: "test -f .warden-self-check" }, files: ["bin.js", "release.txt", "packs"] };
     await writeFile(join(repo, "package.json"), JSON.stringify(manifest));
     await writeFile(join(repo, "bin.js"), bin);
     await chmod(join(repo, "bin.js"), 0o755);
@@ -151,19 +152,46 @@ describe("self-check.sh", () => {
 });
 
 describe("install-hooks.sh", () => {
-  it("installs a hook that runs the pinned tag's script, never the working copy's", async () => {
-    await writeFile(join(repo, "scripts/self-check.sh"), '#!/bin/sh\necho "ran $1"\n');
+  beforeEach(() => {
+    vi.stubEnv("GIT_CONFIG_GLOBAL", join(home, "gitconfig"));
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const pin = async (): Promise<void> => {
+    await writeFile(join(repo, "scripts/self-check.sh"), '#!/bin/sh\necho "ran $1"\nexit "${SELF_EXIT:-0}"\n');
     await chmod(join(repo, "scripts/self-check.sh"), 0o755);
     git("add", "-A");
     git("commit", "-q", "-m", "pin");
     git("tag", "t1");
     expect(sh("scripts/install-hooks.sh", "t1").code).toBe(0);
+    await mkdir(join(repo, ".warden/generated/hooks"), { recursive: true });
+    await writeFile(join(repo, ".warden/generated/hooks/pre-commit"), '#!/bin/sh\necho "warden ran"\nexit "${WARDEN_EXIT:-0}"\n');
+    await chmod(join(repo, ".warden/generated/hooks/pre-commit"), 0o755);
+  };
+
+  const hook = (env: Record<string, string> = {}): { code: number | null; out: string } => {
+    const r = spawnSync(".git/hooks/pre-commit", [], { cwd: repo, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home, ...env } });
+    return { code: r.status, out: r.stdout };
+  };
+
+  it("installs a hook that runs the pinned tag's script, never the working copy's, and then Warden's commit check", async () => {
+    await pin();
     await writeFile(join(repo, "scripts/self-check.sh"), "#!/bin/sh\nexit 9\n");
     git("add", "-A");
     git("commit", "-q", "-m", "tamper");
-    const r = sh(".git/hooks/pre-commit");
+    const r = hook();
     expect(r.code).toBe(0);
-    expect(r.out).toContain("ran t1");
+    expect(r.out).toBe("ran t1\nwarden ran\n");
+    expect(commitHookItem(repo).fix).toBeUndefined();
+  });
+
+  it("fails the hook when either the pinned self-check or Warden's commit check fails", async () => {
+    await pin();
+    expect(hook({ SELF_EXIT: "3" })).toEqual({ code: 3, out: "ran t1\n" });
+    expect(hook({ WARDEN_EXIT: "4" })).toEqual({ code: 4, out: "ran t1\nwarden ran\n" });
   });
 
   it("refuses a tag that does not exist", () => {

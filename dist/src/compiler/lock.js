@@ -38,6 +38,12 @@ export const packFiles = async (base, dir) => {
     }
 };
 export const LOCK_PATH = ".warden/lock.json";
+export const FIRST_STAMPING = "0.1.11";
+export const olderThan = (a, b) => {
+    const [x, y] = [a, b].map((v) => v.split(".").map(Number));
+    const i = x.findIndex((n, j) => n !== y[j]);
+    return i !== -1 && x[i] < (y[i] ?? 0);
+};
 export const sha256 = (content) => createHash("sha256").update(content).digest("hex");
 export function canonicalJson(value) {
     if (Array.isArray(value))

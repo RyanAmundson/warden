@@ -221,6 +221,22 @@ sees the cause fixed. The daemon keeps its checkpoint in
 `$WARDEN_HOME/daemon/state.json`. At its first start, and when it first
 discovers a repository, it records the repository's current branch and
 worktree tips as the checkpoint, and it judges only commits made after that.
+It also records every ref tip once as the boundary. A commit that the
+boundary reaches is not judged, unless the daemon already flagged it. The
+daemon keeps every commit id it ever flagged in `state.json`. A flagged
+commit stays flagged until a full check stamps it, every ref and
+worktree that holds it drops it, or the owner trusts it. An alert about a working copy refuses commits only in its own
+worktree. Hook problems, unchecked commits, and history scan errors refuse
+commits in every worktree of the repository. The daemon skips the worktree
+that `scripts/self-check.sh` creates, which holds a `.warden-self-check`
+marker.
+
+The `trusted` list in a repository's entry in `state.json` is a one-time
+owner decision. Each entry names a full commit id, a reason, and a
+timestamp, and the daemon never judges that commit, even if Evidence
+recorded it as unchecked. Only the owner adds an entry, by editing
+`state.json` while the daemon is stopped. No command, scan, or commit
+content adds one.
 A running daemon discovers a repository as soon as `warden init` or a check
 writes the repository's first Evidence, without waiting for its next
 10-second tick.
