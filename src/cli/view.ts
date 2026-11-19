@@ -440,7 +440,7 @@ export function renderDeterminism(model: ViewModel, size: Size): string[] {
       : ` Most non-deterministic failures: ${nonDet.label}, ${count(nonDet.n)} of ${count(nonDet.total)} in its last completed run.`;
   const legend = names.map((name, i) => `${marks[i] as string} ${name}`).join("   ");
   const bottom = [rule, clip(` ${legend}`, width), ...wrap(verdict, width, 3)];
-  const top = [spread(` WARDEN  ${model.project} · base ${model.base} · v${model.version}`, "q quit  r rerun  d back", width), rule, clip(`${" DETERMINISM BY PROJECT".padEnd(width - rightW)}${right(names, withShare ? SHARE : undefined)}`, width)];
+  const top = [spread(` WARDEN  ${model.project} · base ${model.base} · v${model.version}`, "q quit  r rerun  d back", width), rule, clip(`${(width - rightW > " DETERMINISM BY PROJECT".length ? " DETERMINISM BY PROJECT" : " DETERMINISM").padEnd(width - rightW)}${right(names, withShare ? SHARE : undefined)}`, width)];
   const room = Math.max(0, size.rows - top.length - bottom.length);
   const kept = body.length > room ? Math.max(0, room - 1) : body.length;
   const hidden = body.length - kept;

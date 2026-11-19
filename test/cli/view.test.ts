@@ -625,6 +625,9 @@ it("a record without kinds counts its recorded failures as unknown kind, in a co
   expect(lines[2]).toMatch(/ prose {2}unknown {2}det\. share$/);
   expect(lines).toContainEqual(expect.stringMatching(/^ {3}older +· +0 +0 +0 +2 +–$/));
   expect(lines).toContain(" █ deterministic   ▒ judgment   ░ prose   · unknown");
+  const narrow = renderDeterminism({ ...threeProjects(), projects: [...threeProjects().projects, { project: "older", run: old }] }, { cols: 60, rows: 24 });
+  for (const l of narrow) expect(l.length, l).toBeLessThanOrEqual(60);
+  expect(narrow[2]).toMatch(/^ DETERMINISM +deterministic {2}judgment {2}prose {2}unknown$/);
   expect(renderDeterminism(threeProjects(), { cols: 120, rows: 40 }).join("\n")).not.toContain("unknown");
 });
 
