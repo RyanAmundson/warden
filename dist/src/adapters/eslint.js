@@ -42,7 +42,29 @@ const emit = (gs, set) => {
 };
 const NO_COMMENTS = "warden/no-comments";
 const NO_SUPPRESSIONS = "warden/no-suppressions";
-const COMMENT_LINE = /^\s*(\/\/|\/\*)/;
+const BOM = /^\uFEFF/;
+const annotatedLine = (lines) => {
+    let inBlock = false;
+    for (const line of lines) {
+        const text = line.trim();
+        if (inBlock || text.startsWith("/*")) {
+            inBlock = !text.slice(inBlock ? 0 : 2).includes("*/");
+            continue;
+        }
+        if (text !== "" && !text.startsWith("//"))
+            return line;
+    }
+    return undefined;
+};
+const joined = (before, after) => {
+    const head = before.trimEnd();
+    const tail = after.trimStart();
+    if (head === "")
+        return `${before}${tail}`;
+    if (tail === "" || /[([]$/.test(head) || /^[)\],;.]/.test(tail))
+        return `${head}${tail}`;
+    return `${head} ${tail}`;
+};
 const hiddenRules = (removed) => {
     const body = removed.replace(/^\/[/*]/, "").replace(/\*\/$/, "");
     const rest = /^\s*eslint-(?:disable|enable)(?:-next-line|-line)?(?=\s|$)(.*)$/s.exec(body)?.[1] ?? "";
@@ -74,13 +96,12 @@ const rewrite = (source, m, id) => {
     const before = lines[m.line - 1].slice(0, m.column - 1);
     const after = source.slice(to).split("\n")[0];
     if (before.trim() === "" && after.trim() === "") {
-        const annotated = id === NO_SUPPRESSIONS ? lines.slice(endLine).find((l) => l.trim() !== "" && !COMMENT_LINE.test(l)) : undefined;
+        const annotated = id === NO_SUPPRESSIONS ? annotatedLine(lines.slice(endLine)) : undefined;
         if (annotated !== undefined)
             return `${annotated.trimEnd()}\n${hint(removed)}`;
         return `${endLine === m.line ? "Delete this line." : `Delete lines ${m.line} to ${endLine}.`}\n${hint(removed)}`;
     }
-    const seam = /\s$/.test(before) ? after.trimStart() : after;
-    return `${`${before}${seam}`.trimEnd()}\n${hint(removed)}`;
+    return `${joined(before, after).trimEnd()}\n${hint(removed)}`;
 };
 const doThisFor = (doThis) => (doThis === undefined ? {} : { doThis });
 const run = async (gs, files, ctx) => {
@@ -93,6 +114,7 @@ const run = async (gs, files, ctx) => {
             { plugins: { warden: plugin } },
             { files: ["**/*.{ts,tsx,mts,cts}"], languageOptions: { parser: tseslint.parser } },
             { linterOptions: { noInlineConfig: true } },
+            { ignores: ["!**/node_modules/"] },
             ...entries,
         ],
         allowInlineConfig: false,
@@ -117,7 +139,9 @@ const run = async (gs, files, ctx) => {
             for (const [id, t] of Object.entries(pass.rules ?? {}))
                 ruleMs.set(id, (ruleMs.get(id) ?? 0) + t.total);
         }
-        const source = result.messages.length > 0 ? await readFile(result.filePath, "utf8") : "";
+        if (result.messages.length > 0 && result.source === undefined)
+            throw new Error(`eslint returned messages for ${result.filePath} without its source`);
+        const source = (result.source ?? "").replace(BOM, "");
         const suppressed = new Set(result.messages.filter((m) => m.ruleId === NO_SUPPRESSIONS).map((m) => `${m.line}:${m.column}`));
         for (const m of result.messages) {
             if (m.ruleId === NO_COMMENTS && suppressed.has(`${m.line}:${m.column}`))

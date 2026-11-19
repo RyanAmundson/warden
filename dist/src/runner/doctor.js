@@ -2,7 +2,7 @@ import { accessSync, constants, existsSync, readFileSync, statSync } from "node:
 import { createRequire } from "node:module";
 import { delimiter, join, resolve } from "node:path";
 import { commandOf, packDirs } from "../adapters/cmd.js";
-import { TOOLS } from "../compiler/lock.js";
+import { TOOLS, firstLine } from "../compiler/lock.js";
 const wardenRequire = createRequire(import.meta.url);
 const executable = (file) => {
     try {
@@ -49,7 +49,7 @@ const toolItem = async (name, load) => {
         return { name: `tool ${name}` };
     }
     catch (cause) {
-        return { name: `tool ${name}`, problem: cause.message, fix: `reinstall Warden so its bundled ${name} loads` };
+        return { name: `tool ${name}`, problem: firstLine(cause.message), fix: `reinstall Warden so its bundled ${name} loads` };
     }
 };
 export async function doctor(set) {

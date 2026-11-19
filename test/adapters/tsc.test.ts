@@ -129,6 +129,17 @@ describe("tsc adapter", () => {
     });
   });
 
+  it("gives an unused local to a noUnusedLocals Guardrail", async () => {
+    await withProject(async (root) => {
+      await writeFile(join(root, "src/b.ts"), "export function f(): number {\n  const unused = 1;\n  return 2;\n}\n");
+      const g = guardrail("unused", "tsc:noUnusedLocals");
+      await emitInto(root, [g]);
+      const results = await tscAdapter.run([g], [], ctxFor(root));
+      expect(results.find((r) => r.guardrail === "unused")?.violations.map((v) => `${v.file}:${v.line} ${v.message.slice(0, 7)}`)).toEqual(["src/b.ts:2 TS6133:"]);
+      expect(results.find((r) => r.guardrail === "tsc:baseline-errors")?.violations).toEqual([]);
+    });
+  });
+
   it("sends syntax errors to the parse-error guardrail", async () => {
     await withProject(async (root) => {
       await writeFile(join(root, "src/b.ts"), "export const n = 1;\nconst = ;\n");

@@ -1,4 +1,5 @@
 import type { Practice, RecordSet } from "../records/types.js";
+import { unmappedFlag } from "../adapters/tsc.js";
 import { ESLINT_PASS, RUN_TOTAL } from "../runner/evidence.js";
 
 export interface Finding {
@@ -13,6 +14,7 @@ const CODES = [
   "duplicate-guardrail",
   "reserved-id",
   "cmd-lint",
+  "unmapped-tsc-flag",
   "prose-only",
   "conflict-overlap",
   "undefined-conflict",
@@ -56,6 +58,8 @@ export function checkConsistency(set: RecordSet): Finding[] {
       if (g.id === RUN_TOTAL || g.id === ESLINT_PASS) {
         add("reserved-id", g.id, `Guardrail id ${g.id} is reserved for Warden's own cost and scaling rows. Next action: rename Guardrail ${g.id} in ${pack.file}, then run warden compile.`);
       }
+      const unmapped = unmappedFlag(g);
+      if (unmapped !== undefined) add("unmapped-tsc-flag", g.id, `Guardrail ${g.id} in ${pack.file}: ${unmapped}`);
     }
     for (const g of pack.practices.flatMap((p) => p.guardrails)) {
       if (g.kind === "lint" && g.implementation.startsWith("cmd:")) {

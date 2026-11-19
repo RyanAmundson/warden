@@ -95,7 +95,7 @@ export function formatFeedback(failures, set, format, notes = {}) {
     for (const item of items) {
         lines.push(`FAIL ${item.file === "" ? "project" : `${item.file}:${item.line}`}  ${item.practice}`);
         lines.push(`  Rule:     ${item.rule}`);
-        if (item.file === "")
+        if (item.file === "" || !item.message.includes(item.rule))
             lines.push(`  Output:   ${indent(item.message)}`);
         if (item.doThis !== undefined)
             lines.push(`  Do this:  ${indent(item.doThis)}`);
