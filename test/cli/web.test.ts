@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -207,6 +207,48 @@ describe("pages render from API responses", () => {
     const html = renderApp(state("tamper", { tamper: { open: [{ ...detection, file: "<img src=x onerror=alert(1)>" }], recent: [] } }));
     expect(html).not.toContain("<img src=x");
     expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+  });
+});
+
+describe("UI QA fixes", () => {
+  it("marks the selected run with aria-current and links each run to its detail", () => {
+    const html = renderApp(state("runs", { runs: { project: "context-manager", runs: cmRuns } }, { view: { run: "r-block", outcome: "all", fresh: new Set() } }));
+    expect(html).toContain('<tr class="sel" aria-current="true">');
+    expect((html.match(/<tr[^>]*aria-current/g) ?? []).length).toBe(1);
+    expect(html).toContain('href="/runs?project=context-manager&amp;run=r-block#detail"');
+    expect(html).toContain('<section class="mod narrow detail" id="detail"');
+  });
+
+  it("marks the current watched project in the sidebar, and the stylesheet styles it", async () => {
+    const html = renderApp(state("runs", { runs: { project: "context-manager", runs: cmRuns } }));
+    expect(html).toMatch(/aria-current="true"><span>context-manager<\/span>/);
+    const css = await readFile(join(wardenRoot, "web/app.css"), "utf8");
+    expect(css).toContain(".nav a[aria-current]{");
+  });
+
+  it("shows a dash for the last pass of a project with no runs", () => {
+    const html = renderApp(state("overview", { tamper: { open: [], recent: [] }, runs: { "context-manager": [], warden: [run({ run: "w-1" })] } }));
+    expect(html).not.toContain("in the last 0 runs");
+    expect(html).toMatch(/Last pass<\/div><div>–<\/div>/);
+  });
+
+  it("offers no dead link from the empty state and words None yet as plain text", () => {
+    const html = renderApp({ ...state("layers", {}), projects: [], data: { projects: [] } });
+    expect(html).not.toContain('href="/layers">See the bundled packs');
+    expect(html).toContain('<li class="empty-item">None yet</li>');
+    expect(html).toContain('<h1 class="h1">Layers</h1>');
+  });
+
+  it("makes the frozen page inert while the daemon is lost", () => {
+    const html = renderApp({ ...state("overview", {}), lost: true, frozen: '<button data-action="pause">Pause live</button>', frozenAt: at(41) });
+    expect(html).toMatch(/<div class="frozen" inert[ >]/);
+  });
+
+  it("omits the column header of a band with no rules", () => {
+    const html = renderApp(state("layers", { layers }, { project: "warden" }));
+    const judgment = html.slice(html.indexOf('id="ly-judgment"'), html.indexOf('id="ly-prose"'));
+    expect(judgment).not.toContain("<thead>");
+    expect(html.slice(html.indexOf('id="ly-prose"'))).toContain("<thead>");
   });
 });
 

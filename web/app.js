@@ -9,6 +9,7 @@ let lastBeat = Date.now();
 let events;
 let pending;
 let loads = 0;
+let jump = location.hash === "#detail";
 
 const api = async (path) => {
   const res = await fetch(path, { cache: "no-store" }).catch((cause) => {
@@ -81,6 +82,13 @@ const load = async () => {
     state.error = null;
     state.lost = false;
     lastBeat = Date.now();
+    render();
+    const detail = jump && document.getElementById("detail");
+    if (detail) {
+      jump = false;
+      if (detail.getBoundingClientRect().top > innerHeight) detail.scrollIntoView();
+    }
+    return;
   } catch (cause) {
     if (seq !== loads) return;
     if (cause.network) return goLost();

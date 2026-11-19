@@ -166,7 +166,7 @@ const sidebar = (state) => {
 <div class="brand">${BRAND}<span>WARDEN</span></div>
 <div class="daemon${lost ? " lost" : ""}"><b><i aria-hidden="true"></i>${lost ? "Daemon not answering" : "Daemon live"}</b><span id="beat">${esc(beatText(health, now))}</span></div>
 <div class="navs"><ul class="nav">${nav}</ul>
-<div><div class="lbl">Watched projects</div><ul class="nav">${watched === "" ? '<li><span class="lbl">None yet</span></li>' : watched}</ul></div></div>
+<div><div class="lbl">Watched projects</div><ul class="nav">${watched === "" ? '<li class="empty-item">None yet</li>' : watched}</ul></div></div>
 <div class="foot">Warden ${esc(health?.version ?? "")} · evidence in ${esc(homeOf(health?.heartbeatFile))}</div>
 </nav>`;
 };
@@ -176,13 +176,12 @@ const header = (title, sub, controls = "") => `<header class="head"><div><h1 cla
 const projectPicker = (state, id) =>
   `<label class="lbl" for="${id}">Project</label><select id="${id}" data-nav="project">${state.projects.map((p) => `<option value="${esc(p.project)}"${p.project === state.project ? " selected" : ""}>${esc(p.project)}</option>`).join("")}</select>`;
 
-export const emptyState = () => `${header("Overview", "0 projects watched")}
+export const emptyState = (page) => `${header(PAGES[page === "run" ? "runs" : page] ?? "Overview", "0 projects watched")}
 <section class="mod empty" aria-labelledby="em-h">
 <svg class="keyart" width="300" height="80" viewBox="0 0 120 32" role="img" aria-label="An empty key outline: no lock to fit yet"><rect x="1" y="4" width="26" height="24" rx="7" fill="none" stroke="#9AA3AE" stroke-width="0.8" stroke-dasharray="2 1.5"/><circle cx="10" cy="16" r="3.5" fill="none" stroke="#9AA3AE" stroke-width="0.8"/><path d="M27 10 L112 10 L118 16.5 L112 23 L27 23" fill="none" stroke="#9AA3AE" stroke-width="0.8" stroke-dasharray="2 1.5"/></svg>
 <div><h2 id="em-h">No projects are watched yet</h2>
 <p>The daemon watches every project that warden init registered, and every project whose checks wrote evidence. It has found none. Set Warden up in a project and it appears here, with its runs streaming as agents edit.</p>
-${nextBox("run warden init in a project")}
-<div><a href="/layers">See the bundled packs</a></div></div>
+${nextBox("run warden init in a project")}</div>
 </section>`;
 
 export const lostBanner = (state) => {
@@ -231,7 +230,7 @@ const projectCard = (p, runs) => {
   return `<section class="mod card" aria-labelledby="${id}">
 <div class="modh"><div><h2 class="h2" id="${id}">${esc(p.project)}</h2><span class="muted mono">${roots}</span></div>${tag(s)}</div>
 <div class="keyrow">${projectKey(p.project, p.openAlerts > 0)}<div>${p.openAlerts > 0 ? `<span class="bad">${plural(p.openAlerts, "open tamper detection")}</span><a href="${href("tamper")}">See what changed</a>` : '<span class="ok">No open tamper detections</span><span class="muted">The daemon is watching its hooks and records</span>'}</div></div>
-<div class="stats"><div><div class="lbl">Last run</div><div>${run ? `${esc(clock(run.at))} · ${esc(run.tier ?? "")}` : "–"}</div></div><div><div class="lbl">Last pass</div><div>${lastPass ? `${esc(clock(lastPass.at))} · ${esc(lastPass.tier ?? "")}` : `none in the last ${plural(runs.length, "run")}`}</div></div><div><div class="lbl">Open alerts</div><div>${num(p.openAlerts)}</div></div><div><div class="lbl">Ratchet left</div><div>${ratchet ? num(ratchet[1]) : "–"}</div></div></div>
+<div class="stats"><div><div class="lbl">Last run</div><div>${run ? `${esc(clock(run.at))} · ${esc(run.tier ?? "")}` : "–"}</div></div><div><div class="lbl">Last pass</div><div>${lastPass ? `${esc(clock(lastPass.at))} · ${esc(lastPass.tier ?? "")}` : (runs.length === 0 ? "–" : `none in the last ${plural(runs.length, "run")}`)}</div></div><div><div class="lbl">Open alerts</div><div>${num(p.openAlerts)}</div></div><div><div class="lbl">Ratchet left</div><div>${ratchet ? num(ratchet[1]) : "–"}</div></div></div>
 ${end}
 </section>`;
 };
@@ -239,7 +238,7 @@ ${end}
 const runRow = (run, cols, view) => {
   const cells = {
     time: `<td>${esc(clock(run.at))}</td>`,
-    timeLink: `<td><a href="${href("runs", { project: run.project, run: run.run })}" style="font-weight:600">${esc(clock(run.at))}</a></td>`,
+    timeLink: `<td><a href="${href("runs", { project: run.project, run: run.run })}#detail" style="font-weight:600">${esc(clock(run.at))}</a></td>`,
     project: `<td style="font-weight:600">${esc(run.project)}</td>`,
     trigger: `<td>${esc(trigger(run))}</td>`,
     tier: `<td>${esc(run.tier ?? "–")}</td>`,
@@ -251,12 +250,12 @@ const runRow = (run, cols, view) => {
     next: `<td class="mono clip" title="${esc(run.next ?? "")}">${esc(run.next ?? "nothing to do")}</td>`,
   };
   const cls = [view?.selected === run.run ? "sel" : notPassing(run) ? "held" : "", view?.fresh?.has(run.run) ? "arrived" : ""].filter(Boolean).join(" ");
-  return `<tr${cls === "" ? "" : ` class="${cls}"`}>${cols.map((c) => cells[c]).join("")}</tr>`;
+  return `<tr${cls === "" ? "" : ` class="${cls}"`}${view?.selected === run.run ? ' aria-current="true"' : ""}>${cols.map((c) => cells[c]).join("")}</tr>`;
 };
 
 export const overviewPage = (state) => {
   const { data, view = {} } = state;
-  if (data.projects.length === 0) return emptyState();
+  if (data.projects.length === 0) return emptyState(state.page);
   const all = data.projects.flatMap((p) => (data.runs[p.project] ?? []).map((r) => ({ ...r, project: p.project })));
   const stream = all.filter((r) => !view.filter || r.project === view.filter).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 25);
   const now = new Date(state.now ?? Date.now());
@@ -298,7 +297,7 @@ const tierTitle = (run) => `${(run.tier ?? "run").replace(/^./, (c) => c.toUpper
 
 const runSub = (run) => `triggered by ${trigger(run)} · ${target(run)}${run.bytes ? ` · ${(run.bytes / 1000).toFixed(1)} kB` : ""} · ${ms(run.ms)} ms · exit ${run.exit ?? "–"}${run.commit ? ` · commit ${run.commit.slice(0, 7)}` : ""}`;
 
-const runDetail = (project, run) => `<section class="mod narrow detail" aria-labelledby="rn-dh">
+const runDetail = (project, run) => `<section class="mod narrow detail" id="detail" aria-labelledby="rn-dh">
 <div class="modh"><div><h2 class="h2" id="rn-dh">${esc(tierTitle(run))}</h2><span class="muted">${esc(runSub(run))}</span></div>${tag(outcome(run))}</div>
 ${stepsList(run)}
 ${failuresTable(run)}
@@ -311,7 +310,7 @@ export const filterRuns = (runs, view = {}) =>
 
 export const runsPage = (state) => {
   const { data, view = {} } = state;
-  if (data.projects.length === 0) return emptyState();
+  if (data.projects.length === 0) return emptyState(state.page);
   const runs = data.runs.runs;
   const shown = filterRuns(runs, view);
   const counts = { all: runs.length, pass: runs.filter(passed).length, not: runs.filter(notPassing).length };
@@ -352,7 +351,7 @@ const missingRun = (project, id, count) => `<section class="mod pad" role="statu
 
 export const runPage = (state) => {
   const { data } = state;
-  if (data.projects.length === 0) return emptyState();
+  if (data.projects.length === 0) return emptyState(state.page);
   const project = data.runs.project;
   const runs = data.runs.runs;
   const wanted = state.view?.run;
@@ -366,14 +365,14 @@ export const runPage = (state) => {
 ${banner(run)}
 <div class="split"><section class="mod wide" aria-labelledby="er-steps"><div class="modh"><h2 class="h2" id="er-steps">Steps</h2><span class="muted">${notPassing(run) && run.outcome !== "ran" ? (reached === 0 ? "stopped before step 1" : `stopped at step ${reached} of 4`) : `${reached} of 4 steps ran`}</span></div>${stepsList(run)}${failuresTable(run)}</section>
 <section class="mod narrow" aria-labelledby="er-run"><div class="modh"><h2 class="h2" id="er-run">Run</h2>${tag(outcome(run))}</div><dl class="facts">${facts.map(([k, v]) => `<dt class="lbl">${k}</dt><dd>${v}</dd>`).join("")}</dl></section></div>
-${streak.length > 1 ? `<section class="mod" aria-labelledby="er-streak"><div class="modh"><h2 class="h2" id="er-streak">Same outcome, ${num(streak.length)} runs in a row</h2><span class="muted">since ${esc(clock(streak.at(-1).at))}${run.next ? " · each gave the same next action" : ""}</span></div><div class="scroll"><table><thead><tr><th scope="col">Time</th><th scope="col">Trigger</th><th scope="col">Tier</th><th scope="col" class="r">ms</th></tr></thead><tbody>${streak.map((r) => `<tr${r.run === run.run ? ' class="sel"' : ""}><td><a href="${href("run", { project, run: r.run })}">${esc(clock(r.at))}</a></td><td>${esc(trigger(r))}</td><td>${esc(r.tier ?? "–")}</td><td class="r">${ms(r.ms)}</td></tr>`).join("")}</tbody></table></div></section>` : ""}`;
+${streak.length > 1 ? `<section class="mod" aria-labelledby="er-streak"><div class="modh"><h2 class="h2" id="er-streak">Same outcome, ${num(streak.length)} runs in a row</h2><span class="muted">since ${esc(clock(streak.at(-1).at))}${run.next ? " · each gave the same next action" : ""}</span></div><div class="scroll"><table><thead><tr><th scope="col">Time</th><th scope="col">Trigger</th><th scope="col">Tier</th><th scope="col" class="r">ms</th></tr></thead><tbody>${streak.map((r) => `<tr${r.run === run.run ? ' class="sel" aria-current="true"' : ""}><td><a href="${href("run", { project, run: r.run })}">${esc(clock(r.at))}</a></td><td>${esc(trigger(r))}</td><td>${esc(r.tier ?? "–")}</td><td class="r">${ms(r.ms)}</td></tr>`).join("")}</tbody></table></div></section>` : ""}`;
 };
 
 export const weakest = (practices) => [...practices].sort((a, b) => (KIND_RANK[b.strongestKind] ?? 9) - (KIND_RANK[a.strongestKind] ?? 9))[0];
 
 export const layersPage = (state) => {
   const { data } = state;
-  if (data.projects.length === 0) return emptyState();
+  if (data.projects.length === 0) return emptyState(state.page);
   const l = data.layers;
   const w = weakest(l.practices);
   const verdict = w === undefined || DETERMINISTIC.has(w.strongestKind) ? "None. Every practice is held by a deterministic rule." : `${esc(w.practice)}, held only by ${esc(w.strongestKind)}. Add a type, lint, or runtime Guardrail to ${esc(w.practice)}.`;
@@ -385,13 +384,13 @@ export const layersPage = (state) => {
         .map(
           (k) =>
             `<tr class="kind"><td>${KIND_RANK[k.kind] ?? ""}</td><td>${esc(k.kind)}</td><td colspan="6" class="note">${esc(KIND_TEXT[k.kind] ?? "")} · ${k.rules.length === 0 ? "none yet" : plural(k.rules.length, "rule")}</td></tr>${k.rules
-              .map((r) => `<tr class="sub"><td></td><td class="mono">${esc(r.guardrail)}</td><td>${esc(r.pack)}</td><td>${esc(r.practice)}</td><td>${esc(r.adapter)}</td><td>${esc(r.runs.join(", "))}</td><td class="r">${esc(r.median)}</td><td>${r.promote ? tag({ cls: "err", text: "Promote" }) : ""}</td></tr>`)
+              .map((r) => `<tr class="sub"><td></td><td class="mono" style="padding-left:30px">${esc(r.guardrail)}</td><td>${esc(r.pack)}</td><td>${esc(r.practice)}</td><td>${esc(r.adapter)}</td><td>${esc(r.runs.join(", "))}</td><td class="r">${esc(r.median)}</td><td>${r.promote ? tag({ cls: "err", text: "Promote" }) : ""}</td></tr>`)
               .join("")}`,
         )
         .join("");
       const name = esc(b.band.replace(/^./, (c) => c.toUpperCase()));
       const id = esc(b.band);
-      return `<section class="mod" aria-labelledby="ly-${id}"><div class="modh"><div style="flex-direction:row;align-items:center;gap:10px">${marks[b.band] ?? ""}<h2 class="h2" id="ly-${id}">${name}</h2><span class="muted">${esc(BAND_TEXT[b.band] ?? "")}</span></div><span class="muted">${plural(count, "rule")}</span></div><div class="scroll"><table><thead><tr><th scope="col">Rank</th><th scope="col">Kind or Guardrail</th><th scope="col">Pack</th><th scope="col">Practice</th><th scope="col">Adapter</th><th scope="col">Runs at</th><th scope="col" class="r">Median</th><th scope="col"><span class="lbl">Weak</span></th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+      return `<section class="mod" aria-labelledby="ly-${id}"><div class="modh"><div style="flex-direction:row;align-items:center;gap:10px">${marks[b.band] ?? ""}<h2 class="h2" id="ly-${id}">${name}</h2><span class="muted">${esc(BAND_TEXT[b.band] ?? "")}</span></div><span class="muted">${plural(count, "rule")}</span></div><div class="scroll"><table>${count === 0 ? "" : '<thead><tr><th scope="col">Rank</th><th scope="col">Kind or Guardrail</th><th scope="col">Pack</th><th scope="col">Practice</th><th scope="col">Adapter</th><th scope="col">Runs at</th><th scope="col" class="r">Median</th><th scope="col"><span class="lbl">Weak</span></th></tr></thead>'}<tbody>${rows}</tbody></table></div></section>`;
     })
     .join("");
   const rulesOf = (id) => l.bands.flatMap((b) => b.kinds.flatMap((k) => k.rules.filter((r) => r.pack === id)));
@@ -411,7 +410,7 @@ ${bands}
 
 export const violationsPage = (state) => {
   const { data } = state;
-  if (data.projects.length === 0) return emptyState();
+  if (data.projects.length === 0) return emptyState(state.page);
   const v = data.violations;
   const last = v.packs.map((p) => p.lastRun).filter(Boolean).sort((a, b) => b.at.localeCompare(a.at))[0];
   const ratchetRun = data.runs.runs.find((r) => r.ratchet !== undefined);
@@ -443,7 +442,7 @@ export const share = (c) => {
 
 export const determinismPage = (state) => {
   const { data } = state;
-  if (data.projects.length === 0) return emptyState();
+  if (data.projects.length === 0) return emptyState(state.page);
   const rows = data.determinism.projects
     .map((p) => {
       const c = p.counts;
@@ -460,7 +459,7 @@ export const determinismPage = (state) => {
       const runs = data.runs[p.project] ?? [];
       const count = (o) => runs.filter((r) => r.outcome === o).length;
       const recent = runs.find((r) => ["tampered", "error", "unstaged", "refused"].includes(r.outcome));
-      return `<tr><td style="font-weight:700">${esc(p.project)}</td><td class="r">${num(count("tampered"))}</td><td class="r">${num(count("refused"))}</td><td class="r">${num(count("error"))}</td><td class="r">${num(count("unstaged"))}</td><td class="wrap">${recent ? `<a href="${href("run", { project: p.project, run: recent.run })}">${esc(clock(recent.at))}</a> · ${esc(outcome(recent).text)}${recent.next ? ` · <span class="mono">${esc(recent.next)}</span>` : ""}` : '<span class="muted">none</span>'}</td></tr>`;
+      return `<tr><td style="font-weight:700">${esc(p.project)}</td><td class="r">${num(count("tampered"))}</td><td class="r">${num(count("refused"))}</td><td class="r">${num(count("error"))}</td><td class="r">${num(count("unstaged"))}</td><td class="wrap" style="min-width:260px">${recent ? `<a href="${href("run", { project: p.project, run: recent.run })}">${esc(clock(recent.at))}</a> · ${esc(outcome(recent).text)}${recent.next ? ` · <span class="mono">${esc(recent.next)}</span>` : ""}` : '<span class="muted">none</span>'}</td></tr>`;
     })
     .join("");
   const depth = Math.max(0, ...data.projects.map((p) => (data.runs[p.project] ?? []).length));
@@ -477,7 +476,7 @@ const isOpen = (open, e) => open.some((d) => d.project === e.project && d.file =
 
 export const tamperPage = (state) => {
   const { data } = state;
-  if (data.projects.length === 0) return emptyState();
+  if (data.projects.length === 0) return emptyState(state.page);
   const { open, recent } = data.tamper;
   const projects = [...new Set(open.map((d) => d.project))];
   const kinds = [...new Set(open.map((d) => d.detail.split(" ")[0]))];
@@ -506,6 +505,6 @@ export const mainHtml = (state) => {
 };
 
 export const renderApp = (state) => {
-  const body = state.lost ? `${lostBanner(state)}<div class="frozen" style="display:flex;flex-direction:column;gap:16px">${state.frozen ?? ""}</div>` : mainHtml(state);
+  const body = state.lost ? `${lostBanner(state)}<div class="frozen" inert style="display:flex;flex-direction:column;gap:16px">${state.frozen ?? ""}</div>` : mainHtml(state);
   return `<div class="shell">${sidebar(state)}<main class="main" id="main">${body}</main></div>`;
 };
