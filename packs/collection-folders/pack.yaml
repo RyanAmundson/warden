@@ -84,6 +84,7 @@ practices:
           "src/[Widget]/button/index.ts": "export const button = 1;\n"
         mustPass:
           "src/[quality-gates]/lint/index.ts": "export const lint = 1;\n"
+          "src/[quality-gates]/test/index.ts": "export const test = 1;\n"
   - id: collection-items-share-one-shape
     statement: Every item of a collection has the same top-level files and folders as the other items in it, with names that repeat the item name compared as <item>.
     terms: [collection]

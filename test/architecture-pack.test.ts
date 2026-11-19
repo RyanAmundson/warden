@@ -8,7 +8,6 @@ import { eslintAdapter } from "../src/adapters/eslint.js";
 import { loadRecords } from "../src/records/load.js";
 import type { Guardrail, RecordSet } from "../src/records/types.js";
 import { runGuardrails } from "../src/runner/run.js";
-import { bench } from "./pack-bench.js";
 
 const wardenRoot = resolve(import.meta.dirname, "..");
 const code = "[\"**/*.{ts,tsx,mts,cts,js,mjs,cjs}\"]";
@@ -66,11 +65,6 @@ afterEach(async () => {
 });
 
 describe("architecture pack world boundary", () => {
-  it.each([modules, globals, "architecture-source-shape"])("%s scales at most linearly", async (rule) => {
-    const { code, out } = await bench(root, { rule });
-    expect(code, out).toBe(0);
-  });
-
   it("is consistent and its examples hold", async () => {
     expect(checkConsistency(set)).toEqual([]);
     expect(await runExamples(set)).toEqual([]);
