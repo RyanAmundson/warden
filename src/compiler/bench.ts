@@ -161,30 +161,53 @@ export async function benchKey(s: Subject, warden: string, cfg: BenchSettings): 
   return sha256(canonicalJson(["bench", s.g.id, s.g.version, s.g.implementation, s.g.options ?? null, warden, cfg, s.groups, code]));
 }
 
+const admitSubject = async (set: RecordSet, s: Subject, warden: string, cfg: BenchSettings): Promise<Finding | undefined> => {
+  const key = await benchKey(s, warden, cfg);
+  if (readBenchCache(key) !== undefined) return undefined;
+  let m: Measurement;
+  try {
+    m = await benchSubject(set, s, cfg, "warden compile");
+  } catch (cause) {
+    if (!(cause instanceof RecordError)) throw cause;
+    return { code: "bench-failed", record: s.g.id, message: cause.message };
+  }
+  if (m.verdict === "superlinear") {
+    return {
+      code: "superlinear",
+      record: s.g.id,
+      message: `Guardrail ${s.g.id} is superlinear in files (k=${(m.k as number).toFixed(2)}, measured twice); points: ${pointsText(m)}. Next action: make ${s.g.id} linear in files, then run warden compile.`,
+    };
+  }
+  writeBenchCache(key, m);
+  return undefined;
+};
+
 export async function admit(set: RecordSet, warden: string): Promise<Finding[]> {
   const cfg = benchSettings(set.config);
   const gs = set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.filter((g) => g.kind !== "instruction")));
-  const findings: Finding[] = [];
-  for (const s of subjectsOf(set, gs)) {
-    const key = await benchKey(s, warden, cfg);
-    if (readBenchCache(key) !== undefined) continue;
-    let m: Measurement;
-    try {
-      m = await benchSubject(set, s, cfg, "warden compile");
-    } catch (cause) {
-      if (!(cause instanceof RecordError)) throw cause;
-      findings.push({ code: "bench-failed", record: s.g.id, message: cause.message });
-      continue;
+  const packs = new Map<Pack, Subject[]>();
+  for (const subject of subjectsOf(set, gs)) {
+    let group = packs.get(subject.pack);
+    if (group === undefined) {
+      group = [];
+      packs.set(subject.pack, group);
     }
-    if (m.verdict === "superlinear") {
-      findings.push({
-        code: "superlinear",
-        record: s.g.id,
-        message: `Guardrail ${s.g.id} is superlinear in files (k=${(m.k as number).toFixed(2)}, measured twice); points: ${pointsText(m)}. Next action: make ${s.g.id} linear in files, then run warden compile.`,
-      });
-      continue;
-    }
-    writeBenchCache(key, m);
+    group.push(subject);
   }
-  return findings;
+  const pending = [...packs.values()].entries();
+  const results: Finding[][] = [];
+  const measurePacks = async (): Promise<void> => {
+    for (const [index, subjects] of pending) {
+      const findings: Finding[] = [];
+      for (const subject of subjects) {
+        const finding = await admitSubject(set, subject, warden, cfg);
+        if (finding !== undefined) findings.push(finding);
+      }
+      results[index] = findings;
+    }
+  };
+  const workers = await Promise.allSettled([measurePacks(), measurePacks()]);
+  const error = workers.find((worker) => worker.status === "rejected");
+  if (error !== undefined) throw error.reason;
+  return results.flat();
 }
