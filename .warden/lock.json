@@ -1,8 +1,13 @@
 {
-  "format": 2,
-  "warden": "0.1.8",
+  "format": 3,
+  "warden": "0.1.9",
   "sources": {
     ".warden/config.yaml": "2280033b1777f6de504790f367247cbd9d99df3dc4f7605b396435ce60a48b77",
+    "packs/core/fixtures/clean-pass.ts": "037ecd1db38c230c248787e60fd7bfc0cb0101b187b59535b6e7483be762d350",
+    "packs/core/fixtures/comment-fail.ts": "26caf9e7681674ea2c01a7c7762d2856907b53385a361624f0f6396dfacb3ddc",
+    "packs/core/fixtures/directive-pass.ts": "ad7a012e75ab4f267ebcfd2e371026389088071f8f387e67e39a84cb568d3bf1",
+    "packs/core/fixtures/skip-fail.test.ts": "ba0d6052b5430ccba1be91aca70f3ee276d2909da5857e0fb508af9494ad370d",
+    "packs/core/fixtures/suppression-fail.ts": "9898b90158d301da945ac358c8d846d559fc9fea4dcfab5401bbb180e070039e",
     "packs/core/pack.yaml": "0549826a521623ac0bb0ac890e361048df6c7c8c5060ed9a21dcc3edaa3dae91"
   },
   "tools": {
@@ -11,7 +16,8 @@
     "typescript": "5.9.3"
   },
   "generated": {
-    ".warden/generated/eslint.rules.json": "682fd2781e2bf47c6a9eed187f5120a2ed2291d93d1928faa894f6dcd194f809"
+    ".warden/generated/eslint.rules.json": "02677ce587d8d56c9ce466119ca5f8b409af77ecd328b35fcc2746b089fc4bee",
+    ".warden/generated/hooks/pre-commit": "7ed44e03380db180eff223a86456d5224ee9862ee86c8ac0af5a4f95f8856eaa"
   },
   "guardrails": {
     "warden-no-comments": {

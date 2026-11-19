@@ -13,13 +13,9 @@ import { adapters, runGuardrails } from "../runner/run.js";
 
 const RUNS = 3;
 
-export const RANK: Verdict[] = ["constant", "sublinear", "linear", "superlinear"];
+const FIXED_RUNS = 9;
 
-const median = (xs: number[]): number => {
-  const s = [...xs].sort((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 === 1 ? (s[mid] as number) : ((s[mid - 1] as number) + (s[mid] as number)) / 2;
-};
+export const RANK: Verdict[] = ["constant", "sublinear", "linear", "superlinear"];
 
 const mean = (xs: number[]): number => xs.reduce((a, b) => a + b, 0) / xs.length;
 
@@ -59,28 +55,41 @@ const refuseUnmatched = (s: Subject, rerun: string): void => {
   );
 };
 
+const WRITE_BATCH = 64;
+
 const writeTree = async (root: string, tree: Record<string, string>): Promise<void> => {
-  for (const [path, content] of Object.entries(tree)) {
-    await mkdir(dirname(join(root, path)), { recursive: true });
-    await writeFile(join(root, path), content);
+  const entries = Object.entries(tree);
+  for (let i = 0; i < entries.length; i += WRITE_BATCH) {
+    await Promise.all(
+      entries.slice(i, i + WRITE_BATCH).map(async ([path, content]) => {
+        await mkdir(dirname(join(root, path)), { recursive: true });
+        await writeFile(join(root, path), content);
+      }),
+    );
   }
 };
 
-const measure = (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string): Promise<Measurement> =>
+const measure = (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string, signal?: AbortSignal): Promise<Measurement> =>
   withExampleProject(async (project) => {
-    const ctx = { root: project, generatedDir: join(project, ".warden/generated"), unbudgeted: true };
+    const ctx = { root: project, generatedDir: join(project, ".warden/generated"), unbudgeted: true, signal };
     await writeTree(project, (adapters.get(prefixOf(s.g)) as Adapter).emit([s.g], set));
     const files: string[] = [];
     let copies = 0;
-    const sample = async (n: number): Promise<number> => {
+    const sample = async (n: number, runs = RUNS): Promise<number> => {
+      signal?.throwIfAborted();
+      const tree: Record<string, string> = {};
       for (; copies < n; copies++) {
-        const copy = copyOf(s.g, s.prefix, copies);
-        await writeTree(project, Object.fromEntries(copy.map((c) => [c.path, c.content])));
-        files.push(...copy.map((c) => c.path));
+        for (const c of copyOf(s.g, s.prefix, copies)) {
+          tree[c.path] = c.content;
+          files.push(c.path);
+        }
       }
+      await writeTree(project, tree);
       const times: number[] = [];
-      for (let i = 0; i < RUNS; i++) {
+      for (let i = 0; i < runs; i++) {
+        signal?.throwIfAborted();
         const results = await runGuardrails(set, [s.g], files, ctx);
+        signal?.throwIfAborted();
         const bad = results.find((r) => r.status !== "pass");
         if (bad !== undefined) {
           throw new RecordError(
@@ -93,7 +102,7 @@ const measure = (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string):
         if (own === undefined) throw new Error(`no result for guardrail ${s.g.id}`);
         times.push(s.time(own));
       }
-      return median(times);
+      return Math.min(...times);
     };
     const seen = new Map<number, number>();
     const at = async (n: number): Promise<number> => {
@@ -105,7 +114,7 @@ const measure = (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string):
       for (const m of [1, 2, 4, 8]) points.push([base * m, await at(base * m)]);
       return points;
     };
-    const f = await at(1);
+    const f = await sample(1, FIXED_RUNS);
     let base = cfg.baseFiles;
     while ((await at(base)) - f < cfg.minMarginalMs) {
       if (base * 16 > cfg.maxFiles) return { verdict: "constant", points: await sizes(cfg.baseFiles), f };
@@ -115,13 +124,13 @@ const measure = (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string):
     if ((points[3] as [number, number])[1] - f < cfg.constantMs) return { verdict: "constant", points, f };
     const k = slope(points, f);
     return { verdict: k > cfg.linearMax ? "superlinear" : k < cfg.sublinearMax ? "sublinear" : "linear", k, points, f };
-  });
+  }, true);
 
-export const benchSubject = async (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string): Promise<Measurement & { previous?: Measurement }> => {
+export const benchSubject = async (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string, signal?: AbortSignal): Promise<Measurement & { previous?: Measurement }> => {
   refuseUnmatched(s, rerun);
-  const first = await measure(set, s, cfg, rerun);
+  const first = await measure(set, s, cfg, rerun, signal);
   if (first.verdict !== "superlinear") return first;
-  return { ...(await measure(set, s, cfg, rerun)), previous: first };
+  return { ...(await measure(set, s, cfg, rerun, signal)), previous: first };
 };
 
 export const subjectsOf = (set: RecordSet, gs: Guardrail[]): Subject[] =>

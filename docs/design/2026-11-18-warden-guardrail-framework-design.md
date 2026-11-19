@@ -279,7 +279,17 @@ folder of the Guardrail's pack, so a pack can ship a script and run it as
 `cmd:node "$WARDEN_PACK_DIR/check.js"`; failures and next actions show the
 command with the folder substituted and shell-quoted, `warden doctor` checks
 that each named pack file exists, and every file in a bundled or local pack's
-folder but `.DS_Store` is hashed into the lock. A `cmd` Guardrail reports one project-wide result, so
+folder but `.DS_Store` is hashed into the lock. A `cmd` command that is
+only `node "$WARDEN_PACK_DIR/<script>"` and plain arguments, in a pack that
+Warden ships, runs the script in a worker thread inside Warden rather than a
+new Node process, and the budget stops the worker. The script sees the project
+root as `process.cwd()`, its arguments in `process.argv`, and its exit code as
+the verdict, but it cannot call `process.chdir`, so it resolves every relative
+path against `process.cwd()`. Every other command, including a local pack's
+script, runs in the shell. A `cmd` command that exits 2 reports
+an error in its environment or usage, not a violation: Warden exits 2 with the
+command's last output line as the next action, or tells you to run the command
+when that line has none. A `cmd` Guardrail reports one project-wide result, so
 compile refuses one whose kind is `lint`; moving such a Guardrail from `lint`
 to `runtime` is not weakening, since its `lint` result never failed. Because every adapter normalizes to the same Violation, the
 baseline, cache, budgets, Evidence, and report work the same for every tool.
@@ -288,7 +298,7 @@ baseline, cache, budgets, Evidence, and report work the same for every tool.
 |---|---|---|
 | `eslint` | `.warden/generated/eslint.config.mjs` | ESLint API |
 | `tsc` | `.warden/generated/tsconfig.json`, extending the project's own and adding flags | `tsc --noEmit -p`, diagnostics parsed per file |
-| `cmd` | nothing | a shell command; exit status is the verdict |
+| `cmd` | nothing | a shell command, or a worker thread for `node <script>`; exit status is the verdict |
 | `claude-settings` | `permissions.deny` entries | nothing; it is a harness control |
 | later: `codex-config`, `git-hooks`, `skills`, `tla` | | |
 

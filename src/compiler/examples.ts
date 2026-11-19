@@ -25,14 +25,52 @@ const ownedBy = (owned: Set<string>) => (key: string): boolean => {
 
 export const enabledOn = (file: string, groups: string[][]): boolean => groups.length === 0 || groups.some((g) => g.every((glob) => matchesGlob(file, glob)));
 
-export async function withExampleProject<T>(fn: (project: string) => Promise<T>): Promise<T> {
+interface Unremoved {
+  project: string;
+  cause: string;
+}
+
+const unremoved = (failures: Unremoved[]): Error =>
+  new Error(
+    `Warden could not remove ${failures.length === 1 ? "its example project" : `${failures.length} example projects:`} ${failures.map((f) => `${f.project} (${f.cause})`).join(", ")}. Next action: delete ${failures.map((f) => f.project).join(" and ")}, then run the command again.`,
+  );
+
+const removals = new Set<Promise<void>>();
+
+export const exampleProjectsRemoved = async (): Promise<void> => {
+  const pending = [...removals];
+  removals.clear();
+  const failures = (await Promise.allSettled(pending)).flatMap((r) => (r.status === "rejected" ? [r.reason as Unremoved] : []));
+  if (failures.length > 0) throw unremoved(failures);
+};
+
+export async function thenRemoveExampleProjects(run: () => Promise<void>, report: (cause: unknown) => void): Promise<void> {
+  try {
+    await run();
+  } catch (cause) {
+    report(cause);
+  }
+  try {
+    await exampleProjectsRemoved();
+  } catch (cause) {
+    report(cause);
+  }
+}
+
+export async function withExampleProject<T>(fn: (project: string) => Promise<T>, removeLater = false): Promise<T> {
   const project = await mkdtemp(join(tmpdir(), "warden-examples-"));
   try {
     await writeFile(join(project, "package.json"), "{}\n");
     await writeFile(join(project, "tsconfig.json"), TSCONFIG);
     return await fn(project);
   } finally {
-    await rm(project, { recursive: true, force: true });
+    const removal = rm(project, { recursive: true, force: true }).catch((cause: Error) => Promise.reject<void>({ project, cause: cause.message } satisfies Unremoved));
+    if (removeLater) {
+      removals.add(removal);
+      removal.then(() => removals.delete(removal), () => undefined);
+    } else {
+      await removal.catch((failure: Unremoved) => Promise.reject(unremoved([failure])));
+    }
   }
 }
 
