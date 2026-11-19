@@ -51,7 +51,7 @@ td.clip{width:100%;max-width:0;min-width:120px;overflow:hidden;text-overflow:ell
 .kind td{background:#EEF0F2;font-weight:650}
 .kind td.note{font-weight:400;color:var(--muted);white-space:normal}
 .bandt{table-layout:fixed;min-width:700px}
-.bandt td{white-space:normal}
+.bandt td{white-space:normal;overflow-wrap:anywhere}
 .bandt td.r{white-space:nowrap}
 .tag{display:inline-flex;align-items:center;gap:5px;padding:1px 7px;font-stretch:80%;font-weight:650;font-size:12px;line-height:18px;border:1px solid;white-space:nowrap}
 .pass{color:#1F5E39;background:#DDEFE3;border-color:#9CCBAE}

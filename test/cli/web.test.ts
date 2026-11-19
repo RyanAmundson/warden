@@ -331,13 +331,16 @@ describe("review and UI QA round 2", () => {
 
   it("wraps long band cells instead of clipping them", async () => {
     const css = await readFile(join(wardenRoot, "web/app.css"), "utf8");
-    expect(css).toContain(".bandt td{white-space:normal}");
+    expect(css).toContain(".bandt td{white-space:normal;overflow-wrap:anywhere}");
     expect(css).not.toMatch(/\.bandt td\{[^}]*overflow:hidden/);
   });
 
-  it("breaks words anywhere only in the Failures File cell and keeps the Median on one line", async () => {
+  it("breaks long identifiers in the Layers band and Failures File cells while keeping the Median on one line", async () => {
     const css = await readFile(join(wardenRoot, "web/app.css"), "utf8");
-    expect(css.match(/^[^{}]*\btd[^{}]*\{[^}]*overflow-wrap:anywhere/gm)).toEqual(["td.path{overflow-wrap:anywhere"]);
+    expect(css.match(/^[^{}]*\btd[^{}]*\{[^}]*overflow-wrap:anywhere/gm)).toEqual([
+      "td.path{overflow-wrap:anywhere",
+      ".bandt td{white-space:normal;overflow-wrap:anywhere",
+    ]);
     expect(css).toContain(".bandt td.r{white-space:nowrap}");
     const html = renderApp(state("run", { runs: { project: "context-manager", runs: cmRuns } }, { view: { run: "r-block", fresh: new Set() } }));
     expect(html).toContain('<td class="mono wrap path">');
