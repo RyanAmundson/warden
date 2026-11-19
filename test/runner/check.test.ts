@@ -302,6 +302,17 @@ describe("runCheck", () => {
     expect(runs[2]?.out).not.toContain("dispute");
   });
 
+  it("text and agent feedback for a file-and-line failure quote the tool's own message", async () => {
+    await write("b.ts", "var b = 1;\n");
+    for (const format of ["text", "agent"] as const) {
+      const { code, out } = await check({ format });
+      expect(code).toBe(1);
+      expect(out).toContain("FAIL b.ts:1  no-var\n  Rule:     Declare with const.\n  Output:   Unexpected var, use let or const instead.\n");
+    }
+    await write("b.ts", "// two\nconst b = 1;\n");
+    expect((await check({ format: "agent" })).out).not.toContain("Output:");
+  });
+
   it("feedback names rule, example, and one next action", async () => {
     await write("b.ts", "// two\nconst b = 1;\n");
     const { code, out } = await check();
