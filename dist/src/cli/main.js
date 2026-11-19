@@ -20,6 +20,7 @@ import { runPacks } from "./packs.js";
 import { runReport } from "./report.js";
 import { reviewOptions, runBrief, runTriage } from "./review.js";
 import { runRuns } from "./runs.js";
+import { runWhere } from "./where.js";
 import { liveView, loadView, plainDeterminism, plainLayers, plainView, plainViolations } from "./view.js";
 import { SKILL_HARNESSES } from "../runner/doctor.js";
 import { wardenHome } from "../runner/evidence.js";
@@ -109,6 +110,9 @@ program
     .option("--pack <id>", "only this pack")
     .action(async (o) => {
     process.exitCode = await runBench(root(), findWardenRoot(), o);
+});
+program.command("where <term-unit-or-path>").description("locate a Unit and its document").action(async (query) => {
+    process.exitCode = await runWhere(root(), findWardenRoot(), query);
 });
 program.command("explain <id>").description("explain a Practice or Guardrail").action(async (id) => {
     process.exitCode = await runExplain(root(), findWardenRoot(), id);

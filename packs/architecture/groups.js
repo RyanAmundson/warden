@@ -6,26 +6,31 @@ export const stem = (file) => file.replace(CODE, "");
 
 export const sameModule = (a, b) => stem(a) === stem(b);
 
-export const groupOf = (file, settings) => {
+export function* groupAncestors(file, settings, all = false) {
   const path = `/${file}`;
   for (const collection of settings.groupCollections) {
-    const at = path.indexOf(`/${collection.collection}/`);
-    if (at === -1) continue;
-    const base = path.slice(1, at + collection.collection.length + 1);
-    const rest = path.slice(at + collection.collection.length + 2);
-    if (!rest.includes("/")) return undefined;
-    const name = rest.split("/")[0];
-    const suffixed = name.endsWith(collection.suffix);
-    return {
-      name,
-      dir: `${base}/${name}`,
-      port: `${base}/${collection.port.replaceAll("{name}", name)}`,
-      suffix: collection.suffix,
-      term: suffixed ? name.slice(0, name.length - collection.suffix.length) : undefined,
-    };
+    const marker = `/${collection.collection}/`;
+    for (let at = path.indexOf(marker); at !== -1; at = path.indexOf(marker, at + 1)) {
+      const start = at + marker.length;
+      const end = path.indexOf("/", start);
+      if (end === -1) {
+        if (!all) return;
+        break;
+      }
+      const name = path.slice(start, end);
+      const base = path.slice(1, start - 1);
+      yield {
+        name,
+        dir: `${base}/${name}`,
+        port: `${base}/${collection.port.replaceAll("{name}", name)}`,
+        suffix: collection.suffix,
+        term: name.endsWith(collection.suffix) ? name.slice(0, name.length - collection.suffix.length) : undefined,
+      };
+    }
   }
-  return undefined;
-};
+}
+
+export const groupOf = (file, settings) => groupAncestors(file, settings).next().value;
 
 export const conformanceOf = (group) => `${stem(group.port)}.conformance.ts`;
 

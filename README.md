@@ -170,6 +170,11 @@ Codex asks you to review the plugin's hooks before they run. Once trusted:
 - A missing or older global `warden` blocks patches and commits with the
   install command, as in Claude Code.
 
+With the architecture pack enabled, `warden where <term-or-path>` looks up
+the owning group and its expected `CONTRACT.md` from the declared group
+collections. You can also pass the group folder name. A path resolves to the
+nearest group, and can point to a file you are about to create.
+
 ## Git pre-commit hook
 
 `warden compile` writes `.warden/generated/hooks/pre-commit`, an executable

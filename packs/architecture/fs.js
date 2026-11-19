@@ -1,13 +1,14 @@
-import { conformanceOf, groupOf, sameModule, stem } from "./groups.js";
+import { conformanceOf, groupAncestors, sameModule, stem } from "./groups.js";
 
-export const groupsIn = (files, settings) => {
+export const groupsIn = (files, settings, { allAncestors = false } = {}) => {
   const groups = new Map();
   for (const file of [...files].sort()) {
-    const group = groupOf(file, settings);
-    if (group === undefined) continue;
-    const known = groups.get(group.dir) ?? { ...group, files: [] };
-    known.files.push(file);
-    groups.set(group.dir, known);
+    for (const group of groupAncestors(file, settings, allAncestors)) {
+      const known = groups.get(group.dir) ?? { ...group, files: [] };
+      known.files.push(file);
+      groups.set(group.dir, known);
+      if (!allAncestors) break;
+    }
   }
   return [...groups.values()];
 };
@@ -25,7 +26,7 @@ const conformancePresent = ({ files, all, settings }) => {
     }));
 };
 
-const kebab = (id) => id.toLowerCase().replaceAll(" ", "-");
+export const kebab = (id) => id.toLowerCase().replaceAll(" ", "-");
 
 const groupNamedByTerm = ({ files, settings, terms }) =>
   groupsIn(files, settings).flatMap((group) => {
