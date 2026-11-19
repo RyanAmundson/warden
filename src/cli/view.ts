@@ -5,6 +5,7 @@ import { bundledTools } from "../compiler/lock.js";
 import { RecordError, loadRecords } from "../records/load.js";
 import { type Kind, type Tier, kindRank } from "../records/types.js";
 import { type Evidence, type Step, readEvidence } from "../runner/evidence.js";
+import { MAX_RECORDED_FAILURES } from "./check.js";
 import { listPacks } from "./packs.js";
 import { buildReport } from "./report.js";
 import { clock, firstFailure, msText, noRules, older, ruleParts, runRecords, target, visible } from "./runs.js";
@@ -15,6 +16,7 @@ export interface RuleRow {
   fired: number;
   median: string;
   budgetMs: number;
+  baselined: number;
 }
 
 export interface ViewModel {
@@ -56,7 +58,7 @@ export async function loadView(root: string, wardenRoot: string): Promise<ViewMo
     version: await wardenVersion(wardenRoot),
     packs: set.config.packs.map((p) => p.id),
     tools: bundledTools(),
-    rules: report.guardrails.map((g) => ({ guardrail: g.guardrail, strength: g.strength, fired: g.fired, median: g.costShared === undefined ? `${g.medianMs ?? 0} ms` : "shared", budgetMs: budget.get(g.guardrail) ?? 0 })),
+    rules: report.guardrails.map((g) => ({ guardrail: g.guardrail, strength: g.strength, fired: g.fired, median: g.costShared === undefined ? `${g.medianMs ?? 0} ms` : "shared", budgetMs: budget.get(g.guardrail) ?? 0, baselined: g.baselineRemaining })),
     evidence: readEvidence(set.config.project),
     now: Date.now(),
     layers: set.packs.flatMap((p) =>
@@ -234,7 +236,7 @@ export function render(model: ViewModel, size: Size, selected: number): string[]
     const where = shown.record === undefined ? shown.steps.find((e) => e.files !== undefined) : shown.record;
     return [` NOW  ${tier === "" ? "" : `${tier} `}check`, ...(where === undefined ? [] : [target(where)]), ...(trigger === undefined ? [] : [`triggered by ${TRIGGER[trigger] ?? trigger}`]), ...(shown.interrupted === true ? ["interrupted"] : []), ...(shown.record?.ms === undefined ? [] : [msText(shown.record.ms)])].join(" · ");
   })();
-  const top = [spread(` WARDEN  ${model.project} · base ${model.base} · v${model.version}`, "q quit  r rerun  l layers", width), rule, clip(head, width), ...stepLines(shown, model.tools, width), ""];
+  const top = [spread(` WARDEN  ${model.project} · base ${model.base} · v${model.version}`, "q quit  r rerun  l layers  v violations", width), rule, clip(head, width), ...stepLines(shown, model.tools, width), ""];
   const bottom = [rule, ...wrap(footer(shown, live), width, 3)];
   const room = Math.max(0, size.rows - top.length - bottom.length - 3);
   const ruleRows = Math.min(model.rules.length, Math.ceil(room / 2));
@@ -315,15 +317,70 @@ export function renderLayers(model: ViewModel, size: Size): string[] {
     weakest === undefined || DETERMINISTIC.has(weakest.strongestKind)
       ? " Weakest practice: none. Every practice is held by a deterministic rule."
       : ` Weakest practice: ${weakest.practice}, held only by ${weakest.strongestKind}. Next action: add a type, lint, or runtime Guardrail to ${weakest.practice}`;
-  const top = [spread(` WARDEN  ${model.project} · base ${model.base} · v${model.version}`, "q quit  r rerun  l runs", width), rule, spread(" LAYERS  strongest first · a rule can only move up", "rules  proven", width - 1)];
+  const top = [spread(` WARDEN  ${model.project} · base ${model.base} · v${model.version}`, "q quit  r rerun  l runs  v violations", width), rule, spread(" LAYERS  strongest first · a rule can only move up", "rules  proven", width - 1)];
   const bottom = [clip(` PACKS   ${packs}`, width), rule, ...wrap(verdict, width, 3)];
   const room = Math.max(0, size.rows - top.length - bottom.length);
   return [...top, ...body.slice(0, room), ...bottom].map((l) => visible(l).trimEnd());
 }
 
-export const plainLayers = (model: ViewModel): string => `${renderLayers(model, { cols: 80, rows: 60 }).join("\n")}\n`;
+const MIN_BAR = 8;
 
-export const plainView = (model: ViewModel): string => `${render(model, { cols: 80, rows: 40 }, 0).join("\n")}\n`;
+const LEGEND = [" █ baselined, allowed until touched", " ▓ new in the last run, blocking"];
+
+export function renderViolations(model: ViewModel, size: Size): string[] {
+  const width = Math.max(40, size.cols);
+  const rule = "─".repeat(width);
+  const runs = runRecords(model.evidence);
+  const baselined = new Map(model.rules.map((r) => [r.guardrail, r.baselined]));
+  const packs = model.packs.map((pack) => {
+    const ids = model.layers.filter((r) => r.pack === pack).map((r) => r.guardrail);
+    const run = runs.filter((e) => ids.some((id) => e.rules?.[id] !== undefined || (e.cachedRules ?? []).includes(id))).at(-1);
+    const fresh = (id: string): number | undefined => (run === undefined ? undefined : (run.failures ?? []).filter((f) => f.guardrail === id).length);
+    const rows = ids.map((id) => ({ label: `  ${id}`, old: baselined.get(id) ?? 0, fresh: fresh(id) }));
+    const sum = (xs: (number | undefined)[]): number | undefined => (run === undefined ? undefined : xs.reduce<number>((a, b) => a + (b ?? 0), 0));
+    return { label: pack, old: rows.reduce((a, r) => a + r.old, 0), fresh: sum(rows.map((r) => r.fresh)), last: run === undefined ? "" : `${clock(run.at).slice(0, 5)} ${SHORT[run.trigger ?? ""] ?? run.trigger ?? "-"}`, run, rows };
+  });
+  const newText = (n: number | undefined): string => (n === undefined ? "–" : count(n));
+  const layout = (guardrails: boolean, lastRun: boolean) => {
+    const rows = packs.flatMap((p) => [p, ...(guardrails ? p.rows.map((r) => ({ ...r, last: "" })) : [])]);
+    const oldW = Math.max(9, ...rows.map((r) => count(r.old).length));
+    const newW = Math.max(3, ...rows.map((r) => newText(r.fresh).length));
+    const lastW = lastRun ? Math.max(8, ...rows.map((r) => r.last.length)) : 0;
+    const right = (old: string, fresh: string, last: string): string => `  ${old.padStart(oldW)}   ${fresh.padStart(newW)}${lastRun ? `   ${last.padEnd(lastW)}` : ""}`;
+    const labelW = Math.max(0, ...rows.map((r) => r.label.length));
+    const bar = width - 1 - labelW - 1 - right("", "", "").length;
+    return { rows, right, labelW, bar };
+  };
+  const chosen = [layout(true, true), layout(false, true), layout(false, false)].find((l) => l.bar >= MIN_BAR) ?? layout(false, false);
+  const barW = Math.max(1, chosen.bar);
+  const most = Math.max(0, ...chosen.rows.map((r) => r.old + (r.fresh ?? 0)));
+  const scale = most === 0 ? 0 : barW / most;
+  const body = chosen.rows.map((r) => {
+    const fresh = r.fresh ?? 0;
+    const n = fresh === 0 ? 0 : Math.max(1, Math.round(fresh * scale));
+    const b = Math.min(Math.round(r.old * scale), barW - n);
+    const bar = b + n === 0 ? "▏" : `${"█".repeat(b)}${"▓".repeat(n)}`;
+    return clip(`${` ${r.label.padEnd(chosen.labelW)} ${bar}`.padEnd(width - chosen.right("", "", "").length)}${chosen.right(count(r.old), newText(r.fresh), r.last)}`, width);
+  });
+  const latest = packs.filter((p) => (p.fresh ?? 0) > 0 && p.run !== undefined).map((p) => p.run as Evidence).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1);
+  const capped = packs.some((p) => (p.run?.failures ?? []).length >= MAX_RECORDED_FAILURES);
+  const next = runs.length === 0 ? " Next action: press r to run warden check" : latest?.next === undefined ? "" : ` Next action: ${latest.next}`;
+  const top = [spread(` WARDEN  ${model.project} · base ${model.base} · v${model.version}`, "q quit  r rerun  v back", width), rule, clip(`${" VIOLATIONS BY PACK".padEnd(width - chosen.right("", "", "").length)}${chosen.right("baselined", "new", "last run")}`, width)];
+  const bottom = [
+    rule,
+    ...(width >= LEGEND.join("  ").length ? [LEGEND.join("  ")] : LEGEND).map((l) => clip(l, width)),
+    ...(capped ? wrap(` New counts are the first ${MAX_RECORDED_FAILURES} failures a run records.`, width, 2) : []),
+    ...(next === "" ? [] : wrap(next, width, 3)),
+  ];
+  const room = Math.max(0, size.rows - top.length - bottom.length);
+  return [...top, ...body.slice(0, room), ...bottom].map((l) => visible(l).trimEnd());
+}
+
+export const plainViolations = (model: ViewModel, cols = 80): string => `${renderViolations(model, { cols, rows: 200 }).join("\n")}\n`;
+
+export const plainLayers = (model: ViewModel, cols = 80): string => `${renderLayers(model, { cols, rows: 60 }).join("\n")}\n`;
+
+export const plainView = (model: ViewModel, cols = 80): string => `${render(model, { cols, rows: 40 }, 0).join("\n")}\n`;
 
 export const ENTER = "\x1b[?1049h\x1b[?25l";
 
@@ -347,12 +404,14 @@ export interface ViewOutput {
   off(event: "resize", listener: () => void): unknown;
 }
 
+export type Screen = "runs" | "layers" | "violations";
+
 export interface ViewIo {
   input: ViewInput;
   output: ViewOutput;
   watchDir: string;
   file: string;
-  layers?: boolean;
+  screen?: Screen;
   load: () => Promise<ViewModel>;
   rerun: () => void;
 }
@@ -361,7 +420,7 @@ export function liveView(io: ViewIo): Promise<number> {
   return new Promise((resolve, reject) => {
     let model: ViewModel | undefined;
     let selected = 0;
-    let layers = io.layers === true;
+    let screen: Screen = io.screen ?? "runs";
     let closed = false;
     let watcher: FSWatcher | undefined;
     let timer: NodeJS.Timeout | undefined;
@@ -391,7 +450,7 @@ export function liveView(io: ViewIo): Promise<number> {
       if (closed || model === undefined) return;
       try {
         const size = { cols: io.output.columns || 80, rows: io.output.rows || 24 };
-        const lines = layers ? renderLayers(model, size) : render(model, size, selected);
+        const lines = screen === "layers" ? renderLayers(model, size) : screen === "violations" ? renderViolations(model, size) : render(model, size, selected);
         io.output.write(`${HOME}${lines.join("\n")}`);
       } catch (cause) {
         fail(cause);
@@ -429,8 +488,9 @@ export function liveView(io: ViewIo): Promise<number> {
       const k = chunk.toString("utf8");
       if (k === "q" || k === "\x03") return quit();
       if (k === "r") return io.rerun();
-      if (k === "l") {
-        layers = !layers;
+      if (k === "l" || k === "v") {
+        const to: Screen = k === "l" ? "layers" : "violations";
+        screen = screen === to ? "runs" : to;
         return draw();
       }
       const runs = model === undefined ? 0 : runRecords(model.evidence).length;

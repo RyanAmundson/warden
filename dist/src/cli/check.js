@@ -119,7 +119,7 @@ const report = (failures, set, opts, notes) => {
     }
     return failed ? 1 : 0;
 };
-const MAX_RECORDED_FAILURES = 10;
+export const MAX_RECORDED_FAILURES = 10;
 const closeStep = (live, state, extra = {}) => {
     if (live.open === undefined || live.project === undefined)
         return;

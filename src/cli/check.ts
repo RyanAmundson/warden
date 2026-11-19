@@ -139,7 +139,7 @@ const report = (failures: Violation[], set: RecordSet, opts: CheckOptions, notes
   return failed ? 1 : 0;
 };
 
-const MAX_RECORDED_FAILURES = 10;
+export const MAX_RECORDED_FAILURES = 10;
 
 interface Live {
   run: string;
