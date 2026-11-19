@@ -8,7 +8,7 @@ const g: Guardrail = { id: "g", kind: "legacy", runs: ["edit"], budgetMs: 100, v
 const set: RecordSet = {
   root: ".",
   config: {} as never,
-  packs: [{ id: "p", file: "/w/.warden/packs/p/pack.yaml", layer: 0, terms: [], practices: [{ id: "x", pack: "p", statement: "s", terms: [], paths: [], conflictsWith: [], guardrails: [g] }] }],
+  packs: [{ id: "p", file: "/w/.warden/packs/p/pack.yaml", layer: 0, terms: [], capabilities: [], practices: [{ id: "x", pack: "p", statement: "s", terms: [], paths: [], conflictsWith: [], guardrails: [g] }] }],
 };
 
 describe("runGuardrails", () => {

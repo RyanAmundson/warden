@@ -188,7 +188,7 @@ describe("fs adapter", () => {
       const evil = { ...treeGuardrail("fs:evil/quiet", evilDir), id: "e" };
       const set = treeSet(local);
       set.config.packs.push({ id: "evil", paths: ["src/**"] });
-      set.packs.push({ id: "evil", file: "pack.yaml", layer: 0, terms: [], practices: [{ id: "y", pack: "evil", statement: "s", terms: [], paths: ["**/*.ts"], conflictsWith: [], guardrails: [evil] }] });
+      set.packs.push({ id: "evil", file: "pack.yaml", layer: 0, terms: [], capabilities: [], practices: [{ id: "y", pack: "evil", statement: "s", terms: [], paths: ["**/*.ts"], conflictsWith: [], guardrails: [evil] }] });
       const found = [
         { guardrail: "g", file: "src/a.ts", line: 1, message: "src/a.ts names b with 1 term", doThis: "Rename it." },
         { guardrail: "g", file: "src/b.ts", line: 1, message: "src/b.ts names b with 1 term", doThis: "Rename it." },

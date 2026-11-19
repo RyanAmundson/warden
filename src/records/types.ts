@@ -36,12 +36,31 @@ export interface Practice {
   guardrails: Guardrail[];
 }
 
+export interface ReviewRule {
+  adapter: string;
+  model: string;
+}
+
+export interface Capability {
+  id: string;
+  kind: "skill" | "tool";
+  serves: string;
+  purpose: string;
+  when: string;
+  upholds: string[];
+  commands: string[];
+  replaces: string[];
+  review?: ReviewRule;
+  pack: string;
+}
+
 export interface Pack {
   id: string;
   file: string;
   layer: number;
   terms: Term[];
   practices: Practice[];
+  capabilities: Capability[];
   settings?: Record<string, unknown>;
 }
 

@@ -2,6 +2,7 @@ import { join } from "node:path";
 import type { Pack, Practice, RecordSet } from "../records/types.js";
 import { unmappedFlag } from "../adapters/tsc.js";
 import { ESLINT_PASS, RUN_TOTAL } from "../runner/evidence.js";
+import { reviewAdapters } from "../review/adapter.js";
 
 export interface Finding {
   code: string;
@@ -21,6 +22,11 @@ const CODES = [
   "undefined-conflict",
   "undefined-term",
   "banned-synonym",
+  "duplicate-capability",
+  "same-purpose",
+  "undefined-upheld",
+  "undefined-serves",
+  "unknown-review-adapter",
   "layer-order",
 ];
 
@@ -112,6 +118,26 @@ export function checkConsistency(set: RecordSet): Finding[] {
       }
     }
   }
+
+  const capabilities = set.packs.flatMap((p) => p.capabilities);
+  const fileOf = new Map(set.packs.map((p) => [p.id, p.file]));
+  const practiceIds = new Set(practices.map((p) => p.id));
+  const firstServing = new Map<string, string>();
+  capabilities.forEach((c, i) => {
+    const file = fileOf.get(c.pack) as string;
+    if (capabilities.findIndex((o) => o.id === c.id) !== i) {
+      add("duplicate-capability", c.id, `Capability ${c.id} is defined more than once. Next action: rename Capability ${c.id} in ${file}, then run warden compile.`);
+      return;
+    }
+    const first = firstServing.get(c.serves);
+    if (first === undefined) firstServing.set(c.serves, c.id);
+    else add("same-purpose", c.id, `Capabilities ${first} and ${c.id} both serve Term ${c.serves}. Next action: merge ${c.id} into ${first} in ${file}, then run warden compile.`);
+    for (const id of c.upholds) {
+      if (!practiceIds.has(id)) add("undefined-upheld", c.id, `Capability ${c.id} upholds Practice ${id}, which is not defined. Next action: enable the pack that defines Practice ${id} in .warden/config.yaml, then run warden compile.`);
+    }
+    if (c.review !== undefined && !reviewAdapters.has(c.review.adapter)) add("unknown-review-adapter", c.id, `Capability ${c.id} names review adapter ${c.review.adapter}, which Warden does not have. Next action: set review.adapter to one of ${[...reviewAdapters.keys()].join(", ")} in ${file}, then run warden compile.`);
+    if (!termIds.has(c.serves)) add("undefined-serves", c.id, `Capability ${c.id} serves Term ${c.serves}, which is not defined. Next action: enable the pack that defines Term ${c.serves} in .warden/config.yaml, then run warden compile.`);
+  });
 
   let free = Math.max(...set.packs.map((p) => p.layer));
   for (const pack of set.packs) {

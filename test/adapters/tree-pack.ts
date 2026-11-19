@@ -8,7 +8,7 @@ export const treeGuardrail = (implementation: string, packDir: string): Guardrai
 export const treeSet = (g: Guardrail): RecordSet => ({
   root: "",
   config: { project: "p", base: "main", packs: [{ id: "local", paths: ["src/**"], settings: { word: "b" } }], tierBudgetMs: { edit: 1000, commit: 1000, boundary: 1000 }, loopBreakerRepeats: 3 },
-  packs: [{ id: "local", file: "pack.yaml", layer: 0, terms: [{ id: "t", definition: "d", bans: [] }], practices: [{ id: "x", pack: "local", statement: "s", terms: [], paths: ["**/*.ts"], conflictsWith: [], guardrails: [g] }] }],
+  packs: [{ id: "local", file: "pack.yaml", layer: 0, capabilities: [], terms: [{ id: "t", definition: "d", bans: [] }], practices: [{ id: "x", pack: "local", statement: "s", terms: [], paths: ["**/*.ts"], conflictsWith: [], guardrails: [g] }] }],
 });
 
 export async function shippedPack(adapter: string, code: string): Promise<{ dir: string; remove: () => Promise<void> }> {
