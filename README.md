@@ -52,12 +52,28 @@ lock records the list's hash as a source, so a changed list shows up as source
 drift. `warden check` verifies signatures with `ssh-keygen`, whatever the
 repository's own `gpg.ssh` settings say. An unsigned change is reported as
 `unsigned`, and a signature from any other key as `untrusted-signature`. The
-next action names the first-parent commits to `git revert -m 1`, newest first,
-and stashes uncommitted changes in the paths they touch; the pre-commit hook
-does not block `git revert`. The check ignores replace refs, grafts, and the
-commit-graph file. It cannot detect a commit object or alternate object store
-that was rewritten in place; that only changes the local copy, like an
-uncommitted edit, and cannot be pushed. If
+next action names the first-parent commits to `git revert -X ours -m 1`,
+newest first, and first stashes uncommitted and untracked changes in the paths
+they touch; the pre-commit hook does not block `git revert`. `-X ours` keeps a
+later commit's version of a line that both commits changed, so the revert
+finishes without a conflict stop. A revert still stops when a later commit
+deleted a file the unsigned commit changed. `git revert --continue` then runs
+the pre-commit hook, which refuses it, and the named command does not work.
+That history needs a commit made without the hook, such as a cherry-pick or a
+rebase, and a person must undo it by hand. When the first-parent
+chain ends in a root commit instead of the merge base, the next action reverts
+the merge that joined the base with `-m` naming the parent that holds it.
+
+The check ignores replace refs, grafts, the commit-graph file, and submodule
+`ignore` settings. It trusts its own process and the installed package. It
+cannot detect a commit object or alternate object store that was rewritten in
+place in the local repository. If the real commit is already on the remote,
+for example because the feature branch was pushed, a merge made from that
+local copy can still put the unsigned commit into the history of `main`,
+though `main`'s tree keeps the original content. These also redirect the
+check: `GIT_DIR`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`,
+`GIT_CONFIG_PARAMETERS`, a `git` or `ssh-keygen` earlier on `PATH`, and an edit
+to the installed package's `allowed_signers` file. If
 the package's list is missing or empty, every `.warden/` change is reported
 as `no-allowed-signers`. A file that matches the base again at `HEAD` needs no
 signature; an uncommitted revert does not count. `.warden/baseline.json` is

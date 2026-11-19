@@ -6,7 +6,7 @@ import { LOCK_FORMAT, LOCK_PATH, type Lock, canonicalJson, readLock, sha256 } fr
 import { RecordError, readText } from "../records/load.js";
 import { type BenchSettings, type Kind, type RecordSet, kindRank } from "../records/types.js";
 import { BASELINE_PATH, type Baseline, carryRenames, projectWideEntries, readBaseline } from "./baseline.js";
-import { changeSignatures, changesSinceMergeBase, containsHead, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
+import { type Revert, changeSignatures, changesSinceMergeBase, containsHead, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
 
 export interface Tamper {
   file: string;
@@ -14,7 +14,7 @@ export interface Tamper {
   guardrail?: string;
   was?: string;
   sources?: string[];
-  commits?: string[];
+  commits?: Revert[];
   dirty?: string[];
 }
 

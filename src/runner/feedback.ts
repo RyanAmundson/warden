@@ -50,8 +50,15 @@ const nextAction = (failures: Violation[], set: RecordSet, notes: Notes): string
   }
   const signed = notes.tampered?.find((t) => (t.commits ?? []).length > 0);
   if (signed !== undefined) {
-    const stash = (signed.dirty ?? []).length === 0 ? "" : `git stash push -- ${shellWords(signed.dirty ?? [])} && `;
-    return `run ${stash}git revert --no-edit -m 1 ${(signed.commits ?? []).join(" ")} to undo the commits that changed .warden/ without an allowed signature, then run warden check again.`;
+    const stash = (signed.dirty ?? []).length === 0 ? "" : `git stash push -u -- ${shellWords(signed.dirty ?? [])} && `;
+    const groups: { parent: number; commits: string[] }[] = [];
+    for (const { commit, parent } of signed.commits ?? []) {
+      const last = groups[groups.length - 1];
+      if (last?.parent === parent) last.commits.push(commit);
+      else groups.push({ parent, commits: [commit] });
+    }
+    const revert = groups.map((g) => `git revert --no-edit -X ours -m ${g.parent} ${g.commits.join(" ")}`).join(" && ");
+    return `run ${stash}${revert} to undo the commits that changed .warden/ without an allowed signature, then run warden check again.`;
   }
   if (notes.tampered?.some((t) => t.detail === "base-moved") === true) {
     return "revert the base change in .warden/config.yaml and run warden compile.";

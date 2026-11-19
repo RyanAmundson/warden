@@ -2010,7 +2010,7 @@ describe("signed .warden changes", () => {
     expect(code).toBe(1);
     expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
     expect(out.match(/Next action:/g)).toHaveLength(1);
-    expect(out).toContain(`Next action: run git revert --no-edit -m 1 ${git("rev-parse", "HEAD").trim()} to undo the commits that changed .warden/ without an allowed signature, then run warden check again.`);
+    expect(out).toContain(`Next action: run git revert --no-edit -X ours -m 1 ${git("rev-parse", "HEAD").trim()} to undo the commits that changed .warden/ without an allowed signature, then run warden check again.`);
   });
 
   const follow = async (out: string): Promise<void> => {
@@ -2032,7 +2032,7 @@ describe("signed .warden changes", () => {
     const { code, out } = await check();
     expect(code).toBe(1);
     expect(out.match(/Next action:/g)).toHaveLength(1);
-    expect(out).toContain(`Next action: run git stash push -- '.warden/notes.txt' && git revert --no-edit -m 1 ${sha} to undo`);
+    expect(out).toContain(`Next action: run git stash push -u -- '.warden/notes.txt' && git revert --no-edit -X ours -m 1 ${sha} to undo`);
     await follow(out);
     expect((await check()).code).toBe(0);
   });
@@ -2049,7 +2049,7 @@ describe("signed .warden changes", () => {
     git("commit", "-q", "-m", "merge side");
     const { code, out } = await check();
     expect(code).toBe(1);
-    expect(out).toContain(`git revert --no-edit -m 1 ${git("rev-parse", "HEAD").trim()} to undo`);
+    expect(out).toContain(`git revert --no-edit -X ours -m 1 ${git("rev-parse", "HEAD").trim()} to undo`);
     await follow(out);
     expect((await check()).code).toBe(0);
   });
@@ -2079,9 +2079,80 @@ describe("signed .warden changes", () => {
     git("add", "-A");
     git("commit", "-q", "-m", "c3");
     const { out } = await check();
-    expect(out).toContain(`git revert --no-edit -m 1 ${git("rev-list", "main..HEAD").trim().split("\n").join(" ")} to undo`);
+    expect(out).toContain(`git revert --no-edit -X ours -m 1 ${git("rev-list", "main..HEAD").trim().split("\n").join(" ")} to undo`);
     await follow(out);
     expect((await check()).code).toBe(0);
+  });
+
+  const gitlink = async (ignore: boolean): Promise<void> => {
+    const sub = git("commit-tree", git("mktree").trim(), "-m", "sub").trim();
+    git("update-index", "--add", "--cacheinfo", `160000,${sub},.warden/packs/evil`);
+    await write(".gitmodules", `[submodule "evil"]\n\tpath = .warden/packs/evil\n\turl = https://example.invalid/x\n${ignore ? "\tignore = all\n" : ""}`);
+    git("add", ".gitmodules");
+    git("commit", "-q", "-m", "gitlink");
+  };
+
+  it("a submodule ignore = all in .gitmodules cannot hide an unsigned gitlink under .warden", async () => {
+    await gitlink(true);
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/packs/evil", detail: "unsigned" }]);
+    expect(out.match(/Next action:/g)).toHaveLength(1);
+    await follow(out);
+    expect((await check({}, false)).code).toBe(0);
+  });
+
+  it("diff.ignoreSubmodules = all in the repository config cannot hide an unsigned gitlink under .warden", async () => {
+    await gitlink(false);
+    git("config", "diff.ignoreSubmodules", "all");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/packs/evil", detail: "unsigned" }]);
+    expect(out.match(/Next action:/g)).toHaveLength(1);
+    await follow(out);
+    expect((await check({}, false)).code).toBe(0);
+  });
+
+  it("an unsigned orphan first parent is tampering with one next action that works", async () => {
+    git("switch", "-q", "--orphan", "orphan");
+    git("checkout", "main", "--", ".");
+    await write(".warden/notes.txt", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "orphan");
+    git("merge", "-q", "--allow-unrelated-histories", "-s", "ours", "main", "-m", "merge main");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/notes.txt", detail: "unsigned" }]);
+    expect(out.match(/Next action:/g)).toHaveLength(1);
+    expect(out).toContain(`git revert --no-edit -X ours -m 2 ${git("rev-parse", "HEAD").trim()} to undo`);
+    await follow(out);
+    expect((await check({}, false)).code).toBe(0);
+  });
+
+  it("an untracked file in a path the revert restores is stashed, so the revert applies", async () => {
+    git("rm", "-q", ".warden/notes.txt");
+    git("commit", "-q", "-m", "delete notes");
+    await write(".warden/notes.txt", "local\n");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    expect(out).toContain("git stash push -u -- '.warden/notes.txt' && ");
+    await follow(out);
+    expect((await check({}, false)).code).toBe(0);
+  });
+
+  it("a revert that meets a later change to the same lines outside .warden still finishes under the pre-commit hook", async () => {
+    await write(".warden/notes.txt", "evil\n");
+    await write("a.ts", "// one\nconst a = 2;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "c1");
+    await write("a.ts", "// one\nconst a = 3;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "c2");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    await follow(out);
+    expect(await read("a.ts")).toBe("// one\nconst a = 3;\n");
+    expect((await check({}, false)).code).toBe(0);
   });
 
   it("a graft cannot hide an unsigned deletion", async () => {
