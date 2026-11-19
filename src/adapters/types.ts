@@ -33,6 +33,8 @@ export interface RunContext {
   root: string;
   generatedDir: string;
   unbudgeted?: boolean;
+  base?: string;
+  settingsOf?: (g: Guardrail) => Record<string, unknown> | undefined;
   signal?: AbortSignal;
   onGroup?: (adapter: string, guardrails: string[]) => void;
 }
