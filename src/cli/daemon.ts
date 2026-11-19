@@ -182,7 +182,7 @@ export async function runDaemon(wardenRoot: string, port: number): Promise<numbe
   try {
     served = await serve(wardenRoot, port);
   } catch (cause) {
-    const next = (cause as NodeJS.ErrnoException).code === "EADDRINUSE" ? `port ${port} on 127.0.0.1 is in use, perhaps by another warden daemon. Next action: run warden daemon --port <a free port>` : `the daemon could not start: ${(cause as Error).message}. Next action: fix what that names under ${wardenHome()}, then run warden daemon`;
+    const next = (cause as NodeJS.ErrnoException).code === "EADDRINUSE" ? `port ${port} on 127.0.0.1 is in use, perhaps by another warden daemon. Next action: run warden daemon --port <a free port>` : (cause as Error).message.includes("Next action: ") ? `the daemon could not start: ${(cause as Error).message}` : `the daemon could not start: ${(cause as Error).message}. Next action: fix what that names under ${wardenHome()}, then run warden daemon`;
     process.stderr.write(`${next}\n`);
     return 2;
   }

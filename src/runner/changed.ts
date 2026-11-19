@@ -162,7 +162,7 @@ export interface Committed {
   commit: string;
   tree: string;
   parents: string[];
-  parentTree?: string;
+  expectedTree?: string;
 }
 
 export interface Worktree {
@@ -170,42 +170,63 @@ export interface Worktree {
   head?: string;
 }
 
+const UNBORN = /^0+$/;
+
 export function worktrees(root: string): Worktree[] {
   return must(root, ["worktree", "list", "--porcelain"])
     .split("\n\n")
     .flatMap((block) => {
       const path = /^worktree (.+)$/m.exec(block)?.[1];
       const head = /^HEAD ([0-9a-f]+)$/m.exec(block)?.[1];
-      return path === undefined ? [] : [{ path, ...(head === undefined ? {} : { head }) }];
+      return path === undefined ? [] : [{ path, ...(head === undefined || UNBORN.test(head) ? {} : { head }) }];
     });
 }
 
 export const repoTips = (root: string): string[] =>
   [...new Set([...must(root, ["for-each-ref", "--format=%(objectname)", "refs/heads"]).split("\n").filter((l) => l !== ""), ...worktrees(root).flatMap((w) => (w.head === undefined ? [] : [w.head]))])].sort();
 
-export function newCommits(root: string, tips: string[], seen: string[]): Committed[] {
-  if (tips.length === 0) return [];
-  const range = [...tips, ...seen.filter((t) => hasCommit(root, t)).map((t) => `^${t}`)];
-  const commits = must(root, ["log", "--no-merges", "--format=%H %T %P", ...range, "--"])
+const mergedTree = (root: string, parents: string[]): string | undefined => {
+  if (parents.length !== 2) return undefined;
+  const r = git(root, ["merge-tree", "--write-tree", ...parents]);
+  return r.ok || r.out !== "" ? r.out.split("\n")[0] : undefined;
+};
+
+const described = (root: string, range: string[]): Committed[] => {
+  const commits = must(root, ["log", "--format=%H %T %P", ...range, "--"])
     .split("\n")
     .filter((l) => l !== "")
     .map((l) => {
       const [commit, tree, ...parents] = l.split(" ") as [string, string, ...string[]];
       return { commit, tree, parents: parents.filter((p) => p !== "") };
     });
-  const parents = [...new Set(commits.flatMap((c) => c.parents))];
+  const single = [...new Set(commits.flatMap((c) => (c.parents.length === 1 ? c.parents : [])))];
   const trees = new Map(
-    parents.length === 0
+    single.length === 0
       ? []
-      : must(root, ["log", "--no-walk=unsorted", "--format=%H %T", ...parents, "--"])
+      : must(root, ["log", "--no-walk=unsorted", "--format=%H %T", ...single, "--"])
           .split("\n")
           .filter((l) => l !== "")
           .map((l) => l.split(" ") as [string, string]),
   );
-  return commits.map((c) => ({ ...c, ...(c.parents[0] === undefined ? {} : { parentTree: trees.get(c.parents[0]) }) }));
+  return commits.map((c) => {
+    const expectedTree = c.parents.length === 1 ? trees.get(c.parents[0] as string) : mergedTree(root, c.parents);
+    return { ...c, ...(expectedTree === undefined ? {} : { expectedTree }) };
+  });
+};
+
+export function newCommits(root: string, tips: string[], seen: string[]): Committed[] {
+  if (tips.length === 0) return [];
+  return described(root, [...tips, ...seen.filter((t) => hasCommit(root, t)).map((t) => `^${t}`), "--not", "--remotes"]);
+}
+
+export function commitsOf(root: string, shas: string[]): Committed[] {
+  const known = shas.filter((sha) => hasCommit(root, sha));
+  return known.length === 0 ? [] : described(root, ["--no-walk=unsorted", ...known]);
 }
 
 export const isAncestor = (root: string, ancestor: string, of: string): boolean => git(root, ["merge-base", "--is-ancestor", ancestor, of]).ok;
+
+export const reachable = (root: string, sha: string, tips: string[]): boolean => hasCommit(root, sha) && tips.some((tip) => isAncestor(root, sha, tip));
 
 export function restoreAction(root: string, path: string): string {
   if (git(root, ["cat-file", "-e", `HEAD:${path}`]).ok) return `run git checkout HEAD -- .warden in ${root}`;

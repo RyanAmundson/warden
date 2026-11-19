@@ -257,22 +257,134 @@ it("keeps its checkpoint across a restart past 1 MB of Evidence, and without a c
   await stop();
   await rm(stateFile());
   s = await start();
-  expect(unchecked(s)).toEqual([]);
-  expect(Object.values(JSON.parse(readFileSync(stateFile(), "utf8")).repos as Record<string, { tips: string[] }>).map((r) => r.tips)).toEqual([[down]]);
+  expect(unchecked(s)).toEqual([down]);
+  await stop();
+  await rm(stateFile());
+  await writeFile(join(root, "src/u.ts"), "export const u = 1;\n");
+  git(root, "add", "-A");
+  commitUnhooked("before any checkpoint");
+  const unseen = git(root, "rev-parse", "HEAD").trim();
+  s = await start();
+  expect(unchecked(s)).toEqual([down]);
+  expect(Object.values(JSON.parse(readFileSync(stateFile(), "utf8")).repos as Record<string, { tips: string[] }>).map((r) => r.tips)).toEqual([[unseen]]);
   await writeFile(join(root, "src/e.ts"), "export const e = 1;\n");
   git(root, "add", "-A");
   commitUnhooked("after the seed");
   const after = git(root, "rev-parse", "HEAD").trim();
   await until("a commit after the seed is flagged", () => unchecked(s).includes(after));
-  expect(unchecked(s)).toEqual([after]);
+  expect(unchecked(s).sort()).toEqual([down, after].sort());
 });
 
-it("judges a new root commit, which has no parent", async () => {
+const treeWith = async (file: string): Promise<string> => {
+  await writeFile(join(root, file), "export const o = 1;\n");
+  git(root, "add", file);
+  const tree = git(root, "write-tree").trim();
+  git(root, "rm", "-q", "--cached", file);
+  await rm(join(root, file));
+  return tree;
+};
+
+it("judges a root commit, its next action closes the alert, and a deleted branch drops its alert", async () => {
   const s = await start();
-  const orphan = git(root, "commit-tree", git(root, "write-tree").trim(), "-m", "orphan").trim();
+  const orphan = git(root, "commit-tree", await treeWith("src/o.ts"), "-m", "orphan").trim();
   git(root, "branch", "orphan", orphan);
   await until("the root commit is flagged", () => unchecked(s).includes(orphan));
-  expect(tampered().find((e) => e.file === orphan)?.next).toBe(`in a checkout of commit ${orphan.slice(0, 12)} with nothing staged, run warden check --base main`);
+  const short = orphan.slice(0, 12);
+  expect(tampered().find((e) => e.file === orphan)?.next).toBe(`run git switch -c warden-check-${short} main, then git read-tree -u --reset ${short}, then warden check --base main`);
+  git(root, "switch", "-q", "-c", `warden-check-${short}`, "main");
+  git(root, "read-tree", "-u", "--reset", short);
+  expect(warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", "main").code).toBe(1);
+  await until("the root commit's alert closes", () => !unchecked(s).includes(orphan));
+  git(root, "reset", "-q", "--hard");
+  git(root, "switch", "-q", "main");
+  const gone = git(root, "commit-tree", await treeWith("src/g.ts"), "-m", "doomed").trim();
+  git(root, "branch", "doomed", gone);
+  await until("the second root commit is flagged", () => unchecked(s).includes(gone));
+  git(root, "branch", "-q", "-D", "doomed");
+  await until("the unreachable commit's alert is dropped", () => !unchecked(s).includes(gone));
+});
+
+it("judges a merge whose tree is not the automatic merge of its parents, and passes a clean merge", async () => {
+  const s = await start();
+  const main = git(root, "rev-parse", "HEAD").trim();
+  const side = git(root, "commit-tree", await treeWith("src/side.ts"), "-p", main, "-m", "side").trim();
+  const automatic = git(root, "merge-tree", "--write-tree", main, side).split("\n")[0] as string;
+  const clean = git(root, "commit-tree", automatic, "-p", main, "-p", side, "-m", "clean merge").trim();
+  git(root, "update-ref", "refs/heads/main", clean);
+  git(root, "reset", "-q", "--hard");
+  await until("the clean merge is recorded", () => readEvidence(PROJECT).some((e) => e.kind === "commit" && e.commit === clean));
+  expect(readEvidence(PROJECT).find((e) => e.kind === "commit" && e.commit === clean)?.status).toBe("checked");
+  const evil = git(root, "commit-tree", await treeWith("src/evil.ts"), "-p", clean, "-p", side, "-m", "evil merge").trim();
+  expect(git(root, "rev-list", "--parents", "-n", "1", evil).trim().split(" ")).toHaveLength(3);
+  git(root, "update-ref", "refs/heads/main", evil);
+  git(root, "reset", "-q", "--hard");
+  await until("the evil merge is flagged", () => unchecked(s).includes(evil));
+  expect(unchecked(s).sort()).toEqual([side, evil].sort());
+});
+
+it("an orphan worktree or a broken ref never stops detection, and a failing source raises its own alert", async () => {
+  const s = await start();
+  git(root, "worktree", "add", "-q", "--orphan", "-b", "empty", join(scratch, "orph"));
+  await writeFile(join(root, "src/f.ts"), "export const f = 1;\n");
+  git(root, "add", "-A");
+  commitUnhooked("next to an orphan worktree");
+  const next = git(root, "rev-parse", "HEAD").trim();
+  await until("the commit is flagged despite the orphan worktree", () => unchecked(s).includes(next));
+  await writeFile(join(root, ".git/refs/heads/ghost"), `${"1".repeat(40)}\n`);
+  git(root, "config", "core.hooksPath", "elsewhere");
+  await until("the hook change is still detected", () => openOf(s).some((d) => d.detail === "hook-unwired"));
+  await until("the failing history source raises an alert", () => openOf(s).some((d) => d.detail === "scan-error" && d.file === "git history"));
+});
+
+it("drops a removed worktree's root and hands commit judging to a live root without a restart", async () => {
+  const wt = join(scratch, "first");
+  git(root, "worktree", "add", "-q", wt, "-b", "first");
+  await rm(join(home, "evidence"), { recursive: true, force: true });
+  appendEvidence(PROJECT, { at: new Date().toISOString(), kind: "registered", root: wt });
+  appendEvidence(PROJECT, { at: new Date().toISOString(), kind: "registered", root });
+  const s = await start();
+  expect([...s.daemon.projects.keys()]).toEqual([wt, root]);
+  git(root, "worktree", "remove", wt);
+  await until("the removed root is dropped", () => !s.daemon.projects.has(wt));
+  await writeFile(join(root, "src/h.ts"), "export const h = 1;\n");
+  git(root, "add", "-A");
+  commitUnhooked("after the first root left");
+  const after = git(root, "rev-parse", "HEAD").trim();
+  await until("the live root judges the commit", () => unchecked(s).includes(after));
+});
+
+it("does not judge commits that arrive already reachable from a remote-tracking ref", async () => {
+  const remote = join(scratch, "remote.git");
+  git(scratch, "init", "-q", "--bare", "-b", "main", remote);
+  git(root, "remote", "add", "origin", remote);
+  git(root, "push", "-q", "origin", "main");
+  const clone = join(scratch, "clone");
+  git(scratch, "clone", "-q", remote, clone);
+  const s = await start();
+  await writeFile(join(clone, "src/r.ts"), "export const r = 1;\n");
+  git(clone, "add", "-A");
+  git(clone, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "from another machine");
+  git(clone, "push", "-q", "origin", "main");
+  const remoteCommit = git(clone, "rev-parse", "HEAD").trim();
+  git(root, "fetch", "-q", "origin");
+  git(root, "merge", "-q", "--ff-only", "origin/main");
+  await until("the pulled commit is seen", () => git(root, "rev-parse", "HEAD").trim() === remoteCommit);
+  await s.daemon.rescan();
+  expect(unchecked(s)).toEqual([]);
+  await writeFile(join(root, "src/l.ts"), "export const l = 1;\n");
+  git(root, "add", "-A");
+  commitUnhooked("local");
+  const local = git(root, "rev-parse", "HEAD").trim();
+  await until("a local commit is still flagged", () => unchecked(s).includes(local));
+  expect(unchecked(s)).toEqual([local]);
+});
+
+it("a corrupt checkpoint stops startup with one next action", async () => {
+  await mkdir(join(home, "daemon"), { recursive: true });
+  await writeFile(stateFile(), "{");
+  const r = warden(root, {}, "daemon", "--port", "0");
+  expect(r.code).toBe(2);
+  expect(r.err.match(/Next action: /g)).toHaveLength(1);
 });
 
 it("seeds the tips of a repository discovered after the daemon started", async () => {

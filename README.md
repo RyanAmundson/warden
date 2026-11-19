@@ -131,15 +131,16 @@ foreground. The daemon watches every project whose root appears in Warden's
 Evidence, which `warden init` and every check write, and every worktree of
 those repositories that has `.warden/config.yaml`. It records each change to
 `.warden/` and each tamper detection as Evidence with one next action. It
-also records each new non-merge commit reachable from the repository's local
-branches or any worktree's HEAD, whether it arrived by commit, merge,
-fast-forward, cherry-pick, rebase, or `git am`. Tamper detections cover:
+also records each new commit reachable from the repository's local branches
+or any worktree's HEAD, whether it arrived by commit, merge, fast-forward,
+cherry-pick, rebase, or `git am`. Tamper detections cover:
 
 - a commit hook that git no longer runs;
 - `.warden/` contents that no longer match the lock;
 - a Claude plugin that was enabled and is now disabled or removed;
 - a commit whose tree no full commit-tier check passed on, measured from the
-  commit's parent or an ancestor of it;
+  commit's parent or an ancestor of it. A merge whose tree equals the
+  automatic merge of its two parents needs no check; any other merge does;
 - a check that ran with `WARDEN_DAEMON=off`.
 
 While the daemon holds an open alert for a repository, `warden check` fails
@@ -148,8 +149,21 @@ sees the cause fixed. The daemon keeps its checkpoint in
 `$WARDEN_HOME/daemon/state.json`. At its first start, and when it first
 discovers a repository, it records the repository's current branch and
 worktree tips as the checkpoint, and it judges only commits made after that.
-Commits made while no daemon ran on the machine, before the checkpoint
-existed, go unjudged.
+If `state.json` is lost, the daemon rebuilds open alerts from git and
+Evidence.
+
+These commits go unjudged:
+
+- commits made before the checkpoint existed, while no daemon ran on the
+  machine;
+- commits made on another machine: a commit that a remote-tracking ref
+  already reaches when the daemon first sees it;
+- a commit pushed to a remote without ever being on a local branch or
+  worktree HEAD here;
+- commits in a worktree whose branch has no commit yet.
+
+An open alert for a commit that no local branch or worktree HEAD reaches any
+more is dropped.
 
 It writes a heartbeat every 10 seconds. A commit-tier check exits 1 when the
 heartbeat is missing, older than 30 seconds, dated in the future, or written
@@ -157,6 +171,12 @@ by a process that is no longer running.
 
 `WARDEN_DAEMON=off` skips the heartbeat check, for tests and CI only. Each
 check that skips it is recorded, and the daemon flags it.
+
+Detection is tamper-evident, not tamper-proof. The heartbeat, Evidence, and
+`state.json` live under your own user, so a process running as you can forge
+them: a heartbeat that names another live process passes the check, a forged
+Evidence run line can stamp a commit, and an edited `state.json` can let one
+check pass before the daemon's next scan rewrites it.
 
 The daemon serves a JSON API on `http://127.0.0.1:7419` (`--port` changes
 it). It answers only requests whose `Host` is `127.0.0.1` or `localhost` on
