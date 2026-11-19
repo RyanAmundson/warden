@@ -97,7 +97,7 @@ describe("compile", () => {
       runs: ["commit", "edit"],
       paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs} & src/**"],
     });
-    expect(lock.format).toBe(2);
+    expect(lock.format).toBe(3);
     expect(lock.config).toEqual({
       project: "fixture",
       base: "main",

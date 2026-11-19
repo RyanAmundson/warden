@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { RecordError } from "../records/load.js";
 import { pathGroups } from "../records/paths.js";
 import { benchSettings } from "../records/types.js";
-export const LOCK_FORMAT = 2;
+export const LOCK_FORMAT = 3;
 export const TOOLS = ["eslint", "typescript-eslint", "typescript"];
 const wardenRequire = createRequire(import.meta.url);
 export const bundledTools = () => Object.fromEntries(TOOLS.map((name) => [name, wardenRequire(`${name}/package.json`).version]));

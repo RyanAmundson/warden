@@ -6,7 +6,7 @@ import { RecordError } from "../records/load.js";
 import { pathGroups } from "../records/paths.js";
 import { type BenchSettings, type Kind, type ProjectConfig, type RecordSet, type Tier, benchSettings } from "../records/types.js";
 
-export const LOCK_FORMAT = 2;
+export const LOCK_FORMAT = 3;
 
 export interface Lock {
   format: number;

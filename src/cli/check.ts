@@ -4,7 +4,7 @@ import { join, relative, resolve, sep } from "node:path";
 import { hookTrigger } from "../adapters/claude.js";
 import { PARSE_ERROR, type RunContext, type RunResult, type Violation } from "../adapters/types.js";
 import { wardenVersion } from "../compiler/compile.js";
-import { LOCK_PATH, bundledTools, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
+import { LOCK_FORMAT, LOCK_PATH, bundledTools, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import type { Guardrail, RecordSet, Tier } from "../records/types.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
@@ -239,8 +239,8 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   if (lockedBy !== running && !olderThan(lockedBy, running)) {
     throw new RecordError(LOCK_PATH, "/warden", `was written by Warden ${lockedBy}; this is Warden ${running}. Next action: install Warden ${lockedBy}, the release that wrote the lock, then run warden check --base ${base} again.`);
   }
-  if (lockedBy !== running || Object.keys(working?.generated ?? {}).some((key) => key.includes("#"))) {
-    throw new RecordError(LOCK_PATH, "/warden", `was written by Warden ${lockedBy}, an older release than this Warden ${running}. Next action: run warden compile, stage .warden, and commit.`);
+  if (lockedBy !== running || (working?.format ?? LOCK_FORMAT) < LOCK_FORMAT || Object.keys(working?.generated ?? {}).some((key) => key.includes("#"))) {
+    throw new RecordError(LOCK_PATH, "/warden", `${lockedBy === running ? `is in an older format than this Warden ${running} writes` : `was written by Warden ${lockedBy}, an older release than this Warden ${running}`}. Next action: run warden compile, stage .warden, and commit.`);
   }
   const unknown = unknownAdapters(set);
   if (unknown.length > 0) {

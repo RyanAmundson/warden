@@ -975,7 +975,7 @@ describe("final review: lock records base and project", () => {
 
   it("a base lock from a newer Warden exits 2 and says to update Warden", async () => {
     await commitBaseLock((lock) => {
-      lock.format = 3;
+      lock.format = 4;
     });
     git("checkout", "-q", "feature");
     git("merge", "-q", "--no-edit", "main");
@@ -1054,7 +1054,7 @@ describe("bundled tool versions in the lock", () => {
     const working = await read(".warden/lock.json");
     git("checkout", "-q", "main");
     await editLock((lock) => {
-      lock.format = 3;
+      lock.format = 4;
       delete lock.sources;
     });
     git("commit", "-q", "-am", "newer base lock");
@@ -1581,6 +1581,20 @@ describe("engine review: the Warden that wrote the lock", () => {
     expect((await check()).code).toBe(0);
   });
 
+  it("a lock in the previous format, hashing only each pack.yaml, says to recompile instead of reporting the pack's other files as tampering", async () => {
+    await editLock((lock) => {
+      lock.format = 2;
+      lock.sources = Object.fromEntries(Object.entries(lock.sources as Record<string, string>).filter(([key]) => !key.startsWith("packs/") || key.endsWith("/pack.yaml")));
+    });
+    const { code, err } = await check();
+    expect(code).toBe(2);
+    expect(err).toContain(`is in an older format than this Warden ${running} writes. Next action: run warden compile, stage .warden, and commit.`);
+    expect(err.match(/Next action:/g)).toHaveLength(1);
+    expect(await tampered()).toEqual([]);
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect((await check()).code).toBe(0);
+  });
+
   it("a lock that still records the old .claude/settings.json entry is an older lock, not tampering", async () => {
     await editLock((lock) => {
       (lock.generated as Record<string, string>)[".claude/settings.json#warden"] = "0".repeat(64);
@@ -1596,12 +1610,12 @@ describe("engine review: the Warden that wrote the lock", () => {
 
   it("a working lock in a newer format exits 2 and says to install the lock's release", async () => {
     await editLock((lock) => {
-      lock.format = 3;
+      lock.format = 4;
       lock.warden = "9.0.0";
     });
     const { code, err } = await check();
     expect(code).toBe(2);
-    expect(err).toContain("has format 3; this Warden reads formats up to 2. Next action: install Warden 9.0.0, the release that wrote the lock.");
+    expect(err).toContain("has format 4; this Warden reads formats up to 3. Next action: install Warden 9.0.0, the release that wrote the lock.");
     expect(await tampered()).toEqual([]);
   });
 });
