@@ -95,6 +95,11 @@ const scannedFiles = (root: string, base: string, paths: string[] | undefined): 
   });
 };
 
+const sized = async (set: RecordSet, gs: Guardrail[], files: string[], ctx: RunContext): Promise<RunResult[]> => {
+  const size = { files: files.length, bytes: files.reduce((n, f) => n + statSync(join(ctx.root, f)).size, 0) };
+  return (await runGuardrails(set, gs, files, ctx)).map((r) => ({ ...size, ...r }));
+};
+
 const runCached = async (
   set: RecordSet,
   gs: Guardrail[],
@@ -117,7 +122,7 @@ const runCached = async (
       else hits.set(keyOf(f, g), cached);
     }
   }
-  const fresh = misses.size > 0 ? await runGuardrails(set, lint, [...misses], ctx) : [];
+  const fresh = misses.size > 0 ? await sized(set, lint, [...misses], ctx) : [];
   const parse = fresh.filter((r) => r.guardrail === PARSE_ERROR);
   const unparsed = new Set(parse.flatMap((r) => r.violations.map((v) => v.file)));
   const results = lint.map((g): RunResult => {
@@ -132,8 +137,8 @@ const runCached = async (
     return { guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms: r?.ms ?? 0, overBudget: r?.overBudget === true, ...(r?.shared === undefined ? {} : { shared: r.shared }) };
   });
   const others = [
-    ...(rest.length > 0 ? await runGuardrails(set, rest, scanned, ctx) : []),
-    ...(trees.length > 0 ? await runGuardrails(set, trees, projectFiles(set.root, set.config.packs.flatMap((p) => p.paths), run.tier !== "commit"), ctx) : []),
+    ...(rest.length > 0 ? await sized(set, rest, scanned, ctx) : []),
+    ...(trees.length > 0 ? await sized(set, trees, projectFiles(set.root, set.config.packs.flatMap((p) => p.paths), run.tier !== "commit"), ctx) : []),
   ];
   return { perFile: [...results, ...parse], wholeProject: others, ran: [...fresh, ...others], cached: hits.size };
 };
