@@ -51,7 +51,9 @@ consuming repository, `.warden/allowed_signers` included, can add a key. The
 lock records the list's hash as a source, so a changed list shows up as source
 drift. `warden check` verifies signatures with `ssh-keygen`, whatever the
 repository's own `gpg.ssh` settings say. An unsigned change is reported as
-`unsigned`, and a signature from any other key as `untrusted-signature`. If
+`unsigned`, and a signature from any other key as `untrusted-signature`. The
+next action names the commits to `git revert`, which the pre-commit hook does
+not block; replace refs are ignored. If
 the package's list is missing or empty, every `.warden/` change is reported
 as `no-allowed-signers`. A file that matches the base again at `HEAD` needs no
 signature; an uncommitted revert does not count. `.warden/baseline.json` is
