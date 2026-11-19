@@ -6,7 +6,7 @@ import { LOCK_FORMAT, LOCK_PATH, PROJECT_SOURCE, type Lock, canonicalJson, readL
 import { RecordError, readText } from "../records/load.js";
 import { type BenchSettings, type Kind, type RecordSet, kindRank } from "../records/types.js";
 import { BASELINE_PATH, type Baseline, carryRenames, projectWideEntries, readBaseline } from "./baseline.js";
-import { type Restore, changeSignatures, trackedFiles, changesSinceMergeBase, containsHead, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
+import { type Restore, changeSignatures, trackedFiles, renamesSinceMergeBase, containsHead, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
 
 export interface Tamper {
   file: string;
@@ -154,7 +154,7 @@ const loosened = (set: RecordSet, wardenRoot: string, base: string, lock: Lock):
   }
   const editedCode = Object.keys(before.sources ?? {}).filter((k) => ((/^\.warden\/packs\/[^/]+\/./.test(k) && !k.endsWith("/pack.yaml")) || k.startsWith(PROJECT_SOURCE)) && before.sources[k] !== lock.sources[k]);
   if (editedCode.length > 0) found.push({ file: LOCK_PATH, detail: "loosened" });
-  const { renames } = changesSinceMergeBase(root, base);
+  const renames = renamesSinceMergeBase(root, base);
   const baseBaseline = carryRenames(JSON.parse(showAtMergeBase(root, base, BASELINE_PATH) ?? "{}") as Baseline, renames);
   for (const [id, entries] of Object.entries(carryRenames(readBaseline(root), renames))) {
     if (id in lock.guardrails && !(id in before.guardrails)) continue;
