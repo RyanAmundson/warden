@@ -98,7 +98,7 @@ export function checkConsistency(set: RecordSet): Finding[] {
   const termIds = new Set(terms.map((t) => t.id));
   for (const p of practices) {
     for (const t of p.terms) {
-      if (!termIds.has(t)) add("undefined-term", p.id, `Practice ${p.id} names Term ${t}, which is not defined.`);
+      if (!termIds.has(t)) add("undefined-term", p.id, `Practice ${p.id} names Term ${t}, which is not defined. Next action: enable the pack that defines Term ${t} before pack ${p.pack} in .warden/config.yaml, then run warden compile.`);
     }
   }
 

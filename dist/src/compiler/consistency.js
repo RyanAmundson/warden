@@ -85,7 +85,7 @@ export function checkConsistency(set) {
     for (const p of practices) {
         for (const t of p.terms) {
             if (!termIds.has(t))
-                add("undefined-term", p.id, `Practice ${p.id} names Term ${t}, which is not defined.`);
+                add("undefined-term", p.id, `Practice ${p.id} names Term ${t}, which is not defined. Next action: enable the pack that defines Term ${t} before pack ${p.pack} in .warden/config.yaml, then run warden compile.`);
         }
     }
     for (const p of practices) {
