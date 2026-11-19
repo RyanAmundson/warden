@@ -15,7 +15,13 @@ const ownedBy = (owned) => (key) => {
     return first === "node_modules" || first === ".warden" || [...owned].some((o) => path === o || path.startsWith(`${o}/`));
 };
 export const enabledOn = (file, groups) => groups.length === 0 || groups.some((g) => g.every((glob) => matchesGlob(file, glob)));
-export async function withExampleProject(fn) {
+const removals = new Set();
+export const exampleProjectsRemoved = async () => {
+    const pending = [...removals];
+    removals.clear();
+    await Promise.all(pending);
+};
+export async function withExampleProject(fn, removeLater = false) {
     const project = await mkdtemp(join(tmpdir(), "warden-examples-"));
     try {
         await writeFile(join(project, "package.json"), "{}\n");
@@ -23,7 +29,16 @@ export async function withExampleProject(fn) {
         return await fn(project);
     }
     finally {
-        await rm(project, { recursive: true, force: true });
+        const removal = rm(project, { recursive: true, force: true }).catch((cause) => {
+            throw new Error(`Warden could not remove its example project ${project}: ${cause.message}. Next action: delete ${project}, then run the command again.`);
+        });
+        if (removeLater) {
+            removals.add(removal);
+            removal.then(() => removals.delete(removal), () => undefined);
+        }
+        else {
+            await removal;
+        }
     }
 }
 export async function runExamples(set) {

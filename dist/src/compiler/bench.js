@@ -95,7 +95,7 @@ const measure = (set, s, cfg, rerun, signal) => withExampleProject(async (projec
         return { verdict: "constant", points, f };
     const k = slope(points, f);
     return { verdict: k > cfg.linearMax ? "superlinear" : k < cfg.sublinearMax ? "sublinear" : "linear", k, points, f };
-});
+}, true);
 export const benchSubject = async (set, s, cfg, rerun, signal) => {
     refuseUnmatched(s, rerun);
     const first = await measure(set, s, cfg, rerun, signal);

@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Adapter } from "../../src/adapters/types.js";
 import { runBench } from "../../src/cli/bench.js";
+import { exampleProjectsRemoved } from "../../src/compiler/examples.js";
 import { BENCH_DEFAULTS } from "../../src/records/types.js";
 import { adapters } from "../../src/runner/run.js";
 
@@ -217,6 +218,7 @@ it("an aborted bench kills the run in flight, starts no other run, and removes i
   controller.abort();
   await expect(run).rejects.toMatchObject({ name: "AbortError" });
   await new Promise((r) => setTimeout(r, 200));
+  await exampleProjectsRemoved();
   const lines = readFileSync(log, "utf8").trim().split("\n");
   expect(lines).toHaveLength(1);
   const [pid, project] = (lines[0] as string).split(" ");

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { Command, CommanderError } from "commander";
 import { refusal } from "../adapters/claude.js";
 import { compile, wardenVersion } from "../compiler/compile.js";
+import { exampleProjectsRemoved } from "../compiler/examples.js";
 import { findWardenRoot } from "../records/load.js";
 import { runBench } from "./bench.js";
 import { runCheck } from "./check.js";
@@ -158,7 +159,12 @@ program
 });
 try {
     program.version(await wardenVersion(findWardenRoot()));
-    await program.parseAsync(process.argv);
+    try {
+        await program.parseAsync(process.argv);
+    }
+    finally {
+        await exampleProjectsRemoved();
+    }
 }
 catch (cause) {
     if (cause instanceof CommanderError) {

@@ -174,6 +174,19 @@ so the cache never answers. It also runs unbudgeted (`ctx.unbudgeted`), so a
 slow size is measured instead of killed. Runs go one at a time, which follows
 the shared-compute rule and keeps them from competing for the CPU.
 
+**Removal.** A measurement returns before its temporary project is removed.
+The project is removed in the background, and every `warden` command waits for
+those removals before it exits. A removal that fails stops the command with
+exit 2 and one next action: delete the named project folder, then run the
+command again.
+
+**Test timeout (Ryan, 2026-11-18).** Only the `scaling` vitest project raises
+the test timeout, to 10 s; every other test keeps the 5 s default. The limit
+covers the bench's worst case, two from-scratch measurements of one
+Guardrail. At load 8 to 10, the slowest observed scaling test that measured
+once took 4.4 s, so two measurements take up to about 8.8 s; 10 s leaves
+about 1 s above that.
+
 **Lint Guardrails are fitted on their own rule time (my call),** taken from
 ESLint's `stats`, not on the whole pass. The verdict is about the rule alone.
 The shared pass is benchmarked as its own row, `eslint-pass`. A superlinear
