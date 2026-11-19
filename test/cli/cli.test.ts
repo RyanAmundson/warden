@@ -396,7 +396,7 @@ describe("warden CLI", () => {
     );
     const r = warden("compile");
     expect(r.code).toBe(2);
-    expect(r.err).toMatch(/^unknown-adapter local-no-x: .*Next action: set implementation to one of eslint:<\.\.\.>, tsc:<\.\.\.>, cmd:<\.\.\.> in \S*\/\.warden\/packs\/local\/pack\.yaml, then run warden compile\.$/m);
+    expect(r.err).toMatch(/^unknown-adapter local-no-x: .*Next action: set implementation to one of eslint:<\.\.\.>, tsc:<\.\.\.>, cmd:<\.\.\.>, fs:<\.\.\.>, graph:<\.\.\.> in \S*\/\.warden\/packs\/local\/pack\.yaml, then run warden compile\.$/m);
     expect(existsSync(join(root, ".warden/lock.json"))).toBe(false);
   });
 

@@ -1,9 +1,9 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { enabledOn, examplePrefix, withExampleProject } from "./examples.js";
+import { examplePrefix, withExampleProject } from "./examples.js";
 import { canonicalJson, sha256 } from "./lock.js";
-import { RecordError } from "../records/load.js";
-import { pathGroups } from "../records/paths.js";
+import { RecordError, exampleSet } from "../records/load.js";
+import { enabledOn, pathGroups } from "../records/paths.js";
 import { benchSettings } from "../records/types.js";
 import { readBenchCache, writeBenchCache } from "../runner/cache.js";
 import { adapters, runGuardrails } from "../runner/run.js";
@@ -40,15 +40,16 @@ const writeTree = async (root, tree) => {
         await writeFile(join(root, path), content);
     }
 };
-const measure = (set, s, cfg, rerun) => withExampleProject(async (project) => {
-    const ctx = { root: project, generatedDir: join(project, ".warden/generated"), unbudgeted: true };
-    await writeTree(project, adapters.get(prefixOf(s.g)).emit([s.g], set));
+const measure = (project, s, cfg, rerun) => withExampleProject(async (root) => {
+    const set = exampleSet(project);
+    const ctx = { root, generatedDir: join(root, ".warden/generated"), unbudgeted: true };
+    await writeTree(root, adapters.get(prefixOf(s.g)).emit([s.g], set));
     const files = [];
     let copies = 0;
     const sample = async (n) => {
         for (; copies < n; copies++) {
             const copy = copyOf(s.g, s.prefix, copies);
-            await writeTree(project, Object.fromEntries(copy.map((c) => [c.path, c.content])));
+            await writeTree(root, Object.fromEntries(copy.map((c) => [c.path, c.content])));
             files.push(...copy.map((c) => c.path));
         }
         const times = [];

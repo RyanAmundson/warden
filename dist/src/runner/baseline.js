@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join, matchesGlob } from "node:path";
+import { join } from "node:path";
 import { PARSE_ERROR } from "../adapters/types.js";
+import { matchesPath } from "../records/paths.js";
 import { runGuardrails } from "./run.js";
 export const BASELINE_PATH = ".warden/baseline.json";
 export function readBaseline(root) {
@@ -70,11 +71,11 @@ export function applyBaseline(results, baseline, scanned, existing, touched = ()
             delete next[g];
     return { failures, next };
 }
-const projectFiles = (root, globs) => {
+export const projectFiles = (root, globs) => {
     const out = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" });
     return out
         .split("\0")
-        .filter((f) => f !== "" && existsSync(join(root, f)) && statSync(join(root, f)).isFile() && globs.some((g) => matchesGlob(f, g)));
+        .filter((f) => f !== "" && existsSync(join(root, f)) && statSync(join(root, f)).isFile() && globs.some((g) => matchesPath(f, g)));
 };
 export async function measureBaseline(set, guardrails) {
     const files = projectFiles(set.root, set.config.packs.flatMap((p) => p.paths));

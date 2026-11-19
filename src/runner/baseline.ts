@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join, matchesGlob } from "node:path";
+import { join } from "node:path";
 import { PARSE_ERROR, type RunResult, type Violation } from "../adapters/types.js";
+import { matchesPath } from "../records/paths.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
 import { runGuardrails } from "./run.js";
 
@@ -75,11 +76,11 @@ export function applyBaseline(
   return { failures, next };
 }
 
-const projectFiles = (root: string, globs: string[]): string[] => {
+export const projectFiles = (root: string, globs: string[]): string[] => {
   const out = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" });
   return out
     .split("\0")
-    .filter((f) => f !== "" && existsSync(join(root, f)) && statSync(join(root, f)).isFile() && globs.some((g) => matchesGlob(f, g)));
+    .filter((f) => f !== "" && existsSync(join(root, f)) && statSync(join(root, f)).isFile() && globs.some((g) => matchesPath(f, g)));
 };
 
 export async function measureBaseline(set: RecordSet, guardrails: Guardrail[]): Promise<{ baseline: Baseline; files: number; unparsed: string[] }> {

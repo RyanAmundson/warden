@@ -89,6 +89,23 @@ const benchLoosened = (was: BenchSettings | undefined, now: BenchSettings | unde
   was !== undefined &&
   (now === undefined || now.linearMax > was.linearMax || now.constantMs > was.constantMs || now.minMarginalMs > was.minMarginalMs || now.maxFiles < was.maxFiles);
 
+const globWidens = (now: string, was: string): boolean => {
+  const [a, b] = [now.split(/(\{[^{}]*\})/), was.split(/(\{[^{}]*\})/)];
+  if (a.length !== b.length) return false;
+  const [kept, dropped] = now.startsWith("!") ? [b, a] : [a, b];
+  return a.every((part, i) => {
+    if (part === b[i]) return true;
+    if (i % 2 === 0) return false;
+    const members = new Set((kept[i] as string).slice(1, -1).split(","));
+    return (dropped[i] as string).slice(1, -1).split(",").every((m) => members.has(m));
+  });
+};
+
+export const widens = (now: string, was: string): boolean => {
+  const [a, b] = [now.split(" & "), was.split(" & ")];
+  return a.length === b.length && a.every((glob, i) => globWidens(glob, b[i] as string));
+};
+
 const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
   const before = readBaseLock(root, base);
   if (before === undefined) return [];
@@ -108,17 +125,6 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
     found.push({ file: LOCK_PATH, detail: "loosened" });
   }
   const covers = (now: string[], was: string[]): boolean => was.every((x) => now.includes(x));
-  const widens = (now: string, was: string): boolean => {
-    const [a, b] = [now.split(/(\{[^{}]*\})/), was.split(/(\{[^{}]*\})/)];
-    if (a.length !== b.length) return false;
-    return a.every((part, i) => {
-      const old = b[i] as string;
-      if (part === old) return true;
-      if (i % 2 === 0) return false;
-      const members = new Set(part.slice(1, -1).split(","));
-      return old.slice(1, -1).split(",").every((m) => members.has(m));
-    });
-  };
   const pathsCover = (now: string[], was: string[]): boolean => was.every((x) => now.some((y) => widens(y, x)));
   for (const [id, g] of Object.entries(before.guardrails)) {
     const now = lock.guardrails[id];

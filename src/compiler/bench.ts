@@ -2,10 +2,10 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Adapter, RunResult } from "../adapters/types.js";
 import type { Finding } from "./consistency.js";
-import { enabledOn, examplePrefix, withExampleProject } from "./examples.js";
+import { examplePrefix, withExampleProject } from "./examples.js";
 import { canonicalJson, sha256 } from "./lock.js";
-import { RecordError } from "../records/load.js";
-import { pathGroups } from "../records/paths.js";
+import { RecordError, exampleSet } from "../records/load.js";
+import { enabledOn, pathGroups } from "../records/paths.js";
 import { type BenchSettings, type Guardrail, type Pack, type RecordSet, benchSettings } from "../records/types.js";
 import { readBenchCache, writeBenchCache } from "../runner/cache.js";
 import type { Measurement, Verdict } from "../runner/evidence.js";
@@ -66,16 +66,17 @@ const writeTree = async (root: string, tree: Record<string, string>): Promise<vo
   }
 };
 
-const measure = (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string): Promise<Measurement> =>
-  withExampleProject(async (project) => {
-    const ctx = { root: project, generatedDir: join(project, ".warden/generated"), unbudgeted: true };
-    await writeTree(project, (adapters.get(prefixOf(s.g)) as Adapter).emit([s.g], set));
+const measure = (project: RecordSet, s: Subject, cfg: BenchSettings, rerun: string): Promise<Measurement> =>
+  withExampleProject(async (root) => {
+    const set = exampleSet(project);
+    const ctx = { root, generatedDir: join(root, ".warden/generated"), unbudgeted: true };
+    await writeTree(root, (adapters.get(prefixOf(s.g)) as Adapter).emit([s.g], set));
     const files: string[] = [];
     let copies = 0;
     const sample = async (n: number): Promise<number> => {
       for (; copies < n; copies++) {
         const copy = copyOf(s.g, s.prefix, copies);
-        await writeTree(project, Object.fromEntries(copy.map((c) => [c.path, c.content])));
+        await writeTree(root, Object.fromEntries(copy.map((c) => [c.path, c.content])));
         files.push(...copy.map((c) => c.path));
       }
       const times: number[] = [];

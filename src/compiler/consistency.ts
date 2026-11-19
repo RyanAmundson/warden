@@ -24,7 +24,7 @@ const CODES = [
   "layer-order",
 ];
 
-const prefix = (glob: string): string => glob.split("*", 1)[0] ?? "";
+const prefix = (glob: string): string => (glob.startsWith("!") ? "" : (glob.split("*", 1)[0] ?? ""));
 
 const overlaps = (a: string, b: string): boolean => prefix(a).startsWith(prefix(b)) || prefix(b).startsWith(prefix(a));
 
