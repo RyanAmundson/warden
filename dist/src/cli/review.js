@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { loadRecords } from "../records/load.js";
 import { reviewAdapters } from "../review/adapter.js";
 import { exitCode, touchedLines, triage } from "../review/findings.js";
@@ -22,7 +22,7 @@ export function reviewOptions(sub, raw) {
 }
 const resolveRef = (root, ref) => {
     try {
-        return execFileSync("git", ["rev-parse", "--verify", `${ref}^{commit}`], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+        return execFileSync("git", ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
     }
     catch (cause) {
         if (typeof cause.status !== "number")
@@ -41,6 +41,7 @@ const readFile = (path) => {
 const quote = (v) => (/^[\w./@%+=:,-]+$/.test(v) ? v : `'${v.replaceAll("'", "'\\''")}'`);
 const briefLine = (o, base, r) => [
     `warden review brief --capability ${o.capability} --base ${base} --head ${r.head}`,
+    ...(o.component === undefined ? [] : [`--component ${quote(o.component)}`]),
     ...(r.previousHead === undefined ? [] : [`--previous-head ${r.previousHead}`]),
     ...(r.previousReport === undefined ? [] : [`--previous-report ${quote(r.previousReport)}`]),
     `--requirements ${o.requirements.map(quote).join(" ")}`,
@@ -65,12 +66,19 @@ async function prepare(root, wardenRoot, o) {
         throw new Error(`no review adapter has id ${capability.review.adapter}. Next action: set the review adapter of Capability ${capability.id} to one of ${[...reviewAdapters.keys()].join(", ")}, then run warden compile`);
     const practices = set.packs.flatMap((p) => p.practices);
     const previousHead = o.previousHead === undefined ? undefined : resolveRef(root, o.previousHead);
+    if (adapter.id === "component-quality" && !/^[\w$.-]+$/.test(o.component ?? "")) {
+        throw new Error("The component-quality adapter needs a component name. Next action: run the command again with --component <name>");
+    }
     const scope = {
         base,
         head,
         requirements: o.requirements,
         upholds: capability.upholds.map((id) => ({ id, statement: practices.find((p) => p.id === id)?.statement ?? id })),
         ...(previousHead === undefined ? {} : { previousHead }),
+        ...(adapter.id !== "component-quality" || o.component === undefined ? {} : {
+            component: { name: o.component, root },
+            resolveCommit: (abbreviation) => resolveRef(root, abbreviation),
+        }),
     };
     return { capability, adapter, scope, previousHead };
 }
@@ -85,6 +93,10 @@ const previousFindings = (adapter, scope, head, report) => {
 };
 export async function runBrief(root, wardenRoot, o) {
     const { capability, adapter, scope, previousHead } = await prepare(root, wardenRoot, o);
+    if (scope.component !== undefined &&
+        (resolveRef(root, "HEAD") !== scope.head || execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }).trim() !== "")) {
+        throw new Error(`Component Quality needs a clean checkout at ${scope.head}. Next action: run the brief from a clean worktree at that commit`);
+    }
     if (o.previous !== undefined) {
         const text = readFile(o.previous);
         try {
@@ -100,7 +112,11 @@ export async function runBrief(root, wardenRoot, o) {
     if (o.previousReport !== undefined) {
         scope.previous = previousFindings(adapter, scope, previousHead, o.previousReport);
     }
-    process.stdout.write(`${JSON.stringify(adapter.invocation(capability.review, scope), null, 2)}\n`);
+    const invocation = adapter.invocation(capability.review, scope);
+    if (invocation.tool === "Workflow" && !existsSync(invocation.input.scriptPath)) {
+        throw new Error(`No Component Quality workflow at ${invocation.input.scriptPath}. Next action: install the component-quality skill and rerun the brief`);
+    }
+    process.stdout.write(`${JSON.stringify(invocation, null, 2)}\n`);
     return 0;
 }
 const label = (f) => (f.blocks ? "BLOCK" : f.kind === "env" ? "ENV" : f.kind === "flake" ? "RERUN" : "TASK");

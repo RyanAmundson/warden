@@ -58,7 +58,7 @@ const normalize = (report: string, scope: ReviewScope): Normalized => {
   return { verdict: "fail", reviewedHead, findings };
 };
 
-export const ponytailReview: ReviewAdapter = {
+export const ponytailReview = {
   id: "ponytail-review",
   invocation: (rule, scope) => ({
     tool: "Agent",
@@ -70,4 +70,4 @@ export const ponytailReview: ReviewAdapter = {
     },
   }),
   normalize,
-};
+} satisfies ReviewAdapter;

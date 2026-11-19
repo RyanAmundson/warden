@@ -92,7 +92,7 @@ const normalize = (report: string, scope: ReviewScope): Normalized => {
   return { verdict: findings.length === 0 ? "pass" : "fail", reviewedHead, findings };
 };
 
-export const uiQaReview: ReviewAdapter = {
+export const uiQaReview = {
   id: "ui-qa",
   invocation: (rule, scope) => ({
     tool: "Agent",
@@ -104,4 +104,4 @@ export const uiQaReview: ReviewAdapter = {
     },
   }),
   normalize,
-};
+} satisfies ReviewAdapter;

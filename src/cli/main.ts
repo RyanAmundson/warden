@@ -164,6 +164,7 @@ const reviewFlags = (c: Command): Command =>
     .option("--capability <id>", "the Capability with a review block")
     .option("--base <ref>", "the branch the change merges into")
     .option("--head <ref>", "the head to review")
+    .option("--component <name>", "the component to audit with component-quality")
     .option("--previous-head <ref>", "the head the previous round reviewed; makes this round 2")
     .option("--previous-report <file>", "the reviewer's report of the previous round; needs --previous-head")
     .option("--requirements <paths...>", "files that state what the change must do");

@@ -1,9 +1,10 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { auditFacets, auditGroups } from "../fixtures/review/component-quality/audit.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
 const main = join(wardenRoot, "dist/src/cli/main.js");
@@ -18,7 +19,7 @@ const git = (...args: string[]): string =>
   execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: root, encoding: "utf8" }).trim();
 
 const run = (...args: string[]): { code: number | null; out: string; err: string } => {
-  const r = spawnSync("node", [main, ...args], { cwd: root, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home } });
+  const r = spawnSync("node", [main, ...args], { cwd: root, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home, HOME: home } });
   return { code: r.status, out: r.stdout, err: r.stderr };
 };
 
@@ -55,6 +56,8 @@ beforeAll(async () => {
       "    review: { adapter: ponytail-review, model: opus }",
       "  - id: visual-gate", "    kind: skill", "    serves: review", "    purpose: Verify the rendered interface.", "    when: Before landing UI changes.", "    upholds: [small]", "    commands: [warden review]", "    replaces: []",
       "    review: { adapter: ui-qa, model: opus }",
+      "  - id: component-audit", "    kind: skill", "    serves: review", "    purpose: Audit a component.", "    when: Before landing component changes.", "    upholds: [small]", "    commands: [warden review]", "    replaces: []",
+      "    review: { adapter: component-quality, model: opus }",
       "  - id: plain", "    kind: tool", "    serves: other", "    purpose: Nothing.", "    when: Never.", "    upholds: []", "    commands: [warden review]", "    replaces: []", "",
     ].join("\n"),
   );
@@ -111,6 +114,81 @@ describe("warden review", () => {
     expect(call.input.model).toBe("opus");
     expect(call.input.prompt).toContain(head);
     expect(call.input.prompt).toContain("Keep every change small.");
+  });
+
+  it("prints the Component Quality workflow for a clean checkout and triages its native sidecar", async () => {
+    const scope = ["--capability", "component-audit", "--base", base, "--head", head, "--requirements", REQ, "--component", "Table"];
+    const scriptDir = join(home, ".agents/skills/component-quality");
+    await mkdir(scriptDir, { recursive: true });
+    const scriptPath = join(scriptDir, "component-quality.js");
+    await writeFile(scriptPath, "");
+    const brief = run("review", "brief", ...scope);
+    expect(brief.code, brief.err).toBe(0);
+    expect(JSON.parse(brief.out)).toMatchObject({
+      tool: "Workflow",
+      input: { scriptPath, args: { component: "Table", repoPath: realpathSync(root) } },
+      scope: { base, head, requirements: [REQ] },
+      instructions: [expect.stringContaining(head), expect.stringContaining("startup logs"), expect.stringContaining("tracked files")],
+    });
+
+    const filename = join(home, "component-quality.json");
+    const sidecar = {
+      schemaVersion: 1, component: "Table", componentPath: "a.ts", reportPath: ".reports/component-quality-Table-latest.md",
+      class: "atom", score: 80, confidence: { applicable: auditFacets.length, unknown: 0 }, unverifiedFindings: 0,
+      groups: auditGroups, facets: auditFacets,
+      findingCounts: { Critical: 0, High: 1, Medium: 0, Low: 0 },
+      findings: [{ severity: "High", title: "Focus ring is absent", file: "a.ts", line: "2", unverified: false }],
+    };
+    await writeFile(filename, JSON.stringify({ ...sidecar, commit: git("rev-parse", "--short=9", head) }));
+    expect(run("review", "triage", ...scope, "--report", filename)).toMatchObject({
+      code: 1,
+      out: expect.stringContaining("BLOCK 1 touched a.ts:2  Focus ring is absent"),
+    });
+
+    await writeFile(filename, JSON.stringify({ ...sidecar, commit: git("rev-parse", "--short=9", base) }));
+    expect(run("review", "triage", ...scope, "--report", filename)).toMatchObject({
+      code: 2,
+      out: expect.stringContaining("does not name the requested commit"),
+    });
+
+    const empty = { ...sidecar, commit: head, findings: [], findingCounts: { Critical: 0, High: 0, Medium: 0, Low: 0 } };
+    for (const broken of [
+      { groups: undefined, facets: undefined },
+      { groups: [auditGroups[0]], facets: auditFacets.slice(0, 5), confidence: { applicable: 5, unknown: 0 } },
+      { facets: auditFacets.map((facet) => ({ ...facet, status: "unknown", score: null })) },
+    ]) {
+      await writeFile(filename, JSON.stringify({ ...empty, ...broken }));
+      expect(run("review", "triage", ...scope, "--report", filename)).toMatchObject({
+        code: 2,
+        out: expect.stringContaining("does not contain a completed and verified audit"),
+      });
+    }
+
+    await writeFile(filename, JSON.stringify({
+      ...sidecar,
+      commit: head,
+      confidence: { applicable: auditFacets.length - 1, unknown: 1 },
+      groups: [{ id: "A", scored: 4, notApplicable: 0, unknown: 1 }, ...auditGroups.slice(1)],
+      facets: [{ id: "A1", group: "A", status: "unknown", score: null }, ...auditFacets.slice(1)],
+      findings: [{ ...sidecar.findings[0], line: "1" }],
+    }));
+    const partial = run("review", "triage", ...scope, "--report", filename, "--format", "json");
+    expect(partial.code, partial.err).toBe(2);
+    expect(JSON.parse(partial.out)).toMatchObject({
+      verdict: "operational",
+      findings: [{ kind: "untouched", title: "Focus ring is absent" }, { kind: "env" }],
+    });
+
+    const dirty = join(root, "dirty.ts");
+    await writeFile(dirty, "export const dirty = true;");
+    try {
+      expect(run("review", "brief", ...scope)).toMatchObject({
+        code: 2,
+        err: expect.stringContaining("needs a clean checkout"),
+      });
+    } finally {
+      await rm(dirty);
+    }
   });
 
   it("routes a Ponytail capability through brief and records an unfixed finding in triage", async () => {

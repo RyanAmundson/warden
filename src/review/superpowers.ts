@@ -69,11 +69,11 @@ const normalize = (report: string, scope: ReviewScope): Normalized => {
   return { verdict, reviewedHead, findings };
 };
 
-export const superpowersReview: ReviewAdapter = {
+export const superpowersReview = {
   id: "superpowers-review",
   invocation: (rule: ReviewRule, scope: ReviewScope) => ({
     tool: "Agent",
     input: { description: `Independent review of ${scope.head.slice(0, 12)}`, subagent_type: "general-purpose", model: rule.model, prompt: reviewPrompt(scope, REPORT_SHAPE) },
   }),
   normalize,
-};
+} satisfies ReviewAdapter;
