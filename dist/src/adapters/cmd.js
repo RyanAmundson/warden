@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { dirname } from "node:path";
 const killGroup = (pid) => {
     try {
         process.kill(-pid, "SIGKILL");
@@ -9,9 +8,9 @@ const killGroup = (pid) => {
             throw cause;
     }
 };
-export const spawnBudgeted = (file, args, cwd, budgetMs, shell = false) => new Promise((resolve, reject) => {
+export const spawnBudgeted = (file, args, cwd, budgetMs, shell = false, env = {}) => new Promise((resolve, reject) => {
     const start = performance.now();
-    const child = spawn(file, args, { cwd, shell, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(file, args, { cwd, shell, env: { ...process.env, ...env }, detached: true, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     let output = "";
@@ -40,21 +39,40 @@ export const spawnBudgeted = (file, args, cwd, budgetMs, shell = false) => new P
     });
 });
 export const OUTPUT_LINES = 20;
-const tail = (output) => output.trimEnd().split("\n").filter((l) => l !== "").slice(-OUTPUT_LINES);
-export const PACK_TOKEN = "{pack}";
-export const packDirs = (set) => new Map(set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.map((g) => [g.id, dirname(p.file)]))));
+export const PACK_DIR = "WARDEN_PACK_DIR";
+export const PACK_VAR = /\$(?:\{WARDEN_PACK_DIR\}|WARDEN_PACK_DIR(?![A-Za-z0-9_]))/g;
 const shellWord = (path) => (/^[\w./-]+$/.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`);
-export const commandOf = (g, packDir) => {
-    const command = g.implementation.slice(g.implementation.indexOf(":") + 1);
-    if (!command.includes(PACK_TOKEN))
-        return command;
+export const withPackDir = (command, packDir) => {
     if (packDir === undefined)
-        throw new Error(`Guardrail ${g.id} names ${PACK_TOKEN} but was run without its pack directory`);
-    return command.replaceAll(PACK_TOKEN, shellWord(packDir));
+        return command;
+    let out = "";
+    let quote;
+    for (let i = 0; i < command.length;) {
+        const rest = command.slice(i);
+        const found = quote === "'" ? null : new RegExp(`^${PACK_VAR.source}`).exec(rest);
+        if (found !== null) {
+            out += quote === '"' ? packDir.replace(/["\\$`]/g, "\\$&") : shellWord(packDir);
+            i += found[0].length;
+            continue;
+        }
+        const c = command[i];
+        if (c === "\\" && quote !== "'") {
+            out += rest.slice(0, 2);
+            i += 2;
+            continue;
+        }
+        if ((c === '"' || c === "'") && (quote === undefined || quote === c))
+            quote = quote === undefined ? c : undefined;
+        out += c;
+        i += 1;
+    }
+    return out;
 };
+const tail = (output) => output.trimEnd().split("\n").filter((l) => l !== "").slice(-OUTPUT_LINES);
 const runOne = async (g, ctx) => {
-    const command = commandOf(g, ctx.packDirs?.get(g.id));
-    const { code, killed, ms, output } = await spawnBudgeted(command, [], ctx.root, ctx.unbudgeted === true ? undefined : g.budgetMs, true);
+    const run = g.implementation.slice(g.implementation.indexOf(":") + 1);
+    const command = withPackDir(run, g.packDir);
+    const { code, killed, ms, output } = await spawnBudgeted(run, [], ctx.root, ctx.unbudgeted === true ? undefined : g.budgetMs, true, g.packDir === undefined ? {} : { [PACK_DIR]: g.packDir });
     if (killed)
         return { guardrail: g.id, status: "killed", violations: [], ms, command };
     if (code === 0)

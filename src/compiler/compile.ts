@@ -13,10 +13,10 @@ import { stamp } from "./emit.js";
 import { runExamples } from "./examples.js";
 import { LOCK_PATH, type Lock, computeLock, sha256 } from "./lock.js";
 
-const localPackFiles = async (projectRoot: string, id: string): Promise<string[]> => {
+const packFiles = async (base: string, dir: string): Promise<string[]> => {
   try {
-    const entries = await readdir(join(projectRoot, ".warden/packs", id), { recursive: true, withFileTypes: true });
-    return entries.filter((e) => e.isFile() && e.name !== ".DS_Store").map((e) => relative(projectRoot, join(e.parentPath, e.name)).split(sep).join("/"));
+    const entries = await readdir(join(base, dir), { recursive: true, withFileTypes: true });
+    return entries.filter((e) => e.isFile() && e.name !== ".DS_Store").map((e) => relative(base, join(e.parentPath, e.name)).split(sep).join("/"));
   } catch (cause) {
     if ((cause as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw cause;
@@ -29,9 +29,9 @@ const sourceFiles = async (set: RecordSet, projectRoot: string, wardenRoot: stri
   if (config === undefined) throw new RecordError(join(projectRoot, ".warden/config.yaml"), "", "file not found");
   out[".warden/config.yaml"] = config;
   for (const { id } of set.config.packs) {
-    const bundled = await readText(join(wardenRoot, `packs/${id}/pack.yaml`));
-    if (bundled !== undefined) out[`packs/${id}/pack.yaml`] = bundled;
-    for (const key of await localPackFiles(projectRoot, id)) out[key] = (await readText(join(projectRoot, key))) as string;
+    for (const [dir, base] of [[`packs/${id}`, wardenRoot], [`.warden/packs/${id}`, projectRoot]] as const) {
+      for (const key of await packFiles(base, dir)) out[key] = (await readText(join(base, key))) as string;
+    }
   }
   return out;
 };

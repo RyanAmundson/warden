@@ -1,7 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { resolve } from "node:path";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { cmdAdapter, commandOf } from "../../src/adapters/cmd.js";
+import { cmdAdapter } from "../../src/adapters/cmd.js";
 import { runGuardrails } from "../../src/runner/run.js";
 import type { Guardrail, RecordSet } from "../../src/records/types.js";
 import { conformance } from "./conformance.js";
@@ -63,9 +65,20 @@ describe("cmd adapter", () => {
     expect(lines.slice(1)).toEqual([...Array.from({ length: 19 }, (_, i) => `out${i + 12}`), "err"]);
   });
 
-  it("quotes a pack folder that the shell would split, and refuses {pack} without one", () => {
-    expect(commandOf(legacy("cmd:sh {pack}/a.sh"), "/w/it's here")).toBe("sh '/w/it'\\''s here'/a.sh");
-    expect(() => commandOf(legacy("cmd:sh {pack}/a.sh"), undefined)).toThrow("Guardrail g names {pack} but was run without its pack directory");
+  it("runs a Guardrail with WARDEN_PACK_DIR set to its pack's folder", async () => {
+    const [r] = await cmdAdapter.run([{ ...legacy('cmd:test "$WARDEN_PACK_DIR" = /packs/p'), packDir: "/packs/p" }], [], ctx);
+    expect(r?.status).toBe("pass");
+  });
+
+  it("prints the command with its pack folder shell-quoted, so a folder with a space runs as printed", async () => {
+    const pack = await mkdtemp(join(tmpdir(), "warden pack's "));
+    await writeFile(join(pack, "x.sh"), "echo ran\nexit 1\n");
+    const commands = ["sh $WARDEN_PACK_DIR/x.sh", 'sh "$WARDEN_PACK_DIR/x.sh"', 'sh "${WARDEN_PACK_DIR}"/x.sh'];
+    const results = await cmdAdapter.run(commands.map((c) => ({ ...legacy(`cmd:${c}`), packDir: pack })), [], ctx);
+    const printed = results.map((r) => (r.violations[0]?.message.split("\n")[0] ?? "").replace(/ exited with \d+$/, ""));
+    expect(printed[0]).toBe(`sh '${pack.replaceAll("'", "'\\''")}'/x.sh`);
+    for (const command of printed) expect(spawnSync("sh", ["-c", command], { encoding: "utf8" })).toMatchObject({ status: 1, stdout: "ran\n" });
+    await rm(pack, { recursive: true });
   });
 
   it("emits nothing", () => {

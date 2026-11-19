@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Ajv } from "ajv";
 import { parse } from "yaml";
 import schema from "../../schema/records.schema.json" with { type: "json" };
@@ -87,8 +87,11 @@ export async function readPack(projectRoot, wardenRoot, id, configFile) {
         throw new RecordError(file, "/id", `pack id ${pack.id} does not match directory ${id}`);
     }
     pack.file = file;
-    for (const practice of pack.practices)
+    for (const practice of pack.practices) {
         practice.pack = pack.id;
+        for (const g of practice.guardrails)
+            g.packDir = resolve(dirname(file));
+    }
     return { pack, source: inBundled !== undefined ? "bundled" : "local" };
 }
 export async function loadRecords(projectRoot, wardenRoot) {
@@ -106,5 +109,5 @@ export async function loadRecords(projectRoot, wardenRoot) {
         seen.add(entry.id);
         packs.push((await readPack(projectRoot, wardenRoot, entry.id, configFile)).pack);
     }
-    return { config, packs, root: projectRoot };
+    return { config, packs: packs.sort((a, b) => a.layer - b.layer), root: projectRoot };
 }
