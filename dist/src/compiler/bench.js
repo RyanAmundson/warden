@@ -34,10 +34,14 @@ const refuseUnmatched = (s, rerun) => {
         return;
     throw new RecordError(s.pack.file, `/guardrails/${s.g.id}/mustPass`, `Guardrail ${s.g.id} would not run on ${lost.path}, a copy of its mustPass example, because it is outside ${s.groups.map((g) => g.join(" & ")).join(", ")}. Next action: change the paths of Practice ${s.practice} in ${s.pack.file} so they also match files in a subfolder, or make the mustPass example of Guardrail ${s.g.id} a single file, then run ${rerun}.`);
 };
+const WRITE_BATCH = 64;
 const writeTree = async (root, tree) => {
-    for (const [path, content] of Object.entries(tree)) {
-        await mkdir(dirname(join(root, path)), { recursive: true });
-        await writeFile(join(root, path), content);
+    const entries = Object.entries(tree);
+    for (let i = 0; i < entries.length; i += WRITE_BATCH) {
+        await Promise.all(entries.slice(i, i + WRITE_BATCH).map(async ([path, content]) => {
+            await mkdir(dirname(join(root, path)), { recursive: true });
+            await writeFile(join(root, path), content);
+        }));
     }
 };
 const measure = (set, s, cfg, rerun) => withExampleProject(async (project) => {
@@ -46,11 +50,14 @@ const measure = (set, s, cfg, rerun) => withExampleProject(async (project) => {
     const files = [];
     let copies = 0;
     const sample = async (n) => {
+        const tree = {};
         for (; copies < n; copies++) {
-            const copy = copyOf(s.g, s.prefix, copies);
-            await writeTree(project, Object.fromEntries(copy.map((c) => [c.path, c.content])));
-            files.push(...copy.map((c) => c.path));
+            for (const c of copyOf(s.g, s.prefix, copies)) {
+                tree[c.path] = c.content;
+                files.push(c.path);
+            }
         }
+        await writeTree(project, tree);
         const times = [];
         for (let i = 0; i < RUNS; i++) {
             const results = await runGuardrails(set, [s.g], files, ctx);

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -13,6 +13,7 @@ const version = (JSON.parse(readFileSync(join(wardenRoot, "package.json"), "utf8
 let root: string;
 let home: string;
 let roots: string[];
+let checked: number;
 
 const models: Record<string, (n: number, root: string) => number> = {
   linear: (n) => 2 + n,
@@ -28,6 +29,12 @@ const fake: Adapter = {
     if (!roots.includes(ctx.root)) roots.push(ctx.root);
     return gs.map((g) => {
       const model = g.implementation.slice("fake:".length);
+      if (model === "copies") {
+        const wrong = files.find((f) => !existsSync(join(ctx.root, f)) || readFileSync(join(ctx.root, f), "utf8") !== "const a = 1;\n");
+        checked = Math.max(checked, new Set(files).size === files.length && wrong === undefined ? files.length : -1);
+        if (wrong !== undefined || checked < 0) return { guardrail: g.id, status: "fail", violations: [{ guardrail: g.id, file: wrong ?? "", line: 1, message: "bad copy" }], ms: 1 };
+        return { guardrail: g.id, status: "pass", violations: [], ms: 2 + files.length };
+      }
       if (model === "fails") return { guardrail: g.id, status: "fail", violations: [{ guardrail: g.id, file: files[0] as string, line: 1, message: "bad" }], ms: 1 };
       return { guardrail: g.id, status: "pass", violations: [], ms: (models[model] as (n: number, root: string) => number)(files.length, ctx.root) };
     });
@@ -81,6 +88,7 @@ beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "warden-bench-"));
   home = await mkdtemp(join(tmpdir(), "warden-home-"));
   roots = [];
+  checked = 0;
   vi.stubEnv("WARDEN_HOME", home);
   adapters.set("fake", fake);
 });
@@ -165,4 +173,12 @@ it("a copy that lands outside the Guardrail's paths exits 2 with one next action
   expect(err.match(/Next action:/g)).toHaveLength(1);
   expect(err).toContain("Guardrail tree would not run on src/bench-1/src/a.ts, a copy of its mustPass example, because it is outside src/*.ts.");
   expect(roots).toEqual([]);
+});
+
+it("every copy the bench writes exists with its mustPass content before the Guardrail runs, for single-file and tree examples", async () => {
+  const tree = ["        mustPass:", '          src/a.ts: "const a = 1;\\n"', '          src/deep/b.ts: "const a = 1;\\n"'];
+  await setup({ local: [guardrail("single", "copies"), guardrail("tree", "copies", tree)] }, [], '["src/**/*.ts"]');
+  const { code, out } = await bench();
+  expect(code, out).toBe(0);
+  expect(checked).toBe(400);
 });

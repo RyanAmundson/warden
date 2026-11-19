@@ -59,10 +59,17 @@ const refuseUnmatched = (s: Subject, rerun: string): void => {
   );
 };
 
+const WRITE_BATCH = 64;
+
 const writeTree = async (root: string, tree: Record<string, string>): Promise<void> => {
-  for (const [path, content] of Object.entries(tree)) {
-    await mkdir(dirname(join(root, path)), { recursive: true });
-    await writeFile(join(root, path), content);
+  const entries = Object.entries(tree);
+  for (let i = 0; i < entries.length; i += WRITE_BATCH) {
+    await Promise.all(
+      entries.slice(i, i + WRITE_BATCH).map(async ([path, content]) => {
+        await mkdir(dirname(join(root, path)), { recursive: true });
+        await writeFile(join(root, path), content);
+      }),
+    );
   }
 };
 
@@ -73,11 +80,14 @@ const measure = (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string):
     const files: string[] = [];
     let copies = 0;
     const sample = async (n: number): Promise<number> => {
+      const tree: Record<string, string> = {};
       for (; copies < n; copies++) {
-        const copy = copyOf(s.g, s.prefix, copies);
-        await writeTree(project, Object.fromEntries(copy.map((c) => [c.path, c.content])));
-        files.push(...copy.map((c) => c.path));
+        for (const c of copyOf(s.g, s.prefix, copies)) {
+          tree[c.path] = c.content;
+          files.push(c.path);
+        }
       }
+      await writeTree(project, tree);
       const times: number[] = [];
       for (let i = 0; i < RUNS; i++) {
         const results = await runGuardrails(set, [s.g], files, ctx);

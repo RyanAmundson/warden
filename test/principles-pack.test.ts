@@ -7,7 +7,7 @@ import { eslintAdapter } from "../src/adapters/eslint.js";
 import { loadRecords } from "../src/records/load.js";
 import type { Guardrail, RecordSet } from "../src/records/types.js";
 import { runGuardrails } from "../src/runner/run.js";
-import { benchPack } from "./pack-bench.js";
+import { bench } from "./pack-bench.js";
 
 const wardenRoot = resolve(import.meta.dirname, "..");
 const paths = "[\"**/*.{ts,tsx,mts,cts,js,mjs,cjs}\"]";
@@ -77,7 +77,7 @@ afterEach(() => rm(root, { recursive: true, force: true }));
 
 describe("principles pack", () => {
   it("principles pack Guardrails scale at most linearly", async () => {
-    const { code, out } = await benchPack(root, "principles");
+    const { code, out } = await bench(root, { pack: "principles" });
     expect(code, out).toBe(0);
   });
 

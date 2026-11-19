@@ -7,7 +7,7 @@ import { runExamples } from "../src/compiler/examples.js";
 import { loadRecords } from "../src/records/load.js";
 import type { Guardrail, RecordSet } from "../src/records/types.js";
 import { runGuardrails } from "../src/runner/run.js";
-import { benchPack } from "./pack-bench.js";
+import { bench } from "./pack-bench.js";
 
 const wardenRoot = resolve(import.meta.dirname, "..");
 const config = [
@@ -49,8 +49,13 @@ beforeEach(async () => {
 afterEach(() => rm(root, { recursive: true, force: true }));
 
 describe("collection-folders pack", () => {
-  it("collection-folders pack Guardrails scale at most linearly", async () => {
-    const { code, out } = await benchPack(root, "collection-folders");
+  it.each([
+    "warden-collection-holds-only-folders",
+    "warden-collections-do-not-nest",
+    "warden-collection-names-are-plural-kebab-case",
+    "warden-collection-items-share-one-shape",
+  ])("%s scales at most linearly", async (rule) => {
+    const { code, out } = await bench(root, { rule });
     expect(code, out).toBe(0);
   });
 
