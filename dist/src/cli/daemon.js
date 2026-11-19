@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, watch, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
@@ -11,10 +12,8 @@ import { runRecords } from "./runs.js";
 import { BANDS, bandCounts, loadView, packViolations } from "./view.js";
 export const DEFAULT_PORT = 7419;
 export const LABEL = "warden.daemon";
-const INDEX = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Warden</title></head>
-<body><h1>Warden daemon</h1><p>The web UI is not built yet. The JSON API is under <a href="/api/health">/api/health</a>.</p></body></html>
-`;
+const PAGES = new Set(["/", "/runs", "/run", "/layers", "/violations", "/determinism", "/tamper"]);
+const ASSETS = { "/app.css": "text/css; charset=utf-8", "/app.js": "text/javascript; charset=utf-8", "/render.js": "text/javascript; charset=utf-8" };
 class HttpError extends Error {
     status;
     next;
@@ -122,8 +121,9 @@ export async function serve(wardenRoot, port, opts = {}) {
             res.writeHead(405, { "content-type": "application/json" }).end(`${JSON.stringify({ error: `${req.method} is not supported`, next: "send a GET request" })}\n`);
             return;
         }
-        if (url.pathname === "/") {
-            res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(INDEX);
+        const asset = PAGES.has(url.pathname) ? { file: "index.html", type: "text/html; charset=utf-8" } : Object.hasOwn(ASSETS, url.pathname) ? { file: url.pathname.slice(1), type: ASSETS[url.pathname] } : undefined;
+        if (asset !== undefined) {
+            readFile(join(wardenRoot, "web", asset.file)).then((body) => res.writeHead(200, { "content-type": asset.type, "cache-control": "no-cache" }).end(body), (cause) => res.writeHead(500, { "content-type": "application/json" }).end(`${JSON.stringify({ error: cause.message, next: "reinstall Warden so its web folder is present" })}\n`));
             return;
         }
         if (url.pathname === "/api/events") {

@@ -29,6 +29,7 @@
     "dist/src",
     "dist/eslint-plugin",
     "dist/schema",
-    "packs"
+    "packs",
+    "web"
   ]
 }
