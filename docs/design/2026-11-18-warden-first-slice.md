@@ -126,7 +126,7 @@ interface RecordSet { config: ProjectConfig; packs: Pack[]; root: string }
 - Consumes: `RecordSet`.
 - Produces: `interface Finding { code: string; record: string; message: string }`; `checkConsistency(set: RecordSet): Finding[]`.
 
-Finding codes, exactly: `duplicate-term`, `duplicate-practice`, `duplicate-guardrail`, `prose-only` (no Guardrail of kind other than `instruction`), `conflict-overlap` (two Practices in `conflictsWith` share a path glob prefix in the config), `undefined-term` (Practice `terms` names a missing Term), `banned-synonym` (a statement contains a Term's banned word, whole-word, case-insensitive), `layer-order` (a pack's `layer` is not greater than every pack before it in `config.packs`).
+Finding codes, exactly: `duplicate-term`, `duplicate-practice`, `duplicate-guardrail`, `prose-only` (no Guardrail of kind other than `instruction`), `conflict-overlap` (two Practices in `conflictsWith` share a path glob prefix in the config), `undefined-term` (Practice `terms` names a missing Term), `banned-synonym` (a statement contains a Term's banned word, whole-word, case-insensitive), `layer-order` (two configured packs share a `layer`). Packs load in `layer` order, whatever order `config.packs` lists them in.
 
 - [ ] **Step 1: Write one failing test per code**, each building a minimal `RecordSet` in the test and asserting `checkConsistency(set).map(f => f.code)` equals `[<code>]`; plus `clean set has no findings` asserting `[]`.
 - [ ] **Step 2:** Run `npx vitest run test/compiler/consistency.test.ts --maxWorkers=2`. Expected: FAIL.

@@ -109,5 +109,5 @@ export async function loadRecords(projectRoot, wardenRoot) {
         seen.add(entry.id);
         packs.push((await readPack(projectRoot, wardenRoot, entry.id, configFile)).pack);
     }
-    return { config, packs, root: projectRoot };
+    return { config, packs: packs.sort((a, b) => a.layer - b.layer), root: projectRoot };
 }

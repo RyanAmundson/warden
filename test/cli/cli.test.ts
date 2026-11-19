@@ -538,6 +538,13 @@ describe("warden CLI", () => {
       expect(r.out.trim().split("\n").at(-1)).toBe(`Next action: run warden init --packs ${everyPack}`);
     });
 
+    it("init takes the packs in layer order whatever order --packs lists them", async () => {
+      await localPack();
+      await writeFile(join(root, ".warden/packs/local/pack.yaml"), (await readFile(join(root, ".warden/packs/local/pack.yaml"), "utf8")).replace("layer: 1", "layer: 9"));
+      const r = warden("init", "--packs", "local,core");
+      expect(r.code, r.out + r.err).toBe(0);
+    });
+
     it("init --packs core,local writes both, compiles, and locks both", async () => {
       await localPack();
       const r = warden("init", "--packs", "core,local");

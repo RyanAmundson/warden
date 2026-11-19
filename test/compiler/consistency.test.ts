@@ -53,6 +53,16 @@ describe("checkConsistency", () => {
     expect(checkConsistency(set)).toEqual([]);
   });
 
+  it("accepts packs listed out of layer order", () => {
+    expect(codes(build([pack("b", 2, [practice("p2", "b")]), pack("a", 1, [practice("p1", "a")])]))).toEqual([]);
+  });
+
+  it("refuses two packs on one layer and says to move the local one to a free layer", () => {
+    const local = { ...pack("mine", 1, [practice("p2", "mine")]), file: "/w/.warden/packs/mine/pack.yaml" };
+    const found = checkConsistency(build([local, pack("a", 1, [practice("p1", "a")]), pack("b", 3, [practice("p3", "b")])]));
+    expect(found).toEqual([{ code: "layer-order", record: "mine", message: "Packs a and mine both have layer 1. Next action: set layer to 4 in /w/.warden/packs/mine/pack.yaml, then run warden compile." }]);
+  });
+
   it("refuses a Guardrail id that Warden reserves for its own cost rows", () => {
     const set = build([pack("a", 1, [practice("p1", "a", { guardrails: [guardrail("run")] }), practice("p2", "a", { guardrails: [guardrail("eslint-pass")] })])]);
     const found = checkConsistency(set).filter((f) => f.code === "reserved-id");
