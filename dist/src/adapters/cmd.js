@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { Worker } from "node:worker_threads";
 import { RecordError, findWardenRoot } from "../records/load.js";
+import { targetOf } from "./pack-code.js";
 const killGroup = (pid) => {
     try {
         process.kill(-pid, "SIGKILL");
@@ -98,47 +99,22 @@ export const OUTPUT_LINES = 20;
 export const PACK_DIR = "WARDEN_PACK_DIR";
 export const PACK_VAR = /\$(?:\{WARDEN_PACK_DIR\}|WARDEN_PACK_DIR(?![A-Za-z0-9_]))/g;
 const shellWord = (path) => (/^[\w./-]+$/.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`);
-export const withPackDir = (command, packDir) => {
-    if (packDir === undefined)
-        return command;
-    let out = "";
-    let quote;
-    for (let i = 0; i < command.length;) {
-        const rest = command.slice(i);
-        const found = quote === "'" ? null : new RegExp(`^${PACK_VAR.source}`).exec(rest);
-        if (found !== null) {
-            out += quote === '"' ? packDir.replace(/["\\$`]/g, "\\$&") : shellWord(packDir);
-            i += found[0].length;
-            continue;
-        }
-        const c = command[i];
-        if (c === "\\" && quote !== "'") {
-            out += rest.slice(0, 2);
-            i += 2;
-            continue;
-        }
-        if ((c === '"' || c === "'") && (quote === undefined || quote === c))
-            quote = quote === undefined ? c : undefined;
-        out += c;
-        i += 1;
-    }
-    return out;
-};
+export const withPackDir = (command, packDir) => (packDir === undefined ? command : `export ${PACK_DIR}=${shellWord(packDir)}; ${command}`);
 export const COMMAND_CHARS = 200;
 export const brief = (command) => {
     const line = command.trim().split("\n")[0];
     return line.length > COMMAND_CHARS || line !== command.trim() ? `${line.slice(0, COMMAND_CHARS)} …` : line;
 };
 export const runIt = (g) => {
-    const command = withPackDir(g.implementation.slice(g.implementation.indexOf(":") + 1), g.packDir);
+    const command = withPackDir(targetOf(g), g.packDir);
     if (brief(command) === command.trim())
         return `run \`${command}\` and fix what it reports.`;
-    const where = g.packDir === undefined ? "" : ` in ${join(g.packDir, "pack.yaml")}, from the project root with ${PACK_DIR}=${g.packDir}`;
+    const where = g.packDir === undefined ? "" : ` in ${join(g.packDir, "pack.yaml")}, from the project root with ${PACK_DIR}=${shellWord(g.packDir)}`;
     return `run the implementation command of Guardrail ${g.id}${where}, and fix what it reports.`;
 };
 const tail = (output) => output.trimEnd().split("\n").filter((l) => l !== "").slice(-OUTPUT_LINES);
 const runOne = async (g, ctx) => {
-    const run = g.implementation.slice(g.implementation.indexOf(":") + 1);
+    const run = targetOf(g);
     const command = withPackDir(run, g.packDir);
     const budgetMs = ctx.unbudgeted === true ? undefined : g.budgetMs;
     const env = g.packDir === undefined ? {} : { [PACK_DIR]: g.packDir };

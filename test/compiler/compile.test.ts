@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +8,7 @@ import type { Adapter } from "../../src/adapters/types.js";
 import { compile, expectedOutputs } from "../../src/compiler/compile.js";
 import { runExamples } from "../../src/compiler/examples.js";
 import { loadRecords } from "../../src/records/load.js";
+import { commandSources } from "../../src/compiler/command-sources.js";
 import { readLock } from "../../src/compiler/lock.js";
 import { adapters } from "../../src/runner/run.js";
 
@@ -584,3 +585,207 @@ describe("compile admission bench", () => {
     expect(benched.length).toBeGreaterThan(0);
   });
 });
+
+describe("commandSources", () => {
+  it("names the scripts in program position, through npm scripts, cd, and relative imports, and no argument file", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "warden-command-sources-"));
+    try {
+      const files: Record<string, string> = {
+        "scripts/a": "a\n",
+        "scripts/b.ts": 'import x from "./lib/c.js";\nexport * from "./d";\nconst e = require("./e.cjs");\nimport "node:fs";\n',
+        "scripts/lib/c.ts": "export default 1;\n",
+        "scripts/d/index.ts": "export const d = 1;\n",
+        "scripts/e.cjs": "module.exports = 1;\n",
+        "scripts/pre.sh": "p\n",
+        "tools/run.sh": "r\n",
+        "tools/inline.py": "i\n",
+        "data.ts": "d\n",
+        "package.json": JSON.stringify({ scripts: { precheck: "sh scripts/pre.sh", check: "npm run -s inner", inner: "npx tsx scripts/b.ts data.ts", test: "cat data.ts" } }),
+      };
+      for (const [file, content] of Object.entries(files)) {
+        await mkdir(join(dir, file, ".."), { recursive: true });
+        await writeFile(join(dir, file), content);
+      }
+      const out = commandSources(dir, 'sh scripts/a data.ts && npm --silent run check; npm t; (cd tools && ./run.sh) ; sh -c "python inline.py" ; cat data.ts > data.ts', []);
+      expect(Object.keys(out).sort()).toEqual([
+        "./package.json#scripts/check",
+        "./package.json#scripts/inner",
+        "./package.json#scripts/precheck",
+        "./package.json#scripts/test",
+        "./scripts/a",
+        "./scripts/b.ts",
+        "./scripts/d/index.ts",
+        "./scripts/e.cjs",
+        "./scripts/lib/c.ts",
+        "./scripts/pre.sh",
+        "./tools/run.sh",
+      ]);
+      expect(out["./package.json#scripts/inner"]).toBe("npx tsx scripts/b.ts data.ts");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("hashes binary scripts byte for byte and adds the listed data files", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "warden-command-sources-"));
+    try {
+      await writeFile(join(dir, "one"), Buffer.from([0xff]));
+      await writeFile(join(dir, "two"), Buffer.from([0xfe]));
+      await writeFile(join(dir, "data.txt"), "d\n");
+      const one = commandSources(dir, "./one", ["data.txt"]);
+      const two = commandSources(dir, "./two", []);
+      expect(Object.keys(one)).toEqual(["./one", "./data.txt"]);
+      expect(one["./one"]).not.toBe(two["./two"]);
+      expect(() => commandSources(dir, "true", ["gone.txt"])).toThrow("gone.txt");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("follows the shell forms, wrappers, and runners the parser models", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "warden-command-forms-"));
+    try {
+      const files: Record<string, string> = {
+        "scripts/c.sh": "c\n",
+        "scripts/c.js": "c\n",
+        "scripts/a.mjs": "a\n",
+        "scripts/c.py": "c\n",
+        "scripts/shebang": '#!/usr/bin/env node\nrequire("./lib.js");\n',
+        "scripts/lib.js": "l\n",
+      };
+      for (const [file, content] of Object.entries(files)) {
+        await mkdir(join(dir, file, ".."), { recursive: true });
+        await writeFile(join(dir, file), content);
+      }
+      const keys = (command: string): string[] => Object.keys(commandSources(dir, command, [], {})).sort();
+      const sh = ["./scripts/c.sh"];
+      for (const command of [
+        "sh -e scripts/c.sh",
+        "sh -ex scripts/c.sh",
+        "bash -l scripts/c.sh",
+        "bash -lc 'sh scripts/c.sh'",
+        "bash -ec 'sh scripts/c.sh'",
+        "env FOO=1 sh scripts/c.sh",
+        "exec sh scripts/c.sh",
+        "time sh scripts/c.sh",
+        "command sh scripts/c.sh",
+        "! sh scripts/c.sh",
+        "if sh scripts/c.sh; then exit 0; else exit 1; fi",
+        "while sh scripts/c.sh; do true; done",
+        "{ sh scripts/c.sh; }",
+        "test -e x && sh scripts/c.sh || [ -e y ]",
+        'test "$(sh scripts/c.sh)" = ok',
+        "test `sh scripts/c.sh` = ok",
+        "echo x | sh scripts/c.sh",
+      ]) expect([command, keys(command)]).toEqual([command, sh]);
+      expect(keys("npx ts-node scripts/c.js")).toEqual(["./scripts/c.js"]);
+      expect(keys("bun scripts/c.js")).toEqual(["./scripts/c.js"]);
+      expect(keys("bun run scripts/c.js")).toEqual(["./scripts/c.js"]);
+      expect(keys("python3.12 -u scripts/c.py")).toEqual(["./scripts/c.py"]);
+      expect(keys("node --require ./scripts/c.js scripts/a.mjs")).toEqual(["./scripts/a.mjs", "./scripts/c.js"]);
+      expect(keys("node scripts/shebang")).toEqual(["./scripts/lib.js", "./scripts/shebang"]);
+      expect(keys("scripts/shebang")).toEqual(["./scripts/lib.js", "./scripts/shebang"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a form it cannot resolve on the Guardrail's implementation, with one next action", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "warden-command-refused-"));
+    try {
+      await mkdir(join(dir, "scripts"));
+      for (const f of ["c.sh", "a.php", "c.js"]) await writeFile(join(dir, "scripts", f), "c\n");
+      for (const command of ["php scripts/a.php", "chronic ./scripts/c.sh", "eval 'sh scripts/c.sh'", "sh -o pipefail scripts/c.sh", "node --title x scripts/c.js", '"$TOOL" scripts/c.sh', "python -m scripts.c", "case x in x) sh scripts/c.sh;; esac", "sh", 'test "$(( $(sh scripts/c.sh; echo $?) ))" = 0', "echo $(( $(sh scripts/c.sh) + 1 ))", "find . -exec sh scripts/c.sh ;", "xargs -Z ./scripts/c.sh", "nice --frob ./scripts/c.sh"]) {
+        let thrown: unknown;
+        try {
+          commandSources(dir, command, [], {}, { file: "/p/pack.yaml", id: "g" });
+        } catch (cause) {
+          thrown = cause;
+        }
+        expect([command, thrown]).toEqual([command, expect.objectContaining({ file: "/p/pack.yaml", pointer: "/guardrails/g/implementation" })]);
+        expect((thrown as Error).message.match(/Next action:/g)).toHaveLength(1);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts a form once sources lists every file it leaves unresolved, and only then", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "warden-command-partial-"));
+    try {
+      await mkdir(join(dir, "scripts"));
+      for (const f of ["a.php", "b.php", "data.txt"]) await writeFile(join(dir, "scripts", f), `${f}\n`);
+      const run = (sources: string[]): Record<string, string> => commandSources(dir, "php scripts/a.php && php scripts/b.php", sources, {}, { file: "/p/pack.yaml", id: "g" });
+      expect(() => run(["scripts/data.txt"])).toThrow(expect.objectContaining({ pointer: "/guardrails/g/implementation" }));
+      expect(() => run(["scripts/a.php"])).toThrow(expect.objectContaining({ pointer: "/guardrails/g/implementation" }));
+      expect(Object.keys(run(["scripts/a.php", "scripts/b.php", "scripts/data.txt"])).sort()).toEqual(["./scripts/a.php", "./scripts/b.php", "./scripts/data.txt"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("locks the program a known wrapper or interpreter runs, and treats a known tool's path arguments as data", async () => {
+    const dir = await realpath(await mkdtemp(join(tmpdir(), "warden-command-wrappers-")));
+    try {
+      await mkdir(join(dir, "scripts"));
+      for (const f of ["c.sh", "c.pl", "c.rb", "c.awk", "data.txt", "n.sh"]) await writeFile(join(dir, "scripts", f), f === "n.sh" ? "npm run bad\n" : `${f}\n`);
+      const keys = (command: string): string[] => Object.keys(commandSources(dir, command, [], { bad: "php scripts/c.pl" }, { file: "/p/pack.yaml", id: "g" })).sort();
+      const sh = ["./scripts/c.sh"];
+      for (const command of ["nice ./scripts/c.sh", "nice -n 5 sh scripts/c.sh", "timeout 5 ./scripts/c.sh", "timeout -s KILL 5 sh scripts/c.sh", "xargs ./scripts/c.sh", "xargs -n 1 sh scripts/c.sh", "nohup ./scripts/c.sh", "env -- sh scripts/c.sh", "cd scripts && test \"$(sh c.sh; echo $?)\" = 0", "(cd scripts && x=$((1))); sh scripts/c.sh", "{ (cd scripts && x=$((1))); sh scripts/c.sh; }"]) {
+        expect([command, keys(command)]).toEqual([command, sh]);
+      }
+      expect(keys("perl -w scripts/c.pl")).toEqual(["./scripts/c.pl"]);
+      expect(keys("ruby scripts/c.rb")).toEqual(["./scripts/c.rb"]);
+      expect(keys("awk -f scripts/c.awk scripts/data.txt")).toEqual(["./scripts/c.awk"]);
+      for (const command of ["eslint .", "npx eslint .", "tsc -p .", "prettier --check .", "find . -name x", "git diff --exit-code .", "grep -r TODO .", "echo node", "cat scripts/data.txt", "ls . >/dev/null"]) {
+        expect([command, keys(command)]).toEqual([command, []]);
+      }
+      expect(() => keys("sh scripts/n.sh && npm run bad")).toThrow(expect.objectContaining({ pointer: "/guardrails/g/implementation" }));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("hashes a bare command that PATH or node_modules/.bin resolves inside the project, and skips system tools", async () => {
+    const dir = await realpath(await mkdtemp(join(tmpdir(), "warden-command-path-")));
+    try {
+      await mkdir(join(dir, "bin"));
+      await mkdir(join(dir, "tools"));
+      await mkdir(join(dir, "node_modules/.bin"), { recursive: true });
+      await writeFile(join(dir, "bin/check-canon"), "exit 1\n", { mode: 0o755 });
+      await writeFile(join(dir, "tools/linked.js"), "l\n", { mode: 0o755 });
+      await symlink(join(dir, "tools/linked.js"), join(dir, "node_modules/.bin/linked"));
+      vi.stubEnv("PATH", `${join(dir, "bin")}:${process.env.PATH ?? ""}`);
+      expect(Object.keys(commandSources(dir, "check-canon && linked && test -e x && sh -c true", [], {})).sort()).toEqual(["./bin/check-canon", "./tools/linked.js"]);
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("names package.json and one next action when its JSON is malformed", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "warden-command-json-"));
+    try {
+      await writeFile(join(dir, "package.json"), "{ bad");
+      expect(() => commandSources(dir, "npm test", [])).toThrow(expect.objectContaining({ file: "package.json", message: expect.stringMatching(/^is not valid JSON: .+\. Next action: fix the JSON in package\.json, then run warden compile\.$/) }));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("follows the scripts a shell script body runs, best effort, and never refuses for a form in a body", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "warden-command-body-"));
+    try {
+      await mkdir(join(dir, "scripts"));
+      await writeFile(join(dir, "scripts/c.sh"), "set -e\neval \"$X\"\nphp scripts/skipped.sh\nsh scripts/inner.sh\n. scripts/lib.sh\n");
+      await writeFile(join(dir, "scripts/inner.sh"), "node scripts/deep.js\n");
+      await writeFile(join(dir, "scripts/lib.sh"), "l\n");
+      await writeFile(join(dir, "scripts/deep.js"), "d\n");
+      await writeFile(join(dir, "scripts/skipped.sh"), "s\n");
+      expect(Object.keys(commandSources(dir, "sh scripts/c.sh", [], {}, { file: "/p/pack.yaml", id: "g" })).sort()).toEqual(["./scripts/c.sh", "./scripts/deep.js", "./scripts/inner.sh", "./scripts/lib.sh"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+

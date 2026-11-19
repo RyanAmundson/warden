@@ -5,7 +5,7 @@ import { basename, join, relative, resolve, sep } from "node:path";
 import { hookTriggers } from "../adapters/claude.js";
 import { PARSE_ERROR } from "../adapters/types.js";
 import { wardenVersion } from "../compiler/compile.js";
-import { LOCK_FORMAT, LOCK_PATH, bundledTools, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
+import { LOCK_FORMAT, LOCK_PATH, bundledTools, canonicalJson, olderThan, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, projectFiles, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
@@ -27,11 +27,6 @@ const requireBase = (base, configured) => {
     if (base !== undefined)
         return base;
     throw new RecordError("", "/base", `--base is missing; Warden takes the base branch from the command, never from the editable config. Next action: run warden check --base ${configured}`);
-};
-const olderThan = (a, b) => {
-    const [x, y] = [a, b].map((v) => v.split(".").map(Number));
-    const i = x.findIndex((n, j) => n !== y[j]);
-    return i !== -1 && x[i] < (y[i] ?? 0);
 };
 const hookBase = (root) => {
     if (!existsSync(join(root, LOCK_PATH)))

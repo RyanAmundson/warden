@@ -1,6 +1,6 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
@@ -20,7 +20,7 @@ let userHome: string;
 let claude: string;
 let root: string;
 let served: Served | undefined;
-const saved = { WARDEN_HOME: process.env.WARDEN_HOME, HOME: process.env.HOME, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR, WARDEN_DAEMON: process.env.WARDEN_DAEMON };
+const saved = { WARDEN_HOME: process.env.WARDEN_HOME, HOME: process.env.HOME, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR, WARDEN_DAEMON: process.env.WARDEN_DAEMON, TMPDIR: process.env.TMPDIR };
 
 const restore = (): void => {
   for (const [k, v] of Object.entries(saved)) {
@@ -243,6 +243,54 @@ it("flags unchecked commits from another worktree and from a fast-forward of a c
   await until("the fast-forwarded commit is flagged", () => unchecked(s).includes(plumbed));
 });
 
+it("a working-copy drift in one worktree refuses commits only there, and a hook problem refuses every worktree", async () => {
+  const wt = join(scratch, "wt");
+  git(root, "worktree", "add", "-q", wt, "-b", "side");
+  const s = await start();
+  await until("the worktree is watched", () => s.daemon.projects.has(wt));
+  await s.daemon.settled();
+  await writeFile(join(root, ".warden/generated/hooks/pre-commit"), "#!/bin/sh\nexit 0\n");
+  await until("the drift is open in its own root", () => openAlerts(root).some((d) => d.detail === "generated-drift"));
+  expect(openAlerts(wt)).toEqual([]);
+  expect(warden(wt, { WARDEN_DAEMON: undefined }, "check", "--base", "main").code).toBe(0);
+  const own = warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", "main");
+  expect(own.code).not.toBe(0);
+  git(root, "config", "core.hooksPath", "elsewhere");
+  await until("the hook problem is open", () => openAlerts(wt).some((d) => d.detail === "hook-unwired") && openAlerts(root).some((d) => d.detail === "hook-unwired"));
+  const refused = warden(wt, { WARDEN_DAEMON: undefined }, "check", "--base", "main");
+  expect(refused.code).not.toBe(0);
+  expect(readEvidence(PROJECT).filter((e) => e.kind === "cost" && e.guardrail === "run" && e.root === wt).at(-1)).toMatchObject({ exit: refused.code, alert: "hook-unwired" });
+});
+
+it("a stored hook problem applies to every worktree of the repository, and a stored drift only to its own root", async () => {
+  const wt = join(scratch, "wt");
+  git(root, "worktree", "add", "-q", wt, "-b", "side");
+  await mkdir(join(home, "daemon"), { recursive: true });
+  const hook = { project: PROJECT, root, repo: realpathSync(join(root, ".git")), file: ".warden/generated/hooks/pre-commit", detail: "hook-unwired", next: "run git config core.hooksPath .warden/generated/hooks" };
+  const drift = { ...hook, detail: "generated-drift", next: "revert your change to .warden/generated/hooks/pre-commit" };
+  const history = { ...hook, file: "git history", detail: "scan-error", next: "fix what this error names" };
+  const records = { ...hook, file: ".warden", detail: "scan-error", next: "fix what this error names" };
+  await writeFile(stateFile(), JSON.stringify({ roots: { [root]: { open: [hook, drift, history, records] } }, repos: {} }));
+  expect(openAlerts(wt).map((d) => [d.detail, d.file])).toEqual([["hook-unwired", hook.file], ["scan-error", "git history"]]);
+  expect(openAlerts(root)).toHaveLength(4);
+});
+
+it("watches a worktree under the temporary directory, and skips only the self-check's marked worktree", async () => {
+  process.env.TMPDIR = join(scratch, "tmp");
+  const prev = join(scratch, "tmp/warden-self-check.x/prev");
+  const other = join(scratch, "tmp/agent");
+  git(root, "worktree", "add", "-q", "--no-checkout", "--detach", prev, "HEAD");
+  await writeFile(join(prev, ".warden-self-check"), "");
+  git(prev, "reset", "-q", "--hard");
+  git(root, "worktree", "add", "-q", other, "-b", "side");
+  const s = await start();
+  await until("the unmarked worktree is watched", () => s.daemon.projects.has(other));
+  s.daemon.discover();
+  await s.daemon.settled();
+  expect(s.daemon.projects.has(prev)).toBe(false);
+  expect(Object.keys(JSON.parse(readFileSync(stateFile(), "utf8")).roots)).not.toContain(prev);
+});
+
 it("keeps its checkpoint across a restart past 1 MB of Evidence, and without a checkpoint seeds one from the current tips", async () => {
   await start();
   await stop();
@@ -284,6 +332,213 @@ const treeWith = async (file: string): Promise<string> => {
   await rm(join(root, file));
   return tree;
 };
+
+const lockedBy = async (version: string): Promise<void> => {
+  const file = join(root, ".warden/lock.json");
+  await writeFile(file, readFileSync(file, "utf8").replace(/"warden": "[^"]+"/, `"warden": "${version}"`));
+  git(root, "add", "-A");
+};
+
+const why = "its .warden/lock.json is missing, unreadable, older than Warden 0.1.11, or newer than this daemon's Warden 0.1.11, so no release can stamp it";
+
+const unstampable = (sha: string, holders: string[]): string => `remove commit ${sha.slice(0, 12)} from ${holders.join(", ")} by resetting or deleting each, because ${why}; then make its change again in a new commit with the hook`;
+
+it("flags a merge whose first parent predates Warden", async () => {
+  const s = await start();
+  const seed = git(root, "rev-list", "--max-parents=0", "HEAD").trim();
+  const merge = git(root, "commit-tree", await treeWith("src/m.ts"), "-p", seed, "-p", "HEAD", "-m", "merge onto a pre-Warden parent").trim();
+  git(root, "update-ref", "refs/heads/main", merge);
+  git(root, "reset", "-q", "--hard");
+  await until("the merge is flagged", () => unchecked(s).includes(merge));
+  expect(readEvidence(PROJECT).find((e) => e.kind === "commit" && e.commit === merge)?.status).toBe("unchecked");
+});
+
+it("exempts a commit that any ref held when the daemon first saw the repository, even after that ref is gone", async () => {
+  git(root, "switch", "-q", "-c", "early");
+  await writeFile(join(root, "src/early.ts"), "export const early = 1;\n");
+  git(root, "add", "-A");
+  commitUnhooked("before the daemon");
+  const early = git(root, "rev-parse", "HEAD").trim();
+  git(root, "update-ref", "refs/wip/early", early);
+  git(root, "switch", "-q", "main");
+  git(root, "branch", "-q", "-D", "early");
+  const s = await start();
+  git(root, "merge", "-q", "--ff-only", early);
+  git(root, "update-ref", "-d", "refs/wip/early");
+  await until("the commit is recorded", () => readEvidence(PROJECT).some((e) => e.kind === "commit" && e.commit === early));
+  expect(readEvidence(PROJECT).find((e) => e.kind === "commit" && e.commit === early)?.status).toBe("in-boundary");
+  expect(unchecked(s)).toEqual([]);
+});
+
+const downgrade = async (): Promise<string> => {
+  await lockedBy("0.1.10");
+  commitUnhooked("downgraded lock");
+  return git(root, "rev-parse", "HEAD").trim();
+};
+
+const soleHolder = async (hold: (sha: string) => string, release: () => void): Promise<void> => {
+  const s = await start();
+  const down = await downgrade();
+  await until("the downgrade is flagged", () => unchecked(s).includes(down));
+  const holder = hold(down);
+  git(root, "reset", "-q", "--hard", "HEAD^");
+  await s.daemon.rescan();
+  expect(openAlerts(root).find((d) => d.file === down)?.next).toBe(unstampable(down, [holder]));
+  release();
+  await s.daemon.rescan();
+  expect(unchecked(s)).not.toContain(down);
+};
+
+it("flags a commit that downgrades its lock, names its branch, and closes once the branch drops it", async () => {
+  const s = await start();
+  const down = await downgrade();
+  await until("the downgrade is flagged", () => unchecked(s).includes(down));
+  expect(openAlerts(root).find((d) => d.file === down)?.next).toBe(unstampable(down, ["refs/heads/main"]));
+  git(root, "reset", "-q", "--hard", "HEAD^");
+  await until("removing the commit closes the alert", () => !unchecked(s).includes(down));
+});
+
+it("names a tag that holds an unstampable commit, and closes once the tag is deleted", async () => {
+  await soleHolder(
+    (sha) => {
+      git(root, "tag", "kept", sha);
+      return "refs/tags/kept";
+    },
+    () => git(root, "tag", "-d", "kept"),
+  );
+});
+
+it("names a stash that holds an unstampable commit, and closes once the stash is dropped", async () => {
+  await soleHolder(
+    (sha) => {
+      writeFileSync(join(root, "src/stashed.ts"), `export const stashed = "${sha}";\n`);
+      git(root, "stash", "-q", "--include-untracked");
+      return "refs/stash";
+    },
+    () => git(root, "stash", "drop", "-q"),
+  );
+});
+
+it("names a detached worktree that holds an unstampable commit, and closes once it is removed", async () => {
+  const detached = join(scratch, "detached");
+  await soleHolder(
+    (sha) => {
+      git(root, "worktree", "add", "-q", "--detach", detached, sha);
+      return `the detached HEAD of worktree ${detached}`;
+    },
+    () => git(root, "worktree", "remove", "--force", detached),
+  );
+});
+
+it("a malformed lock in history stays flagged in every worktree and never stops the history scan", async () => {
+  const wt = join(scratch, "wt");
+  git(root, "worktree", "add", "-q", wt, "-b", "side");
+  const s = await start();
+  await until("the worktree is watched", () => s.daemon.projects.has(wt));
+  await writeFile(join(root, ".warden/lock.json"), "{");
+  git(root, "add", "-A");
+  commitUnhooked("malformed lock");
+  const bad = git(root, "rev-parse", "HEAD").trim();
+  await until("the malformed commit is flagged", () => openAlerts(wt).some((d) => d.file === bad));
+  expect(openAlerts(wt).find((d) => d.file === bad)?.next).toBe(unstampable(bad, ["refs/heads/main"]));
+  expect(openOf(s).filter((d) => d.detail === "scan-error" && d.file === "git history")).toEqual([]);
+  git(root, "reset", "-q", "--hard", "HEAD^");
+  await until("removing the commit closes the alert in every worktree", () => !openAlerts(wt).some((d) => d.file === bad));
+});
+
+it("clears a commit recorded as unchecked only when the owner lists it as trusted in the daemon's state", async () => {
+  let s = await start();
+  await writeFile(join(root, "src/t.ts"), "export const t = 1;\n");
+  git(root, "add", "-A");
+  commitUnhooked("reviewed elsewhere");
+  const reviewed = git(root, "rev-parse", "HEAD").trim();
+  await until("the commit is flagged", () => unchecked(s).includes(reviewed));
+  await stop();
+  const repo = realpathSync(join(root, ".git"));
+  const saved = JSON.parse(readFileSync(stateFile(), "utf8")) as { repos: Record<string, Record<string, unknown>> };
+  await writeFile(stateFile(), JSON.stringify(saved));
+  s = await start();
+  expect(unchecked(s)).toEqual([reviewed]);
+  await stop();
+  const entry = { commit: reviewed, reason: "independent review PASS", at: new Date().toISOString() };
+  (saved.repos[repo] as Record<string, unknown>).trusted = [entry];
+  await writeFile(stateFile(), JSON.stringify(saved));
+  s = await start();
+  expect(unchecked(s)).toEqual([]);
+  await s.daemon.rescan();
+  expect(unchecked(s)).toEqual([]);
+  expect(JSON.parse(readFileSync(stateFile(), "utf8")).repos[repo].trusted).toEqual([entry]);
+});
+
+it("gives a lock that names a release newer than the daemon's the unstampable next action", async () => {
+  const s = await start();
+  await lockedBy("9.9.9");
+  commitUnhooked("compiled by a release that does not exist");
+  const forged = git(root, "rev-parse", "HEAD").trim();
+  await until("the commit is flagged", () => unchecked(s).includes(forged));
+  expect(openAlerts(root).find((d) => d.file === forged)?.next).toBe(unstampable(forged, ["refs/heads/main"]));
+  git(root, "reset", "-q", "--hard", "HEAD^");
+  await until("removing the commit closes the alert", () => !unchecked(s).includes(forged));
+});
+
+it("asks the owner to trust a published unstampable commit instead of naming a rewrite", async () => {
+  const remote = join(scratch, "remote.git");
+  git(scratch, "init", "-q", "--bare", "-b", "main", remote);
+  git(root, "remote", "add", "origin", remote);
+  const s = await start();
+  await lockedBy("0.1.10");
+  commitUnhooked("downgraded and pushed");
+  const pushed = git(root, "rev-parse", "HEAD").trim();
+  await until("the commit is flagged", () => unchecked(s).includes(pushed));
+  git(root, "push", "-q", "origin", "main");
+  await s.daemon.rescan();
+  expect(openAlerts(root).find((d) => d.file === pushed)?.next).toBe(`ask the repository owner to stop the daemon with warden daemon uninstall, add commit ${pushed} with a reason to the trusted list of ${realpathSync(join(root, ".git"))} in ${stateFile()}, and start it again with warden daemon install, because it is published in refs/remotes/origin/main and ${why}`);
+  await stop();
+  const saved = JSON.parse(readFileSync(stateFile(), "utf8")) as { repos: Record<string, Record<string, unknown>> };
+  (saved.repos[realpathSync(join(root, ".git"))] as Record<string, unknown>).trusted = [{ commit: pushed, reason: "owner reviewed it", at: new Date().toISOString() }];
+  await writeFile(stateFile(), JSON.stringify(saved));
+  const again = await start();
+  expect(unchecked(again)).toEqual([]);
+});
+
+it("flags a commit again when it returns after removal and its Evidence is gone, though the boundary reaches it", async () => {
+  let s = await start();
+  await writeFile(join(root, "src/back.ts"), "export const back = 1;\n");
+  git(root, "add", "-A");
+  commitUnhooked("flagged, removed, then restored");
+  const back = git(root, "rev-parse", "HEAD").trim();
+  await until("the commit is flagged", () => unchecked(s).includes(back));
+  git(root, "reset", "-q", "--hard", "HEAD^");
+  await until("removing the commit closes the alert", () => !unchecked(s).includes(back));
+  await stop();
+  const repo = realpathSync(join(root, ".git"));
+  const saved = JSON.parse(readFileSync(stateFile(), "utf8")) as { repos: Record<string, Record<string, unknown>> };
+  (saved.repos[repo] as Record<string, unknown>).boundary = [back];
+  await writeFile(stateFile(), JSON.stringify(saved));
+  await rm(join(home, "evidence"), { recursive: true, force: true });
+  appendEvidence(PROJECT, { at: new Date().toISOString(), kind: "registered", root });
+  s = await start();
+  git(root, "reset", "-q", "--hard", back);
+  await until("the restored commit is flagged again", () => unchecked(s).includes(back));
+});
+
+it("keeps a flagged commit inside the boundary flagged after its Evidence is gone", async () => {
+  let s = await start();
+  await writeFile(join(root, "src/aged.ts"), "export const aged = 1;\n");
+  git(root, "add", "-A");
+  commitUnhooked("flagged, then aged out");
+  const aged = git(root, "rev-parse", "HEAD").trim();
+  await until("the commit is flagged", () => unchecked(s).includes(aged));
+  await stop();
+  const repo = realpathSync(join(root, ".git"));
+  const saved = JSON.parse(readFileSync(stateFile(), "utf8")) as { repos: Record<string, Record<string, unknown>> };
+  (saved.repos[repo] as Record<string, unknown>).boundary = [aged];
+  await writeFile(stateFile(), JSON.stringify(saved));
+  await rm(join(home, "evidence"), { recursive: true, force: true });
+  appendEvidence(PROJECT, { at: new Date().toISOString(), kind: "registered", root });
+  s = await start();
+  expect(unchecked(s)).toEqual([aged]);
+});
 
 it("judges a root commit, its next action closes the alert, and a deleted branch drops its alert", async () => {
   const s = await start();

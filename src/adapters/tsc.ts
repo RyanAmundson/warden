@@ -3,6 +3,7 @@ import { extname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import type { Guardrail, RecordSet } from "../records/types.js";
+import { targetOf } from "./pack-code.js";
 import type { TscReply, TscRequest } from "./tsc-worker.js";
 import { type Adapter, PARSE_ERROR, type RunContext, type RunResult, type Violation } from "./types.js";
 
@@ -27,18 +28,16 @@ const FLAG_CODES: Record<string, number[]> = {
   allowUnusedLabels: [7028],
 };
 
-const flagOf = (g: Guardrail): string => g.implementation.slice(g.implementation.indexOf(":") + 1);
-
 export const unmappedFlag = (g: Guardrail): string | undefined => {
   if (!g.implementation.startsWith("tsc:")) return undefined;
-  const flag = flagOf(g);
+  const flag = targetOf(g);
   return flag === BASELINE || flag in FLAG_CODES ? undefined : `tsc:${flag} has no known diagnostic codes, so its errors would count as tsc:${BASELINE}. Next action: change the implementation to one of ${Object.keys(FLAG_CODES).map((f) => `tsc:${f}`).join(", ")}, then run warden compile.`;
 };
 
 const emit = (gs: Guardrail[], _set: RecordSet): Record<string, string> => {
   const compilerOptions: Record<string, unknown> = { noEmit: true };
   for (const g of gs) {
-    if (flagOf(g) !== BASELINE) compilerOptions[flagOf(g)] = g.options === undefined ? true : g.options;
+    if (targetOf(g) !== BASELINE) compilerOptions[targetOf(g)] = g.options === undefined ? true : g.options;
   }
   const config = { extends: "../../tsconfig.json", compilerOptions };
   return { [CONFIG_PATH]: `${JSON.stringify(config, null, 2)}\n` };
@@ -100,9 +99,9 @@ const run = async (gs: Guardrail[], _files: string[], ctx: RunContext): Promise<
   const killed = reply === undefined;
   const stdout = reply?.stdout ?? "";
   const owners = new Map<string, string>();
-  for (const g of gs) for (const code of FLAG_CODES[flagOf(g)] ?? []) owners.set(`${code}${flagOf(g) === "noUnusedParameters" ? "p" : ""}`, g.id);
+  for (const g of gs) for (const code of FLAG_CODES[targetOf(g)] ?? []) owners.set(`${code}${targetOf(g) === "noUnusedParameters" ? "p" : ""}`, g.id);
   const parameters = new Set(reply?.parameters ?? []);
-  const baseline = gs.find((g) => flagOf(g) === BASELINE)?.id ?? BASELINE_ID;
+  const baseline = gs.find((g) => targetOf(g) === BASELINE)?.id ?? BASELINE_ID;
   const byGuardrail = new Map<string, Violation[]>([[baseline, []], ...gs.map((g) => [g.id, []] as [string, Violation[]])]);
   const program: string[] = [];
   if (!killed) {

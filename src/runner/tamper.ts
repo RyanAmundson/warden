@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { expectedOutputs } from "../compiler/compile.js";
-import { LOCK_FORMAT, LOCK_PATH, type Lock, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
+import { LOCK_FORMAT, LOCK_PATH, PROJECT_SOURCE, type Lock, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError, readText } from "../records/load.js";
 import { type BenchSettings, type Kind, type RecordSet, kindRank } from "../records/types.js";
 import { BASELINE_PATH, type Baseline, carryRenames, projectWideEntries, readBaseline } from "./baseline.js";
@@ -145,7 +145,7 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
       (!stronger && (now.implementation !== g.implementation || canonicalJson(now.options) !== canonicalJson(g.options) || canonicalJson(now.settings ?? null) !== canonicalJson(g.settings ?? null)));
     if (weaker) found.push({ file: LOCK_PATH, detail: "loosened", guardrail: id });
   }
-  const editedCode = Object.keys(before.sources ?? {}).filter((k) => /^\.warden\/packs\/[^/]+\/./.test(k) && !k.endsWith("/pack.yaml") && before.sources[k] !== lock.sources[k]);
+  const editedCode = Object.keys(before.sources ?? {}).filter((k) => ((/^\.warden\/packs\/[^/]+\/./.test(k) && !k.endsWith("/pack.yaml")) || k.startsWith(PROJECT_SOURCE)) && before.sources[k] !== lock.sources[k]);
   if (editedCode.length > 0) found.push({ file: LOCK_PATH, detail: "loosened" });
   const { renames } = changesSinceMergeBase(root, base);
   const baseBaseline = carryRenames(JSON.parse(showAtMergeBase(root, base, BASELINE_PATH) ?? "{}") as Baseline, renames);
@@ -156,7 +156,7 @@ const loosened = (root: string, base: string, lock: Lock): Tamper[] => {
       if (n > (baseBaseline[id]?.[file] ?? 0)) found.push({ file: BASELINE_PATH, detail: "loosened", guardrail: id });
     }
   }
-  const sources = Object.keys({ ...before.sources, ...lock.sources }).filter((k) => k.startsWith(".warden/") && before.sources?.[k] !== lock.sources[k]);
+  const sources = Object.keys({ ...before.sources, ...lock.sources }).filter((k) => (k.startsWith(".warden/") || (k.startsWith(PROJECT_SOURCE) && k in (before.sources ?? {}))) && before.sources?.[k] !== lock.sources[k]);
   return sources.length === 0 ? found : found.map((t) => (t.file === LOCK_PATH && t.detail === "loosened" ? { ...t, sources } : t));
 };
 
@@ -184,7 +184,8 @@ export async function findTampering(set: RecordSet, wardenRoot: string, base: st
 
   const expected = await expectedOutputs(set, root, wardenRoot);
   const sources = [...new Set([...Object.keys(lock.sources), ...Object.keys(expected.lock.sources)])].sort();
-  const sourceDrift = sources.filter((file) => lock.sources[file] !== expected.lock.sources[file]);
+  const unchanged = (file: string): boolean => file.startsWith(PROJECT_SOURCE) && expected.lock.sources[file] === undefined && existsSync(join(root, file)) && sha256(readFileSync(join(root, file)).toString("latin1")) === lock.sources[file];
+  const sourceDrift = sources.filter((file) => lock.sources[file] !== expected.lock.sources[file] && !unchanged(file));
   const tracked = trackedFiles(root, sourceDrift.filter((file) => file.startsWith(".warden/") && existsSync(join(root, file))));
   found.push(...sourceDrift.map((file): Tamper => ({ file, detail: "source-drift", ...(file.startsWith(".warden/") && existsSync(join(root, file)) && !tracked.has(file) ? { untracked: true } : {}) })));
   if (sourceDrift.length === 0 && canonicalJson({ ...lock, tools: null }) !== canonicalJson({ ...expected.lock, tools: null })) {

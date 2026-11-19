@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { COMMIT_HOOK } from "../compiler/emit.js";
-import { LOCK_PATH, firstLine, readLock } from "../compiler/lock.js";
+import { COMMIT_HOOK, RELEASES } from "../compiler/emit.js";
+import { FIRST_STAMPING, LOCK_PATH, firstLine, olderThan, readLock } from "../compiler/lock.js";
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
-import { allTips, commitsOf, commonDir, covers, newCommits, reachable, repoTips, restoreAction, worktrees } from "./changed.js";
+import { allTips, commitsOf, commonDir, covers, holdersOf, lockVersionAt, newCommits, reachableFrom, reachable, repoTips, restoreAction, worktrees } from "./changed.js";
 import { claudeDir, commitHookItem, pluginAction, pluginState } from "./doctor.js";
 import { LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, evidenceProjects, readEvidenceFrom, readEvidenceTail, wardenHome } from "./evidence.js";
 import { formatFeedback } from "./feedback.js";
@@ -86,13 +86,15 @@ export function readState() {
         throw new RecordError(stateFile(), "", `is not valid JSON. Next action: delete ${stateFile()} and restart the daemon; it rebuilds the file from git and Evidence`);
     return { roots: value.roots ?? {}, repos: value.repos ?? {} };
 }
+const REPO_WIDE = new Set(["hook-unwired", "unchecked-commit"]);
+const repoWide = (d) => REPO_WIDE.has(d.detail) || (d.detail === "scan-error" && d.file === HISTORY);
 export function openAlerts(root) {
     const repo = commonDir(root);
     const indexes = new Map();
     const indexOf = (project) => indexes.get(project) ?? indexes.set(project, refresh(emptyIndex(), project)).get(project);
     return Object.values(readState().roots)
         .flatMap((r) => r.open)
-        .filter((d) => d.repo === repo)
+        .filter((d) => d.repo === repo && (d.root === root || repoWide(d)))
         .filter((d) => d.detail !== "unchecked-commit" || !commitsOf(root, [d.file]).some((c) => stamped(root, indexOf(d.project), c)));
 }
 export function discoverRoots() {
@@ -103,6 +105,8 @@ const nextOf = (message) => {
     const at = message.indexOf("Next action: ");
     return at === -1 ? undefined : message.slice(at + "Next action: ".length).replace(/\.$/, "");
 };
+export const SELF_CHECK_MARKER = ".warden-self-check";
+const HISTORY = "git history";
 const now = () => new Date().toISOString();
 const isRun = (e) => e.kind === "cost" && e.guardrail === RUN_TOTAL;
 const emptyIndex = () => ({ offset: 0, stamps: [], gateOff: [], offRuns: new Set(), lastGated: new Map(), unchecked: new Set(), enabledRoots: new Set() });
@@ -133,11 +137,27 @@ const refresh = (index, project) => {
     return ix;
 };
 const stamped = (root, index, c) => c.expectedTree === c.tree || index.stamps.some((s) => covers(root, s, c));
-const uncheckedAlert = (c, base) => {
+const stampingVersion = (root, c, running) => {
+    const version = lockVersionAt(root, c.commit);
+    return version === undefined || !/^\d+\.\d+\.\d+$/.test(version) || olderThan(version, FIRST_STAMPING) || olderThan(running, version) ? undefined : version;
+};
+const unstampable = (root, repo, c, running) => {
+    const why = `its ${LOCK_PATH} is missing, unreadable, older than Warden ${FIRST_STAMPING}, or newer than this daemon's Warden ${running}, so no release can stamp it`;
+    const holders = holdersOf(root, c.commit);
+    const published = holders.filter((h) => h.startsWith("refs/remotes/"));
+    if (published.length > 0)
+        return `ask the repository owner to stop the daemon with warden daemon uninstall, add commit ${c.commit} with a reason to the trusted list of ${repo} in ${stateFile()}, and start it again with warden daemon install, because it is published in ${published.join(", ")} and ${why}`;
+    return `remove commit ${c.commit.slice(0, 12)} from ${holders.join(", ")} by resetting or deleting each, because ${why}; then make its change again in a new commit with the hook`;
+};
+const uncheckedAlert = (root, repo, c, base, running) => {
     const short = c.commit.slice(0, 12);
+    const version = stampingVersion(root, c, running);
+    if (version === undefined)
+        return { file: c.commit, detail: "unchecked-commit", next: unstampable(root, repo, c, running) };
+    const warden = version === running ? "warden" : `npx --yes --package=${RELEASES}#v${version} warden`;
     const next = c.parents[0] === undefined
-        ? `run git switch -c warden-check-${short} ${base}, then git read-tree -u --reset ${short}, then warden check --base ${base}`
-        : `in a checkout of commit ${short} with nothing staged, run warden check --base ${short}^`;
+        ? `run git switch -c warden-check-${short} ${base}, then git read-tree -u --reset ${short}, then ${warden} check --base ${base}`
+        : `in a checkout of commit ${short} with nothing staged, run ${warden} check --base ${short}^`;
     return { file: c.commit, detail: "unchecked-commit", next };
 };
 const projectOf = (root) => {
@@ -176,6 +196,7 @@ export function startWatching(opts) {
         indexes.set(project, ix);
         return ix;
     };
+    const running = JSON.parse(readFileSync(join(opts.wardenRoot, "package.json"), "utf8")).version;
     const owner = (w) => [...projects.values()].find((x) => x.repo === w.repo) === w;
     const pluginFound = (w, own, ix) => {
         let plugin;
@@ -209,16 +230,21 @@ export function startWatching(opts) {
         const ix = indexFor(w.project);
         const known = state.repos[w.repo];
         const rebuilt = known === undefined ? commitsOf(w.root, [...ix.unchecked]) : [];
+        const refs = allTips(w.root);
+        const boundary = known?.boundary ?? refs;
+        const trusted = (c) => (known?.trusted ?? []).some((t) => t.commit === c.commit);
+        const flagged = new Set([...(known?.flagged ?? []), ...(known?.unchecked ?? []).map((c) => c.commit)]);
         const fresh = newCommits(w.root, tips, known?.tips ?? tips).filter((c) => {
-            const checked = stamped(w.root, ix, c);
-            appendEvidence(w.project, { at: now(), kind: "commit", trigger: "daemon", root: w.root, commit: c.commit, tree: c.tree, status: checked ? "checked" : "unchecked" });
-            return !checked;
+            const status = trusted(c) ? "trusted" : !ix.unchecked.has(c.commit) && !flagged.has(c.commit) && reachableFrom(w.root, c.commit, boundary) ? "in-boundary" : stamped(w.root, ix, c) ? "checked" : "unchecked";
+            appendEvidence(w.project, { at: now(), kind: "commit", trigger: "daemon", root: w.root, commit: c.commit, tree: c.tree, status });
+            return status === "unchecked";
         });
         const pending = [...(known?.unchecked ?? []), ...rebuilt, ...fresh];
-        const refs = allTips(w.root);
-        const unchecked = pending.filter((c, i) => pending.findIndex((x) => x.commit === c.commit) === i && !stamped(w.root, ix, c) && reachable(w.root, c.commit, refs));
-        state.repos[w.repo] = { tips, unchecked };
-        return unchecked.map((c) => uncheckedAlert(c, base));
+        const unchecked = pending.filter((c, i) => pending.findIndex((x) => x.commit === c.commit) === i && !stamped(w.root, ix, c) && reachable(w.root, c.commit, refs) && !trusted(c));
+        for (const c of unchecked)
+            flagged.add(c.commit);
+        state.repos[w.repo] = { tips, unchecked, boundary, flagged: [...flagged], ...(known?.trusted === undefined ? {} : { trusted: known.trusted }) };
+        return unchecked.map((c) => uncheckedAlert(w.root, w.repo, c, base, running));
     };
     const scanRoot = async (w) => {
         const own = (state.roots[w.root] ??= { open: [] });
@@ -261,7 +287,7 @@ export function startWatching(opts) {
             }
         }
         if (owner(w))
-            guarded("git history", () => commitFound(w, w.base ?? "main"));
+            guarded(HISTORY, () => commitFound(w, w.base ?? "main"));
         return [...found, ...w.recordFound];
     };
     const schedule = (w) => {
@@ -358,7 +384,7 @@ export function startWatching(opts) {
         try {
             return worktrees(w.root)
                 .map((t) => t.path)
-                .filter((p) => existsSync(join(p, ".warden/config.yaml")));
+                .filter((p) => existsSync(join(p, ".warden/config.yaml")) && !existsSync(join(p, SELF_CHECK_MARKER)));
         }
         catch (cause) {
             report(cause);

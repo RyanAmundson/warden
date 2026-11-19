@@ -36,7 +36,9 @@ if [ -f "$root/tsconfig.json" ]; then
     fi
   done
 fi
-env -u GIT_INDEX_FILE git -C "$root" worktree add -q --detach "$work/prev" "$tag" >/dev/null
+env -u GIT_INDEX_FILE git -C "$root" worktree add -q --no-checkout --detach "$work/prev" "$tag" >/dev/null
+: > "$work/prev/.warden-self-check"
+env -u GIT_INDEX_FILE git -C "$work/prev" reset -q --hard
 ln -s "$root/node_modules" "$work/prev/node_modules"
 (cd "$work/prev" && npm pack --silent --pack-destination "$work" >/dev/null)
 mkdir "$work/install"

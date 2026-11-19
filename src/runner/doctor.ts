@@ -5,8 +5,9 @@ import { homedir } from "node:os";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
 import { RecordError } from "../records/load.js";
 import { PACK_VAR, brief } from "../adapters/cmd.js";
+import { targetOf } from "../adapters/pack-code.js";
 import { COMMIT_HOOK } from "../compiler/emit.js";
-import { TOOLS, firstLine } from "../compiler/lock.js";
+import { TOOLS, firstLine, scriptsOf } from "../compiler/lock.js";
 import type { RecordSet } from "../records/types.js";
 
 export interface DoctorResult {
@@ -29,12 +30,6 @@ const executable = (file: string): boolean => {
   } catch {
     return false;
   }
-};
-
-const scriptsOf = (root: string): Record<string, unknown> => {
-  const file = join(root, "package.json");
-  if (!existsSync(file)) return {};
-  return (JSON.parse(readFileSync(file, "utf8")) as { scripts?: Record<string, unknown> }).scripts ?? {};
 };
 
 const SHELL_WORDS = new Set([
@@ -139,7 +134,7 @@ export async function doctor(set: RecordSet, withCommitHook = false): Promise<Do
   items.push(await toolItem("warden eslint plugin", () => import("../../eslint-plugin/index.js")));
   const scripts = scriptsOf(set.root);
   for (const g of set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails))) {
-    if (g.implementation.startsWith("cmd:")) items.push(commandItem(g.id, g.implementation.slice(4), set.root, scripts, g.packDir));
+    if (g.implementation.startsWith("cmd:")) items.push(commandItem(g.id, targetOf(g), set.root, scripts, g.packDir));
   }
   if (withCommitHook) items.push(commitHookItem(set.root));
   const plugin = withCommitHook ? pluginState(set.root) : undefined;

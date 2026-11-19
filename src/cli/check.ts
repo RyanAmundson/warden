@@ -5,7 +5,7 @@ import { basename, join, relative, resolve, sep } from "node:path";
 import { hookTriggers } from "../adapters/claude.js";
 import { PARSE_ERROR, type RunContext, type RunResult, type Violation } from "../adapters/types.js";
 import { wardenVersion } from "../compiler/compile.js";
-import { LOCK_FORMAT, LOCK_PATH, bundledTools, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
+import { LOCK_FORMAT, LOCK_PATH, bundledTools, canonicalJson, olderThan, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import type { Guardrail, Kind, RecordSet, Tier } from "../records/types.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, projectFiles, readBaseline, writeBaseline } from "../runner/baseline.js";
@@ -44,12 +44,6 @@ const guardrailsOf = (set: RecordSet, implementation: string): Guardrail[] => se
 const requireBase = (base: string | undefined, configured: string): string => {
   if (base !== undefined) return base;
   throw new RecordError("", "/base", `--base is missing; Warden takes the base branch from the command, never from the editable config. Next action: run warden check --base ${configured}`);
-};
-
-const olderThan = (a: string, b: string): boolean => {
-  const [x, y] = [a, b].map((v) => v.split(".").map(Number)) as [number[], number[]];
-  const i = x.findIndex((n, j) => n !== y[j]);
-  return i !== -1 && (x[i] as number) < (y[i] ?? 0);
 };
 
 const hookBase = (root: string): string => {

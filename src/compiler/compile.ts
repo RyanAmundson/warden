@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { targetOf } from "../adapters/pack-code.js";
 import type { Adapter } from "../adapters/types.js";
 import { RecordError, loadRecords, readText } from "../records/load.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
@@ -11,7 +12,8 @@ import { admit } from "./bench.js";
 import { checkConsistency, type Finding } from "./consistency.js";
 import { COMMIT_HOOK, commitHook, stamp } from "./emit.js";
 import { runExamples } from "./examples.js";
-import { LOCK_PATH, type Lock, computeLock, packFiles, sha256 } from "./lock.js";
+import { commandSources } from "./command-sources.js";
+import { LOCK_PATH, type Lock, computeLock, packFiles, scriptsOf, sha256 } from "./lock.js";
 
 const sourceFiles = async (set: RecordSet, projectRoot: string, wardenRoot: string): Promise<Record<string, string>> => {
   const out: Record<string, string> = {};
@@ -24,6 +26,10 @@ const sourceFiles = async (set: RecordSet, projectRoot: string, wardenRoot: stri
     for (const [dir, base] of [[`packs/${id}`, wardenRoot], [`.warden/packs/${id}`, projectRoot]] as const) {
       for (const key of await packFiles(base, dir)) out[key] = (await readText(join(base, key))) as string;
     }
+  }
+  const scripts = scriptsOf(projectRoot);
+  for (const g of set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails))) {
+    if (g.implementation.startsWith("cmd:")) Object.assign(out, commandSources(projectRoot, targetOf(g), g.sources ?? [], scripts, { file: g.packDir === undefined ? "" : join(g.packDir, "pack.yaml"), id: g.id }));
   }
   return out;
 };

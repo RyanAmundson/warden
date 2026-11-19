@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join, relative, sep } from "node:path";
@@ -37,7 +37,25 @@ export const packFiles = async (base, dir) => {
         throw cause;
     }
 };
+export const scriptsOf = (root) => {
+    const file = join(root, "package.json");
+    if (!existsSync(file))
+        return {};
+    try {
+        return JSON.parse(readFileSync(file, "utf8"))?.scripts ?? {};
+    }
+    catch (cause) {
+        throw new RecordError("package.json", "", `is not valid JSON: ${cause.message}. Next action: fix the JSON in package.json, then run warden compile.`);
+    }
+};
+export const PROJECT_SOURCE = "./";
 export const LOCK_PATH = ".warden/lock.json";
+export const FIRST_STAMPING = "0.1.11";
+export const olderThan = (a, b) => {
+    const [x, y] = [a, b].map((v) => v.split(".").map(Number));
+    const i = x.findIndex((n, j) => n !== y[j]);
+    return i !== -1 && x[i] < (y[i] ?? 0);
+};
 export const sha256 = (content) => createHash("sha256").update(content).digest("hex");
 export function canonicalJson(value) {
     if (Array.isArray(value))

@@ -164,7 +164,7 @@ export function worktrees(root) {
         .flatMap((block) => {
         const path = /^worktree (.+)$/m.exec(block)?.[1];
         const head = /^HEAD ([0-9a-f]+)$/m.exec(block)?.[1];
-        return path === undefined ? [] : [{ path, ...(head === undefined || UNBORN.test(head) ? {} : { head }) }];
+        return path === undefined ? [] : [{ path, ...(head === undefined || UNBORN.test(head) ? {} : { head }), ...(/^detached$/m.test(block) ? { detached: true } : {}) }];
     });
 }
 export const repoTips = (root) => [...new Set([...must(root, ["for-each-ref", "--format=%(objectname)", "refs/heads"]).split("\n").filter((l) => l !== ""), ...worktrees(root).flatMap((w) => (w.head === undefined ? [] : [w.head]))])].sort();
@@ -249,6 +249,25 @@ export function commitsOf(root, shas) {
     const known = shas.filter((sha) => hasCommit(root, sha));
     return known.length === 0 ? [] : described(root, ["--no-walk=unsorted", ...known]);
 }
+export const lockVersionAt = (root, commit) => {
+    const r = git(root, ["show", `${commit}:.warden/lock.json`]);
+    if (!r.ok)
+        return undefined;
+    try {
+        const version = JSON.parse(r.out).warden;
+        return typeof version === "string" ? version : undefined;
+    }
+    catch {
+        return undefined;
+    }
+};
+export const reachableFrom = (root, sha, tips) => execFileSync("git", ["rev-list", "-1", "--ignore-missing", "--stdin", sha], { cwd: root, env: env(), encoding: "utf8", input: tips.map((t) => `^${t}\n`).join(""), stdio: ["pipe", "pipe", "pipe"] }).trim() === "";
+export const holdersOf = (root, sha) => [
+    ...must(root, ["for-each-ref", "--contains", sha, "--format=%(refname)"]).split("\n").filter((l) => l !== ""),
+    ...worktrees(root)
+        .filter((w) => w.detached === true && w.head !== undefined && isAncestor(root, sha, w.head))
+        .map((w) => `the detached HEAD of worktree ${w.path}`),
+];
 export const isAncestor = (root, ancestor, of) => git(root, ["merge-base", "--is-ancestor", ancestor, of]).ok;
 export const reachable = (root, sha, tips) => hasCommit(root, sha) && tips.some((tip) => isAncestor(root, sha, tip));
 export function restoreAction(root, path) {
