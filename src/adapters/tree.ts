@@ -10,6 +10,7 @@ import type { Adapter, RunContext, RunResult, Violation } from "./types.js";
 
 export interface Edge {
   target: string;
+  specifier: string;
   line: number;
 }
 
@@ -70,7 +71,7 @@ export async function importGraph(root: string, files: string[], read: (file: st
       const resolved = ts.resolveModuleName(imported.fileName, join(root, file), options, ts.sys, cache).resolvedModule;
       if (resolved === undefined || resolved.isExternalLibraryImport === true) continue;
       const target = relative(root, resolved.resolvedFileName).split(sep).join("/");
-      if (!target.startsWith("../")) edges.push({ target, line: lineAt(starts, imported.pos) });
+      if (!target.startsWith("../")) edges.push({ target, specifier: imported.fileName, line: lineAt(starts, imported.pos) });
     }
     graph.set(file, edges);
   }

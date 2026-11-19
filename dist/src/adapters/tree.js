@@ -50,7 +50,7 @@ export async function importGraph(root, files, read) {
                 continue;
             const target = relative(root, resolved.resolvedFileName).split(sep).join("/");
             if (!target.startsWith("../"))
-                edges.push({ target, line: lineAt(starts, imported.pos) });
+                edges.push({ target, specifier: imported.fileName, line: lineAt(starts, imported.pos) });
         }
         graph.set(file, edges);
     }

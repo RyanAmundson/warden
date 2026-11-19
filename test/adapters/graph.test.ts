@@ -26,7 +26,7 @@ describe("graph adapter", () => {
       const text = `import { b } from "./b";\n${"\n".repeat(40)}export const x = 1;\nimport { c } from "./c";\n`;
       await writeFile(join(dir, "src/a.ts"), text);
       const graph = await importGraph(dir, ["src/a.ts"], (f) => (f === "src/a.ts" ? text : ""));
-      expect(graph.get("src/a.ts")).toEqual([{ target: "src/b.ts", line: 1 }, { target: "src/c.ts", line: 43 }]);
+      expect(graph.get("src/a.ts")).toEqual([{ target: "src/b.ts", specifier: "./b", line: 1 }, { target: "src/c.ts", specifier: "./c", line: 43 }]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -41,7 +41,7 @@ describe("graph adapter", () => {
       await writeFile(join(dir, "src/lib/b.ts"), "export const b = 1;\n");
       const text = 'import { b } from "@lib/b";\n';
       const graph = await importGraph(dir, ["src/a.ts"], () => text);
-      expect(graph.get("src/a.ts")).toEqual([{ target: "src/lib/b.ts", line: 1 }]);
+      expect(graph.get("src/a.ts")).toEqual([{ target: "src/lib/b.ts", specifier: "@lib/b", line: 1 }]);
       expect(listed).not.toHaveBeenCalled();
     } finally {
       listed.mockRestore();

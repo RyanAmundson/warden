@@ -258,6 +258,16 @@ describe("principles pack", () => {
     expect((await scan("principles-unused-exports", tree))?.status).toBe("pass");
   });
 
+  it.each(["./dialog", "@app/dialog"])("unused exports: rest bindings keep the remaining exports of %s available", async (specifier) => {
+    await write("tsconfig.json", JSON.stringify({ compilerOptions: { paths: { "@app/*": ["./src/*"] } } }));
+    const tree = {
+      "src/dialog.ts": "export const open = 1;\nexport const close = 2;\n",
+      "src/dialog/index.ts": "export const show = 3;\nexport const unused = 4;\n",
+      "src/use.ts": `const { open, ...dialog } = await import("${specifier}");\nimport { show } from "./dialog/index";\nconsole.log(open, dialog.close, show);\n`,
+    };
+    expect(await found("principles-unused-exports", tree)).toEqual(["src/dialog/index.ts:2: unused is exported, but no other file imports it."]);
+  });
+
   it("unused exports: a file outside the Practice's paths still counts as a user", async () => {
     await reconfigure(`  - id: principles\n    paths: ["**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"]\n`);
     const tree = { "src/util.ts": "export const a = 1;\nexport const b = 2;\n", "src/use.ts": 'import { a } from "./util";\nconsole.log(a);\n', "src/App.jsx": 'import { b } from "./util";\nconsole.log(b);\n' };
