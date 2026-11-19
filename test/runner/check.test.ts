@@ -2247,7 +2247,7 @@ describe("signed .warden changes", () => {
     const first = await check({}, false);
     expect(first.code).toBe(1);
     expect(first.out.match(/Next action:/g)).toHaveLength(1);
-    expect(first.out).toContain("Next action: revert your change to .warden/packs/local/extra.yaml.");
+    expect(first.out).toContain("Next action: delete .warden/packs/local/extra.yaml.");
     await rm(join(root, ".warden/packs/local/extra.yaml"));
     const { code, out } = await check({}, false);
     expect(code).toBe(1);
@@ -2301,11 +2301,7 @@ describe("signed .warden changes", () => {
     expect(code).toBe(1);
     await follow(out);
     expect(git("status", "--short")).toContain("D  a.ts");
-    const after = await check({}, false);
-    if (after.code !== 0) {
-      expect(after.out).toContain("Next action: run git add -- '.warden/baseline.json', then run warden check --base main.");
-      git("add", "--", ".warden/baseline.json");
-    }
+    expect(git("diff", "--name-only", "HEAD~1", "HEAD").trim()).toBe(".warden/notes.txt");
     expect((await check({}, false)).code).toBe(0);
   });
 
@@ -2330,6 +2326,46 @@ describe("signed .warden changes", () => {
     git("commit", "-q", "-m", "case variant");
     expect((await check({}, false)).code).toBe(1);
     expect(await tampered()).toContainEqual({ file: ".WARDEN/packs/local/extra.yaml", detail: "unsigned" });
+  });
+
+  it("a case-only rename under .warden gets a restore that converges where git ignores case", async () => {
+    git("config", "core.ignorecase", "true");
+    git("mv", ".warden/notes.txt", ".warden/NOTES.txt");
+    git("commit", "-q", "-m", "case rename");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    await follow(out);
+    expect((await check({}, false)).code).toBe(0);
+    expect(git("ls-tree", "-r", "--name-only", "HEAD", "--", ".warden/notes.txt").trim()).toBe(".warden/notes.txt");
+  });
+
+  it("git rm --cached of an unsigned added file gets a restore whose one commit removes it", async () => {
+    await write(".warden/b.txt", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "add b unsigned");
+    git("rm", "-q", "--cached", ".warden/b.txt");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    await follow(out);
+    expect(git("diff", "--name-only", "HEAD~1", "HEAD").trim()).toBe(".warden/b.txt");
+    expect((await check({}, false)).code).toBe(0);
+  });
+
+  it("the hook still refuses a plain partial commit whose unstaged files would fail a commit-tier guardrail", async () => {
+    git("checkout", "-q", "main");
+    await addLegacy("commit", 'test ! -e broken && test "$(cat x.ts 2>/dev/null)" = "$(cat y.ts 2>/dev/null)"', 5000);
+    await write("x.ts", "export const v = 1;\n");
+    await write("y.ts", "export const v = 1;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "x y");
+    git("checkout", "-q", "-B", "feature");
+    await write("x.ts", "export const v = 2;\n");
+    await write("y.ts", "export const v = 2;\n");
+    git("add", "x.ts");
+    const head = git("rev-parse", "HEAD").trim();
+    const refused = await hookCommit("partial");
+    expect(refused).toContain("UNSTAGED y.ts");
+    expect(git("rev-parse", "HEAD").trim()).toBe(head);
   });
 
   it("Warden's pre-commit hook still refuses a staged unsigned .warden change over an unsigned commit", async () => {

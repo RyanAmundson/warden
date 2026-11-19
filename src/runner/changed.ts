@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { RecordError } from "../records/load.js";
 
 const noGrafts = join(tmpdir(), `warden-no-grafts-${randomUUID()}`);
@@ -104,6 +105,8 @@ export const stageFile = (root: string, path: string): void => {
 
 export const unstagedFiles = (root: string): string[] => names(must(root, ["diff", "-z", "--name-only", "--relative"]));
 
+export const trackedFiles = (root: string, paths: string[]): Set<string> => new Set(paths.length === 0 ? [] : names(must(root, ["--literal-pathspecs", "ls-files", "-z", "--cached", "--", ...paths])));
+
 export const stagedFiles = (root: string): string[] => names(must(root, ["diff", "-z", "--name-only", "--relative", "--cached", "HEAD"]));
 
 export function lastCommittedText(root: string, path: string): string | undefined {
@@ -170,6 +173,8 @@ export interface Restore {
   base: string;
   paths: string[];
   known: string[];
+  stray: string[];
+  aliased: boolean;
 }
 
 export interface Signatures {
@@ -185,7 +190,7 @@ export function changeSignatures(root: string, base: string, dir: string, allowe
   const judged = staged ? diff("--cached", at) : committed;
   const scope = [...new Set([...committed, ...judged])];
   const files = new Map<string, string>();
-  if (scope.length === 0) return { files, restore: { base: at, paths: [], known: [] } };
+  if (scope.length === 0) return { files, restore: { base: at, paths: [], known: [], stray: [], aliased: false } };
   const verify = ["-c", "gpg.ssh.program=ssh-keygen", "-c", "gpg.program=false", "-c", "gpg.x509.program=false", "-c", `gpg.ssh.allowedSignersFile=${allowedSignersFile}`, "--literal-pathspecs"];
   const mark = `\x01${randomUUID()}`;
   const log = must(root, [...verify, "log", "-z", "--topo-order", "--diff-merges=dense-combined", "--no-renames", "--ignore-submodules=none", "--relative", "--name-only", `--format=${mark}%G?`, `${at}..HEAD`, "--", ...scope]);
@@ -204,5 +209,8 @@ export function changeSignatures(root: string, base: string, dir: string, allowe
   const paths = [...new Set([...bad.keys(), ...scope.filter((p) => alongside.includes(p))])].sort();
   const listed = (args: string[]): string[] => (paths.length === 0 ? [] : names(must(root, ["--literal-pathspecs", ...args, "--", ...paths])));
   const known = [...new Set([...listed(["ls-tree", "-r", "-z", "--name-only", "--full-tree", at]), ...listed(["ls-files", "-z", "--cached"])])].sort();
-  return { files, restore: { base: at, paths, known } };
+  const onDisk = (p: string): boolean => existsSync(join(root, dirname(p))) && readdirSync(join(root, dirname(p))).includes(basename(p));
+  const stray = paths.filter((p) => !known.includes(p) && onDisk(p));
+  const aliased = new Set(paths.map((p) => p.toLowerCase())).size < paths.length;
+  return { files, restore: { base: at, paths, known, stray, aliased } };
 }

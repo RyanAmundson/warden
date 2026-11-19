@@ -6,7 +6,7 @@ import { LOCK_FORMAT, LOCK_PATH, canonicalJson, readLock, sha256 } from "../comp
 import { RecordError, readText } from "../records/load.js";
 import { kindRank } from "../records/types.js";
 import { BASELINE_PATH, carryRenames, projectWideEntries, readBaseline } from "./baseline.js";
-import { changeSignatures, changesSinceMergeBase, containsHead, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
+import { changeSignatures, trackedFiles, changesSinceMergeBase, containsHead, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
 const SETTINGS_FILES = [".claude/settings.json", ".claude/settings.local.json"];
 export const SIGNERS_FILE = "allowed_signers";
 const isObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -158,7 +158,8 @@ export async function findTampering(set, wardenRoot, base, staged) {
     const expected = await expectedOutputs(set, root, wardenRoot);
     const sources = [...new Set([...Object.keys(lock.sources), ...Object.keys(expected.lock.sources)])].sort();
     const sourceDrift = sources.filter((file) => lock.sources[file] !== expected.lock.sources[file]);
-    found.push(...sourceDrift.map((file) => ({ file, detail: "source-drift" })));
+    const tracked = trackedFiles(root, sourceDrift.filter((file) => file.startsWith(".warden/") && existsSync(join(root, file))));
+    found.push(...sourceDrift.map((file) => ({ file, detail: "source-drift", ...(file.startsWith(".warden/") && existsSync(join(root, file)) && !tracked.has(file) ? { untracked: true } : {}) })));
     if (sourceDrift.length === 0 && canonicalJson({ ...lock, tools: null }) !== canonicalJson({ ...expected.lock, tools: null })) {
         found.push({ file: LOCK_PATH, detail: "lock-drift" });
     }

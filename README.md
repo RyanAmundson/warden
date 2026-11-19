@@ -56,14 +56,19 @@ next action restores every path changed without an allowed signature, plus
 `.warden/baseline.json` when the branch changed it, to its merge-base
 content with `git restore`, then commits only those paths with
 `git commit --only`. Files the branch added are removed, and files it deleted
-come back. Other staged and unstaged work stays where it is. An untracked file
-at a restored path is replaced by the merge-base content. The commit uses
+come back; a file the branch added that is no longer in the index is deleted
+from disk with `rm -rf`. Other staged and unstaged work stays where it is. An
+untracked file at a restored path is replaced by the merge-base content. When
+two restored paths differ only in case, `git commit --only` refuses them as
+aliases, so the action commits the whole index with a plain `git commit`
+instead, and other staged work joins that commit. The commit uses
 `--allow-empty` so it is still made when a replace ref or a commit-graph file
 makes git's own view of `HEAD` already match the merge base. The restore also
 drops any signed edit to those paths made since the merge base; sign that
 edit again after the restore. When another tamper finding names a file
 outside the restored paths, such as an untracked pack file, the check names
-that file first and the restore after it.
+that file first (an untracked one is to be deleted) and the restore after
+it.
 
 A path needs a signature only while its content differs from the merge base,
 so unsigned commits that leave a path as it was at the merge base are not
@@ -71,8 +76,12 @@ reported. Warden's pre-commit hook judges the index the commit uses, the
 temporary index during `git commit --only`, so it accepts a staged restore
 while `HEAD` still holds the unsigned commit. It refuses a staged tree that
 keeps an unsigned commit's change, and its next action restores every
-unsigned path in `HEAD` or the index. Working-copy changes to files outside
-the commit do not refuse it. It cannot judge the signature of the commit
+unsigned path in `HEAD` or the index. Only during `git commit --only`, which
+git runs on a temporary index rather than `index` or `index.lock`, do
+working-copy changes to files outside the commit not refuse it; that commit
+also leaves `.warden/baseline.json` alone, and the next check lowers it. A
+plain or partial `git commit` is still refused while a scanned file differs
+from the index. It cannot judge the signature of the commit
 being made, which does not exist yet: a staged `.warden/` change on top of
 signed history passes the hook, and the next check reports the commit if it
 is unsigned. Where git ignores case (`core.ignorecase`), the check also

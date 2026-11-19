@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { basename, join, relative, resolve, sep } from "node:path";
 import { hookTriggers } from "../adapters/claude.js";
 import { PARSE_ERROR, type RunContext, type RunResult, type Violation } from "../adapters/types.js";
 import { wardenVersion } from "../compiler/compile.js";
@@ -317,7 +317,9 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const guardrails = selectGuardrails(set, undefined).filter((g) => (lintChosen && g.kind === "lint") || selected.has(g.id));
   const listed = scannedFiles(root, base, opts.paths);
   const unstaged = new Set(tier === "commit" ? unstagedFiles(root) : []);
-  const committing = opts.trigger === "git-commit" ? new Set(stagedFiles(root)) : undefined;
+  const index = process.env.GIT_INDEX_FILE;
+  const onlyCommit = opts.trigger === "git-commit" && index !== undefined && !["index", "index.lock"].includes(basename(index));
+  const committing = onlyCommit ? new Set(stagedFiles(root)) : undefined;
   const scanned = committing === undefined ? listed : listed.filter((f) => committing.has(f) || !unstaged.has(f));
   if (tier === "commit") {
     const differing = scanned.filter((f) => unstaged.has(f));
@@ -372,7 +374,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
         ].filter((f) => f !== "");
   const wide = applyBaseline(wholeProject, narrow.next, judged, exists, touched);
   const failures = [...narrow.failures, ...wide.failures];
-  if (tier !== "edit" && canonicalJson(wide.next) !== canonicalJson(baseline)) {
+  if (tier !== "edit" && !onlyCommit && canonicalJson(wide.next) !== canonicalJson(baseline)) {
     writeBaseline(root, wide.next);
     if (tier === "commit") {
       stageFile(root, BASELINE_PATH);
