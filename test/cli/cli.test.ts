@@ -655,8 +655,11 @@ describe("warden CLI", () => {
     const r = warden("--layers");
     expect(r.code, r.err).toBe(0);
     expect(r.out).toContain(" LAYERS  strongest first");
-    expect(r.out).toMatch(/ PACKS {3}● core \(bundled, \d+ rules?\)/);
-    expect(r.out).not.toContain("architecture");
+    expect(r.out).toMatch(/ PACKS {3}[●○] /);
+    expect(r.out).toMatch(/● core \(bundled, \d+ rules?\)/);
+    const shown = [...r.out.matchAll(/[●○] (\S+) \(bundled/g)].map((m) => m[1]);
+    expect(shown).toContain("core");
+    expect(shown.filter((id) => !bundled.includes(id as string))).toEqual([]);
     expect(r.out).not.toContain("\x1b");
   });
 });

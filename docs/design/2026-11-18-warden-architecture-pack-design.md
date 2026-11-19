@@ -463,3 +463,58 @@ These are the author's calls, not Ryan's decisions:
   call to the suite with the implementation's `create`.
 - Messages, which follow Warden's one-formatter rule: the compliant example and
   one next action.
+
+## Built in version 1
+
+Version 1 ships two practices and three Guardrails.
+
+- `architecture-world-only-in-sources` has two Guardrails.
+  `architecture-world-modules` bans importing the world modules `fs`,
+  `child_process`, `net`, `http`, `timers`, and similar outside a sources
+  folder. `architecture-world-globals` bans `setTimeout`, `setInterval`,
+  `setImmediate`, `fetch`, `XMLHttpRequest`, and `WebSocket` there. This
+  Guardrail was named `architecture-world-timers` before version 1 shipped.
+- `architecture-sources-only-emit` has one Guardrail,
+  `architecture-source-shape`. It bans a source from importing, re-exporting,
+  requiring, or dynamically loading a sink. A type-only import or re-export
+  from a sink passes. It also bans a source from re-exporting a world module,
+  exporting a constant whose value is a bare identifier
+  (`export const read = readFileSync`), default-exporting an identifier,
+  exporting a list of local values, or exporting a class. A source can still
+  export a world value through a member access
+  (`export const read = fs.readFile`) or an object literal
+  (`export const api = { readFile }`, `export default { readFile }`). A
+  `require()` of a sink written as a template literal also passes. Both gaps
+  are recorded in `cm-wkqedr.25`. The local-list ban also fails
+  `export { type X }`, and `export { watch }` for a function that returns an
+  Observable. Write `export type { X }` and `export function watch` instead.
+  Every function a source exports must declare an
+  `Observable` return type, either `Observable` or a qualified name such as
+  `rx.Observable`.
+
+Limits of what version 1 covers:
+
+- The merged practice covers ARCH-7 in one direction only. A source can't
+  import a sink, but nothing yet checks that a sink doesn't import a source.
+- It covers ARCH-9 by the declared return type, not the inferred one. A
+  function with no return type fails, even when TypeScript would infer an
+  `Observable`.
+- `architecture-world-modules` doesn't see `require("fs")` or a dynamic
+  `import("fs")`. The clock check covers timers only, not `Date.now()` or
+  `new Date()`. Both gaps are recorded in `cm-wkqedr.25`.
+- Member-access globals, such as `globalThis.setTimeout` and `window.fetch`,
+  pass the world boundary. So do third-party packages that reach the world,
+  such as `fs-extra`. Both gaps are recorded in `cm-wkqedr.25`.
+- `import type` from a world module still fails the world boundary, because
+  the core rule has no option for type-only imports.
+- Version 1 has no composition-root exemption, so a composition root that
+  reaches the world fails. Until per-pack settings exist (`cm-wkqedr.25`), a
+  project scopes the pack with the `paths` in its config to its group
+  collections, so composition roots fall outside the pack.
+- Only `*.test.*`, `*.spec.*`, and `*.config.*` files, and files under a
+  `test/`, `tests/`, or `__tests__/` folder, count as test or config files.
+  The world boundary skips them.
+- This pack owns the ESLint core rules `no-restricted-imports`,
+  `no-restricted-globals`, and `no-restricted-syntax`. No other pack can use
+  them until `cm-wkqedr.25` lets Guardrails share a rule.
+- Every other ARCH practice waits on `cm-wkqedr.25`.
