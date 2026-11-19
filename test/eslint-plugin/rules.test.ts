@@ -56,6 +56,9 @@ tester.run("no-suppressions", plugin.rules["no-suppressions"], {
     { code: "// plain note\nconst a = 1", options: noSuppressions },
     { code: "it.each([1])(\"x\", () => {})", options: noSuppressions },
     { code: "it.concurrent(\"x\", () => {})", options: noSuppressions },
+    { code: "const s = it;\ns(\"x\", () => {})", options: noSuppressions },
+    { code: "const { skip } = settings;\nskip()", options: noSuppressions },
+    { code: "globalThis.it(\"x\", () => {})", options: noSuppressions },
   ],
   invalid: [
     { ...bad("// eslint-disable-line\nconst a = 1", suppressionMessage), options: noSuppressions },
@@ -83,6 +86,13 @@ tester.run("no-suppressions", plugin.rules["no-suppressions"], {
       "(it<any>).skip(\"x\", () => {})",
       "suite.skip(\"x\", () => {})",
       "bench.todo(\"x\")",
+      "const s = it;\ns.skip(\"x\", () => {})",
+      "const { skip } = it;\nskip(\"x\", () => {})",
+      "const { skip: later } = test;\nlater(\"x\", () => {})",
+      "const s = it.skip;\ns(\"x\", () => {})",
+      "globalThis.it.skip(\"x\", () => {})",
+      "test.fails(\"x\", () => {})",
+      "const test = base.extend({});\ntest.skip(\"x\", () => {})",
     ].map((code) => ({ ...bad(code, suppressionMessage), options: noSuppressions })),
   ],
 });

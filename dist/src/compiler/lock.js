@@ -8,7 +8,16 @@ import { benchSettings } from "../records/types.js";
 export const LOCK_FORMAT = 3;
 export const TOOLS = ["eslint", "typescript-eslint", "typescript"];
 const wardenRequire = createRequire(import.meta.url);
-export const bundledTools = () => Object.fromEntries(TOOLS.map((name) => [name, wardenRequire(`${name}/package.json`).version]));
+export const firstLine = (text) => text.split("\n")[0];
+const versionOf = (name) => {
+    try {
+        return wardenRequire(`${name}/package.json`).version;
+    }
+    catch (cause) {
+        throw new RecordError("", "/tools", `Warden's bundled ${name} does not load: ${firstLine(cause.message)}. Next action: reinstall Warden so its bundled ${name} loads, then run warden doctor.`);
+    }
+};
+export const bundledTools = () => Object.fromEntries(TOOLS.map((name) => [name, versionOf(name)]));
 export const LOCK_PATH = ".warden/lock.json";
 export const sha256 = (content) => createHash("sha256").update(content).digest("hex");
 export function canonicalJson(value) {

@@ -32,8 +32,17 @@ export const TOOLS = ["eslint", "typescript-eslint", "typescript"] as const;
 
 const wardenRequire = createRequire(import.meta.url);
 
-export const bundledTools = (): Record<string, string> =>
-  Object.fromEntries(TOOLS.map((name) => [name, (wardenRequire(`${name}/package.json`) as { version: string }).version]));
+export const firstLine = (text: string): string => text.split("\n")[0] as string;
+
+const versionOf = (name: string): string => {
+  try {
+    return (wardenRequire(`${name}/package.json`) as { version: string }).version;
+  } catch (cause) {
+    throw new RecordError("", "/tools", `Warden's bundled ${name} does not load: ${firstLine((cause as Error).message)}. Next action: reinstall Warden so its bundled ${name} loads, then run warden doctor.`);
+  }
+};
+
+export const bundledTools = (): Record<string, string> => Object.fromEntries(TOOLS.map((name) => [name, versionOf(name)]));
 
 export const LOCK_PATH = ".warden/lock.json";
 

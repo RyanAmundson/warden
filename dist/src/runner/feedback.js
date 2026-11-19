@@ -1,4 +1,4 @@
-import { withPackDir } from "../adapters/cmd.js";
+import { commandOf, packDirs, withPackDir } from "../adapters/cmd.js";
 import { PARSE_ERROR } from "../adapters/types.js";
 const EXAMPLE_LINES = 15;
 const ownerOf = (set, id) => {
@@ -38,8 +38,8 @@ const nextAction = (failures, set, notes) => {
     const located = failures.filter((v) => v.file !== "");
     const legacy = failures.find((v) => v.file === "" && ownerOf(set, v.guardrail)?.guardrail.implementation.startsWith("cmd:") === true);
     if (located.length === 0 && legacy !== undefined) {
-        const { implementation, packDir } = ownerOf(set, legacy.guardrail).guardrail;
-        return `run \`${withPackDir(implementation.slice(implementation.indexOf(":") + 1), packDir)}\` and fix what it reports.`;
+        const { guardrail } = ownerOf(set, legacy.guardrail);
+        return `run \`${withPackDir(commandOf(guardrail, packDirs(set).get(guardrail.id)), guardrail.packDir)}\` and fix what it reports.`;
     }
     if (failures.length > 0) {
         return 'change the code at the lines above to match "Do this". Do not edit .warden/ or generated config; that is recorded as tampering.';
@@ -95,7 +95,7 @@ export function formatFeedback(failures, set, format, notes = {}) {
     for (const item of items) {
         lines.push(`FAIL ${item.file === "" ? "project" : `${item.file}:${item.line}`}  ${item.practice}`);
         lines.push(`  Rule:     ${item.rule}`);
-        if (item.file === "")
+        if (item.file === "" || !item.message.includes(item.rule))
             lines.push(`  Output:   ${indent(item.message)}`);
         if (item.doThis !== undefined)
             lines.push(`  Do this:  ${indent(item.doThis)}`);

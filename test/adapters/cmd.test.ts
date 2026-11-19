@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { cmdAdapter } from "../../src/adapters/cmd.js";
+import { cmdAdapter, commandOf } from "../../src/adapters/cmd.js";
 import { runGuardrails } from "../../src/runner/run.js";
 import type { Guardrail, RecordSet } from "../../src/records/types.js";
 import { conformance } from "./conformance.js";
@@ -66,6 +66,11 @@ describe("cmd adapter", () => {
   it("runs a Guardrail with WARDEN_PACK_DIR set to its pack's folder", async () => {
     const [r] = await cmdAdapter.run([{ ...legacy('cmd:test "$WARDEN_PACK_DIR" = /packs/p'), packDir: "/packs/p" }], [], ctx);
     expect(r?.status).toBe("pass");
+  });
+
+  it("quotes a pack folder that the shell would split, and refuses {pack} without one", () => {
+    expect(commandOf(legacy("cmd:sh {pack}/a.sh"), "/w/it's here")).toBe("sh '/w/it'\\''s here'/a.sh");
+    expect(() => commandOf(legacy("cmd:sh {pack}/a.sh"), undefined)).toThrow("Guardrail g names {pack} but was run without its pack directory");
   });
 
   it("emits nothing", () => {

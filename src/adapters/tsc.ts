@@ -1,8 +1,9 @@
 import { statSync } from "node:fs";
-import { createRequire } from "node:module";
-import { isAbsolute, join, relative } from "node:path";
-import { spawnBudgeted } from "./cmd.js";
+import { extname, isAbsolute, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 import type { Guardrail, RecordSet } from "../records/types.js";
+import type { TscReply, TscRequest } from "./tsc-worker.js";
 import { type Adapter, PARSE_ERROR, type RunContext, type RunResult, type Violation } from "./types.js";
 
 const BASELINE = "baseline-errors";
@@ -13,9 +14,25 @@ const DIAGNOSTIC = /^(.+)\((\d+),\d+\): error TS(\d+): (.*)$/;
 const FLAG_CODES: Record<string, number[]> = {
   strictNullChecks: [2531, 2532, 2533, 18047, 18048],
   noImplicitAny: [7005, 7006, 7031],
+  noUnusedLocals: [6133, 6192, 6196, 6198, 6199, 6205],
+  noImplicitReturns: [7030],
+  noFallthroughCasesInSwitch: [7029],
+  noImplicitThis: [2683],
+  noImplicitOverride: [4114, 4116],
+  noPropertyAccessFromIndexSignature: [4111],
+  exactOptionalPropertyTypes: [2375, 2379, 2412],
+  strictPropertyInitialization: [2564],
+  allowUnreachableCode: [7027],
+  allowUnusedLabels: [7028],
 };
 
 const flagOf = (g: Guardrail): string => g.implementation.slice(g.implementation.indexOf(":") + 1);
+
+export const unmappedFlag = (g: Guardrail): string | undefined => {
+  if (!g.implementation.startsWith("tsc:")) return undefined;
+  const flag = flagOf(g);
+  return flag === BASELINE || flag in FLAG_CODES ? undefined : `tsc:${flag} has no known diagnostic codes, so its errors would count as tsc:${BASELINE}. Next action: change the implementation to one of ${Object.keys(FLAG_CODES).map((f) => `tsc:${f}`).join(", ")}, then run warden compile.`;
+};
 
 const emit = (gs: Guardrail[], _set: RecordSet): Record<string, string> => {
   const compilerOptions: Record<string, unknown> = { noEmit: true };
@@ -26,14 +43,53 @@ const emit = (gs: Guardrail[], _set: RecordSet): Record<string, string> => {
   return { [CONFIG_PATH]: `${JSON.stringify(config, null, 2)}\n` };
 };
 
+const WORKER = new URL(`./tsc-worker${extname(fileURLToPath(import.meta.url))}`, import.meta.url);
+
+let worker: Worker | undefined;
+let busy = false;
+
+const ask = (request: TscRequest, budgetMs: number | undefined): Promise<{ reply?: TscReply; ms: number }> =>
+  new Promise((resolve, reject) => {
+    if (busy) throw new Error("the tsc adapter checks one program at a time; await the previous run");
+    busy = true;
+    const w = (worker ??= new Worker(WORKER));
+    const start = performance.now();
+    const settle = (lost: boolean): number => {
+      clearTimeout(timer);
+      w.off("message", onReply).off("error", onError).off("exit", onExit);
+      busy = false;
+      if (lost) worker = undefined;
+      else w.unref();
+      return performance.now() - start;
+    };
+    const onReply = (reply: TscReply): void => resolve({ reply, ms: settle(false) });
+    const onError = (cause: Error): void => {
+      settle(true);
+      reject(new Error(`tsc ended with ${cause.message}`));
+    };
+    const onExit = (code: number): void => {
+      settle(true);
+      reject(new Error(`tsc ended with exit code ${code}`));
+    };
+    const timer =
+      budgetMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            const ms = settle(true);
+            void w.terminate();
+            resolve({ ms });
+          }, budgetMs);
+    w.ref();
+    w.on("message", onReply).on("error", onError).on("exit", onExit);
+    w.postMessage(request);
+  });
+
 const run = async (gs: Guardrail[], _files: string[], ctx: RunContext): Promise<RunResult[]> => {
-  const tsc = createRequire(import.meta.url).resolve("typescript/bin/tsc");
   const budgetMs = ctx.unbudgeted === true ? undefined : Math.min(...gs.map((g) => g.budgetMs));
   const project = join(relative(ctx.root, ctx.generatedDir), "tsconfig.json");
-  const { stdout, stderr, code, signal, killed, ms } = await spawnBudgeted(process.execPath, [tsc, "-p", project, "--pretty", "false", "--listFiles"], ctx.root, budgetMs);
-  if (!killed && (signal !== null || (code !== 0 && code !== 1 && code !== 2))) {
-    throw new Error(`tsc ended with ${signal ?? `exit code ${code}`}: ${stderr.trim()}`);
-  }
+  const { reply, ms } = await ask({ cwd: ctx.root, project }, budgetMs);
+  const killed = reply === undefined;
+  const stdout = reply?.stdout ?? "";
   const owners = new Map<number, string>();
   for (const g of gs) for (const code of FLAG_CODES[flagOf(g)] ?? []) owners.set(code, g.id);
   const baseline = gs.find((g) => flagOf(g) === BASELINE)?.id ?? BASELINE_ID;
@@ -60,8 +116,8 @@ const run = async (gs: Guardrail[], _files: string[], ctx: RunContext): Promise<
     }
   }
   const parsed = [...byGuardrail.values()].some((v) => v.length > 0);
-  if (!killed && code !== 0 && !parsed) {
-    throw new Error(`tsc exited with ${code} and printed no diagnostics: ${stderr.trim()}`);
+  if (!killed && reply.code !== 0 && !parsed) {
+    throw new Error(`tsc exited with ${reply.code} and printed no diagnostics`);
   }
   const size = { files: program.length, bytes: program.reduce((n, f) => n + statSync(f).size, 0) };
   return [...byGuardrail].map(([guardrail, violations]): RunResult =>

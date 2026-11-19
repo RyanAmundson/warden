@@ -1,16 +1,27 @@
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import type { Adapter } from "../adapters/types.js";
 import { RecordError, loadRecords, readText } from "../records/load.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
 import { BASELINE_PATH, measureBaseline, readBaseline, writeBaseline } from "../runner/baseline.js";
-import { isRepository } from "../runner/changed.js";
+import { hasCommit, isRepository } from "../runner/changed.js";
+import { readBaseLock } from "../runner/tamper.js";
 import { adapters, prefixOf, refuseUnknownAdapters } from "../runner/run.js";
 import { admit } from "./bench.js";
 import { checkConsistency, type Finding } from "./consistency.js";
 import { stamp } from "./emit.js";
 import { runExamples } from "./examples.js";
 import { LOCK_PATH, type Lock, computeLock, sha256 } from "./lock.js";
+
+const packFiles = async (base: string, dir: string): Promise<string[]> => {
+  try {
+    const entries = await readdir(join(base, dir), { recursive: true, withFileTypes: true });
+    return entries.filter((e) => e.isFile() && e.name !== ".DS_Store").map((e) => relative(base, join(e.parentPath, e.name)).split(sep).join("/"));
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw cause;
+  }
+};
 
 const sourceFiles = async (set: RecordSet, projectRoot: string, wardenRoot: string): Promise<Record<string, string>> => {
   const out: Record<string, string> = {};
@@ -19,14 +30,7 @@ const sourceFiles = async (set: RecordSet, projectRoot: string, wardenRoot: stri
   out[".warden/config.yaml"] = config;
   for (const { id } of set.config.packs) {
     for (const [dir, base] of [[`packs/${id}`, wardenRoot], [`.warden/packs/${id}`, projectRoot]] as const) {
-      const entries = await readdir(join(base, dir), { recursive: true, withFileTypes: true }).catch((cause: NodeJS.ErrnoException) => {
-        if (cause.code === "ENOENT") return [];
-        throw cause;
-      });
-      for (const entry of entries.filter((e) => e.isFile())) {
-        const key = relative(base, join(entry.parentPath, entry.name));
-        out[key] = await readFile(join(base, key), "utf8");
-      }
+      for (const key of await packFiles(base, dir)) out[key] = (await readText(join(base, key))) as string;
     }
   }
   return out;
@@ -113,7 +117,8 @@ export async function compile(projectRoot: string, wardenRoot: string): Promise<
   const written = [...Object.keys(outputs), LOCK_PATH];
   if (previous === undefined || !isRepository(projectRoot)) return { findings: [], written };
   const checked = set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.filter((g) => g.kind !== "instruction")));
-  const added = new Set(checked.filter((g) => !(g.id in previous)).map((g) => g.id));
+  const atBase = hasCommit(projectRoot, set.config.base) ? (readBaseLock(projectRoot, set.config.base)?.guardrails ?? {}) : {};
+  const added = new Set(checked.filter((g) => !(g.id in previous) && !(g.id in atBase)).map((g) => g.id));
   const prefixes = new Set(checked.filter((g) => added.has(g.id)).map(prefixOf));
   const { baseline } = await measureBaseline(set, checked.filter((g) => prefixes.has(prefixOf(g))));
   const located = Object.entries(baseline)

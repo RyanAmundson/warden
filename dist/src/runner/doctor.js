@@ -1,8 +1,8 @@
 import { accessSync, constants, existsSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { delimiter, join, resolve } from "node:path";
-import { withPackDir } from "../adapters/cmd.js";
-import { TOOLS } from "../compiler/lock.js";
+import { commandOf, packDirs, withPackDir } from "../adapters/cmd.js";
+import { TOOLS, firstLine } from "../compiler/lock.js";
 const wardenRequire = createRequire(import.meta.url);
 const executable = (file) => {
     try {
@@ -56,7 +56,7 @@ const toolItem = async (name, load) => {
         return { name: `tool ${name}` };
     }
     catch (cause) {
-        return { name: `tool ${name}`, problem: cause.message, fix: `reinstall Warden so its bundled ${name} loads` };
+        return { name: `tool ${name}`, problem: firstLine(cause.message), fix: `reinstall Warden so its bundled ${name} loads` };
     }
 };
 export async function doctor(set) {
@@ -65,9 +65,10 @@ export async function doctor(set) {
         items.push(await toolItem(tool, () => wardenRequire.resolve(tool)));
     items.push(await toolItem("warden eslint plugin", () => import("../../eslint-plugin/index.js")));
     const scripts = scriptsOf(set.root);
+    const dirs = packDirs(set);
     for (const g of set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails))) {
         if (g.implementation.startsWith("cmd:"))
-            items.push(commandItem(g.id, g.implementation.slice(4), set.root, scripts, g.packDir));
+            items.push(commandItem(g.id, commandOf(g, dirs.get(g.id)), set.root, scripts, g.packDir));
     }
     const failed = items.find((i) => i.fix !== undefined);
     return {

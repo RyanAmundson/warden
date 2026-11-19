@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -272,7 +272,7 @@ describe("warden CLI", () => {
     git("branch", "-D", "main");
     const r = warden("init");
     expect(r.code).toBe(2);
-    expect(r.err).toContain("Next action: run warden init --base <an existing branch>");
+    expect(r.err).toContain("Next action: run warden init --base origin/main");
     expect(warden("init", "--base", "origin/main").code).toBe(0);
     await adoptedBase("origin/main");
     expect(execFileSync("git", ["branch", "--list"], { cwd: root, encoding: "utf8" }).replace(/[* ]/g, "").split("\n").filter(Boolean)).toEqual(["feat"]);
@@ -649,6 +649,72 @@ describe("warden CLI", () => {
     expect(r.out).not.toContain("\x1b");
   });
 
+  it("a closed stdout ends init and runs --follow quietly with the exit code of the work done", async () => {
+    const closed = (...args: string[]): Promise<{ code: number | null; err: string }> =>
+      new Promise((done) => {
+        const child = spawn("node", [main, ...args], { cwd: root, env: { ...process.env, WARDEN_HOME: home }, stdio: ["ignore", "pipe", "pipe"] });
+        child.stdout.destroy();
+        let err = "";
+        child.stderr.on("data", (chunk: Buffer) => {
+          err += chunk.toString();
+        });
+        child.on("close", (code) => done({ code, err }));
+      });
+    expect(await closed("init")).toEqual({ code: 0, err: "" });
+    expect(existsSync(join(root, ".warden/baseline.json"))).toBe(true);
+    expect(await closed("runs", "--follow")).toEqual({ code: 0, err: "" });
+  });
+
+  it("a bundled tool that does not load stops check and doctor with one line and one next action", async () => {
+    init();
+    git("add", "-A");
+    git("commit", "-q", "-m", "adopt");
+    const copy = await mkdtemp(join(tmpdir(), "warden-copy-"));
+    try {
+      for (const entry of ["dist", "packs", "package.json"]) await cp(join(wardenRoot, entry), join(copy, entry), { recursive: true });
+      await mkdir(join(copy, "node_modules"));
+      for (const entry of readdirSync(join(wardenRoot, "node_modules")).filter((e) => e !== "typescript-eslint")) {
+        await symlink(join(wardenRoot, "node_modules", entry), join(copy, "node_modules", entry));
+      }
+      const run = (...args: string[]) => spawnSync("node", [join(copy, "dist/src/cli/main.js"), ...args], { cwd: root, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home } });
+      const checked = run("check", "--base", "main");
+      expect(checked.status).toBe(2);
+      expect(checked.stderr).toContain("Warden's bundled typescript-eslint does not load: Cannot find module");
+      expect(checked.stderr).toContain("Next action: reinstall Warden so its bundled typescript-eslint loads, then run warden doctor.");
+      expect(checked.stderr).not.toContain("Require stack");
+      const doctor = run("doctor");
+      expect(doctor.status).toBe(2);
+      expect(doctor.stdout).toMatch(/^FAIL {2}tool typescript-eslint {2}Cannot find module [^\n]*$/m);
+      expect(doctor.stdout).not.toContain("Require stack");
+    } finally {
+      await rm(copy, { recursive: true, force: true });
+    }
+  });
+
+  it("a base that exists only on the remote names the git command that creates it, and following it passes", async () => {
+    init();
+    git("add", "-A");
+    git("commit", "-q", "-m", "adopt");
+    git("checkout", "-q", "-b", "feature");
+    const clones = await mkdtemp(join(tmpdir(), "warden-clones-"));
+    try {
+      for (const [name, extra, action] of [
+        ["tracking", [], "git branch main origin/main"],
+        ["single", ["--single-branch"], "git fetch origin main:main"],
+      ] as const) {
+        const clone = join(clones, name);
+        execFileSync("git", ["clone", "-q", ...extra, "-b", "feature", root, clone], { stdio: "ignore" });
+        const r = wardenIn(clone, "", "check", "--base", "main");
+        expect(r.code).toBe(2);
+        expect(r.err).toContain(`base ref "main" does not exist. Next action: run ${action}, then run the same warden command again`);
+        execFileSync("git", action.split(" ").slice(1), { cwd: clone, stdio: "ignore" });
+        expect(wardenIn(clone, "", "check", "--base", "main").code).toBe(0);
+      }
+    } finally {
+      await rm(clones, { recursive: true, force: true });
+    }
+  });
+
   it("--version prints the version in Warden's package", async () => {
     const r = warden("--version");
     expect(r.code).toBe(0);
@@ -679,7 +745,7 @@ describe("warden CLI", () => {
     init();
     const r = warden("--violations");
     expect(r.code, r.err).toBe(0);
-    expect(r.out).toMatch(/^ WARDEN .* v back\n/);
+    expect(r.out).toMatch(/^ WARDEN .* v back {2}d determinism\n/);
     expect(r.out).toMatch(/\n VIOLATIONS BY PACK +baselined +new +last run\n/);
     expect(r.out).toMatch(/\n core +█+ +1 +– *\n/);
     expect(r.out).toMatch(/\n {3}warden-no-comments +█+ +1 +– *\n/);
@@ -692,7 +758,32 @@ describe("warden CLI", () => {
     const narrow = spawnSync("node", [main, "--violations"], { cwd: root, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home, COLUMNS: "60" } });
     expect(narrow.stdout.split("\n").every((l) => l.length <= 60)).toBe(true);
     expect(narrow.stdout).toContain(`${"─".repeat(60)}\n`);
-    expect(warden("--violations", "--layers").err).toBe("--layers and --violations each open one screen. Next action: run warden with only one of them\n");
+    expect(warden("--violations", "--layers").err).toBe("--layers, --violations, and --determinism each open one screen. Next action: run warden with only one of them\n");
+  });
+
+  it("warden --determinism outside a terminal prints every project's last run split by band, from the kinds warden check records", async () => {
+    init();
+    git("add", "-A");
+    git("commit", "-q", "-m", "adopt");
+    const project = (await readFile(join(root, ".warden/config.yaml"), "utf8")).match(/^project: "?([^"\n]+)"?$/m)?.[1] as string;
+    const before = warden("--determinism");
+    expect(before.code, before.err).toBe(0);
+    expect(before.out).toMatch(/\n ▸ \S+ +no completed run yet\n/);
+    expect(before.out).toContain(" No project has a completed run. Next action: press r to run warden check");
+    await writeFile(join(root, "src/add.ts"), "// eslint-disable-next-line\nexport const add = (a: number, b: number) => a + b;\n");
+    expect(warden("check", "--base", "main").code).toBe(1);
+    const run = (await readFile(join(home, "evidence", `${project}.jsonl`), "utf8")).trim().split("\n").map((l) => JSON.parse(l) as { guardrail?: string; outcome?: string; kinds?: Record<string, number> }).filter((e) => e.guardrail === "run").at(-1);
+    expect(run?.kinds).toEqual({ lint: 1 });
+    await writeFile(join(home, "evidence", "older.jsonl"), `${JSON.stringify({ at: "2026-11-18T10:00:00.000Z", kind: "cost", guardrail: "run", run: "o1", outcome: "ran", result: "fail", failures: [{ file: "a.ts", line: 1, guardrail: "x", practice: "x" }] })}\n`);
+    const wide = spawnSync("node", [main, "--determinism"], { cwd: root, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home, COLUMNS: "120" } });
+    const r = { code: wide.status, out: wide.stdout, err: wide.stderr };
+    expect(r.code, r.err).toBe(0);
+    expect(r.out).toMatch(/^ WARDEN .* d back\n/);
+    expect(r.out).toMatch(/\n DETERMINISM BY PROJECT +deterministic +judgment +prose +unknown +det\. share\n/);
+    expect(r.out).toMatch(new RegExp(`\\n ▸ ${project} +█+ +1 +0 +0 +0 +100%\\n`));
+    expect(r.out).toMatch(/\n {3}older +·+ +0 +0 +0 +1 +–\n/);
+    expect(r.out).not.toContain("\x1b");
+    expect(warden("--determinism", "--layers").code).toBe(2);
   });
 });
 

@@ -1,4 +1,4 @@
-import { cmdAdapter } from "../adapters/cmd.js";
+import { cmdAdapter, packDirs } from "../adapters/cmd.js";
 import { eslintAdapter } from "../adapters/eslint.js";
 import { tscAdapter } from "../adapters/tsc.js";
 import { statSync } from "node:fs";
@@ -33,10 +33,11 @@ export async function runGuardrails(set, gs, files, ctx) {
     for (const g of gs)
         groups.set(prefixOf(g), [...(groups.get(prefixOf(g)) ?? []), g]);
     const out = [];
+    const dirs = packDirs(set);
     const size = { files: files.length, bytes: files.reduce((n, f) => n + statSync(join(ctx.root, f)).size, 0) };
     for (const [prefix, group] of groups) {
         ctx.onGroup?.(prefix, group.map((g) => g.id));
-        const results = await adapters.get(prefix).run(group, files, ctx);
+        const results = await adapters.get(prefix).run(group, files, { ...ctx, packDirs: dirs });
         const passBudget = group.reduce((n, x) => n + x.budgetMs, 0);
         const found = results.find((r) => r.shared !== undefined)?.shared;
         const shared = found === undefined ? undefined : { ...found, budgetMs: passBudget };
