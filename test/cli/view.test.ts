@@ -6,6 +6,22 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { LEAVE, type ViewModel, liveView, plainDeterminism, plainLayers, plainView, plainViolations, render, renderDeterminism, renderLayers, renderViolations } from "../../src/cli/view.js";
 import type { Evidence } from "../../src/runner/evidence.js";
 
+const watched = vi.hoisted(() => [] as string[]);
+
+vi.mock("node:fs", async (original) => {
+  const actual = await original<typeof import("node:fs")>();
+  return {
+    ...actual,
+    watch: (dir: string, listener: (event: string, name: string | null) => void) =>
+      actual.watch(dir, (event, name) => {
+        listener(event, name);
+        watched.push(String(name));
+      }),
+  };
+});
+
+const events = (name: string): number => watched.filter((n) => n === name).length;
+
 const at = (time: string): string => `2026-11-18T${time}.000Z`;
 
 const steps = (run: string, time: string, last: "done" | "fail" = "done"): Evidence[] => [
@@ -67,7 +83,7 @@ const fits = (lines: string[]): void => {
 it("renders a passing run at 80 columns", () => {
   const lines = render(model([...steps("r1", "14:01:40"), passRun]), size, 0);
   fits(lines);
-  expect(lines[0]).toBe(" WARDEN  context-manager · base origin/main · v9.8.7    q quit  r rerun  l  v  d");
+  expect(lines[0]).toBe(" WARDEN  context-manager · base origin/main · v9.8.7     l layers  v viol  d det");
   expect(lines[1]).toBe("─".repeat(80));
   expect(lines[2]).toBe(" NOW  commit check · 3 files · triggered by git commit · 13 ms");
   expect(lines[3]).toMatch(/^ {3}✓ 1 rules intact {6}lock matches, 0 tampered files +2\.0 ms$/);
@@ -282,6 +298,7 @@ class FakeOutput extends EventEmitter {
 let dir: string;
 
 beforeEach(async () => {
+  watched.length = 0;
   dir = await mkdtemp(join(tmpdir(), "warden-view-"));
 });
 
@@ -336,10 +353,10 @@ it("drops a stale load and refreshes only for the project's Evidence file", asyn
   const load = vi.fn<() => Promise<ViewModel>>().mockReturnValueOnce(stale).mockResolvedValue(model([blockRun]));
   const done = liveView({ input, output, watchDir: dir, file: "p.jsonl", rerun: vi.fn(), load });
   await writeFile(join(dir, "other.jsonl"), "x\n");
-  await new Promise((r) => setTimeout(r, 50));
+  await vi.waitFor(() => expect(events("other.jsonl")).toBeGreaterThan(0));
   expect(load).toHaveBeenCalledTimes(1);
   await writeFile(join(dir, "p.jsonl"), "x\n");
-  await new Promise((r) => setTimeout(r, 50));
+  await vi.waitFor(() => expect(events("p.jsonl")).toBeGreaterThan(0));
   expect(load).toHaveBeenCalledTimes(1);
   release(model([passRun]));
   await vi.waitFor(() => expect(output.text).toContain("NOW  edit check"));
@@ -384,7 +401,7 @@ const layered = (extra: Partial<ViewModel> = {}): ViewModel => ({
 it("renders the layers screen at 80 columns, strongest first, with every layer and the packs", () => {
   const lines = renderLayers(layered(), size);
   fits(lines);
-  expect(lines[0]).toMatch(/^ WARDEN {2}warden · base main · v\S+ +q quit {2}r rerun {2}l {2}v {2}d$/);
+  expect(lines[0]).toMatch(/^ WARDEN {2}warden · base main · v\S+ +q quit {2}r rerun {2}l runs {2}v viol {2}d det$/);
   expect(lines[2]).toMatch(/^ LAYERS {2}strongest first · a rule can only move up +rules {2}proven$/);
   expect(lines[3]).toMatch(/^ ┌ DETERMINISTIC ─+┐$/);
   expect(lines[4]).toMatch(/^ │ 0 type +compiler proves it +\(none yet\) +0 +│$/);
@@ -539,14 +556,14 @@ it("v toggles the violations screen, and l and v switch between screens", async 
   const done = liveView({ input, output, watchDir: dir, file: "p.jsonl", rerun: vi.fn(), load: () => Promise.resolve(violated()) });
   const screen = (): string => output.text.slice(output.text.lastIndexOf("\x1b[H"));
   await vi.waitFor(() => expect(screen()).toContain(" NOW  "));
-  expect(screen()).toMatch(/q quit  r rerun  l  v  d/);
+  expect(screen()).toMatch(/l layers  v viol  d det/);
   input.emit("data", Buffer.from("v"));
   expect(screen()).toContain(" VIOLATIONS BY PACK");
   input.emit("data", Buffer.from("v"));
   expect(screen()).toContain(" NOW  ");
   input.emit("data", Buffer.from("l"));
   expect(screen()).toContain(" LAYERS  ");
-  expect(screen()).toMatch(/q quit  r rerun  l  v  d/);
+  expect(screen()).toMatch(/l runs  v viol  d det/);
   input.emit("data", Buffer.from("v"));
   expect(screen()).toContain(" VIOLATIONS BY PACK");
   input.emit("data", Buffer.from("q"));
@@ -776,7 +793,7 @@ it("the runs header keeps the project, base, and version at 80 columns", () => {
   for (const cols of [80, 70]) {
     const lines = render(model([]), { cols, rows: 30 }, 0);
     expect(lines[0]).toContain("context-manager · base origin/main · v9.8.7");
-    expect(lines[0]).toContain("q quit");
+    expect(lines[0]).toContain(cols === 80 ? "l layers  v viol  d det" : "q quit");
     expect(lines[0]?.length).toBeLessThanOrEqual(cols);
   }
   expect(renderLayers(model([]), { cols: 80, rows: 30 })[0]).toContain("· v9.8.7");
@@ -798,12 +815,35 @@ it("on the determinism screen another project's Evidence file refreshes the view
   const done = liveView({ input, output, watchDir: dir, file: "p.jsonl", screen: "determinism", rerun: vi.fn(), load });
   await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(1));
   await writeFile(join(dir, "other.jsonl"), "x\n");
-  await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(load.mock.calls.length).toBeGreaterThanOrEqual(2));
+  await writeFile(join(dir, "p.jsonl"), "a\n");
+  await vi.waitFor(() => expect(events("p.jsonl")).toBeGreaterThanOrEqual(1));
+  const loads = load.mock.calls.length;
+  const own = events("p.jsonl");
   input.emit("data", Buffer.from("d"));
-  await new Promise((r) => setTimeout(r, 50));
   await writeFile(join(dir, "other.jsonl"), "y\n");
-  await new Promise((r) => setTimeout(r, 100));
-  expect(load).toHaveBeenCalledTimes(2);
+  await writeFile(join(dir, "p.jsonl"), "b\n");
+  await vi.waitFor(() => expect(events("p.jsonl")).toBeGreaterThan(own));
+  expect(load.mock.calls.length - loads).toBe(events("p.jsonl") - own);
   input.emit("data", Buffer.from("q"));
   await done;
+});
+
+it("the shortest hint tier still names what each screen key does", () => {
+  expect(render(model([]), size, 0)[0]).toMatch(/l layers {2}v viol {2}d det$/);
+  expect(renderLayers(layered(), { cols: 70, rows: 30 })[0]).not.toMatch(/ [lvd] {2}[lvd]\b/);
+  expect(renderViolations(violated(), { cols: 70, rows: 30 })[0]).not.toMatch(/ [lvd] {2}[lvd]\b/);
+});
+
+it("plain output at a width that wraps the next action never tells the reader to press r", () => {
+  for (const out of [plainViolations(violated([]), 40), plainDeterminism(model([]), 40), plainView(model([]), 40)]) {
+    expect(out).not.toContain("press r");
+    expect(out).toContain("run warden check");
+  }
+});
+
+it("the determinism screen at 30 columns draws no line wider than 30", () => {
+  for (const cols of [30, 25]) {
+    for (const l of renderDeterminism(threeProjects(), { cols, rows: 24 })) expect(l.length, l).toBeLessThanOrEqual(cols);
+  }
 });

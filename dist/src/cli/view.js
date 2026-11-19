@@ -36,6 +36,7 @@ export async function loadView(root, wardenRoot) {
         projects: [...new Set([set.config.project, ...evidenceProjects()])].map((project) => ({ project, run: lastRan(project === set.config.project ? evidence : readEvidence(project)) })),
     };
 }
+const runCheck = (size) => (size.plain === true ? "run warden check" : "press r to run warden check");
 const STEPS = [
     { step: "rules-intact", done: "rules intact", running: "checking rules" },
     { step: "tools-ready", done: "tools ready", running: "checking tools" },
@@ -158,14 +159,14 @@ const verdictCell = (e) => {
         return "· no changes";
     return e.outcome === "ran" ? "? no result recorded" : `· ${e.outcome ?? ""}`;
 };
-const footer = (shown, live) => {
+const footer = (shown, live, size) => {
     if (shown?.interrupted === true)
-        return " Next action: press r to run warden check";
+        return ` Next action: ${runCheck(size)}`;
     if (live)
         return " Running warden check…";
     const record = shown?.record;
     if (record === undefined)
-        return " Next action: press r to run warden check";
+        return ` Next action: ${runCheck(size)}`;
     if (record.next !== undefined)
         return ` Next action: ${record.next}`;
     if (record.result === "pass")
@@ -206,8 +207,8 @@ export function render(model, size, selected) {
         const where = shown.record === undefined ? shown.steps.find((e) => e.files !== undefined) : shown.record;
         return [` NOW  ${tier === "" ? "" : `${tier} `}check`, ...(where === undefined ? [] : [target(where)]), ...(trigger === undefined ? [] : [`triggered by ${TRIGGER[trigger] ?? trigger}`]), ...(shown.interrupted === true ? ["interrupted"] : []), ...(shown.record?.ms === undefined ? [] : [msText(shown.record.ms)])].join(" · ");
     })();
-    const top = [header(model, ["q quit  r rerun  l layers  v violations  d determinism", "q quit  r rerun  l  v  d", "q quit"], width), rule, clip(head, width), ...stepLines(shown, model.tools, width), ""];
-    const bottom = [rule, ...wrap(footer(shown, live), width, 3)];
+    const top = [header(model, ["q quit  r rerun  l layers  v violations  d determinism", "q quit  r rerun  l layers  v viol  d det", "l layers  v viol  d det", "q quit"], width), rule, clip(head, width), ...stepLines(shown, model.tools, width), ""];
+    const bottom = [rule, ...wrap(footer(shown, live, size), width, 3)];
     const room = Math.max(0, size.rows - top.length - bottom.length - 3);
     const ruleRows = Math.min(model.rules.length, Math.ceil(room / 2));
     const runRows = Math.max(0, room - ruleRows);
@@ -282,7 +283,7 @@ export function renderLayers(model, size) {
     const verdict = weakest === undefined || DETERMINISTIC.has(weakest.strongestKind)
         ? " Weakest practice: none. Every practice is held by a deterministic rule."
         : ` Weakest practice: ${weakest.practice}, held only by ${weakest.strongestKind}. Next action: add a type, lint, or runtime Guardrail to ${weakest.practice}`;
-    const top = [header(model, ["q quit  r rerun  l runs  v violations  d determinism", "q quit  r rerun  l  v  d", "q quit"], width), rule, spread(" LAYERS  strongest first · a rule can only move up", "rules  proven", width - 1)];
+    const top = [header(model, ["q quit  r rerun  l runs  v violations  d determinism", "q quit  r rerun  l runs  v viol  d det", "l runs  v viol  d det", "q quit"], width), rule, spread(" LAYERS  strongest first · a rule can only move up", "rules  proven", width - 1)];
     const bottom = [clip(` PACKS   ${packs}`, width), rule, ...wrap(verdict, width, 3)];
     const room = Math.max(0, size.rows - top.length - bottom.length);
     return [...top, ...body.slice(0, room), ...bottom].map((l) => visible(l).trimEnd());
@@ -315,7 +316,7 @@ export function renderViolations(model, size) {
     };
     const latest = packs.filter((p) => (p.fresh ?? 0) > 0 && p.run !== undefined).map((p) => p.run).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1);
     const capped = packs.some((p) => (p.run?.failures ?? []).length >= MAX_RECORDED_FAILURES);
-    const next = runs.length === 0 ? " Next action: press r to run warden check" : latest?.next === undefined ? "" : ` Next action: ${latest.next}`;
+    const next = runs.length === 0 ? ` Next action: ${runCheck(size)}` : latest?.next === undefined ? "" : ` Next action: ${latest.next}`;
     const legend = (width >= LEGEND.join("  ").length ? [LEGEND.join("  ")] : LEGEND).map((l) => clip(l, width));
     const partial = capped ? wrap(` New counts are the first ${MAX_RECORDED_FAILURES} failures a run records.`, width, 2) : [];
     const action = next === "" ? [] : wrap(next, width, 3);
@@ -333,7 +334,7 @@ export function renderViolations(model, size) {
         const bar = b + n === 0 ? "▏" : `${"█".repeat(b)}${"▓".repeat(n)}`;
         return clip(`${` ${clip(r.label, chosen.labelW).padEnd(chosen.labelW)} ${bar}`.padEnd(width - chosen.right("", "", "").length)}${chosen.right(count(r.old), newText(r.fresh), r.last)}`, width);
     });
-    const top = [header(model, ["q quit  r rerun  v back  d determinism", "q quit  r rerun  v  d", "q quit"], width), rule, clip(`${" VIOLATIONS BY PACK".padEnd(width - chosen.right("", "", "").length)}${chosen.right("baselined", "new", "last run")}`, width)];
+    const top = [header(model, ["q quit  r rerun  v back  d determinism", "q quit  r rerun  v back  d det", "v back  d det", "q quit"], width), rule, clip(`${" VIOLATIONS BY PACK".padEnd(width - chosen.right("", "", "").length)}${chosen.right("baselined", "new", "last run")}`, width)];
     const kept = body.length > room ? Math.max(0, room - 1) : body.length;
     const hidden = body.length - kept;
     const note = ` ${hidden} pack${hidden === 1 ? "" : "s"} hidden.${action.length === 0 ? " Next action: run warden --violations | cat" : ""}`;
@@ -359,7 +360,7 @@ const segments = (counts, scale, barW) => {
     return n;
 };
 export function renderDeterminism(model, size) {
-    const width = Math.max(40, size.cols);
+    const width = Math.max(20, size.cols);
     const rule = "─".repeat(width);
     const projects = [...model.projects].sort((a, b) => Number(b.project === model.project) - Number(a.project === model.project) || a.project.localeCompare(b.project));
     const rows = projects.map((p) => ({ label: visible(`${p.project === model.project ? "▸" : " "} ${p.project}`), counts: p.run === undefined ? undefined : bandCounts(p.run) }));
@@ -397,7 +398,7 @@ export function renderDeterminism(model, size) {
     const nonDet = rows.flatMap((r) => (r.counts === undefined ? [] : [{ label: r.label.slice(2), n: known(r.counts) - det(r.counts), total: r.counts.reduce((a, b) => a + b, 0) }])).sort((a, b) => b.n - a.n)[0];
     const ran = rows.some((r) => r.counts !== undefined);
     const verdict = !ran
-        ? " No project has a completed run. Next action: press r to run warden check"
+        ? ` No project has a completed run. Next action: ${runCheck(size)}`
         : nonDet === undefined || nonDet.n === 0
             ? " No project has a judgment or prose failure in its last completed run."
             : ` Most non-deterministic failures: ${nonDet.label}, ${count(nonDet.n)} of ${count(nonDet.total)} in its last completed run.`;
@@ -417,11 +418,11 @@ export function renderDeterminism(model, size) {
     const shown = hidden > 0 ? [...body.slice(0, kept), ...wrap(hiddenText(hidden), width, 3)] : body;
     return [...top, ...shown, ...bottom].map((l) => visible(l).trimEnd());
 }
-const plain = (lines) => `${lines.join("\n").replaceAll("press r to run warden check", "run warden check")}\n`;
-export const plainDeterminism = (model, cols = 80) => plain(renderDeterminism(model, { cols, rows: 200 }));
-export const plainViolations = (model, cols = 80) => plain(renderViolations(model, { cols, rows: 200 }));
-export const plainLayers = (model, cols = 80) => plain(renderLayers(model, { cols, rows: 60 }));
-export const plainView = (model, cols = 80) => plain(render(model, { cols, rows: 40 }, 0));
+const plain = (lines) => `${lines.join("\n")}\n`;
+export const plainDeterminism = (model, cols = 80) => plain(renderDeterminism(model, { plain: true, cols, rows: 200 }));
+export const plainViolations = (model, cols = 80) => plain(renderViolations(model, { plain: true, cols, rows: 200 }));
+export const plainLayers = (model, cols = 80) => plain(renderLayers(model, { plain: true, cols, rows: 60 }));
+export const plainView = (model, cols = 80) => plain(render(model, { plain: true, cols, rows: 40 }, 0));
 export const ENTER = "\x1b[?1049h\x1b[?25l";
 export const LEAVE = "\x1b[?25h\x1b[?1049l";
 const HOME = "\x1b[H\x1b[2J";
