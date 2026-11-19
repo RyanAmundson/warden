@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { loadRecords } from "../records/load.js";
 import type { Capability } from "../records/types.js";
-import { type ReviewScope, reviewAdapters } from "../review/adapter.js";
+import { type ReviewAdapter, type ReviewScope, reviewAdapters } from "../review/adapter.js";
 import { type Triage, exitCode, touchedLines, triage } from "../review/findings.js";
 
 export interface ReviewOptions {
@@ -92,6 +92,15 @@ async function prepare(root: string, wardenRoot: string, o: ReviewOptions) {
 
 const sameShape = (f: unknown): boolean => typeof f === "object" && f !== null && typeof (f as { n?: unknown }).n === "number" && typeof (f as { title?: unknown }).title === "string";
 
+const previousFindings = (adapter: ReviewAdapter, scope: ReviewScope, head: string, report: string): NonNullable<ReviewScope["previous"]> => {
+  const earlier = { ...scope, head };
+  const normalized = adapter.normalize(readFile(report), earlier);
+  if (normalized.reviewedHead !== head || normalized.findings.some(({ severity, flaky }) => severity === "environment" || flaky)) {
+    throw new Error(`${report} does not contain a completed review of ${head}. Next action: pass --previous-report with a completed review of ${head}.`);
+  }
+  return normalized.findings;
+};
+
 export async function runBrief(root: string, wardenRoot: string, o: ReviewOptions): Promise<number> {
   const { capability, adapter, scope, previousHead } = await prepare(root, wardenRoot, o);
   if (o.previous !== undefined) {
@@ -105,8 +114,7 @@ export async function runBrief(root: string, wardenRoot: string, o: ReviewOption
     }
   }
   if (o.previousReport !== undefined) {
-    const earlier = { ...scope, head: previousHead as string };
-    scope.previous = triage(adapter.normalize(readFile(o.previousReport), earlier).findings, touchedLines(root, scope.base, earlier.head), 1, "").findings;
+    scope.previous = previousFindings(adapter, scope, previousHead as string, o.previousReport);
   }
   process.stdout.write(`${JSON.stringify(adapter.invocation(capability.review, scope), null, 2)}\n`);
   return 0;
@@ -116,6 +124,9 @@ const label = (f: Triage["findings"][number]): string => (f.blocks ? "BLOCK" : f
 
 export async function runTriage(root: string, wardenRoot: string, o: ReviewOptions): Promise<number> {
   const { adapter, scope, previousHead } = await prepare(root, wardenRoot, o);
+  if (previousHead !== undefined && o.previousReport !== undefined) {
+    scope.previous = previousFindings(adapter, scope, previousHead, o.previousReport);
+  }
   const normalized = adapter.normalize(readFile(o.report as string), scope);
   const touched = touchedLines(root, previousHead ?? scope.base, scope.head);
   const round = previousHead === undefined ? 1 : 2;

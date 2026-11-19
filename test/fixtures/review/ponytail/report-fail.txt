@@ -1,0 +1,4 @@
+Reviewed head: 1111111111111111111111111111111111111111
+src/list.ts:L12-16: stdlib: Manual loop builds an array. Use Array.from with its mapping function.
+src/list.ts:L25: delete: Unused helper. Remove the helper and its export.
+net: -8 lines possible.

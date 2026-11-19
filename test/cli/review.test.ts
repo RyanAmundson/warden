@@ -51,6 +51,8 @@ beforeAll(async () => {
       "capabilities:",
       "  - id: gate", "    kind: skill", "    serves: review", "    purpose: Review a change.", "    when: Before landing.", "    upholds: [small]", "    commands: [warden review]", "    replaces: []",
       "    review: { adapter: superpowers-review, model: opus }",
+      "  - id: simplify", "    kind: skill", "    serves: review", "    purpose: Find removable complexity.", "    when: Before landing.", "    upholds: [small]", "    commands: [warden review]", "    replaces: []",
+      "    review: { adapter: ponytail-review, model: opus }",
       "  - id: plain", "    kind: tool", "    serves: other", "    purpose: Nothing.", "    when: Never.", "    upholds: []", "    commands: [warden review]", "    replaces: []", "",
     ].join("\n"),
   );
@@ -107,6 +109,33 @@ describe("warden review", () => {
     expect(call.input.model).toBe("opus");
     expect(call.input.prompt).toContain(head);
     expect(call.input.prompt).toContain("Keep every change small.");
+  });
+
+  it("routes a Ponytail capability through brief and records an unfixed finding in triage", async () => {
+    const flags = ["--capability", "simplify", "--base", base, "--head", head, "--requirements", REQ];
+    const first = "a.ts:L2-3: shrink: Manual expansion. Use an array mapping function.";
+    const previous = "ponytail-first.txt";
+    const current = "ponytail-followup.txt";
+    await writeFile(join(root, previous), `Reviewed head: ${base}\n${first}\nnet: -4 lines possible.\n`);
+    await writeFile(join(root, current), `Reviewed head: ${head}\n${first} [earlier 1]\nnet: -4 lines possible.\n`);
+    const round = ["--previous-head", base, "--previous-report", previous];
+    const brief = run("review", "brief", ...flags, ...round);
+    expect(brief.code, brief.err).toBe(0);
+    const prompt = (JSON.parse(brief.out) as { input: { prompt: string } }).input.prompt;
+    expect(prompt).toContain("Use the ponytail:ponytail-review skill");
+    expect(prompt).toContain("1. shrink: Manual expansion (a.ts:2)");
+    expect(run("review", "triage", ...flags, ...round, "--report", current)).toMatchObject({
+      code: 1,
+      out: expect.stringContaining("BLOCK 1 unfixed a.ts:2  shrink: Manual expansion"),
+    });
+
+    await writeFile(join(root, previous), `Reviewed head: ${base}\nTruncated output.\n`);
+    for (const args of [["brief"], ["triage", "--report", current]]) {
+      expect(run("review", ...args, ...flags, ...round)).toMatchObject({
+        code: 2,
+        err: expect.stringContaining("does not contain a completed review"),
+      });
+    }
   });
 
   it("triage of a passing report exits 0 with no next action", async () => {

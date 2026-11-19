@@ -75,7 +75,7 @@ const located = (raw, touched) => {
     if (ranges === undefined)
         return false;
     const line = raw.line;
-    return line === undefined || ranges.some(([a, b]) => line >= a && line <= b);
+    return line === undefined || ranges.some(([a, b]) => (raw.endLine ?? line) >= a && line <= b);
 };
 const kinds = (raw, touched, round) => {
     if (raw.severity === "environment")

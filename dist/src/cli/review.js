@@ -75,6 +75,14 @@ async function prepare(root, wardenRoot, o) {
     return { capability, adapter, scope, previousHead };
 }
 const sameShape = (f) => typeof f === "object" && f !== null && typeof f.n === "number" && typeof f.title === "string";
+const previousFindings = (adapter, scope, head, report) => {
+    const earlier = { ...scope, head };
+    const normalized = adapter.normalize(readFile(report), earlier);
+    if (normalized.reviewedHead !== head || normalized.findings.some(({ severity, flaky }) => severity === "environment" || flaky)) {
+        throw new Error(`${report} does not contain a completed review of ${head}. Next action: pass --previous-report with a completed review of ${head}.`);
+    }
+    return normalized.findings;
+};
 export async function runBrief(root, wardenRoot, o) {
     const { capability, adapter, scope, previousHead } = await prepare(root, wardenRoot, o);
     if (o.previous !== undefined) {
@@ -90,8 +98,7 @@ export async function runBrief(root, wardenRoot, o) {
         }
     }
     if (o.previousReport !== undefined) {
-        const earlier = { ...scope, head: previousHead };
-        scope.previous = triage(adapter.normalize(readFile(o.previousReport), earlier).findings, touchedLines(root, scope.base, earlier.head), 1, "").findings;
+        scope.previous = previousFindings(adapter, scope, previousHead, o.previousReport);
     }
     process.stdout.write(`${JSON.stringify(adapter.invocation(capability.review, scope), null, 2)}\n`);
     return 0;
@@ -99,6 +106,9 @@ export async function runBrief(root, wardenRoot, o) {
 const label = (f) => (f.blocks ? "BLOCK" : f.kind === "env" ? "ENV" : f.kind === "flake" ? "RERUN" : "TASK");
 export async function runTriage(root, wardenRoot, o) {
     const { adapter, scope, previousHead } = await prepare(root, wardenRoot, o);
+    if (previousHead !== undefined && o.previousReport !== undefined) {
+        scope.previous = previousFindings(adapter, scope, previousHead, o.previousReport);
+    }
     const normalized = adapter.normalize(readFile(o.report), scope);
     const touched = touchedLines(root, previousHead ?? scope.base, scope.head);
     const round = previousHead === undefined ? 1 : 2;

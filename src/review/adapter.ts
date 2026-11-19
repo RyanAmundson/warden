@@ -1,12 +1,13 @@
 import type { ReviewRule } from "../records/types.js";
-import type { RawFinding, ReviewFinding } from "./findings.js";
+import type { RawFinding } from "./findings.js";
+import { ponytailReview } from "./ponytail.js";
 import { superpowersReview } from "./superpowers.js";
 
 export interface ReviewScope {
   base: string;
   head: string;
   previousHead?: string;
-  previous?: ReviewFinding[];
+  previous?: Pick<RawFinding, "n" | "title" | "file" | "line">[];
   requirements: string[];
   upholds: { id: string; statement: string }[];
 }
@@ -25,4 +26,4 @@ export interface ReviewAdapter {
   normalize(report: string, scope: ReviewScope): Normalized;
 }
 
-export const reviewAdapters = new Map<string, ReviewAdapter>([[superpowersReview.id, superpowersReview]]);
+export const reviewAdapters = new Map<string, ReviewAdapter>([superpowersReview, ponytailReview].map((adapter) => [adapter.id, adapter]));

@@ -10,6 +10,7 @@ export interface RawFinding {
   title: string;
   file?: string;
   line?: number;
+  endLine?: number;
   reproducesOn: Reproduces[];
   spec: boolean;
   earlier?: number;
@@ -95,7 +96,7 @@ const located = (raw: RawFinding, touched: Touched): boolean => {
   const ranges = Object.hasOwn(touched, raw.file) ? touched[raw.file] : undefined;
   if (ranges === undefined) return false;
   const line = raw.line;
-  return line === undefined || ranges.some(([a, b]) => line >= a && line <= b);
+  return line === undefined || ranges.some(([a, b]) => (raw.endLine ?? line) >= a && line <= b);
 };
 
 const kinds = (raw: RawFinding, touched: Touched, round: number): [Kind, Action, boolean] => {

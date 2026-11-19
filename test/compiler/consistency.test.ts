@@ -335,7 +335,7 @@ describe("checkConsistency", () => {
     const found = checkConsistency(set, noOtherPractices);
     expect(found.map((f) => [f.code, f.record])).toEqual([["unknown-review-adapter", "c"]]);
     const known = [...reviewAdapters.keys()];
-    expect(known).toEqual(["superpowers-review"]);
+    expect(known).toEqual(["superpowers-review", "ponytail-review"]);
     expect(found[0]?.message).toBe(`Capability c names review adapter nope, which Warden does not have. Next action: set review.adapter to one of ${known.join(", ")} in packs/a/pack.yaml, then run warden compile.`);
     const fixed = build([pack("a", 1, [], [term], [capability("c", "a", { review: { adapter: known[0]!, model: "opus" } })])]);
     expect(checkConsistency(fixed, noOtherPractices)).toEqual([]);
