@@ -275,7 +275,7 @@ export const overviewPage = (state) => {
 ${alertsSection(data)}
 <div class="cards">${data.projects.map((p) => projectCard(p, data.runs[p.project] ?? [])).join("")}</div>
 <section class="mod" aria-labelledby="ov-stream"><div class="modh"><h2 class="h2" id="ov-stream">Live check runs</h2>${stepLegend()}</div>
-<div class="scroll"><table><thead><tr><th scope="col">Time</th><th scope="col">Project</th><th scope="col">Trigger</th><th scope="col">Tier</th><th scope="col">Changed</th><th scope="col">Outcome</th><th scope="col">Duration</th><th scope="col" class="r">ms</th><th scope="col" class="r">Ratchet left</th></tr></thead>
+<div class="scroll fit-table"><table class="recent-runs-table"><thead><tr><th scope="col">Time</th><th scope="col">Project</th><th scope="col">Trigger</th><th scope="col">Tier</th><th scope="col">Changed</th><th scope="col">Outcome</th><th scope="col">Duration</th><th scope="col" class="r">ms</th><th scope="col" class="r">Ratchet left</th></tr></thead>
 <tbody>${stream.length === 0 ? '<tr><td colspan="9" class="muted">No check has run yet. Runs appear here as agents edit and commit.</td></tr>' : stream.map((r) => runRow({ ...r, project: r.project }, cols, { fresh: view.fresh })).join("")}</tbody></table></div></section>`;
 };
 
@@ -475,7 +475,7 @@ export const determinismPage = (state) => {
   const depth = Math.max(0, ...data.projects.map((p) => (data.runs[p.project] ?? []).length));
   return `${header("Determinism", "Which strength of rule caught each failure, at each project's last run that reached rules. A deterministic catch is proof; a prose catch is a promise.")}
 <section class="mod" aria-labelledby="dt-proj"><div class="modh"><h2 class="h2" id="dt-proj">Rule failures by strength</h2><div class="legend"><span><i class="sw det" aria-hidden="true"></i>deterministic: type, lint, runtime</span><span><i class="sw jud" aria-hidden="true"></i>judgment: model, review</span><span><i class="sw pro" aria-hidden="true"></i>prose: instruction, legacy</span>${unknown ? '<span><i class="sw unk" aria-hidden="true"></i>unknown: recorded before kinds were kept</span>' : ""}</div></div>
-<div class="scroll"><table><thead><tr><th scope="col" style="width:200px">Project</th><th scope="col">Failures</th><th scope="col" class="r">Deterministic</th><th scope="col" class="r">Judgment</th><th scope="col" class="r">Prose</th><th scope="col" class="r">Deterministic share</th></tr></thead><tbody>${rows}</tbody></table></div></section>
+<div class="scroll fit-table"><table class="strength-table"><thead><tr><th scope="col" class="strength-project">Project</th><th scope="col">Failures</th><th scope="col" class="r">Deterministic</th><th scope="col" class="r">Judgment</th><th scope="col" class="r">Prose</th><th scope="col" class="r">Deterministic share</th></tr></thead><tbody>${rows}</tbody></table></div></section>
 <section class="mod" aria-labelledby="dt-stops"><div class="modh"><h2 class="h2" id="dt-stops">Stops before any rule ran</h2><span class="muted">Not counted above: Warden itself refused the run · last ${plural(depth, "run")} per project</span></div>
 <div class="scroll"><table><thead><tr><th scope="col" style="width:200px">Project</th><th scope="col" class="r">Tampered</th><th scope="col" class="r">Refused</th><th scope="col" class="r">Error</th><th scope="col" class="r">Unstaged</th><th scope="col">Most recent</th></tr></thead><tbody>${stops}</tbody></table></div></section>`;
 };
@@ -490,7 +490,7 @@ export const tamperPage = (state) => {
   const { open, recent } = data.tamper;
   const projects = [...new Set(open.map((d) => d.project))];
   const kinds = [...new Set(open.map((d) => d.detail.split(" ")[0]))];
-  const history = `<section class="mod" aria-labelledby="tp-hist"><div class="modh"><h2 class="h2" id="tp-hist">Tamper records</h2><span class="muted">${plural(recent.length, "record")}, newest first, from checks and the daemon</span></div><div class="scroll"><table><thead><tr><th scope="col">Time</th><th scope="col">Project</th><th scope="col">Found by</th><th scope="col">File</th><th scope="col">Kind</th><th scope="col">Next action Warden gave</th><th scope="col">Now</th></tr></thead><tbody>${
+  const history = `<section class="mod" aria-labelledby="tp-hist"><div class="modh"><h2 class="h2" id="tp-hist">Tamper records</h2><span class="muted">${plural(recent.length, "record")}, newest first, from checks and the daemon</span></div><div class="scroll fit-table"><table class="tamper-history-table"><thead><tr><th scope="col">Time</th><th scope="col">Project</th><th scope="col">Found by</th><th scope="col">File</th><th scope="col">Kind</th><th scope="col">Next action Warden gave</th><th scope="col">Now</th></tr></thead><tbody>${
     recent.length === 0
       ? '<tr><td colspan="7" class="muted">No tamper has been recorded.</td></tr>'
       : recent.map((e) => `<tr><td>${esc(clock(e.at))}</td><td>${esc(e.project)}</td><td>${esc(TRIGGERS[e.trigger] ?? "a check")}</td><td class="mono">${esc(e.file ?? "–")}</td><td class="mono">${esc(e.detail ?? "–")}</td><td class="mono clip" title="${esc(e.next ?? "")}">${esc(e.next ?? "–")}</td><td>${isOpen(open, e) ? tag({ cls: "block", text: "Open" }) : tag({ cls: "pass", text: "Not open now" })}</td></tr>`).join("")
