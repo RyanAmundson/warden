@@ -36,6 +36,8 @@ describe("fs adapter", () => {
     ["a require of Thumbs.db", { "fs.js": "module.exports = require(\"./Thumbs.db\");\n", "Thumbs.db": "module.exports = {};\n" }],
     ["a require of thumbs.db in other case", { "fs.js": "module.exports = require(\"./thumbs.db\");\n", "Thumbs.db": "module.exports = {};\n" }],
     ["a string literal naming desktop.ini", { "fs.js": "const f = \"desktop.ini\";\nexport default {};\n" }],
+    ["a string literal naming Thumbs.db with a long s", { "fs.js": "const f = \"Thumb\u017f.db\";\nexport default {};\n" }],
+    ["a percent-encoded URL literal naming Thumbs.db", { "fs.js": "const f = new URL(\"./%54humbs.db\", import.meta.url);\nexport default {};\n" }],
     ["a string literal naming a junk path in other case", { "fs.js": "const f = \"data/.DS_STORE\";\nexport default {};\n" }],
   ])("refuses pack code with %s, because the lock does not hash OS junk", async (_name, files) => {
     const pack = await shippedPack("fs", "");
@@ -43,6 +45,16 @@ describe("fs adapter", () => {
       for (const [file, code] of Object.entries(files)) await writeFile(join(pack.dir, file), code);
       const g = treeGuardrail("fs:local/mentions", pack.dir);
       await expect(conformance(fsAdapter, fixture, [g], treeSet(g), ["src/a.ts"], [])).rejects.toThrow("OS junk file that the lock does not hash. Next action: rename the file to a name that is not OS junk, and point the code at the new name, then run warden compile.");
+    } finally {
+      await pack.remove();
+    }
+  });
+
+  it.each(["**/.DS_Store", "data/Thumbs.d?", "[Tt]humbs.db"])("allows the glob literal %s, because a glob cannot be loaded as a file", async (glob) => {
+    const pack = await shippedPack("fs", `const ignore = [${JSON.stringify(glob)}];\nexport default { mentions: () => [] };\n`);
+    try {
+      const g = treeGuardrail("fs:local/mentions", pack.dir);
+      await conformance(fsAdapter, fixture, [g], treeSet(g), ["src/a.ts"], []);
     } finally {
       await pack.remove();
     }
