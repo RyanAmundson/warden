@@ -19,8 +19,9 @@ practices:
         implementation: >-
           cmd:node -e '
           const cp=require("node:child_process"),fs=require("node:fs");
-          const git=cp.spawnSync("git",["rev-parse","--is-inside-work-tree"],{encoding:"utf8"}).stdout.trim()==="true";
-          const files=git?cp.execFileSync("git",["ls-files","-z","--cached","--others","--exclude-standard"],{encoding:"utf8",maxBuffer:1<<28}).split("\0").filter(f=>f!==""&&fs.existsSync(f)):fs.readdirSync(".",{recursive:true}).filter(f=>!f.split("/").some(s=>s==="node_modules"||s===".git")&&fs.lstatSync(f).isFile());
+          const ls=cp.spawnSync("git",["ls-files","-z","--cached","--others","--exclude-standard"],{encoding:"utf8",maxBuffer:1<<28});
+          if(ls.status!==0&&!/not a git repository/.test(ls.stderr??""))throw ls.error??new Error(ls.stderr);
+          const files=ls.status===0?ls.stdout.split("\0").filter(f=>f!==""&&fs.existsSync(f)):fs.readdirSync(".",{recursive:true}).filter(f=>!f.split("/").some(s=>s==="node_modules"||s===".git")&&fs.lstatSync(f).isFile());
           const b=s=>/^\[.*\]$/.test(s);
           const bad=files.filter(f=>{const s=f.split("/");return s.length>1&&b(s[s.length-2])});
           if(bad.length>0){console.log(bad.map(f=>`${f} is a file directly inside a collection`).join("\n"));console.log(`${bad.length} loose file(s) in collections, which hold only item folders. Next action: move each listed file into an item folder of its collection.`);process.exit(1)}
@@ -45,8 +46,9 @@ practices:
         implementation: >-
           cmd:node -e '
           const cp=require("node:child_process"),fs=require("node:fs");
-          const git=cp.spawnSync("git",["rev-parse","--is-inside-work-tree"],{encoding:"utf8"}).stdout.trim()==="true";
-          const files=git?cp.execFileSync("git",["ls-files","-z","--cached","--others","--exclude-standard"],{encoding:"utf8",maxBuffer:1<<28}).split("\0").filter(f=>f!==""&&fs.existsSync(f)):fs.readdirSync(".",{recursive:true}).filter(f=>!f.split("/").some(s=>s==="node_modules"||s===".git")&&fs.lstatSync(f).isFile());
+          const ls=cp.spawnSync("git",["ls-files","-z","--cached","--others","--exclude-standard"],{encoding:"utf8",maxBuffer:1<<28});
+          if(ls.status!==0&&!/not a git repository/.test(ls.stderr??""))throw ls.error??new Error(ls.stderr);
+          const files=ls.status===0?ls.stdout.split("\0").filter(f=>f!==""&&fs.existsSync(f)):fs.readdirSync(".",{recursive:true}).filter(f=>!f.split("/").some(s=>s==="node_modules"||s===".git")&&fs.lstatSync(f).isFile());
           const b=s=>/^\[.*\]$/.test(s);
           const bad=new Set();
           for(const f of files){const s=f.split("/");for(let i=1;i<s.length-1;i++)if(b(s[i])&&b(s[i-1]))bad.add(s.slice(0,i+1).join("/"))}
@@ -70,8 +72,9 @@ practices:
         implementation: >-
           cmd:node -e '
           const cp=require("node:child_process"),fs=require("node:fs");
-          const git=cp.spawnSync("git",["rev-parse","--is-inside-work-tree"],{encoding:"utf8"}).stdout.trim()==="true";
-          const files=git?cp.execFileSync("git",["ls-files","-z","--cached","--others","--exclude-standard"],{encoding:"utf8",maxBuffer:1<<28}).split("\0").filter(f=>f!==""&&fs.existsSync(f)):fs.readdirSync(".",{recursive:true}).filter(f=>!f.split("/").some(s=>s==="node_modules"||s===".git")&&fs.lstatSync(f).isFile());
+          const ls=cp.spawnSync("git",["ls-files","-z","--cached","--others","--exclude-standard"],{encoding:"utf8",maxBuffer:1<<28});
+          if(ls.status!==0&&!/not a git repository/.test(ls.stderr??""))throw ls.error??new Error(ls.stderr);
+          const files=ls.status===0?ls.stdout.split("\0").filter(f=>f!==""&&fs.existsSync(f)):fs.readdirSync(".",{recursive:true}).filter(f=>!f.split("/").some(s=>s==="node_modules"||s===".git")&&fs.lstatSync(f).isFile());
           const b=s=>/^\[.*\]$/.test(s);
           const bad=new Set();
           for(const f of files){const s=f.split("/");for(let i=0;i<s.length-1;i++)if(b(s[i])&&!/^\[[a-z0-9]+(-[a-z0-9]+)*s\]$/.test(s[i]))bad.add(s.slice(0,i+1).join("/"))}
@@ -95,8 +98,9 @@ practices:
         implementation: >-
           cmd:node -e '
           const cp=require("node:child_process"),fs=require("node:fs");
-          const git=cp.spawnSync("git",["rev-parse","--is-inside-work-tree"],{encoding:"utf8"}).stdout.trim()==="true";
-          const files=git?cp.execFileSync("git",["ls-files","-z","--cached","--others","--exclude-standard"],{encoding:"utf8",maxBuffer:1<<28}).split("\0").filter(f=>f!==""&&fs.existsSync(f)):fs.readdirSync(".",{recursive:true}).filter(f=>!f.split("/").some(s=>s==="node_modules"||s===".git")&&fs.lstatSync(f).isFile());
+          const ls=cp.spawnSync("git",["ls-files","-z","--cached","--others","--exclude-standard"],{encoding:"utf8",maxBuffer:1<<28});
+          if(ls.status!==0&&!/not a git repository/.test(ls.stderr??""))throw ls.error??new Error(ls.stderr);
+          const files=ls.status===0?ls.stdout.split("\0").filter(f=>f!==""&&fs.existsSync(f)):fs.readdirSync(".",{recursive:true}).filter(f=>!f.split("/").some(s=>s==="node_modules"||s===".git")&&fs.lstatSync(f).isFile());
           const b=s=>/^\[.*\]$/.test(s);
           const items=new Map();
           for(const f of files){const s=f.split("/");for(let i=0;i<s.length-2;i++)if(b(s[i])){const c=s.slice(0,i+1).join("/"),m=items.get(c)??new Map(),k=m.get(s[i+1])??new Map();const e=s[i+2],n=s[i+1];k.set(e,e===n||e.startsWith(n+".")?"<item>"+e.slice(n.length):e);m.set(s[i+1],k);items.set(c,m)}}

@@ -8,6 +8,7 @@ import { benchSettings } from "../records/types.js";
 import { readBenchCache, writeBenchCache } from "../runner/cache.js";
 import { adapters, runGuardrails } from "../runner/run.js";
 const RUNS = 3;
+const FIXED_RUNS = 9;
 export const RANK = ["constant", "sublinear", "linear", "superlinear"];
 const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
 export const slope = (points, f) => {
@@ -44,7 +45,7 @@ const measure = (set, s, cfg, rerun) => withExampleProject(async (project) => {
     await writeTree(project, adapters.get(prefixOf(s.g)).emit([s.g], set));
     const files = [];
     let copies = 0;
-    const sample = async (n) => {
+    const sample = async (n, runs = RUNS) => {
         const tree = {};
         for (; copies < n; copies++) {
             for (const c of copyOf(s.g, s.prefix, copies)) {
@@ -54,7 +55,7 @@ const measure = (set, s, cfg, rerun) => withExampleProject(async (project) => {
         }
         await writeTree(project, tree);
         const times = [];
-        for (let i = 0; i < RUNS; i++) {
+        for (let i = 0; i < runs; i++) {
             const results = await runGuardrails(set, [s.g], files, ctx);
             const bad = results.find((r) => r.status !== "pass");
             if (bad !== undefined) {
@@ -79,7 +80,7 @@ const measure = (set, s, cfg, rerun) => withExampleProject(async (project) => {
             points.push([base * m, await at(base * m)]);
         return points;
     };
-    const f = await at(1);
+    const f = await sample(1, FIXED_RUNS);
     let base = cfg.baseFiles;
     while ((await at(base)) - f < cfg.minMarginalMs) {
         if (base * 16 > cfg.maxFiles)

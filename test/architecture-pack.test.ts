@@ -66,8 +66,8 @@ afterEach(async () => {
 });
 
 describe("architecture pack world boundary", () => {
-  it("architecture pack Guardrails scale at most linearly", async () => {
-    const { code, out } = await bench(root, { pack: "architecture" });
+  it.each([modules, globals, "architecture-source-shape"])("%s scales at most linearly", async (rule) => {
+    const { code, out } = await bench(root, { rule });
     expect(code, out).toBe(0);
   });
 
