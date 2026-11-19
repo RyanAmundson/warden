@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command, CommanderError } from "commander";
 import { refusal } from "../adapters/claude.js";
 import { compile, wardenVersion } from "../compiler/compile.js";
+import { thenRemoveExampleProjects } from "../compiler/examples.js";
+import { findWardenRoot } from "../records/load.js";
 import type { Tier } from "../records/types.js";
 import type { Format } from "../runner/feedback.js";
 import { runBench } from "./bench.js";
@@ -18,16 +20,6 @@ import { runReport } from "./report.js";
 import { runRuns } from "./runs.js";
 import { type Screen, liveView, loadView, plainDeterminism, plainLayers, plainView, plainViolations } from "./view.js";
 import { wardenHome } from "../runner/evidence.js";
-
-const findWardenRoot = (): string => {
-  let dir = dirname(fileURLToPath(import.meta.url));
-  while (!existsSync(join(dir, "packs")) || !existsSync(join(dir, "package.json"))) {
-    const parent = dirname(dir);
-    if (parent === dir) throw new Error("cannot locate the Warden package root");
-    dir = parent;
-  }
-  return dir;
-};
 
 const oneOf = <T extends string>(command: string, name: string, value: string, allowed: readonly T[]): T => {
   if (!(allowed as readonly string[]).includes(value)) throw new Error(`--${name} must be one of ${allowed.join(", ")}. Next action: run warden ${command} --help`);
@@ -184,14 +176,17 @@ program
     }
   });
 
-try {
-  program.version(await wardenVersion(findWardenRoot()));
-  await program.parseAsync(process.argv);
-} catch (cause) {
-  if (cause instanceof CommanderError) {
-    process.exitCode = cause.exitCode === 0 ? 0 : 2;
-  } else {
-    process.stderr.write(`${(cause as Error).message}\n`);
-    process.exitCode = 2;
-  }
-}
+await thenRemoveExampleProjects(
+  async () => {
+    program.version(await wardenVersion(findWardenRoot()));
+    await program.parseAsync(process.argv);
+  },
+  (cause) => {
+    if (cause instanceof CommanderError) {
+      process.exitCode = cause.exitCode === 0 ? 0 : 2;
+    } else {
+      process.stderr.write(`${(cause as Error).message}\n`);
+      process.exitCode = 2;
+    }
+  },
+);

@@ -3,7 +3,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { cmdAdapter } from "../../src/adapters/cmd.js";
+import { bundledScript, cmdAdapter, runInProcess } from "../../src/adapters/cmd.js";
+import { findWardenRoot, readPack } from "../../src/records/load.js";
 import { runGuardrails } from "../../src/runner/run.js";
 import type { Guardrail, RecordSet } from "../../src/records/types.js";
 import { conformance } from "./conformance.js";
@@ -79,6 +80,67 @@ describe("cmd adapter", () => {
     expect(printed[0]).toBe(`sh '${pack.replaceAll("'", "'\\''")}'/x.sh`);
     for (const command of printed) expect(spawnSync("sh", ["-c", command], { encoding: "utf8" })).toMatchObject({ status: 1, stdout: "ran\n" });
     await rm(pack, { recursive: true });
+  });
+
+  it("runs a node script inside Warden's process, in the project root, with its arguments, output, exit code, and pack folder", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "warden-it's here-"));
+    try {
+      await writeFile(join(dir, "s.cjs"), 'console.log(process.pid, process.cwd(), process.argv.slice(2).join(","), process.env.WARDEN_PACK_DIR);\nconsole.error("to stderr");\nprocess.exit(3);\n');
+      const r = await runInProcess([join(dir, "s.cjs"), "a", "b"], dir, undefined, undefined, { WARDEN_PACK_DIR: "/p" });
+      expect(r).toMatchObject({ code: 3, killed: false, output: `${process.pid} ${dir} a,b /p\nto stderr\n` });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("stops a node script at its budget and when the run is aborted", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "warden-node-"));
+    try {
+      await writeFile(join(dir, "spin.cjs"), "setInterval(() => {}, 1000);\n");
+      const r = await runInProcess([join(dir, "spin.cjs")], dir, 200);
+      expect(r.killed).toBe(true);
+      expect(r.ms).toBeLessThan(1000);
+      const controller = new AbortController();
+      const run = runInProcess([join(dir, "spin.cjs")], dir, undefined, controller.signal);
+      controller.abort();
+      await expect(run).rejects.toMatchObject({ name: "AbortError" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("runs in a worker only a script in a pack Warden ships, named through WARDEN_PACK_DIR with plain arguments", async () => {
+    const { pack } = await readPack(process.cwd(), findWardenRoot(), "collection-folders", "config.yaml");
+    for (const g of pack.practices.flatMap((p) => p.guardrails)) expect(bundledScript(g.implementation.slice("cmd:".length), g.packDir)?.[0]).toMatch(/\.cjs$/);
+    const shipped = join(findWardenRoot(), "packs", "collection-folders");
+    expect(bundledScript('node "$WARDEN_PACK_DIR/a.cjs" x --y=1', shipped)).toEqual([join(shipped, "a.cjs"), "x", "--y=1"]);
+    expect(bundledScript('node "$WARDEN_PACK_DIR/a.cjs"', "/project/.warden/packs/local")).toBeUndefined();
+    expect(bundledScript('node "$WARDEN_PACK_DIR/a.cjs"', undefined)).toBeUndefined();
+    expect(bundledScript('node "$WARDEN_PACK_DIR/a.cjs"; rm -rf b', shipped)).toBeUndefined();
+    expect(bundledScript('node "$WARDEN_PACK_DIR/a.cjs"  b', shipped)).toBeUndefined();
+    expect(bundledScript("node -e 1", shipped)).toBeUndefined();
+  });
+
+  it("runs a local pack's script as node would, so a require.main guard still runs its check", async () => {
+    const pack = await mkdtemp(join(tmpdir(), "warden-local-pack-"));
+    try {
+      await writeFile(join(pack, "main.cjs"), "if (require.main === module) process.exit(1);\n");
+      const [r] = await cmdAdapter.run([{ ...legacy('cmd:node "$WARDEN_PACK_DIR/main.cjs"'), packDir: pack }], [], ctx);
+      expect(r?.status).toBe("fail");
+    } finally {
+      await rm(pack, { recursive: true, force: true });
+    }
+  });
+
+  it("a command that exits 2 is an environment or usage error that keeps its last line's next action, or names one", async () => {
+    await expect(cmdAdapter.run([legacy("cmd:echo noise; echo 'no git. Next action: install git.'; exit 2")], [], ctx)).rejects.toMatchObject({
+      name: "RecordError",
+      pointer: "/guardrails/g/implementation",
+      message: "echo noise; echo 'no git. Next action: install git.'; exit 2 exited with 2, an error in its environment or usage, not a violation: no git. Next action: install git.",
+    });
+    await expect(cmdAdapter.run([legacy("cmd:exit 2")], [], ctx)).rejects.toMatchObject({
+      message: "exit 2 exited with 2, an error in its environment or usage, not a violation: it printed nothing. Next action: run `exit 2` and fix what it reports.",
+    });
   });
 
   it("emits nothing", () => {
