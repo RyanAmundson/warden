@@ -852,3 +852,39 @@ it("the determinism screen at 30 columns draws no line wider than 30", () => {
     for (const l of renderDeterminism(threeProjects(), { cols, rows: 24 })) expect(l.length, l).toBeLessThanOrEqual(cols);
   }
 });
+
+const LONG = "a-very-long-project-name-for-header-xyz";
+
+const headers = (project: string, cols: number): string[] => {
+  const s = { cols, rows: 30 };
+  const m = { ...model([]), project, base: "origin/main", version: "9.8.7" };
+  return [render(m, s, 0)[0], renderLayers({ ...layered(), project, base: "origin/main", version: "9.8.7" }, s)[0], renderViolations({ ...violated(), project, base: "origin/main", version: "9.8.7" }, s)[0], renderDeterminism({ ...threeProjects(), project, base: "origin/main", version: "9.8.7" }, s)[0]] as string[];
+};
+
+const hintOf = (line: string): string => (line.match(/(q quit.*)$/) ?? ["", ""])[1] as string;
+
+it("every screen header keeps q quit and r rerun, then the same project parts, at 80 columns with a long project name", () => {
+  for (const line of headers(LONG, 80)) {
+    expect(line.length, line).toBeLessThanOrEqual(80);
+    expect(hintOf(line) as string, line).toMatch(/^q quit {2}r rerun/);
+    expect(line, line).toContain(`${LONG} · v`);
+  }
+});
+
+it("every screen header at 30 columns shows q quit and r rerun, with the project dropped before them", () => {
+  for (const project of ["context-manager", LONG]) {
+    for (const line of headers(project, 30)) {
+      expect(line.length, line).toBeLessThanOrEqual(30);
+      expect(line, line).toMatch(/q quit {2}r rerun$/);
+    }
+  }
+});
+
+it("all screens drop the same header parts at the same width", () => {
+  for (const project of ["context-manager", LONG]) {
+    for (let cols = 30; cols <= 130; cols += 5) {
+      const shape = headers(project, cols).map((l) => [l.includes(project), l.includes("base"), l.includes(" · v"), l.includes("q quit"), l.includes("r rerun")].join());
+      expect(new Set(shape).size, `${project} ${cols}: ${shape.join(" | ")}`).toBe(1);
+    }
+  }
+});

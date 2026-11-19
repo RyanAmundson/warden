@@ -128,18 +128,20 @@ const wrap = (text: string, width: number, most: number): string[] => {
 
 const count = (n: number): string => n.toLocaleString("en-US");
 
-const header = (model: ViewModel, hints: string[], width: number): string => {
+const HINT_WIDTHS = [
+  "q quit  r rerun  l layers  v violations  d determinism".length,
+  "q quit  r rerun  l layers  v viol  d det".length,
+  "q quit  r rerun".length,
+];
+
+const HEADER_ORDER = [[0, 0], [0, 1], [1, 0], [1, 1], [1, 2], [2, 2], [3, 2]] as const;
+
+const header = (model: ViewModel, [full, short]: [string, string], width: number): string => {
   const name = ` WARDEN  ${model.project}`;
-  const lefts = [`${name} · base ${model.base} · v${model.version}`, `${name} · v${model.version}`, name];
-  const keyed = hints.filter((h) => h.startsWith("q quit  r rerun"));
-  const rest = hints.filter((h) => !keyed.includes(h));
-  const fits = (left: string, h: string): boolean => left.length + 1 + h.length <= width;
-  for (const left of lefts) {
-    const h = keyed.find((k) => fits(left, k));
-    if (h !== undefined) return spread(left, h, width);
-  }
-  const left = lefts[0] as string;
-  return spread(left, rest.find((h) => fits(left, h)) ?? (rest.at(-1) as string), width);
+  const lefts = [`${name} · base ${model.base} · v${model.version}`, `${name} · v${model.version}`, name, " WARDEN"];
+  const hints = [full, short, "q quit  r rerun"];
+  const pick = HEADER_ORDER.find(([l, h]) => visible(lefts[l] as string).length + 1 + (HINT_WIDTHS[h] as number) <= width);
+  return pick === undefined ? spread(lefts[0] as string, "q quit", width) : spread(lefts[pick[0]] as string, hints[pick[1]] as string, width);
 };
 
 const DETAIL = 25;
@@ -257,7 +259,7 @@ export function render(model: ViewModel, size: Size, selected: number): string[]
     const where = shown.record === undefined ? shown.steps.find((e) => e.files !== undefined) : shown.record;
     return [` NOW  ${tier === "" ? "" : `${tier} `}check`, ...(where === undefined ? [] : [target(where)]), ...(trigger === undefined ? [] : [`triggered by ${TRIGGER[trigger] ?? trigger}`]), ...(shown.interrupted === true ? ["interrupted"] : []), ...(shown.record?.ms === undefined ? [] : [msText(shown.record.ms)])].join(" · ");
   })();
-  const top = [header(model, ["q quit  r rerun  l layers  v violations  d determinism", "q quit  r rerun  l layers  v viol  d det", "l layers  v viol  d det", "q quit"], width), rule, clip(head, width), ...stepLines(shown, model.tools, width), ""];
+  const top = [header(model, ["q quit  r rerun  l layers  v violations  d determinism", "q quit  r rerun  l layers  v viol  d det"], width), rule, clip(head, width), ...stepLines(shown, model.tools, width), ""];
   const bottom = [rule, ...wrap(footer(shown, live, size), width, 3)];
   const room = Math.max(0, size.rows - top.length - bottom.length - 3);
   const ruleRows = Math.min(model.rules.length, Math.ceil(room / 2));
@@ -338,7 +340,7 @@ export function renderLayers(model: ViewModel, size: Size): string[] {
     weakest === undefined || DETERMINISTIC.has(weakest.strongestKind)
       ? " Weakest practice: none. Every practice is held by a deterministic rule."
       : ` Weakest practice: ${weakest.practice}, held only by ${weakest.strongestKind}. Next action: add a type, lint, or runtime Guardrail to ${weakest.practice}`;
-  const top = [header(model, ["q quit  r rerun  l runs  v violations  d determinism", "q quit  r rerun  l runs  v viol  d det", "l runs  v viol  d det", "q quit"], width), rule, spread(" LAYERS  strongest first · a rule can only move up", "rules  proven", width - 1)];
+  const top = [header(model, ["q quit  r rerun  l runs  v violations  d determinism", "q quit  r rerun  l runs  v viol  d det"], width), rule, spread(" LAYERS  strongest first · a rule can only move up", "rules  proven", width - 1)];
   const bottom = [clip(` PACKS   ${packs}`, width), rule, ...wrap(verdict, width, 3)];
   const room = Math.max(0, size.rows - top.length - bottom.length);
   return [...top, ...body.slice(0, room), ...bottom].map((l) => visible(l).trimEnd());
@@ -392,7 +394,7 @@ export function renderViolations(model: ViewModel, size: Size): string[] {
     const bar = b + n === 0 ? "▏" : `${"█".repeat(b)}${"▓".repeat(n)}`;
     return clip(`${` ${clip(r.label, chosen.labelW).padEnd(chosen.labelW)} ${bar}`.padEnd(width - chosen.right("", "", "").length)}${chosen.right(count(r.old), newText(r.fresh), r.last)}`, width);
   });
-  const top = [header(model, ["q quit  r rerun  v back  d determinism", "q quit  r rerun  v back  d det", "v back  d det", "q quit"], width), rule, clip(`${" VIOLATIONS BY PACK".padEnd(width - chosen.right("", "", "").length)}${chosen.right("baselined", "new", "last run")}`, width)];
+  const top = [header(model, ["q quit  r rerun  v back  d determinism", "q quit  r rerun  v back  d det"], width), rule, clip(`${" VIOLATIONS BY PACK".padEnd(width - chosen.right("", "", "").length)}${chosen.right("baselined", "new", "last run")}`, width)];
   const kept = body.length > room ? Math.max(0, room - 1) : body.length;
   const hidden = body.length - kept;
   const note = ` ${hidden} pack${hidden === 1 ? "" : "s"} hidden.${action.length === 0 ? " Next action: run warden --violations | cat" : ""}`;
@@ -475,7 +477,7 @@ export function renderDeterminism(model: ViewModel, size: Size): string[] {
   const hiddenLines = fits ? 0 : wrap(hiddenText(body.length), width, 3).length;
   const verdictLines = wrap(verdict, width, fits ? 3 : Math.min(3, Math.max(1, size.rows - fixed - 1 - hiddenLines)));
   const bottom = [rule, ...legend.map((l) => clip(l, width)), ...verdictLines];
-  const top = [header(model, ["q quit  r rerun  d back", "q quit"], width), rule, clip(`${(width - rightW > " DETERMINISM BY PROJECT".length ? " DETERMINISM BY PROJECT" : " DETERMINISM").padEnd(width - rightW)}${right(heads, SHARE)}`, width)];
+  const top = [header(model, ["q quit  r rerun  d back", "q quit  r rerun  d back"], width), rule, clip(`${(width - rightW > " DETERMINISM BY PROJECT".length ? " DETERMINISM BY PROJECT" : " DETERMINISM").padEnd(width - rightW)}${right(heads, SHARE)}`, width)];
   const kept = fits ? body.length : Math.max(1, size.rows - top.length - bottom.length - hiddenLines);
   const hidden = body.length - kept;
   const shown = hidden > 0 ? [...body.slice(0, kept), ...wrap(hiddenText(hidden), width, 3)] : body;
