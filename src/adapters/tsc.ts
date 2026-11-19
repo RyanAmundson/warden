@@ -129,18 +129,27 @@ const run = async (gs: Guardrail[], _files: string[], ctx: RunContext): Promise<
     return new RecordError(tsconfig, "/compilerOptions", `${refusal} Next action: change compilerOptions in ${tsconfig} so tsc accepts them, then run warden check again.`);
   };
   if (!killed) {
+    let refused: RecordError | undefined;
     for (const line of stdout.split("\n")) {
       if (line.trim() === "" || /^\s/.test(line)) continue;
       const m = DIAGNOSTIC.exec(line);
-      const refused = optionsError(line, m);
-      if (refused !== undefined) throw refused;
+      const syntax = m !== null && Number(m[4]) >= 1000 && Number(m[4]) < 2000;
+      if (syntax && m[2]?.endsWith(".json")) {
+        const config = resolve(ctx.root, m[2]);
+        throw new RecordError(config, "", `tsc could not parse the configuration at ${m[1]}: TS${m[4]}: ${m[5]}. Next action: fix the syntax in ${config}:${m[3]}, then run warden check again.`);
+      }
+      const option = optionsError(line, m);
+      if (option !== undefined) {
+        refused ??= option;
+        continue;
+      }
       if (m === null && isAbsolute(line)) {
         program.push(line);
         continue;
       }
       if (m === null) throw new Error(`tsc printed an unparsable line: ${line}`);
       const code = Number(m[4]);
-      const guardrail = code >= 1000 && code < 2000 ? PARSE_ERROR : (owners.get(`${code}${parameters.has(m[1] as string) ? "p" : ""}`) ?? baseline);
+      const guardrail = syntax ? PARSE_ERROR : (owners.get(`${code}${parameters.has(m[1] as string) ? "p" : ""}`) ?? baseline);
       if (!byGuardrail.has(guardrail)) byGuardrail.set(guardrail, []);
       (byGuardrail.get(guardrail) as Violation[]).push({
         guardrail,
@@ -149,6 +158,7 @@ const run = async (gs: Guardrail[], _files: string[], ctx: RunContext): Promise<
         message: `TS${m[4]}: ${m[5]}`,
       });
     }
+    if (refused !== undefined) throw refused;
   }
   const parsed = [...byGuardrail.values()].some((v) => v.length > 0);
   if (!killed && reply.code !== 0 && !parsed) {
