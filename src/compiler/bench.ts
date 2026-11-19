@@ -124,7 +124,7 @@ const measure = (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string, 
     if ((points[3] as [number, number])[1] - f < cfg.constantMs) return { verdict: "constant", points, f };
     const k = slope(points, f);
     return { verdict: k > cfg.linearMax ? "superlinear" : k < cfg.sublinearMax ? "sublinear" : "linear", k, points, f };
-   }, true);
+  }, true);
 
 export const benchSubject = async (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string, signal?: AbortSignal): Promise<Measurement & { previous?: Measurement }> => {
   refuseUnmatched(s, rerun);

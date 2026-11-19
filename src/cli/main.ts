@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { Command, CommanderError } from "commander";
 import { refusal } from "../adapters/claude.js";
 import { compile, wardenVersion } from "../compiler/compile.js";
-import { exampleProjectsRemoved } from "../compiler/examples.js";
+import { thenRemoveExampleProjects } from "../compiler/examples.js";
 import { findWardenRoot } from "../records/load.js";
 import type { Tier } from "../records/types.js";
 import type { Format } from "../runner/feedback.js";
@@ -162,18 +162,17 @@ program
     }
   });
 
-try {
-  program.version(await wardenVersion(findWardenRoot()));
-  try {
+await thenRemoveExampleProjects(
+  async () => {
+    program.version(await wardenVersion(findWardenRoot()));
     await program.parseAsync(process.argv);
-  } finally {
-    await exampleProjectsRemoved();
-  }
-} catch (cause) {
-  if (cause instanceof CommanderError) {
-    process.exitCode = cause.exitCode === 0 ? 0 : 2;
-  } else {
-    process.stderr.write(`${(cause as Error).message}\n`);
-    process.exitCode = 2;
-  }
-}
+  },
+  (cause) => {
+    if (cause instanceof CommanderError) {
+      process.exitCode = cause.exitCode === 0 ? 0 : 2;
+    } else {
+      process.stderr.write(`${(cause as Error).message}\n`);
+      process.exitCode = 2;
+    }
+  },
+);
