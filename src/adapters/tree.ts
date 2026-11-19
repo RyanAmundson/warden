@@ -58,22 +58,39 @@ const compilerOptions = async (root: string): Promise<import("typescript").Compi
   return { ...ts.parseJsonConfigFileContent(config, { ...ts.sys, readDirectory: () => [] }, root).options, allowJs: true };
 };
 
+const memoizePath = <T>(lookup: (path: string) => T): ((path: string) => T) => {
+  const values = new Map<string, T>();
+  return (path) => {
+    if (!values.has(path)) values.set(path, lookup(path));
+    return values.get(path) as T;
+  };
+};
+
 export async function importGraph(root: string, files: string[], read: (file: string) => string): Promise<Map<string, Edge[]>> {
   const { default: ts } = await import("typescript");
   const options = await compilerOptions(root);
   const cache = ts.createModuleResolutionCache(root, (name) => name, options);
+  const host = {
+    ...ts.sys,
+    fileExists: memoizePath(ts.sys.fileExists),
+    directoryExists: memoizePath(ts.sys.directoryExists),
+  };
   const graph = new Map<string, Edge[]>();
-  for (const file of files.filter((f) => CODE.test(f))) {
-    const text = read(file);
-    const starts = lineStarts(text);
+  for (const file of files) {
+    if (!CODE.test(file)) continue;
     const edges: Edge[] = [];
-    for (const imported of ts.preProcessFile(text, true, true).importedFiles) {
-      const resolved = ts.resolveModuleName(imported.fileName, join(root, file), options, ts.sys, cache).resolvedModule;
+    graph.set(file, edges);
+    const text = read(file);
+    const { importedFiles } = ts.preProcessFile(text, true, true);
+    if (importedFiles.length === 0) continue;
+    const starts = lineStarts(text);
+    const from = join(root, file);
+    for (const imported of importedFiles) {
+      const resolved = ts.resolveModuleName(imported.fileName, from, options, host, cache).resolvedModule;
       if (resolved === undefined || resolved.isExternalLibraryImport === true) continue;
       const target = relative(root, resolved.resolvedFileName).split(sep).join("/");
       if (!target.startsWith("../")) edges.push({ target, specifier: imported.fileName, line: lineAt(starts, imported.pos) });
     }
-    graph.set(file, edges);
   }
   return graph;
 }
