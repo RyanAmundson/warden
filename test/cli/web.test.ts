@@ -426,6 +426,18 @@ describe("the daemon serves the web UI", () => {
     expect(res.body).toContain(text);
   });
 
+  it("loads both dashboard fonts from the daemon", async () => {
+    const [page, css] = await Promise.all([get("/"), get("/app.css")]);
+    expect(page.body).not.toMatch(/fonts\.(?:googleapis|gstatic)\.com/);
+    const fonts = ["/fonts/Archivo.woff2", "/fonts/JetBrainsMono.woff2"];
+    for (const path of fonts) expect(css.body).toContain(`url("${path}")`);
+    for (const font of await Promise.all(fonts.map(get))) {
+      expect(font.status).toBe(200);
+      expect(font.type).toBe("font/woff2");
+      expect(font.body.slice(0, 4)).toBe("wOF2");
+    }
+  });
+
   it("refuses a page for a foreign Host", async () => {
     const res = await new Promise<{ status: number; body: string }>((done, fail) => {
       request({ host: "127.0.0.1", port: served.port, path: "/runs", headers: { host: "evil.example" } }, (r) => {

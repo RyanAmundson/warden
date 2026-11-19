@@ -1,3 +1,5 @@
+@font-face{font-family:Archivo;font-style:normal;font-weight:100 900;font-stretch:62% 125%;font-display:swap;src:url("/fonts/Archivo.woff2") format("woff2")}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400 600;font-display:swap;src:url("/fonts/JetBrainsMono.woff2") format("woff2")}
 :root{--ink:#15191F;--ink2:#2E3641;--muted:#4A5360;--paper:#E9ECEF;--card:#F8F9FA;--line:#C9CED5;--rule:#DDE1E6;--steel:#1C2A3F;--steel2:#233451;--steel3:#2A3D58;--brass:#C9A04A;--brass2:#B8892B;--brasslt:#E9D49A;--brasstx:#F1D58F;--link:#1C3F6E;--red:#8E1B14;--amber:#7A4700;--amberbg:#FBE7C6;--amberln:#E3B66C;--amberink:#4A2B00}
 *{box-sizing:border-box}
 html{scrollbar-color:#9AA3AE var(--paper)}

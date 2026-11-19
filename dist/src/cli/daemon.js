@@ -13,7 +13,13 @@ import { BANDS, bandCounts, loadView, packViolations } from "./view.js";
 export const DEFAULT_PORT = 7419;
 export const LABEL = "warden.daemon";
 const PAGES = new Set(["/", "/runs", "/run", "/layers", "/violations", "/determinism", "/tamper"]);
-const ASSETS = { "/app.css": "text/css; charset=utf-8", "/app.js": "text/javascript; charset=utf-8", "/render.js": "text/javascript; charset=utf-8" };
+const ASSETS = {
+    "/app.css": "text/css; charset=utf-8",
+    "/app.js": "text/javascript; charset=utf-8",
+    "/render.js": "text/javascript; charset=utf-8",
+    "/fonts/Archivo.woff2": "font/woff2",
+    "/fonts/JetBrainsMono.woff2": "font/woff2",
+};
 class HttpError extends Error {
     status;
     next;
