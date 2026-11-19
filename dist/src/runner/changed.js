@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { lstatSync, readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { RecordError } from "../records/load.js";
 const noGrafts = join(tmpdir(), `warden-no-grafts-${randomUUID()}`);
 const env = () => ({
@@ -154,7 +154,8 @@ export function showAtMergeBase(root, base, path) {
 }
 export function changeSignatures(root, base, dir, allowedSignersFile, staged, alongside) {
     const at = mergeBase(root, base);
-    const spec = `:(literal${git(root, ["config", "--bool", "core.ignorecase"]).out.trim() === "true" ? ",icase" : ""})${dir}`;
+    const icase = git(root, ["config", "--bool", "core.ignorecase"]).out.trim() === "true";
+    const spec = `:(literal${icase ? ",icase" : ""})${dir}`;
     const diff = (...trees) => names(must(root, ["diff", "-z", "--name-only", "--no-renames", "--ignore-submodules=none", "--relative", ...trees, "--", spec]));
     const committed = diff(at, "HEAD");
     const judged = staged ? diff("--cached", at) : committed;
@@ -185,23 +186,21 @@ export function changeSignatures(root, base, dir, allowedSignersFile, staged, al
     const paths = [...new Set([...bad.keys(), ...scope.filter((p) => alongside.includes(p))])].sort();
     const listed = (args) => (paths.length === 0 ? [] : names(must(root, ["--literal-pathspecs", ...args, "--", ...paths])));
     const known = [...new Set([...listed(["ls-tree", "-r", "-z", "--name-only", "--full-tree", at]), ...listed(["ls-files", "-z", "--cached"])])].sort();
-    const removable = (p) => {
-        const parts = p.split("/");
-        for (let i = 1; i <= parts.length; i++) {
-            const at = parts.slice(0, i).join("/");
-            if (!readdirSync(join(root, dirname(at))).includes(parts[i - 1]))
+    const onDisk = (p) => {
+        let path = dir;
+        for (const part of p.slice(dir.length + 1).split("/")) {
+            const entries = readdirSync(join(root, path));
+            const name = entries.includes(part) ? part : icase ? entries.find((e) => e.toLowerCase() === part.toLowerCase()) : undefined;
+            if (name === undefined)
                 return undefined;
-            const entry = lstatSync(join(root, at));
-            if (i === parts.length)
-                return at;
-            if (entry.isSymbolicLink())
-                return i === 1 ? undefined : at;
-            if (!entry.isDirectory())
-                return undefined;
+            path = `${path}/${name}`;
+            const entry = lstatSync(join(root, path));
+            if (entry.isSymbolicLink() || !entry.isDirectory())
+                return path;
         }
-        return undefined;
+        return path;
     };
-    const stray = [...new Set(paths.filter((p) => !known.includes(p)).map(removable).filter((p) => p !== undefined))].sort();
+    const stray = [...new Set(paths.filter((p) => !known.includes(p)).map(onDisk).filter((p) => p !== undefined))].sort();
     const aliased = new Set(paths.map((p) => p.toLowerCase())).size < paths.length;
     return { files, restore: { base: at, paths, known, stray, aliased } };
 }

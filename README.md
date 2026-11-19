@@ -57,7 +57,8 @@ next action restores every path changed without an allowed signature, plus
 content with `git restore`, then commits only those paths with
 `git commit --only`. Files the branch added are removed, and files it deleted
 come back; a file the branch added that is no longer in the index is deleted
-from disk with `rm -rf`. Other staged and unstaged work stays where it is. An
+from disk with `git clean`, which never follows a symbolic link; when a folder
+on that path is a link, the link itself is removed. Other staged and unstaged work stays where it is. An
 untracked file at a restored path is replaced by the merge-base content. When
 two restored paths differ only in case, `git commit --only` refuses them as
 aliases, so the action commits the whole index with a plain `git commit`

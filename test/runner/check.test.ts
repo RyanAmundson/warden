@@ -2369,11 +2369,79 @@ describe("signed .warden changes", () => {
       await symlink(dir, join(root, ".warden/sub"));
       const { code, out } = await check({}, false);
       expect(code).toBe(1);
-      expect(out).toContain("Next action: run rm -rf -- '.warden/sub' && ");
+      expect(out).toContain("Next action: run git --literal-pathspecs clean -f -x -- '.warden/sub' && ");
       await follow(out);
       expect((await readdir(dir)).sort()).toEqual(["-rf x", "file"]);
       expect(existsSync(join(root, ".warden/sub"))).toBe(false);
       expect((await check({}, false)).code).toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("the printed restore deletes nothing outside .warden when a symlink replaces the folder after the check prints it", async () => {
+    await write(".warden/sub/file", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "add sub/file unsigned");
+    git("rm", "-r", "-q", "--cached", ".warden/sub");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    expect(out).toContain("Next action: run git --literal-pathspecs clean -f -x -- '.warden/sub/file' && ");
+    const dir = await outside();
+    try {
+      await rm(join(root, ".warden/sub"), { recursive: true });
+      await symlink(dir, join(root, ".warden/sub"));
+      const action = /Next action: run (.*) to restore the \.warden\/ files/s.exec(out)?.[1] as string;
+      spawnSync("sh", ["-c", action], { cwd: root, env: await commitEnv(), encoding: "utf8" });
+      expect((await readdir(dir)).sort()).toEqual(["-rf x", "file"]);
+      expect(await readFile(join(dir, "file"), "utf8")).toBe("precious\n");
+      await fixes(false);
+      expect((await readdir(dir)).sort()).toEqual(["-rf x", "file"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  const caseAlias = async (): Promise<void> => {
+    await write(".warden/sub/keep", "keep\n");
+    git("add", "-A");
+    commitSigned("ryan", "signed keep");
+    git("branch", "-f", "main", "HEAD");
+    await write(".warden/sub/file", "evil\n");
+    const blob = git("hash-object", "-w", ".warden/sub/file").trim();
+    git("update-index", "--add", "--cacheinfo", `100644,${blob},.warden/Sub/file`);
+    git("commit", "-q", "-m", "unsigned case alias");
+    git("--literal-pathspecs", "rm", "-q", "--cached", ".warden/Sub/file");
+  };
+
+  it("a stray path whose case differs from its real folder on disk is removed and the check converges", async (ctx) => {
+    if (!existsSync(join(root, ".WARDEN"))) ctx.skip();
+    git("config", "core.ignorecase", "true");
+    await caseAlias();
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    expect(out).toContain("Next action: run git --literal-pathspecs clean -f -x -- '.warden/sub/file' && ");
+    await fixes(false);
+    expect(await readdir(join(root, ".warden/sub"))).toEqual(["keep"]);
+  });
+
+  it("a stray path whose case differs from a symlinked folder on disk removes only the link and the check converges", async (ctx) => {
+    if (!existsSync(join(root, ".WARDEN"))) ctx.skip();
+    git("config", "core.ignorecase", "true");
+    await write(".warden/Sub/file", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "add Sub/file unsigned");
+    git("rm", "-r", "-q", "--cached", ".warden/Sub");
+    await rm(join(root, ".warden/Sub"), { recursive: true });
+    const dir = await outside();
+    try {
+      await symlink(dir, join(root, ".warden/sub"));
+      const { code, out } = await check({}, false);
+      expect(code).toBe(1);
+      expect(out).toContain("Next action: run git --literal-pathspecs clean -f -x -- '.warden/sub' && ");
+      await fixes(false);
+      expect((await readdir(dir)).sort()).toEqual(["-rf x", "file"]);
+      expect(existsSync(join(root, ".warden/sub"))).toBe(false);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
