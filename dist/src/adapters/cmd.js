@@ -97,6 +97,8 @@ export const bundledScript = (command, packDir) => {
 };
 export const OUTPUT_LINES = 20;
 export const PACK_DIR = "WARDEN_PACK_DIR";
+export const BASE_VAR = "WARDEN_BASE";
+export const SETTINGS_VAR = "WARDEN_SETTINGS";
 export const PACK_VAR = /\$(?:\{WARDEN_PACK_DIR\}|WARDEN_PACK_DIR(?![A-Za-z0-9_]))/g;
 const shellWord = (path) => (/^[\w./-]+$/.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`);
 export const withPackDir = (command, packDir) => (packDir === undefined ? command : `export ${PACK_DIR}=${shellWord(packDir)}; ${command}`);
@@ -117,7 +119,11 @@ const runOne = async (g, ctx) => {
     const run = targetOf(g);
     const command = withPackDir(run, g.packDir);
     const budgetMs = ctx.unbudgeted === true ? undefined : g.budgetMs;
-    const env = g.packDir === undefined ? {} : { [PACK_DIR]: g.packDir };
+    const env = {
+        ...(g.packDir === undefined ? {} : { [PACK_DIR]: g.packDir }),
+        ...(ctx.base === undefined ? {} : { [BASE_VAR]: ctx.base }),
+        [SETTINGS_VAR]: JSON.stringify(ctx.settingsOf?.(g) ?? {}),
+    };
     const words = bundledScript(run, g.packDir);
     const { code, killed, ms, output } = await (words === undefined ? spawnBudgeted(run, [], ctx.root, budgetMs, true, env, ctx.signal) : runInProcess(words, ctx.root, budgetMs, ctx.signal, env));
     if (killed)

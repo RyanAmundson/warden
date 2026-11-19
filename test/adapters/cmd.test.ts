@@ -22,7 +22,7 @@ const ctx = { root: process.cwd(), generatedDir: "" };
 
 const fixtures = resolve(import.meta.dirname, "../fixtures/adapters");
 
-const emptySet: RecordSet = { root: "", packs: [], config: {} as never };
+const emptySet: RecordSet = { root: "", packs: [], config: { packs: [] } as never };
 
 const setOf = (g: Guardrail): RecordSet => ({
   ...emptySet,
@@ -159,6 +159,19 @@ describe("cmd adapter", () => {
     await expect(cmdAdapter.run([legacy("cmd:exit 2")], [], ctx)).rejects.toMatchObject({
       message: "exit 2 exited with 2, an error in its environment or usage, not a violation: it printed nothing. Next action: run `exit 2` and fix what it reports.",
     });
+  });
+
+  it("a cmd command sees WARDEN_BASE and its pack settings as JSON", async () => {
+    const g = legacy(`cmd:test "$WARDEN_BASE" = abc && node -e 'process.exit(JSON.parse(process.env.WARDEN_SETTINGS).n === 2 ? 0 : 1)'`);
+    const set = { ...setOf(g), config: { packs: [{ id: "p", paths: [], settings: { n: 2 } }] } as never };
+    const [r] = await runGuardrails(set, [g], [], { ...ctx, base: "abc" });
+    expect(r?.status).toBe("pass");
+  });
+
+  it("WARDEN_BASE is unset when the run has no base", async () => {
+    const g = legacy(`cmd:test -z "\${WARDEN_BASE+set}" && test "$WARDEN_SETTINGS" = "{}"`);
+    const [r] = await runGuardrails(setOf(g), [g], [], ctx);
+    expect(r?.status).toBe("pass");
   });
 
   it("emits nothing", () => {

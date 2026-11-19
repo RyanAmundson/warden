@@ -40,6 +40,9 @@ export async function runGuardrails(set: RecordSet, gs: Guardrail[], files: stri
   const stray = gs.find((g) => !known.has(g));
   if (stray !== undefined) throw new Error(`runGuardrails got Guardrail ${stray.id}, which is not in the record set`);
   refuseUnknownAdapters(set);
+  const packOf = new Map(set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.map((g) => [g, p.id] as const))));
+  const settingsOf = (g: Guardrail): Record<string, unknown> | undefined => set.config.packs.find((p) => p.id === packOf.get(g))?.settings;
+  ctx = { ...ctx, settingsOf };
   const groups = new Map<string, Guardrail[]>();
   for (const g of gs) groups.set(prefixOf(g), [...(groups.get(prefixOf(g)) ?? []), g]);
   const out: RunResult[] = [];

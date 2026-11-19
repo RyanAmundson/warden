@@ -339,7 +339,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
     groups += 1;
     openStep(live, "rules", { detail: adapter, members: ids, ...where });
   };
-  const ctx = { root, generatedDir: join(root, ".warden/generated"), onGroup };
+  const ctx = { root, generatedDir: join(root, ".warden/generated"), base, onGroup };
   const lockSha = sha256(readFileSync(join(root, LOCK_PATH)));
   const ran = await runCached(set, guardrails, scanned, shas, ctx, project, { lockSha, warden: running, tier });
   if (groups === 0) {

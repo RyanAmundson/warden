@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, posix } from "node:path";
@@ -56,12 +57,19 @@ export async function thenRemoveExampleProjects(run: () => Promise<void>, report
   }
 }
 
-export async function withExampleProject<T>(fn: (project: string) => Promise<T>, removeLater = false): Promise<T> {
+const IDENTITY = { GIT_AUTHOR_NAME: "warden", GIT_AUTHOR_EMAIL: "warden@example.invalid", GIT_COMMITTER_NAME: "warden", GIT_COMMITTER_EMAIL: "warden@example.invalid" };
+
+const git = (project: string, args: string[]): string => execFileSync("git", args, { cwd: project, env: { ...process.env, ...IDENTITY }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+
+export async function withExampleProject<T>(fn: (project: string, base: string) => Promise<T>, removeLater = false): Promise<T> {
   const project = await mkdtemp(join(tmpdir(), "warden-examples-"));
   try {
     await writeFile(join(project, "package.json"), "{}\n");
     await writeFile(join(project, "tsconfig.json"), TSCONFIG);
-    return await fn(project);
+    git(project, ["init", "-q"]);
+    git(project, ["add", "-A"]);
+    git(project, ["-c", "user.name=warden", "-c", "user.email=warden@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "scaffold"]);
+    return await fn(project, git(project, ["rev-parse", "HEAD"]).trim());
   } finally {
     const removal = rm(project, { recursive: true, force: true }).catch((cause: Error) => Promise.reject<void>({ project, cause: cause.message } satisfies Unremoved));
     if (removeLater) {
@@ -78,9 +86,9 @@ export async function runExamples(project: RecordSet): Promise<Finding[]> {
   const unknown = unknownAdapters(set).map(({ code, record, message }) => ({ code, record, message }));
   if (unknown.length > 0) return unknown;
   const findings: Finding[] = [];
-  await withExampleProject(async (project) => {
+  await withExampleProject(async (project, base) => {
     const checked: { g: Guardrail; file: string; groups: string[][]; packFile: string }[] = [];
-    const ctx = { root: project, generatedDir: join(project, ".warden/generated") };
+    const ctx = { root: project, generatedDir: join(project, ".warden/generated"), base };
     const emittedPaths = set.packs
       .flatMap((p) => p.practices.flatMap((x) => x.guardrails))
       .flatMap((g) => {
@@ -141,7 +149,7 @@ async function runExample(
   emitted: Record<string, string>,
   source: Example,
   file: string,
-  ctx: { root: string; generatedDir: string },
+  ctx: { root: string; generatedDir: string; base: string },
 ): Promise<string> {
   const tree = typeof source === "string" ? { [file]: source } : source;
   const made: string[] = [];
