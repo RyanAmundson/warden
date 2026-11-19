@@ -613,7 +613,7 @@ describe("warden CLI", () => {
     expect(initialized.out).toContain("ok    tool typescript\n");
     const r = warden("doctor");
     expect(r.code, r.err).toBe(0);
-    expect(r.out).toBe("ok    tool eslint\nok    tool typescript-eslint\nok    tool typescript\nok    tool warden eslint plugin\n");
+    expect(r.out).toBe("ok    tool eslint\nok    tool typescript-eslint\nok    tool typescript\nok    tool warden eslint plugin\nok    git pre-commit hook: .warden/generated/hooks/pre-commit\n");
   });
 
   it("doctor exits 2 with the failing item and one next action", async () => {
@@ -793,6 +793,74 @@ describe("warden CLI", () => {
   });
 });
 
+describe("the commit-tier git hook", () => {
+  const commit = (path: string): { code: number | null; out: string; err: string } => {
+    const r = spawnSync("git", ["-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x"], { cwd: root, encoding: "utf8", env: { ...process.env, PATH: path, WARDEN_HOME: home } });
+    return { code: r.status, out: r.stdout, err: r.stderr };
+  };
+  let bin: string;
+  const tools = (): string => `${bin}:/usr/bin:/bin`;
+
+  beforeEach(async () => {
+    bin = await mkdtemp(join(tmpdir(), "warden-bin-"));
+    await symlink(execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim(), join(bin, "git"));
+  });
+
+  afterEach(() => rm(bin, { recursive: true, force: true }));
+
+  it("init points git at the locked, executable pre-commit hook under .warden", async () => {
+    init();
+    expect(execFileSync("git", ["config", "core.hooksPath"], { cwd: root, encoding: "utf8" }).trim()).toBe(".warden/generated/hooks");
+    const lock = JSON.parse(await readFile(join(root, ".warden/lock.json"), "utf8")) as { generated: Record<string, string> };
+    expect(Object.keys(lock.generated)).toContain(".warden/generated/hooks/pre-commit");
+    expect(execFileSync("sh", ["-c", "test -x .warden/generated/hooks/pre-commit && echo yes"], { cwd: root, encoding: "utf8" })).toBe("yes\n");
+  });
+
+  it("a commit runs Warden's commit check and is refused when a Guardrail fails", async () => {
+    init();
+    await writeFile(join(bin, "warden"), `#!/bin/sh\nexec "${process.execPath}" "${main}" "$@"\n`, { mode: 0o755 });
+    git("add", "-A");
+    git("commit", "-q", "-m", "adopt");
+    await writeFile(join(root, "src/b.ts"), "// new\nexport const b = 1;\n");
+    git("add", "-A");
+    const refused = commit(tools());
+    expect(refused.code).toBe(1);
+    expect(refused.err).toContain("FAIL src/b.ts:1");
+    await writeFile(join(root, "src/b.ts"), "export const b = 1;\n");
+    git("add", "-A");
+    expect(commit(tools()).code).toBe(0);
+  });
+
+  it("a commit with no warden on PATH is refused with the install command as its one next action", () => {
+    init();
+    git("add", "-A");
+    const r = commit(tools());
+    expect(r.code).not.toBe(0);
+    const version = (JSON.parse(readFileSync(join(wardenRoot, "package.json"), "utf8")) as { version: string }).version;
+    expect(r.err).toContain(`Next action: run npm install -g git+https://github.com/RyanAmundson/warden.git#v${version}, then commit again.`);
+    expect(r.err.match(/Next action/g)).toHaveLength(1);
+  });
+
+  it("init leaves a project's own hooks in force, and doctor names the one line that chains Warden's", async () => {
+    await mkdir(join(root, "hooks"));
+    git("config", "core.hooksPath", "hooks");
+    const r = warden("init");
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("Next action: make hooks/pre-commit an executable script that runs .warden/generated/hooks/pre-commit and exits with its status, then run warden doctor\n");
+    expect(execFileSync("git", ["config", "core.hooksPath"], { cwd: root, encoding: "utf8" }).trim()).toBe("hooks");
+    await writeFile(join(root, "hooks/pre-commit"), "#!/bin/sh\n.warden/generated/hooks/pre-commit || exit $?\n", { mode: 0o755 });
+    expect(warden("doctor").code).toBe(0);
+  });
+
+  it("doctor in a fresh clone names the git config command that installs the hook", () => {
+    init();
+    git("config", "--unset", "core.hooksPath");
+    const r = warden("doctor");
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("Next action: run git config core.hooksPath .warden/generated/hooks, then run warden doctor\n");
+  });
+});
+
 describe("the Claude Code plugin hook", () => {
   const script = join(wardenRoot, "hooks/warden.sh");
   let shims: string;
@@ -882,6 +950,35 @@ describe("the Claude Code plugin hook", () => {
     expect((JSON.parse(r.out) as { reason: string }).reason).toContain("FAIL src/b.ts:1");
     await writeFile(join(root, "src/b.ts"), "export const b = 1;\n");
     expect(hook("check", edit("src/b.ts"))).toEqual({ code: 0, out: "", err: "" });
+  });
+
+  const codexCommand = (event: "PreToolUse" | "PostToolUse"): string => {
+    const config = JSON.parse(readFileSync(join(wardenRoot, "hooks/codex.json"), "utf8")) as { hooks: Record<string, { hooks: { command: string }[] }[]> };
+    return (config.hooks[event] as { hooks: { command: string }[] }[])[0]?.hooks[0]?.command as string;
+  };
+  const codex = (event: "PreToolUse" | "PostToolUse", input: unknown): { code: number | null; out: string; err: string } => {
+    const r = spawnSync("sh", ["-c", codexCommand(event)], { cwd: root, input: JSON.stringify(input), encoding: "utf8", env: { ...process.env, PATH: `${shims}:${system}`, WARDEN_HOME: home, PLUGIN_ROOT: wardenRoot } });
+    return { code: r.status, out: r.stdout, err: r.stderr };
+  };
+  const patch = (...lines: string[]): unknown => ({ tool_name: "apply_patch", tool_input: { command: ["*** Begin Patch", ...lines, "*** End Patch", ""].join("\n") } });
+
+  it("the Codex plugin's version is the package's version, and its manifest names the Codex hooks", () => {
+    const manifest = JSON.parse(readFileSync(join(wardenRoot, ".codex-plugin/plugin.json"), "utf8")) as { version: string; hooks: string };
+    expect(manifest.version).toBe(pluginVersion());
+    expect(existsSync(join(wardenRoot, manifest.hooks))).toBe(true);
+  });
+
+  it("the Codex hooks refuse a patch under .warden, and block after a patch that breaks a Guardrail", async () => {
+    init();
+    git("add", "-A");
+    git("commit", "-q", "-m", "adopt");
+    expect(denied(codex("PreToolUse", patch("*** Update File: src/a.ts", "*** Add File: .warden/x.yaml", "+x")))).toContain(".warden/x.yaml is a Warden record");
+    expect(codex("PreToolUse", patch("*** Update File: src/a.ts"))).toEqual({ code: 0, out: "", err: "" });
+    expect(denied(codex("PreToolUse", bash("git commit -n")))).toContain("-n skips the pre-commit hook");
+    await writeFile(join(root, "src/b.ts"), "// new\nexport const b = 1;\n");
+    const r = codex("PostToolUse", patch("*** Add File: src/b.ts", "+// new", "+export const b = 1;"));
+    expect(r.code, r.err).toBe(0);
+    expect((JSON.parse(r.out) as { decision: string; reason: string }).reason).toContain("FAIL src/b.ts:1");
   });
 
   it("turns a warden crash into a block with one next action", async () => {

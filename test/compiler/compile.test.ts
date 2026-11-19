@@ -73,13 +73,13 @@ describe("compile", () => {
   it("compile writes only under .warden", async () => {
     const { findings, written } = await compile(root, wardenRoot);
     expect(findings).toEqual([]);
-    expect(written.sort()).toEqual([".warden/generated/eslint.rules.json", ".warden/lock.json"]);
+    expect(written.sort()).toEqual([".warden/generated/eslint.rules.json", ".warden/generated/hooks/pre-commit", ".warden/lock.json"]);
     const rules = JSON.parse(await read(".warden/generated/eslint.rules.json"));
     expect(rules["@generated"]).toMatch(HEADER);
     expect(Object.keys(rules)[0]).toBe("@generated");
     expect(Array.isArray(rules.entries)).toBe(true);
     const lock = readLock(root);
-    expect(Object.keys(lock.generated)).toEqual([".warden/generated/eslint.rules.json"]);
+    expect(Object.keys(lock.generated)).toEqual([".warden/generated/eslint.rules.json", ".warden/generated/hooks/pre-commit"]);
     expect(Object.keys(lock.sources).sort()).toEqual([".warden/config.yaml", "allowed_signers", ...(await readdir(join(wardenRoot, "packs/core/fixtures"))).map((f) => `packs/core/fixtures/${f}`).sort(), "packs/core/pack.yaml"]);
     expect(lock.guardrails["warden-no-comments"]).toEqual({
       kind: "lint",

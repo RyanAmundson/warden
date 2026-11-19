@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
-import { hookTrigger } from "../adapters/claude.js";
+import { hookTriggers } from "../adapters/claude.js";
 import { PARSE_ERROR, type RunContext, type RunResult, type Violation } from "../adapters/types.js";
 import { wardenVersion } from "../compiler/compile.js";
 import { LOCK_FORMAT, LOCK_PATH, bundledTools, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
@@ -400,7 +400,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   }
   const prior = readEvidenceTail(project, LOOP_TAIL_BYTES);
   const trigger = new Set(
-    opts.hook === "claude" ? (opts.hookInput === undefined ? [] : [hookTrigger(root, opts.hookInput)]) : opts.paths === undefined ? [] : scanned,
+    opts.hook === "claude" ? (opts.hookInput === undefined ? [] : hookTriggers(root, opts.hookInput)) : opts.paths === undefined ? [] : scanned,
   );
   let repeated: Repeated | undefined;
   for (const key of new Set(failures.map((v) => `${v.guardrail}\0${v.file}`))) {

@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(apply_patch|Bash)$",
+        "hooks": [{ "type": "command", "command": "sh \"${PLUGIN_ROOT}/hooks/warden.sh\" guard" }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^apply_patch$",
+        "hooks": [{ "type": "command", "command": "sh \"${PLUGIN_ROOT}/hooks/warden.sh\" check" }]
+      }
+    ]
+  }
+}
