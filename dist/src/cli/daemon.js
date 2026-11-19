@@ -109,7 +109,14 @@ export async function serve(wardenRoot, port, opts = {}) {
     });
     const bound = server.address().port;
     const hosts = new Set([`127.0.0.1:${bound}`, `localhost:${bound}`]);
-    const daemon = startWatching({ wardenRoot, port: bound, ...opts, onDetection: (d) => send("tamper", d), onEvidence: (project) => send("evidence", { project }) });
+    let daemon;
+    try {
+        daemon = startWatching({ wardenRoot, port: bound, ...opts, onDetection: (d) => send("tamper", d), onEvidence: (project) => send("evidence", { project }) });
+    }
+    catch (cause) {
+        await new Promise((resolve) => server.close(() => resolve()));
+        throw cause;
+    }
     const beat = setInterval(() => send("heartbeat", readHeartbeat() ?? null), opts.intervalMs ?? HEARTBEAT_MS);
     server.on("request", (req, res) => {
         const url = new URL(req.url ?? "/", `http://127.0.0.1:${bound}`);
@@ -157,9 +164,8 @@ export async function runDaemon(wardenRoot, port) {
         served = await serve(wardenRoot, port);
     }
     catch (cause) {
-        if (cause.code !== "EADDRINUSE")
-            throw cause;
-        process.stderr.write(`port ${port} on 127.0.0.1 is in use, perhaps by another warden daemon. Next action: run warden daemon --port <a free port>\n`);
+        const next = cause.code === "EADDRINUSE" ? `port ${port} on 127.0.0.1 is in use, perhaps by another warden daemon. Next action: run warden daemon --port <a free port>` : `the daemon could not start: ${cause.message}. Next action: fix what that names under ${wardenHome()}, then run warden daemon`;
+        process.stderr.write(`${next}\n`);
         return 2;
     }
     process.stdout.write(`warden daemon listening on http://127.0.0.1:${served.port}, watching ${served.daemon.projects.size} project${served.daemon.projects.size === 1 ? "" : "s"}\n`);

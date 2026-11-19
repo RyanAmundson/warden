@@ -128,15 +128,24 @@ warden daemon install
 
 `warden daemon uninstall` removes it, and `warden daemon` runs it in the
 foreground. The daemon watches every project whose root appears in Warden's
-Evidence, which `warden init` and every check write. It records each change
-to `.warden/`, each commit, and each tamper detection as Evidence with one
-next action. Tamper detections cover:
+Evidence, which `warden init` and every check write, and every worktree of
+those repositories that has `.warden/config.yaml`. It records each change to
+`.warden/` and each tamper detection as Evidence with one next action. It
+also records each new non-merge commit reachable from the repository's local
+branches or any worktree's HEAD, whether it arrived by commit, merge,
+fast-forward, cherry-pick, rebase, or `git am`. Tamper detections cover:
 
 - a commit hook that git no longer runs;
 - `.warden/` contents that no longer match the lock;
 - a Claude plugin that was enabled and is now disabled or removed;
-- a commit with no passing commit-tier check;
+- a commit whose tree no full commit-tier check passed on, measured from the
+  commit's parent or an ancestor of it;
 - a check that ran with `WARDEN_DAEMON=off`.
+
+While the daemon holds an open alert for a repository, `warden check` fails
+at every tier with that alert's next action. The alert closes when the daemon
+sees the cause fixed. The daemon keeps its checkpoint in
+`$WARDEN_HOME/daemon/state.json`.
 
 It writes a heartbeat every 10 seconds. A commit-tier check exits 1 when the
 heartbeat is missing, older than 30 seconds, dated in the future, or written

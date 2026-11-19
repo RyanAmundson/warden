@@ -9,7 +9,7 @@ import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
 import { indexTree, checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
-import { heartbeatProblem } from "../runner/daemon.js";
+import { heartbeatProblem, openAlerts } from "../runner/daemon.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
 import { formatFeedback } from "../runner/feedback.js";
@@ -126,6 +126,15 @@ const report = (failures, set, opts, notes) => {
     }
     return failed ? 1 : 0;
 };
+const refuseForAlert = (alert, opts) => {
+    const message = `Warden's daemon holds an open tamper alert for this repository: ${alert.detail} ${alert.file} in ${alert.root}. Next action: ${alert.next}`;
+    if (opts.hook === "claude") {
+        process.stdout.write(`${JSON.stringify({ decision: "block", reason: message })}\n`);
+        return 0;
+    }
+    process.stderr.write(`${message}\n`);
+    return 1;
+};
 export const MAX_RECORDED_FAILURES = 10;
 const kindCounts = (failures, set) => {
     const kindOf = new Map(set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.map((g) => [g.id, g.kind]))));
@@ -227,6 +236,7 @@ const check = async (opts, live) => {
     verifyBase(root, base, checkBaseAction);
     refuseOwnBranch(root, base);
     live.base = { base, mergeBase: mergeBase(root, base) };
+    const alerts = openAlerts(root);
     openStep(live, "rules-intact");
     if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined) {
         throw new RecordError(LOCK_PATH, "", "not found; this project was never compiled. Next action: run warden compile.");
@@ -405,8 +415,9 @@ const check = async (opts, live) => {
     }
     const notes = { repeated, overBudget, killed };
     closeStep(live, failedOf(failures, notes) ? "fail" : "done");
-    const code = report(failures, set, opts, notes);
-    return finish(project, scanned.length === 0 && ran.ran.length === 0 ? "empty" : "ran", scanned, code, { set, failures, notes, extra: { guardrails: chosen.length, cached: ran.cached, rules: ruleTimes, passes: passTimes, cachedRules: chosen.filter((g) => ruleTimes[g.id] === undefined).map((g) => g.id), ratchet: [baselineTotal(baseline), baselineTotal(wide.next)], ratchetFrom } });
+    const alert = failedOf(failures, notes) ? undefined : alerts[0];
+    const code = alert === undefined ? report(failures, set, opts, notes) : refuseForAlert(alert, opts);
+    return finish(project, scanned.length === 0 && ran.ran.length === 0 ? "empty" : "ran", scanned, code, { set, failures, notes, extra: { scope: opts.paths === undefined && opts.rule === undefined ? "full" : "partial", ...(alert === undefined ? {} : { alert: alert.detail, next: alert.next }), guardrails: chosen.length, cached: ran.cached, rules: ruleTimes, passes: passTimes, cachedRules: chosen.filter((g) => ruleTimes[g.id] === undefined).map((g) => g.id), ratchet: [baselineTotal(baseline), baselineTotal(wide.next)], ratchetFrom } });
 };
 export async function runCheck(opts) {
     const live = {
