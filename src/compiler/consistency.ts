@@ -107,7 +107,8 @@ export function checkConsistency(set: RecordSet): Finding[] {
   for (const pack of set.packs) {
     const first = set.packs.find((p) => p.layer === pack.layer) as Pack;
     if (first === pack) continue;
-    const [keep, move] = pack.file.startsWith(join(set.root, ".warden")) ? [first, pack] : [pack, first];
+    const local = (p: Pack): boolean => p.file.startsWith(join(set.root, ".warden"));
+    const [keep, move] = local(first) && !local(pack) ? [pack, first] : [first, pack];
     add("layer-order", move.id, `Packs ${keep.id} and ${move.id} both have layer ${pack.layer}. Next action: set layer to ${++free} in ${move.file}, then run warden compile.`);
   }
 

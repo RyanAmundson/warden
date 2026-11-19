@@ -63,6 +63,11 @@ describe("checkConsistency", () => {
     expect(found).toEqual([{ code: "layer-order", record: "mine", message: "Packs a and mine both have layer 1. Next action: set layer to 4 in /w/.warden/packs/mine/pack.yaml, then run warden compile." }]);
   });
 
+  it("moves the pack listed later when neither pack on a shared layer is local", () => {
+    const found = checkConsistency(build([pack("a", 1, [practice("p1", "a")]), pack("b", 1, [practice("p2", "b")])]));
+    expect(found.map((f) => f.record)).toEqual(["b"]);
+  });
+
   it("names a different free layer for each pack that must move off a shared layer", () => {
     const local = (id: string): Pack => ({ ...pack(id, 1, [practice(`p-${id}`, id)]), file: `/w/.warden/packs/${id}/pack.yaml` });
     const found = checkConsistency(build([pack("a", 1, [practice("p1", "a")]), local("m1"), local("m2")]));
