@@ -21,6 +21,7 @@ export interface Guardrail {
   version: number;
   implementation: string;
   options?: unknown;
+  sources?: string[];
   mustFail?: Example;
   mustPass?: Example;
   packDir?: string;

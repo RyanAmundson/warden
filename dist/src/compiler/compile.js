@@ -29,7 +29,7 @@ const sourceFiles = async (set, projectRoot, wardenRoot) => {
     const scripts = scriptsOf(projectRoot);
     for (const g of set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails))) {
         if (g.implementation.startsWith("cmd:"))
-            Object.assign(out, commandSources(projectRoot, targetOf(g), scripts));
+            Object.assign(out, commandSources(projectRoot, targetOf(g), g.sources ?? [], scripts, [g.packDir === undefined ? "" : join(g.packDir, "pack.yaml"), `/guardrails/${g.id}/sources`]));
     }
     return out;
 };

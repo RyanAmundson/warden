@@ -146,6 +146,8 @@ describe("cmd adapter", () => {
     expect(runIt(legacy("cmd:npm test"))).toBe("run `npm test` and fix what it reports.");
     const long = { ...legacy(`cmd:echo ${"x".repeat(300)}`), packDir: "/p/.warden/packs/local" };
     expect(runIt(long)).toBe("run the implementation command of Guardrail g in /p/.warden/packs/local/pack.yaml, from the project root with WARDEN_PACK_DIR=/p/.warden/packs/local, and fix what it reports.");
+    expect(runIt({ ...long, packDir: "/p/a b" })).toContain("with WARDEN_PACK_DIR='/p/a b', and");
+    expect(runIt({ ...legacy('cmd:sh "${WARDEN_PACK_DIR:-.}/x.sh"'), packDir: "/p/a b" })).toBe(`run \`export WARDEN_PACK_DIR='/p/a b'; sh "\${WARDEN_PACK_DIR:-.}/x.sh"\` and fix what it reports.`);
   });
 
   it("a command that exits 2 is an environment or usage error that keeps its last line's next action, or names one", async () => {

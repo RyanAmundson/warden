@@ -277,16 +277,25 @@ A Guardrail's `implementation` names its adapter and the tool's own rule:
 through unchanged. A `cmd` command runs with `WARDEN_PACK_DIR` set to the
 folder of the Guardrail's pack, so a pack can ship a script and run it as
 `cmd:node "$WARDEN_PACK_DIR/check.js"`; failures and next actions print the
-command after `export WARDEN_PACK_DIR=<folder, shell-quoted>;`, so it runs as
-printed whatever its quoting, `warden doctor` checks that each named pack file
-exists, and every file in a bundled or local pack's folder but `.DS_Store` is
-hashed into the lock. The lock also hashes, under keys that start with `./`,
-every project script a `cmd` command names (a file with a script extension
-such as `.sh`, `.js`, `.ts`, or `.py`, or an executable file), and the text of each
-`npm run <script>` or `npm test` script it calls together with the project
-files that script names, one level deep. Editing one of those files without
-recompiling is source drift, and recompiling after the edit, or dropping the
-file from the command, is loosening. A `cmd` command that is
+command after `export WARDEN_PACK_DIR=<folder, shell-quoted>;` whenever the
+Guardrail has a pack folder, so it runs as printed whatever its quoting,
+`warden doctor` checks that each named pack file exists, and every file in a
+bundled or local pack's folder but `.DS_Store` is hashed into the lock. The
+lock also hashes, under keys that start with `./`, each project file a `cmd`
+command runs: a path in program position (the first word, or the script
+argument of `sh`, `bash`, `node`, `tsx`, `npx tsx`, `python`, or `deno run`),
+resolved against any `cd <dir>` before it in the same command or subshell.
+It hashes the text of each npm script the command calls (`npm run`, `npm
+run-script`, `npm test`, `npm t`, `npm start`, flags allowed, with the `pre`
+and `post` scripts) and follows those scripts and their own npm calls to a
+fixed point. For a JS or TS script it also hashes each module the script
+reaches through static relative `import`, `export … from`, and `require`. A
+file that appears only as an argument is not hashed, so a command that reads
+the code under check does not lock it. Static analysis cannot see which data
+files a script reads, so a `cmd` Guardrail must list them in `sources`, a list
+of project paths that the lock hashes under the same `./` keys. Editing any of
+these files without recompiling is source drift, and recompiling after the
+edit, or dropping the file from the command or from `sources`, is loosening. A `cmd` command that is
 only `node "$WARDEN_PACK_DIR/<script>"` and plain arguments, in a pack that
 Warden ships, runs the script in a worker thread inside Warden rather than a
 new Node process, and the budget stops the worker. The script sees the project

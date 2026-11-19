@@ -586,22 +586,56 @@ describe("compile admission bench", () => {
 });
 
 describe("commandSources", () => {
-  it("names each project script a command or its npm script runs, and the npm script's own text, but not a data file it tests", async () => {
+  it("names the scripts in program position, through npm scripts, cd, and relative imports, and no argument file", async () => {
     const dir = await mkdtemp(join(tmpdir(), "warden-command-sources-"));
     try {
-      await mkdir(join(dir, "scripts"));
-      await writeFile(join(dir, "scripts/a.sh"), "a\n");
-      await writeFile(join(dir, "scripts/b.js"), "b\n");
-      await writeFile(join(dir, "scripts/c.mjs"), "c\n");
+      const files: Record<string, string> = {
+        "scripts/a": "a\n",
+        "scripts/b.ts": 'import x from "./lib/c.js";\nexport * from "./d";\nconst e = require("./e.cjs");\nimport "node:fs";\n',
+        "scripts/lib/c.ts": "export default 1;\n",
+        "scripts/d/index.ts": "export const d = 1;\n",
+        "scripts/e.cjs": "module.exports = 1;\n",
+        "scripts/pre.sh": "p\n",
+        "tools/run.sh": "r\n",
+        "tools/inline.py": "i\n",
+        "data.ts": "d\n",
+        "package.json": JSON.stringify({ scripts: { precheck: "sh scripts/pre.sh", check: "npm run -s inner", inner: "npx tsx scripts/b.ts data.ts", test: "node --test data.ts" } }),
+      };
+      for (const [file, content] of Object.entries(files)) {
+        await mkdir(join(dir, file, ".."), { recursive: true });
+        await writeFile(join(dir, file), content);
+      }
+      const out = commandSources(dir, 'sh scripts/a data.ts && npm --silent run check; npm t; (cd tools && ./run.sh) ; sh -c "python inline.py" ; cat data.ts > data.ts', []);
+      expect(Object.keys(out).sort()).toEqual([
+        "./package.json#scripts/check",
+        "./package.json#scripts/inner",
+        "./package.json#scripts/precheck",
+        "./package.json#scripts/test",
+        "./scripts/a",
+        "./scripts/b.ts",
+        "./scripts/d/index.ts",
+        "./scripts/e.cjs",
+        "./scripts/lib/c.ts",
+        "./scripts/pre.sh",
+        "./tools/run.sh",
+      ]);
+      expect(out["./package.json#scripts/inner"]).toBe("npx tsx scripts/b.ts data.ts");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("hashes binary scripts byte for byte and adds the listed data files", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "warden-command-sources-"));
+    try {
+      await writeFile(join(dir, "one"), Buffer.from([0xff]));
+      await writeFile(join(dir, "two"), Buffer.from([0xfe]));
       await writeFile(join(dir, "data.txt"), "d\n");
-      await writeFile(join(dir, "package.json"), JSON.stringify({ scripts: { check: "node scripts/b.js", test: "node --import=./scripts/c.mjs x" } }));
-      expect(commandSources(dir, 'sh "scripts/a.sh" && npm run check; npm test; node "$WARDEN_PACK_DIR/a.sh" ../outside scripts; test -e data.txt')).toEqual({
-        "./scripts/a.sh": "a\n",
-        "./package.json#scripts/check": "node scripts/b.js",
-        "./scripts/b.js": "b\n",
-        "./package.json#scripts/test": "node --import=./scripts/c.mjs x",
-        "./scripts/c.mjs": "c\n",
-      });
+      const one = commandSources(dir, "./one", ["data.txt"]);
+      const two = commandSources(dir, "./two", []);
+      expect(Object.keys(one)).toEqual(["./one", "./data.txt"]);
+      expect(one["./one"]).not.toBe(two["./two"]);
+      expect(() => commandSources(dir, "true", ["gone.txt"])).toThrow("gone.txt");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

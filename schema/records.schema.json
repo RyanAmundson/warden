@@ -86,6 +86,7 @@
         "version": { "type": "integer", "minimum": 1 },
         "implementation": { "type": "string", "minLength": 1 },
         "options": {},
+        "sources": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "mustFail": { "$ref": "#/$defs/example" },
         "mustPass": { "$ref": "#/$defs/example" }
       },

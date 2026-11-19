@@ -500,7 +500,7 @@ describe("ruling fixes", () => {
     expect(code).toBe(1);
     expect(out).toMatch(/^ {2}Reason: {3}stopped at \d+ ms: did not finish within its 200 ms budget$/m);
     expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([
-      "Next action: run `test ! -e slow || sleep 2.413; test ! -e broken` directly to see why it does not finish.",
+      `Next action: run \`export WARDEN_PACK_DIR=${join(root, ".warden/packs/legacy")}; test ! -e slow || sleep 2.413; test ! -e broken\` directly to see why it does not finish.`,
     ]);
     expect(out).not.toMatch(/blocked|cannot proceed/i);
   });
@@ -898,9 +898,9 @@ describe("final review: legacy feedback", () => {
     await write("b.ts", "const b = 1;\n");
     const { code, out } = await check();
     expect(code).toBe(1);
-    expect(out).toContain("  Output:   test ! -e broken || { echo broken thing; exit 1; } exited with 1\n            broken thing");
+    expect(out).toContain(`  Output:   export WARDEN_PACK_DIR=${join(root, ".warden/packs/legacy")}; test ! -e broken || { echo broken thing; exit 1; } exited with 1\n            broken thing`);
     expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([
-      "Next action: run `test ! -e broken || { echo broken thing; exit 1; }` and fix what it reports.",
+      `Next action: run \`export WARDEN_PACK_DIR=${join(root, ".warden/packs/legacy")}; test ! -e broken || { echo broken thing; exit 1; }\` and fix what it reports.`,
     ]);
   });
 
@@ -914,6 +914,69 @@ describe("final review: legacy feedback", () => {
     const next = /^Next action: run `(.+)` and fix what it reports\.$/m.exec(out)?.[1] as string;
     expect(next).toBe(`export WARDEN_PACK_DIR=${join(root, ".warden/packs/legacy")}; node "$WARDEN_PACK_DIR/bin/no-broken.mjs"`);
     expect(spawnSync("sh", ["-c", next], { cwd: root }).status).toBe(1);
+  });
+});
+
+describe("a cmd Guardrail's project scripts are locked", () => {
+  const lockedThenEdited = async (command: string, files: Record<string, string>, edit: [string, string], sources?: string[]): Promise<{ code: number; out: string }> => {
+    for (const [file, content] of Object.entries(files)) await write(file, content);
+    await write(".warden/config.yaml", config(["core", "local", "legacy"]));
+    const pack = legacyPack("commit", command, 5000);
+    await write(".warden/packs/legacy/pack.yaml", sources === undefined ? pack : pack.replace("        mustFail:", `        sources: ${JSON.stringify(sources)}\n        mustFail:`));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    git("add", "-A");
+    git("commit", "-q", "-m", "legacy");
+    git("branch", "-f", "main", "HEAD");
+    expect((await check()).code).toBe(0);
+    await write(edit[0], edit[1]);
+    return check();
+  };
+
+  it("a script run by sh with no extension is locked", async () => {
+    const { code } = await lockedThenEdited("test ! -e broken || sh scripts/check", { "scripts/check": "exit 1\n" }, ["scripts/check", "true\n"]);
+    expect(code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: "./scripts/check", detail: "source-drift" });
+  });
+
+  it("an npm script another npm script calls is locked, and the next action names the script in package.json", async () => {
+    const pkg = (inner: string): string => JSON.stringify({ scripts: { check: "npm run check:inner", "check:inner": inner } });
+    const { code, out } = await lockedThenEdited("test ! -e broken || npm run check", { "package.json": pkg("sh scripts/c.sh"), "scripts/c.sh": "exit 1\n" }, ["package.json", pkg("true")]);
+    expect(code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: "./package.json#scripts/check:inner", detail: "source-drift" });
+    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual(['Next action: revert your change to the "check:inner" script in package.json.']);
+  });
+
+  it("a module a locked script imports is locked", async () => {
+    const { code } = await lockedThenEdited("test ! -e broken || node scripts/c.mjs", { "scripts/c.mjs": 'import { ok } from "./lib.mjs";\nprocess.exit(ok ? 0 : 1);\n', "scripts/lib.mjs": "export const ok = false;\n" }, ["scripts/lib.mjs", "export const ok = true;\n"]);
+    expect(code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: "./scripts/lib.mjs", detail: "source-drift" });
+  });
+
+  it("an npm script named after a flag is locked", async () => {
+    const { code } = await lockedThenEdited("test ! -e broken || npm run --silent check", { "package.json": JSON.stringify({ scripts: { check: "sh scripts/c.sh" } }), "scripts/c.sh": "exit 1\n" }, ["scripts/c.sh", "true\n"]);
+    expect(code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: "./scripts/c.sh", detail: "source-drift" });
+  });
+
+  it("a script run after cd resolves against that folder and is locked", async () => {
+    const { code } = await lockedThenEdited("test ! -e broken || (cd scripts && sh c.sh)", { "scripts/c.sh": "exit 1\n" }, ["scripts/c.sh", "true\n"]);
+    expect(code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: "./scripts/c.sh", detail: "source-drift" });
+  });
+
+  it("a data file listed in sources is locked", async () => {
+    const { code } = await lockedThenEdited("test ! -e broken || sh scripts/c.sh", { "scripts/c.sh": 'test "$(cat scripts/target.txt)" = ok\n', "scripts/target.txt": "no\n" }, ["scripts/target.txt", "ok\n"], ["scripts/target.txt"]);
+    expect(code).toBe(1);
+    expect(await tampered()).toContainEqual({ file: "./scripts/target.txt", detail: "source-drift" });
+  });
+
+  it("a project file the command only reads as an argument is not locked, so editing it is not tampering", async () => {
+    const { code } = await lockedThenEdited('test ! -e broken && test "$(cat x.ts 2>/dev/null)" = "$(cat y.ts 2>/dev/null)"', { "x.ts": "export const v = 1;\n", "y.ts": "export const v = 1;\n" }, ["x.ts", "export const v = 2;\n"]);
+    expect(code).toBe(1);
+    expect(await tampered()).toEqual([]);
+    await write("y.ts", "export const v = 2;\n");
+    expect((await check()).code).toBe(0);
+    expect(Object.keys(readLock(root).sources).filter((k) => k.startsWith("./"))).toEqual([]);
   });
 });
 

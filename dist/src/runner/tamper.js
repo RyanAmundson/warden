@@ -164,7 +164,8 @@ export async function findTampering(set, wardenRoot, base, staged) {
         return [...found, { file: LOCK_PATH, detail: "missing-lock" }];
     const expected = await expectedOutputs(set, root, wardenRoot);
     const sources = [...new Set([...Object.keys(lock.sources), ...Object.keys(expected.lock.sources)])].sort();
-    const sourceDrift = sources.filter((file) => lock.sources[file] !== expected.lock.sources[file]);
+    const unchanged = (file) => file.startsWith(PROJECT_SOURCE) && expected.lock.sources[file] === undefined && existsSync(join(root, file)) && sha256(readFileSync(join(root, file)).toString("latin1")) === lock.sources[file];
+    const sourceDrift = sources.filter((file) => lock.sources[file] !== expected.lock.sources[file] && !unchanged(file));
     const tracked = trackedFiles(root, sourceDrift.filter((file) => file.startsWith(".warden/") && existsSync(join(root, file))));
     found.push(...sourceDrift.map((file) => ({ file, detail: "source-drift", ...(file.startsWith(".warden/") && existsSync(join(root, file)) && !tracked.has(file) ? { untracked: true } : {}) })));
     if (sourceDrift.length === 0 && canonicalJson({ ...lock, tools: null }) !== canonicalJson({ ...expected.lock, tools: null })) {

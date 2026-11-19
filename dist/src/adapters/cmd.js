@@ -99,7 +99,7 @@ export const OUTPUT_LINES = 20;
 export const PACK_DIR = "WARDEN_PACK_DIR";
 export const PACK_VAR = /\$(?:\{WARDEN_PACK_DIR\}|WARDEN_PACK_DIR(?![A-Za-z0-9_]))/g;
 const shellWord = (path) => (/^[\w./-]+$/.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`);
-export const withPackDir = (command, packDir) => packDir === undefined || !new RegExp(PACK_VAR.source).test(command) ? command : `export ${PACK_DIR}=${shellWord(packDir)}; ${command}`;
+export const withPackDir = (command, packDir) => (packDir === undefined ? command : `export ${PACK_DIR}=${shellWord(packDir)}; ${command}`);
 export const COMMAND_CHARS = 200;
 export const brief = (command) => {
     const line = command.trim().split("\n")[0];
@@ -109,7 +109,7 @@ export const runIt = (g) => {
     const command = withPackDir(targetOf(g), g.packDir);
     if (brief(command) === command.trim())
         return `run \`${command}\` and fix what it reports.`;
-    const where = g.packDir === undefined ? "" : ` in ${join(g.packDir, "pack.yaml")}, from the project root with ${PACK_DIR}=${g.packDir}`;
+    const where = g.packDir === undefined ? "" : ` in ${join(g.packDir, "pack.yaml")}, from the project root with ${PACK_DIR}=${shellWord(g.packDir)}`;
     return `run the implementation command of Guardrail ${g.id}${where}, and fix what it reports.`;
 };
 const tail = (output) => output.trimEnd().split("\n").filter((l) => l !== "").slice(-OUTPUT_LINES);

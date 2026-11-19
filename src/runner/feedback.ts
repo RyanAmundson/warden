@@ -3,6 +3,11 @@ import { PARSE_ERROR, type Violation } from "../adapters/types.js";
 import type { Guardrail, Practice, RecordSet } from "../records/types.js";
 import type { Tamper } from "./tamper.js";
 
+const sourceName = (file: string): string => {
+  const script = /^\.\/package\.json#scripts\/(.+)$/.exec(file)?.[1];
+  return script === undefined ? file : `the "${script}" script in package.json`;
+};
+
 export type Format = "text" | "agent" | "json";
 
 export interface Repeated {
@@ -67,10 +72,10 @@ const nextAction = (failures: Violation[], set: RecordSet, notes: Notes): string
     if (sources.length === 0) {
       const strays = [...new Set(others.filter((t) => t.untracked === true).map((t) => t.file))];
       const reverts = [...new Set(others.filter((t) => t.untracked !== true).map((t) => t.file))];
-      return [...(strays.length === 0 ? [] : [`delete ${strays.join(", ")}`]), ...(reverts.length === 0 ? [] : [`revert your change to ${reverts.join(", ")}`])].join(", then ") + ".";
+      return [...(strays.length === 0 ? [] : [`delete ${strays.join(", ")}`]), ...(reverts.length === 0 ? [] : [`revert your change to ${reverts.map(sourceName).join(", ")}`])].join(", then ") + ".";
     }
     const files = [...new Set([...sources, ...others.filter((t) => t.sources === undefined && t.file !== ".warden/lock.json").map((t) => t.file)])];
-    return `revert your change to ${files.join(", ")}, then run warden compile.`;
+    return `revert your change to ${files.map(sourceName).join(", ")}, then run warden compile.`;
   }
   if ((notes.unstaged ?? []).length > 0) {
     if (notes.base === undefined) throw new Error("an unstaged note needs the base to name the next command");

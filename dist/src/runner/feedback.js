@@ -1,5 +1,9 @@
 import { runIt } from "../adapters/cmd.js";
 import { PARSE_ERROR } from "../adapters/types.js";
+const sourceName = (file) => {
+    const script = /^\.\/package\.json#scripts\/(.+)$/.exec(file)?.[1];
+    return script === undefined ? file : `the "${script}" script in package.json`;
+};
 const EXAMPLE_LINES = 15;
 const ownerOf = (set, id) => {
     for (const practice of set.packs.flatMap((p) => p.practices)) {
@@ -35,10 +39,10 @@ const nextAction = (failures, set, notes) => {
         if (sources.length === 0) {
             const strays = [...new Set(others.filter((t) => t.untracked === true).map((t) => t.file))];
             const reverts = [...new Set(others.filter((t) => t.untracked !== true).map((t) => t.file))];
-            return [...(strays.length === 0 ? [] : [`delete ${strays.join(", ")}`]), ...(reverts.length === 0 ? [] : [`revert your change to ${reverts.join(", ")}`])].join(", then ") + ".";
+            return [...(strays.length === 0 ? [] : [`delete ${strays.join(", ")}`]), ...(reverts.length === 0 ? [] : [`revert your change to ${reverts.map(sourceName).join(", ")}`])].join(", then ") + ".";
         }
         const files = [...new Set([...sources, ...others.filter((t) => t.sources === undefined && t.file !== ".warden/lock.json").map((t) => t.file)])];
-        return `revert your change to ${files.join(", ")}, then run warden compile.`;
+        return `revert your change to ${files.map(sourceName).join(", ")}, then run warden compile.`;
     }
     if ((notes.unstaged ?? []).length > 0) {
         if (notes.base === undefined)

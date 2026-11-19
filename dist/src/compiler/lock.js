@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { RecordError } from "../records/load.js";
 import { pathGroups } from "../records/paths.js";
 import { benchSettings } from "../records/types.js";
@@ -43,32 +43,178 @@ export const scriptsOf = (root) => {
         return {};
     return JSON.parse(readFileSync(file, "utf8")).scripts ?? {};
 };
-const NPM_SCRIPT = /\bnpm\s+(?:run\s+([^\s;&|()<>`-][^\s;&|()<>`]*)|test(?![\w:-]))/g;
 export const PROJECT_SOURCE = "./";
-const SCRIPT = /\.(?:sh|bash|zsh|[cm]?js|[cm]?ts|jsx|tsx|py|rb|pl)$/;
-export const commandSources = (root, command, scripts = scriptsOf(root)) => {
-    const out = {};
-    let text = command;
-    for (const m of command.matchAll(NPM_SCRIPT)) {
-        const name = m[1] ?? "test";
-        const body = scripts[name];
-        if (typeof body !== "string")
-            continue;
-        out[`${PROJECT_SOURCE}package.json#scripts/${name}`] = body;
-        text += `\n${body}`;
+const NPM_ALIASES = { test: "test", t: "test", tst: "test", start: "start", stop: "stop", restart: "restart" };
+const NPM_RUN = new Set(["run", "run-script", "rum", "urn"]);
+const SHELLS = new Set(["sh", "bash", "zsh", "dash"]);
+const INTERPRETERS = new Set([...SHELLS, "node", "tsx", "python", "python3"]);
+const INLINE = new Set(["-c", "-e", "-p", "-m", "--eval", "--print", "--test"]);
+const MODULE = /\.(?:[cm]?[jt]s|[jt]sx)$/;
+const IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)["'](\.{1,2}\/[^"']*)["']/g;
+const EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
+const lex = (text) => {
+    const out = [];
+    let word;
+    let drop = false;
+    const end = () => {
+        if (word !== undefined) {
+            if (!drop)
+                out.push({ word });
+            drop = false;
+        }
+        word = undefined;
+    };
+    for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (c === "'") {
+            const close = text.indexOf("'", i + 1);
+            const stop = close === -1 ? text.length : close;
+            word = (word ?? "") + text.slice(i + 1, stop);
+            i = stop;
+        }
+        else if (c === '"') {
+            let v = "";
+            let j = i + 1;
+            for (; j < text.length && text[j] !== '"'; j++)
+                v += text[j] === "\\" ? (text[++j] ?? "") : text[j];
+            word = (word ?? "") + v;
+            i = j;
+        }
+        else if (c === "\\") {
+            word = (word ?? "") + (text[++i] ?? "");
+        }
+        else if (c === "#" && word === undefined) {
+            while (i + 1 < text.length && text[i + 1] !== "\n")
+                i++;
+        }
+        else if (c === "<" || c === ">") {
+            if (word !== undefined && /^\d+$/.test(word))
+                word = undefined;
+            end();
+            while (/[<>&|]/.test(text[i + 1] ?? ""))
+                i++;
+            drop = true;
+        }
+        else if ("\n;&|()".includes(c)) {
+            end();
+            drop = false;
+            out.push({ op: c });
+        }
+        else if (/\s/.test(c)) {
+            end();
+        }
+        else {
+            word = (word ?? "") + c;
+        }
     }
-    for (const word of text.split(/[\s;&|()<>`]+/)) {
-        const path = word.replace(/["']/g, "").replace(/^[^=/]*=/, "");
-        if (path === "" || path.includes("$"))
-            continue;
-        const full = resolve(root, path);
-        const key = relative(root, full);
-        const stat = statSync(full, { throwIfNoEntry: false });
-        if (key === "" || key.startsWith("..") || isAbsolute(key) || stat?.isFile() !== true || !(SCRIPT.test(key) || (stat.mode & 0o111) !== 0))
-            continue;
-        out[`${PROJECT_SOURCE}${key.split(sep).join("/")}`] = readFileSync(full, "utf8");
-    }
+    end();
     return out;
+};
+const projectKey = (root, full) => {
+    const key = relative(root, full);
+    if (key === "" || key.startsWith("..") || isAbsolute(key) || statSync(full, { throwIfNoEntry: false })?.isFile() !== true)
+        return undefined;
+    return `${PROJECT_SOURCE}${key.split(sep).join("/")}`;
+};
+const addModule = (w, dir, spec) => {
+    const base = resolve(dir, spec);
+    const candidates = [base, ...EXTENSIONS.map((e) => base + e), ...(/\.[cm]?js$/.test(base) ? [base.replace(/js$/, "ts"), base.replace(/\.js$/, ".tsx")] : []), ...EXTENSIONS.map((e) => join(base, `index${e}`))];
+    const found = candidates.find((f) => statSync(f, { throwIfNoEntry: false })?.isFile() === true);
+    if (found !== undefined)
+        addFile(w, dir, found);
+};
+const addFile = (w, cwd, path) => {
+    if (path === "" || path.includes("$"))
+        return;
+    const full = resolve(cwd, path);
+    const key = projectKey(w.root, full);
+    if (key === undefined || key in w.out)
+        return;
+    const bytes = readFileSync(full);
+    w.out[key] = bytes.toString("latin1");
+    if (MODULE.test(full))
+        for (const m of bytes.toString("utf8").matchAll(IMPORT))
+            addModule(w, dirname(full), m[1]);
+};
+const runNpm = (w, name) => {
+    for (const n of [`pre${name}`, name, `post${name}`]) {
+        const key = `${PROJECT_SOURCE}package.json#scripts/${n}`;
+        const body = w.scripts[n];
+        if (typeof body !== "string" || key in w.out)
+            continue;
+        w.out[key] = body;
+        walk(w, body, w.root);
+    }
+};
+const simple = (w, words, cwd) => {
+    const start = words.findIndex((x) => !/^[A-Za-z_]\w*=/.test(x));
+    if (start === -1)
+        return cwd;
+    const [cmd, ...args] = words.slice(start);
+    if (cmd === "cd")
+        return args[0] === undefined || args[0].includes("$") ? cwd : resolve(cwd, args[0]);
+    if (cmd === "npm") {
+        const [sub, name] = args.filter((a) => !a.startsWith("-"));
+        if (sub !== undefined && NPM_RUN.has(sub) && name !== undefined)
+            runNpm(w, name);
+        else if (sub !== undefined && sub in NPM_ALIASES)
+            runNpm(w, NPM_ALIASES[sub]);
+        return cwd;
+    }
+    const via = cmd === "npx" && args[0] === "tsx" ? args.slice(1) : cmd === "deno" && args[0] === "run" ? args.slice(1) : INTERPRETERS.has(cmd) ? args : undefined;
+    if (via === undefined) {
+        if (cmd.includes("/"))
+            addFile(w, cwd, cmd);
+        return cwd;
+    }
+    for (let i = 0; i < via.length; i++) {
+        const a = via[i];
+        if (a === "-c" && SHELLS.has(cmd)) {
+            if (via[i + 1] !== undefined)
+                walk(w, via[i + 1], cwd);
+            break;
+        }
+        if (INLINE.has(a))
+            break;
+        if (a.startsWith("-"))
+            continue;
+        addFile(w, cwd, a);
+        break;
+    }
+    return cwd;
+};
+function walk(w, text, cwd) {
+    const stack = [];
+    let here = cwd;
+    let words = [];
+    const flush = () => {
+        if (words.length > 0)
+            here = simple(w, words, here);
+        words = [];
+    };
+    for (const t of lex(text)) {
+        if ("word" in t) {
+            words.push(t.word);
+            continue;
+        }
+        flush();
+        if (t.op === "(")
+            stack.push(here);
+        else if (t.op === ")")
+            here = stack.pop() ?? cwd;
+    }
+    flush();
+}
+export const commandSources = (root, command, sources, scripts = scriptsOf(root), record = ["", "/sources"]) => {
+    const w = { root, scripts, out: {} };
+    walk(w, command, root);
+    for (const path of sources) {
+        const key = projectKey(root, resolve(root, path));
+        if (key === undefined)
+            throw new RecordError(record[0], record[1], `${path} is not a file inside the project, so the lock cannot hash it. Next action: create ${path} in the project or remove it from sources, then run warden compile.`);
+        w.out[key] = readFileSync(resolve(root, path)).toString("latin1");
+    }
+    return w.out;
 };
 export const LOCK_PATH = ".warden/lock.json";
 export const sha256 = (content) => createHash("sha256").update(content).digest("hex");
