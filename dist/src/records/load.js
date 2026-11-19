@@ -104,6 +104,9 @@ export async function readPack(projectRoot, wardenRoot, id, configFile) {
         for (const g of practice.guardrails)
             g.packDir = resolve(dirname(file));
     }
+    pack.capabilities ??= [];
+    for (const capability of pack.capabilities)
+        capability.pack = pack.id;
     return { pack, source: inBundled !== undefined ? "bundled" : "local" };
 }
 const settingsAjv = new Ajv({ useDefaults: true });
