@@ -140,6 +140,14 @@ describe("pages render from API responses", () => {
     expect(stops).toMatch(/context-manager<\/td><td class="r">0<\/td><td class="r">1<\/td><td class="r">2<\/td>/);
   });
 
+  it("renders a run that stopped before its first step", () => {
+    const early = run({ run: "r-early", outcome: "error", result: undefined, exit: 2, steps: {}, next: "run warden check --base main", ratchet: undefined, rules: undefined });
+    const html = renderApp(state("run", { runs: { project: "context-manager", runs: [early] } }, { view: { run: "r-early", fresh: new Set() } }));
+    expect(html).toContain("Error before the first step");
+    expect(html).toContain("stopped before step 1");
+    expect(nextActions(html)).toEqual(["run warden check --base main"]);
+  });
+
   it("renders gate-off and unchecked-commit detections with their API next action and no lock art", () => {
     const open = [
       { project: "warden", root: "/p/w", file: "run r-9", detail: "gate-off", next: "run warden check at the commit tier without WARDEN_DAEMON=off" },

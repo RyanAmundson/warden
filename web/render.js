@@ -95,7 +95,7 @@ export const notPassing = (run) => !passed(run) && run.outcome !== "empty";
 
 export const stoppedAt = (run) => {
   const reached = STEPS.filter((s) => run.steps?.[s.id] !== undefined);
-  return reached.at(-1) ?? STEPS[0];
+  return reached.at(-1);
 };
 
 export const outcome = (run) => {
@@ -109,7 +109,7 @@ export const outcome = (run) => {
   if (run.outcome === "tampered") return { cls: "tamper", text: "Tampered", icon: true };
   if (run.outcome === "unstaged") return { cls: "err", text: "Unstaged", icon: true };
   if (run.outcome === "refused") return { cls: "err", text: "Refused", icon: true };
-  if (run.outcome === "error") return { cls: "err", text: `Error · ${stoppedAt(run).label}`, icon: true };
+  if (run.outcome === "error") return { cls: "err", text: stoppedAt(run) ? `Error · ${stoppedAt(run).label}` : "Error", icon: true };
   return { cls: "idle", text: run.outcome ?? "Unknown" };
 };
 
@@ -271,7 +271,7 @@ ${alertsSection(data)}
 };
 
 const stepsList = (run) => {
-  const stop = notPassing(run) ? stoppedAt(run).id : undefined;
+  const stop = notPassing(run) ? stoppedAt(run)?.id : undefined;
   let sum = 0;
   const items = STEPS.map((s, i) => {
     const v = run.steps?.[s.id];
@@ -340,8 +340,9 @@ const banner = (run) => {
   if (!notPassing(run)) return "";
   const o = outcome(run);
   const step = stoppedAt(run);
-  const title = run.outcome === "ran" ? `Blocked by ${plural(run.failures?.length ?? 0, "failure")}` : `${OUTCOME_TITLE[run.outcome] ?? run.outcome} at ${step.label}`;
-  const why = run.outcome === "ran" ? "The rules ran and found new violations in the changed files." : `Warden stopped at step ${STEPS.indexOf(step) + 1} of 4, so no rule ran.`;
+  const name = OUTCOME_TITLE[run.outcome] ?? run.outcome;
+  const title = run.outcome === "ran" ? `Blocked by ${plural(run.failures?.length ?? 0, "failure")}` : step ? `${name} at ${step.label}` : `${name} before the first step`;
+  const why = run.outcome === "ran" ? "The rules ran and found new violations in the changed files." : step ? `Warden stopped at step ${STEPS.indexOf(step) + 1} of 4, so no rule ran.` : "Warden stopped before its first step, so no rule ran.";
   return `<section class="banner ${run.outcome === "tampered" ? "red" : "amber"}" aria-labelledby="er-h"><div class="top">${tag(o)}<h2 id="er-h">${esc(title)}</h2></div><p>${esc(why)}</p>${run.next ? nextBox(run.next) : ""}</section>`;
 };
 
@@ -356,7 +357,7 @@ export const runPage = (state) => {
   const facts = [["Run", `<span class="mono">${esc(run.run)}</span>`], ["Commit", esc(run.commit?.slice(0, 12) ?? "–")], ["Base", esc(run.base ?? "–")], ["Merge base", esc(run.mergeBase?.slice(0, 12) ?? "–")], ["Rules", run.guardrails === undefined ? "–" : `${num(run.guardrails)}, ${num(run.cachedRules?.length ?? 0)} cached`], ["Ratchet", run.ratchet ? `${num(run.ratchet[0])} → ${num(run.ratchet[1])}` : "–"]];
   return `<header class="head"><div><a href="${href("runs", { project })}" style="font-size:12px;font-weight:600">Runs · ${esc(project)}</a><h1 class="h1">${esc(tierTitle(run))}</h1><div class="muted">${esc(runSub(run))}</div></div><div class="controls"><button class="btn" type="button" data-copy="${esc(run.run)}">Copy run id</button></div></header>
 ${banner(run)}
-<div class="split"><section class="mod wide" aria-labelledby="er-steps"><div class="modh"><h2 class="h2" id="er-steps">Steps</h2><span class="muted">${notPassing(run) && run.outcome !== "ran" ? `stopped at step ${reached} of 4` : `${reached} of 4 steps ran`}</span></div>${stepsList(run)}${failuresTable(run)}</section>
+<div class="split"><section class="mod wide" aria-labelledby="er-steps"><div class="modh"><h2 class="h2" id="er-steps">Steps</h2><span class="muted">${notPassing(run) && run.outcome !== "ran" ? (reached === 0 ? "stopped before step 1" : `stopped at step ${reached} of 4`) : `${reached} of 4 steps ran`}</span></div>${stepsList(run)}${failuresTable(run)}</section>
 <section class="mod narrow" aria-labelledby="er-run"><div class="modh"><h2 class="h2" id="er-run">Run</h2>${tag(outcome(run))}</div><dl class="facts">${facts.map(([k, v]) => `<dt class="lbl">${k}</dt><dd>${v}</dd>`).join("")}</dl></section></div>
 ${streak.length > 1 ? `<section class="mod" aria-labelledby="er-streak"><div class="modh"><h2 class="h2" id="er-streak">Same outcome, ${num(streak.length)} runs in a row</h2><span class="muted">since ${esc(clock(streak.at(-1).at))}${run.next ? " · each gave the same next action" : ""}</span></div><div class="scroll"><table><thead><tr><th scope="col">Time</th><th scope="col">Trigger</th><th scope="col">Tier</th><th scope="col" class="r">ms</th></tr></thead><tbody>${streak.map((r) => `<tr${r.run === run.run ? ' class="sel"' : ""}><td><a href="${href("run", { project, run: r.run })}">${esc(clock(r.at))}</a></td><td>${esc(trigger(r))}</td><td>${esc(r.tier ?? "–")}</td><td class="r">${ms(r.ms)}</td></tr>`).join("")}</tbody></table></div></section>` : ""}`;
 };
