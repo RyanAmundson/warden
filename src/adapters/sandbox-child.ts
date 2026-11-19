@@ -1,4 +1,5 @@
 import { readSync, writeSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -32,6 +33,8 @@ interface Failure {
   pointer: string;
   message: string;
 }
+
+const require = createRequire(import.meta.url);
 
 const pause = new Int32Array(new SharedArrayBuffer(4));
 
@@ -94,8 +97,9 @@ const load = async (e: Entry): Promise<unknown> => {
 
 const isFinding = (f: unknown): boolean => {
   if (typeof f !== "object" || f === null) return false;
-  const { file, message, line, doThis } = f as Record<string, unknown>;
-  return typeof file === "string" && typeof message === "string" && (line === undefined || typeof line === "number") && (doThis === undefined || typeof doThis === "string");
+  const { file, message, line, endLine, doThis } = f as Record<string, unknown>;
+  const lines = (line === undefined && endLine === undefined) || (Number.isInteger(line) && (endLine === undefined || (Number.isInteger(endLine) && (endLine as number) >= (line as number))));
+  return typeof file === "string" && typeof message === "string" && lines && (doThis === undefined || typeof doThis === "string");
 };
 
 const tree = async ({ entry, input }: TreeJob): Promise<unknown> => {
@@ -110,13 +114,15 @@ const tree = async ({ entry, input }: TreeJob): Promise<unknown> => {
   const start = performance.now();
   let found: unknown;
   try {
-    found = (check as (i: unknown) => unknown)({ ...input, read, ...(input.imports === undefined ? {} : { imports: new Map(input.imports) }) });
+    const given = { ...input, read, ...(input.imports === undefined ? {} : { imports: new Map(input.imports) }) };
+    Object.defineProperty(given, "ts", { get: () => require("typescript") as unknown, enumerable: true });
+    found = (check as (i: unknown) => unknown)(given);
   } catch (cause) {
     fail(entry, `${entry.implementation} in ${entry.file} threw: ${causeOf(cause)}`);
   }
   const ms = performance.now() - start;
   if (!Array.isArray(found) || !found.every(isFinding)) {
-    fail(entry, `${entry.implementation} in ${entry.file} returned ${Array.isArray(found) ? "a list with an item" : typeof found} that is not a finding of the form { file, message, line?, doThis? }`);
+    fail(entry, `${entry.implementation} in ${entry.file} returned ${Array.isArray(found) ? "a list with an item" : typeof found} that is not a finding of the form { file, message, line?, endLine?, doThis? }`);
   }
   return { found, ms };
 };

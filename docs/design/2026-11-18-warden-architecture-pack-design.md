@@ -482,7 +482,9 @@ another pack's code or results.
 - It may read only the pack folders it runs and Warden's own install, its code
   and its `node_modules`. It reads no project file directly. Warden sends the
   file names, a tree check's `read` asks Warden for each file's text, and
-  ESLint rules receive each file's text.
+  ESLint rules receive each file's text. A tree check's `ts` is the
+  TypeScript compiler API that Warden ships, loaded on first use, so a check
+  can parse the text that `read` returns.
 - It has no write access, no child processes, no worker threads, no native
   addons, no inspector, no WASI, no TCP, UDP, or DNS, and no `node:sqlite`
   (`--no-experimental-sqlite`), which would read and write databases around
@@ -494,7 +496,7 @@ another pack's code or results.
   Warden is killed by SIGINT, SIGTERM, or SIGKILL in the middle of a check.
   Warden also kills both when it exits normally.
 - A pack check that does not load, throws, or returns something other than a
-  list of `{ file, message, line?, doThis? }` findings is refused the same
+  list of `{ file, message, line?, endLine?, doThis? }` findings is refused the same
   way. So is an ESLint rule that throws.
 
 Two static checks remain, because they give a clearer error than a refused

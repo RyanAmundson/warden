@@ -16,6 +16,7 @@ export interface Edge {
 interface Found {
   file: string;
   line?: number;
+  endLine?: number;
   message: string;
   doThis?: string;
 }
@@ -53,7 +54,7 @@ const compilerOptions = async (root: string): Promise<import("typescript").Compi
   if (error !== undefined) {
     throw new RecordError(file, "", `does not parse: ${ts.flattenDiagnosticMessageText(error.messageText, "\n")}. Next action: fix ${file}, then run the same warden command again.`);
   }
-  return { ...ts.parseJsonConfigFileContent(config, ts.sys, root).options, allowJs: true };
+  return { ...ts.parseJsonConfigFileContent(config, { ...ts.sys, readDirectory: () => [] }, root).options, allowJs: true };
 };
 
 export async function importGraph(root: string, files: string[], read: (file: string) => string): Promise<Map<string, Edge[]>> {
@@ -119,7 +120,7 @@ const treeAdapter = (id: "fs" | "graph"): Adapter => ({
           const file = join(g.packDir as string, `${id}.js`);
           throw new RecordError(file, "", `${g.implementation} reported ${v.file}, which is not one of the files it was given. Next action: make ${g.implementation} in ${file} report only files from its input, then run warden compile.`);
         }
-        return { guardrail: g.id, file: v.file, line: v.line ?? 1, message: v.message, ...(v.doThis === undefined ? {} : { doThis: v.doThis }) };
+        return { guardrail: g.id, file: v.file, line: v.line ?? 1, ...(v.endLine === undefined ? {} : { endLine: v.endLine }), message: v.message, ...(v.doThis === undefined ? {} : { doThis: v.doThis }) };
       });
       out.push({ guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms: graphMs + ms });
     }

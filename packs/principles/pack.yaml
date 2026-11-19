@@ -1,6 +1,11 @@
 id: principles
 layer: 2
 terms: []
+settings:
+  type: object
+  additionalProperties: false
+  properties:
+    contractExports: { type: array, items: { type: string, minLength: 1 }, default: [] }
 practices:
   - id: small-functions
     statement: Functions stay small. Complexity at most 10, so at most 9 decisions such as if, loop, case, ?:, &&, ||, and ??; at most 3 levels of nesting, 50 lines, and 4 parameters.
@@ -69,7 +74,7 @@ practices:
         mustFail: "export class A {}\nexport class B {}\n"
         mustPass: "export class A {}\n"
   - id: no-unused-code
-    statement: Code declares nothing it does not use. No unused local, no useless constructor, and no unused private member.
+    statement: Code declares nothing it does not use. No unused local, no unused parameter or type parameter, no useless constructor, and no unused private member.
     terms: []
     paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"]
     conflictsWith: []
@@ -99,3 +104,78 @@ practices:
         implementation: "eslint:no-unused-private-class-members"
         mustFail: "export class A {\n  #x = 1;\n}\n"
         mustPass: "export class A {\n  #x = 1;\n  get x(): number {\n    return this.#x;\n  }\n}\n"
+      - id: principles-unused-parameters
+        kind: type
+        runs: [commit]
+        budgetMs: 60000
+        version: 1
+        implementation: "tsc:noUnusedParameters"
+        mustFail: "export const f = (unused: number): number => 1;\n"
+        mustPass: "export const f = (used: number): number => used;\n"
+  - id: no-repeated-code
+    statement: No block of 8 or more significant lines appears twice. A significant line has a letter or digit, and is not a comment or part of an import or export list; test, spec, story, and declaration files are not read.
+    terms: []
+    paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"]
+    conflictsWith: []
+    guardrails:
+      - id: principles-duplicate-blocks
+        kind: lint
+        runs: [boundary]
+        budgetMs: 5000
+        version: 1
+        implementation: "fs:principles/duplicate-blocks"
+        mustFail:
+          src/a.ts: "export const a = (n: number): number => {\n  const x1 = n + 1;\n  const x2 = x1 * 2;\n  const x3 = x2 - 3;\n  const x4 = x3 / 4;\n  const x5 = x4 % 5;\n  const x6 = x5 + 6;\n  const x7 = x6 * 7;\n  return x7;\n};\n"
+          src/b.ts: "export const b = (n: number): number => {\n  const x1 = n + 1;\n  const x2 = x1 * 2;\n  const x3 = x2 - 3;\n  const x4 = x3 / 4;\n  const x5 = x4 % 5;\n  const x6 = x5 + 6;\n  const x7 = x6 * 7;\n  return x7;\n};\n"
+        mustPass:
+          src/a.ts: "export default (n: number): number => n + 1;\n"
+          src/b.ts: "import step from \"./a\";\nconsole.log(step(1));\n"
+  - id: no-speculative-code
+    statement: Code builds nothing ahead of need. Every export of a file that another file imports is imported by another file, since a file nothing imports is an entry point whose exports are its interface, and an interface has more than one implementing class unless it sits in a port, the file named after its group folder inside a bracketed collection. Test, spec, and story files count as users but are not checked, export-star barrels count as uses, and names a framework requires, such as metadata, GET, and loader, are exempt.
+    terms: []
+    paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"]
+    conflictsWith: []
+    guardrails:
+      - id: principles-unused-exports
+        kind: lint
+        runs: [boundary]
+        budgetMs: 5000
+        version: 1
+        implementation: "graph:principles/unused-exports"
+        mustFail:
+          src/a.ts: "export const step = (n: number): number => n + 1;\nexport const twice = (n: number): number => n * 2;\n"
+          src/b.ts: "import { step } from \"./a\";\nconsole.log(step(1));\n"
+        mustPass:
+          src/a.ts: "export const step = (n: number): number => n + 1;\n"
+          src/b.ts: "import { step } from \"./a\";\nconsole.log(step(1));\n"
+      - id: principles-single-implementation
+        kind: lint
+        runs: [boundary]
+        budgetMs: 5000
+        version: 1
+        implementation: "fs:principles/single-implementation"
+        mustFail:
+          src/shape.ts: "export interface Shape {\n  area(): number;\n}\n"
+          src/square.ts: "import type { Shape } from \"./shape\";\nexport class Square implements Shape {\n  area(): number {\n    return 1;\n  }\n}\n"
+        mustPass:
+          src/shape.ts: "export interface Shape {\n  area(): number;\n}\n"
+          src/square.ts: "import type { Shape } from \"./shape\";\nexport class Square implements Shape {\n  area(): number {\n    return 1;\n  }\n}\n"
+          src/circle.ts: "import type { Shape } from \"./shape\";\nexport class Circle implements Shape {\n  area(): number {\n    return 3;\n  }\n}\n"
+  - id: one-home-per-name
+    statement: Each exported name is declared in one file, and other files import it from there. Re-exports and default exports are not declarations; names a framework requires, such as metadata, GET, and loader, and names the project lists in the contractExports setting, are exempt; create files, test, spec, story, and declaration files are not read.
+    terms: []
+    paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"]
+    conflictsWith: []
+    guardrails:
+      - id: principles-duplicate-exports
+        kind: lint
+        runs: [boundary]
+        budgetMs: 5000
+        version: 1
+        implementation: "fs:principles/duplicate-exports"
+        mustFail:
+          src/a.ts: "export const step = (n: number): number => n + 1;\n"
+          src/b.ts: "export const step = (n: number): number => n + 2;\n"
+        mustPass:
+          src/a.ts: "export default (n: number): number => n + 1;\n"
+          src/index.ts: "export { default as step } from \"./a\";\n"
