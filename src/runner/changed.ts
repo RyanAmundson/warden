@@ -1,9 +1,24 @@
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { existsSync, readdirSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { RecordError } from "../records/load.js";
+
+const noGrafts = join(tmpdir(), `warden-no-grafts-${randomUUID()}`);
+
+const env = (): NodeJS.ProcessEnv => ({
+  ...process.env,
+  GIT_NO_REPLACE_OBJECTS: "1",
+  GIT_GRAFT_FILE: noGrafts,
+  GIT_CONFIG_COUNT: "1",
+  GIT_CONFIG_KEY_0: "core.commitGraph",
+  GIT_CONFIG_VALUE_0: "false",
+});
 
 const git = (root: string, args: string[]): { ok: boolean; out: string; err: string } => {
   try {
-    return { ok: true, out: execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }), err: "" };
+    return { ok: true, out: execFileSync("git", args, { cwd: root, env: env(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }), err: "" };
   } catch (cause) {
     const e = cause as { status?: number | null; stdout?: string; stderr?: string };
     if (typeof e.status !== "number") throw cause;
@@ -70,7 +85,7 @@ export const containsHead = (root: string, ref: string): boolean => git(root, ["
 export function historyOf(root: string, path: string): string[] {
   const commits = names(must(root, ["log", "-z", "--full-history", "--format=%H", "HEAD", "--", path]));
   if (commits.length === 0) return [];
-  const out = execFileSync("git", ["cat-file", "--batch"], { cwd: root, input: commits.map((sha) => `${sha}:./${path}\n`).join(""), maxBuffer: 1 << 30, stdio: ["pipe", "pipe", "pipe"] });
+  const out = execFileSync("git", ["cat-file", "--batch"], { cwd: root, env: env(), input: commits.map((sha) => `${sha}:./${path}\n`).join(""), maxBuffer: 1 << 30, stdio: ["pipe", "pipe", "pipe"] });
   const texts: string[] = [];
   for (let at = 0; at < out.length; ) {
     const end = out.indexOf(10, at);
@@ -89,6 +104,10 @@ export const stageFile = (root: string, path: string): void => {
 };
 
 export const unstagedFiles = (root: string): string[] => names(must(root, ["diff", "-z", "--name-only", "--relative"]));
+
+export const trackedFiles = (root: string, paths: string[]): Set<string> => new Set(paths.length === 0 ? [] : names(must(root, ["--literal-pathspecs", "ls-files", "-z", "--cached", "--", ...paths])));
+
+export const stagedFiles = (root: string): string[] => names(must(root, ["diff", "-z", "--name-only", "--relative", "--cached", "HEAD"]));
 
 export function lastCommittedText(root: string, path: string): string | undefined {
   if (!isRepository(root)) return undefined;
@@ -148,4 +167,50 @@ export function showAtMergeBase(root: string, base: string, path: string): strin
   const spec = `${mergeBase(root, base)}:./${path}`;
   if (!git(root, ["cat-file", "-e", spec]).ok) return undefined;
   return must(root, ["show", spec]);
+}
+
+export interface Restore {
+  base: string;
+  paths: string[];
+  known: string[];
+  stray: string[];
+  aliased: boolean;
+}
+
+export interface Signatures {
+  files: Map<string, string>;
+  restore: Restore;
+}
+
+export function changeSignatures(root: string, base: string, dir: string, allowedSignersFile: string, staged: boolean, alongside: string[]): Signatures {
+  const at = mergeBase(root, base);
+  const spec = `:(literal${git(root, ["config", "--bool", "core.ignorecase"]).out.trim() === "true" ? ",icase" : ""})${dir}`;
+  const diff = (...trees: string[]): string[] => names(must(root, ["diff", "-z", "--name-only", "--no-renames", "--ignore-submodules=none", "--relative", ...trees, "--", spec]));
+  const committed = diff(at, "HEAD");
+  const judged = staged ? diff("--cached", at) : committed;
+  const scope = [...new Set([...committed, ...judged])];
+  const files = new Map<string, string>();
+  if (scope.length === 0) return { files, restore: { base: at, paths: [], known: [], stray: [], aliased: false } };
+  const verify = ["-c", "gpg.ssh.program=ssh-keygen", "-c", "gpg.program=false", "-c", "gpg.x509.program=false", "-c", `gpg.ssh.allowedSignersFile=${allowedSignersFile}`, "--literal-pathspecs"];
+  const mark = `\x01${randomUUID()}`;
+  const log = must(root, [...verify, "log", "-z", "--topo-order", "--diff-merges=dense-combined", "--no-renames", "--ignore-submodules=none", "--relative", "--name-only", `--format=${mark}%G?`, `${at}..HEAD`, "--", ...scope]);
+  const seen = new Set<string>();
+  const bad = new Map<string, string>();
+  for (const entry of log.split(mark).slice(1)) {
+    const end = entry.search(/[\n\0]/);
+    const status = entry[0] as string;
+    for (const path of names(entry.slice(end + 1).replace(/^\n/, ""))) {
+      seen.add(path);
+      if (status !== "G" && !bad.has(path)) bad.set(path, status);
+    }
+  }
+  for (const path of committed) if (!seen.has(path)) bad.set(path, "N");
+  for (const path of judged) if (bad.has(path)) files.set(path, bad.get(path) as string);
+  const paths = [...new Set([...bad.keys(), ...scope.filter((p) => alongside.includes(p))])].sort();
+  const listed = (args: string[]): string[] => (paths.length === 0 ? [] : names(must(root, ["--literal-pathspecs", ...args, "--", ...paths])));
+  const known = [...new Set([...listed(["ls-tree", "-r", "-z", "--name-only", "--full-tree", at]), ...listed(["ls-files", "-z", "--cached"])])].sort();
+  const onDisk = (p: string): boolean => existsSync(join(root, dirname(p))) && readdirSync(join(root, dirname(p))).includes(basename(p));
+  const stray = paths.filter((p) => !known.includes(p) && onDisk(p));
+  const aliased = new Set(paths.map((p) => p.toLowerCase())).size < paths.length;
+  return { files, restore: { base: at, paths, known, stray, aliased } };
 }
