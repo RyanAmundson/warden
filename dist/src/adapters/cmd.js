@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { dirname, resolve as resolvePath } from "node:path";
 import { Worker } from "node:worker_threads";
+import { RecordError } from "../records/load.js";
 const killGroup = (pid) => {
     try {
         process.kill(-pid, "SIGKILL");
@@ -125,6 +126,11 @@ const runOne = async (g, ctx) => {
         return { guardrail: g.id, status: "killed", violations: [], ms, command };
     if (code === 0)
         return { guardrail: g.id, status: "pass", violations: [], ms };
+    if (code === 2) {
+        const last = tail(output).at(-1) ?? "";
+        const said = last.includes("Next action:") ? last : `${last === "" ? "it printed nothing" : last}. Next action: run \`${command}\` and fix what it reports.`;
+        throw new RecordError("", `/guardrails/${g.id}/implementation`, `${command} exited with 2, an error in its environment or usage, not a violation: ${said}`);
+    }
     return {
         guardrail: g.id,
         status: "fail",

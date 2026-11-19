@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { dirname, resolve as resolvePath } from "node:path";
 import { Worker } from "node:worker_threads";
+import { RecordError } from "../records/load.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
 import type { Adapter, RunContext, RunResult } from "./types.js";
 
@@ -145,6 +146,11 @@ const runOne = async (g: Guardrail, ctx: RunContext): Promise<RunResult> => {
   const { code, killed, ms, output } = await (words === undefined ? spawnBudgeted(command, [], ctx.root, budgetMs, true, ctx.signal) : runInProcess(words, ctx.root, budgetMs, ctx.signal));
   if (killed) return { guardrail: g.id, status: "killed", violations: [], ms, command };
   if (code === 0) return { guardrail: g.id, status: "pass", violations: [], ms };
+  if (code === 2) {
+    const last = tail(output).at(-1) ?? "";
+    const said = last.includes("Next action:") ? last : `${last === "" ? "it printed nothing" : last}. Next action: run \`${command}\` and fix what it reports.`;
+    throw new RecordError("", `/guardrails/${g.id}/implementation`, `${command} exited with 2, an error in its environment or usage, not a violation: ${said}`);
+  }
   return {
     guardrail: g.id,
     status: "fail",

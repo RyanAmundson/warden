@@ -87,15 +87,14 @@ describe("collection-folders pack", () => {
     expect((await run("warden-collection-holds-only-folders"))?.violations[0]?.message).toContain("src/[widgets]/stray.ts is a file directly inside a collection");
   });
 
-  it("without git on PATH fails with one next action instead of a stack trace", async () => {
+  it("without git on PATH stops with exit 2 and one next action instead of a Guardrail failure", async () => {
     const bin = join(root, ".bin");
     await mkdir(bin);
     await symlink(process.execPath, join(bin, "node"));
     vi.stubEnv("PATH", bin);
     await write("src/[widgets]/button/index.ts");
     for (const g of guardrails) {
-      const lines = (await run(g.id))?.violations[0]?.message.split("\n") ?? [];
-      expect(lines.slice(1)).toEqual(["git is not on PATH, so the files cannot be listed. Next action: install git so that it is on PATH."]);
+      await expect(run(g.id)).rejects.toMatchObject({ name: "RecordError", message: expect.stringMatching(/exited with 2, an error in its environment or usage, not a violation: git is not on PATH, so the files cannot be listed\. Next action: install git so that it is on PATH\.$/) });
     }
   });
 

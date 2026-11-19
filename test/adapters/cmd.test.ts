@@ -107,6 +107,17 @@ describe("cmd adapter", () => {
     expect(nodeScript("nodemon a.cjs")).toBeUndefined();
   });
 
+  it("a command that exits 2 is an environment or usage error that keeps its last line's next action, or names one", async () => {
+    await expect(cmdAdapter.run([legacy("cmd:echo noise; echo 'no git. Next action: install git.'; exit 2")], [], ctx)).rejects.toMatchObject({
+      name: "RecordError",
+      pointer: "/guardrails/g/implementation",
+      message: "echo noise; echo 'no git. Next action: install git.'; exit 2 exited with 2, an error in its environment or usage, not a violation: no git. Next action: install git.",
+    });
+    await expect(cmdAdapter.run([legacy("cmd:exit 2")], [], ctx)).rejects.toMatchObject({
+      message: "exit 2 exited with 2, an error in its environment or usage, not a violation: it printed nothing. Next action: run `exit 2` and fix what it reports.",
+    });
+  });
+
   it("emits nothing", () => {
     expect(cmdAdapter.emit([legacy("cmd:true")], emptySet)).toEqual({});
   });

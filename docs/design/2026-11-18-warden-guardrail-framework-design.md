@@ -283,7 +283,10 @@ arguments runs the script in a worker thread inside Warden rather than a new
 Node process, and the budget stops the worker. The script sees the project
 root as `process.cwd()`, its arguments in `process.argv`, and its exit code
 as the verdict, but it cannot call `process.chdir`, so it resolves every
-relative path against `process.cwd()`. A `cmd` Guardrail reports one project-wide result, so
+relative path against `process.cwd()`. A `cmd` command that exits 2 reports
+an error in its environment or usage, not a violation: Warden exits 2 with the
+command's last output line as the next action, or tells you to run the command
+when that line has none. A `cmd` Guardrail reports one project-wide result, so
 compile refuses one whose kind is `lint`; moving such a Guardrail from `lint`
 to `runtime` is not weakening, since its `lint` result never failed. Because every adapter normalizes to the same Violation, the
 baseline, cache, budgets, Evidence, and report work the same for every tool.
