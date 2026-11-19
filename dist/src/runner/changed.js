@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { existsSync, readdirSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { lstatSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { RecordError } from "../records/load.js";
 const noGrafts = join(tmpdir(), `warden-no-grafts-${randomUUID()}`);
 const env = () => ({
@@ -185,8 +185,23 @@ export function changeSignatures(root, base, dir, allowedSignersFile, staged, al
     const paths = [...new Set([...bad.keys(), ...scope.filter((p) => alongside.includes(p))])].sort();
     const listed = (args) => (paths.length === 0 ? [] : names(must(root, ["--literal-pathspecs", ...args, "--", ...paths])));
     const known = [...new Set([...listed(["ls-tree", "-r", "-z", "--name-only", "--full-tree", at]), ...listed(["ls-files", "-z", "--cached"])])].sort();
-    const onDisk = (p) => existsSync(join(root, dirname(p))) && readdirSync(join(root, dirname(p))).includes(basename(p));
-    const stray = paths.filter((p) => !known.includes(p) && onDisk(p));
+    const removable = (p) => {
+        const parts = p.split("/");
+        for (let i = 1; i <= parts.length; i++) {
+            const at = parts.slice(0, i).join("/");
+            if (!readdirSync(join(root, dirname(at))).includes(parts[i - 1]))
+                return undefined;
+            const entry = lstatSync(join(root, at));
+            if (i === parts.length)
+                return at;
+            if (entry.isSymbolicLink())
+                return i === 1 ? undefined : at;
+            if (!entry.isDirectory())
+                return undefined;
+        }
+        return undefined;
+    };
+    const stray = [...new Set(paths.filter((p) => !known.includes(p)).map(removable).filter((p) => p !== undefined))].sort();
     const aliased = new Set(paths.map((p) => p.toLowerCase())).size < paths.length;
     return { files, restore: { base: at, paths, known, stray, aliased } };
 }

@@ -2351,6 +2351,50 @@ describe("signed .warden changes", () => {
     expect((await check({}, false)).code).toBe(0);
   });
 
+  const outside = async (): Promise<string> => {
+    const dir = await realpath(await mkdtemp(join(tmpdir(), "warden-outside-")));
+    await writeFile(join(dir, "file"), "precious\n");
+    await writeFile(join(dir, "-rf x"), "precious\n");
+    return dir;
+  };
+
+  it("the restore never deletes a file outside .warden through a symlinked parent folder", async () => {
+    await write(".warden/sub/file", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "add sub/file unsigned");
+    git("rm", "-r", "-q", "--cached", ".warden/sub");
+    await rm(join(root, ".warden/sub"), { recursive: true });
+    const dir = await outside();
+    try {
+      await symlink(dir, join(root, ".warden/sub"));
+      const { code, out } = await check({}, false);
+      expect(code).toBe(1);
+      expect(out).toContain("Next action: run rm -rf -- '.warden/sub' && ");
+      await follow(out);
+      expect((await readdir(dir)).sort()).toEqual(["-rf x", "file"]);
+      expect(existsSync(join(root, ".warden/sub"))).toBe(false);
+      expect((await check({}, false)).code).toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("the restore removes hostile untracked names literally and touches nothing else", async () => {
+    const names = [".warden/-rf x", ".warden/a b", ".warden/$(touch PWNED)", ".warden/q'uote", ".warden/..dots", ".warden/-", ".warden/*"];
+    for (const n of names) await write(n, "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "hostile unsigned");
+    git("--literal-pathspecs", "rm", "-q", "--cached", "--", ...names);
+    await write("keep.txt", "keep\n");
+    const { code, out } = await check({}, false);
+    expect(code).toBe(1);
+    await follow(out);
+    expect((await check({}, false)).code).toBe(0);
+    expect(existsSync(join(root, "PWNED")) || existsSync(join(root, ".warden/PWNED"))).toBe(false);
+    expect(await read("keep.txt")).toBe("keep\n");
+    expect((await readdir(join(root, ".warden"))).filter((n) => names.includes(`.warden/${n}`))).toEqual([]);
+  });
+
   it("the hook still refuses a plain partial commit whose unstaged files would fail a commit-tier guardrail", async () => {
     git("checkout", "-q", "main");
     await addLegacy("commit", 'test ! -e broken && test "$(cat x.ts 2>/dev/null)" = "$(cat y.ts 2>/dev/null)"', 5000);
