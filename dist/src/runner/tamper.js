@@ -52,9 +52,15 @@ export function readBaseLock(root, base) {
     const text = showAtMergeBase(root, base, LOCK_PATH);
     if (text === undefined)
         return undefined;
-    const before = JSON.parse(text);
+    let before;
+    try {
+        before = JSON.parse(text);
+    }
+    catch (cause) {
+        throw new RecordError(LOCK_PATH, "", `at the merge base with ${base} is not valid JSON (${cause.message}). Next action: run warden compile on ${base} and commit the lock there, merge ${base} into this branch, then run warden check --base ${base} again.`);
+    }
     if ((before.format ?? 0) > LOCK_FORMAT) {
-        throw new RecordError(LOCK_PATH, "/format", `the lock at the merge base with ${base} has format ${before.format}; this Warden reads formats up to ${LOCK_FORMAT}. Next action: update this project's Warden to the release that wrote the lock on ${base}, then run warden check --base ${base} again.`);
+        throw new RecordError(LOCK_PATH, "/format", `the lock at the merge base with ${base} has format ${before.format}; this Warden reads formats up to ${LOCK_FORMAT}. Next action: install Warden ${before.warden}, the release that wrote the lock on ${base}, then run warden check --base ${base} again.`);
     }
     return before;
 }
@@ -98,7 +104,8 @@ const loosened = (root, base, lock) => {
         const now = lock.guardrails[id];
         const known = now !== undefined && g.kind !== undefined;
         const stronger = known && g.kind === "instruction" && kindRank(now.kind) < kindRank(g.kind);
-        if (known && kindRank(now.kind) > kindRank(g.kind))
+        const cmdLintToRuntime = known && g.kind === "lint" && now.kind === "runtime" && g.implementation.startsWith("cmd:");
+        if (known && !cmdLintToRuntime && kindRank(now.kind) > kindRank(g.kind))
             found.push({ file: LOCK_PATH, detail: "weakened-kind", guardrail: id, was: g.kind });
         const weaker = now === undefined ||
             now.budgetMs > g.budgetMs ||

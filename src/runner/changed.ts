@@ -13,6 +13,8 @@ const git = (root: string, args: string[]): { ok: boolean; out: string; err: str
 
 const names = (text: string): string[] => text.split("\0").filter((l) => l !== "");
 
+export const hasCommit = (root: string, ref: string): boolean => git(root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]).ok;
+
 const must = (root: string, args: string[]): string => {
   const r = git(root, args);
   if (!r.ok) throw new Error(`git ${args.join(" ")} failed: ${r.err.trim()}`);
@@ -21,19 +23,31 @@ const must = (root: string, args: string[]): string => {
 
 export const isRepository = (root: string): boolean => git(root, ["rev-parse", "--is-inside-work-tree"]).ok;
 
-export const CHECK_BASE_ACTION = "run warden check --base <an existing branch>";
+export interface MissingBase {
+  base: string;
+  tracking?: string;
+  remote?: string;
+}
 
-export function verifyBase(root: string, base: string, action: string): void {
+export const checkBaseAction = ({ base, tracking, remote }: MissingBase): string => {
+  if (tracking !== undefined) return `run git branch ${base} ${tracking}, then run the same warden command again`;
+  if (remote !== undefined) return `run git fetch ${remote} ${base}:${base}, then run the same warden command again`;
+  return "run warden check --base <an existing branch>";
+};
+
+export function verifyBase(root: string, base: string, action: (missing: MissingBase) => string): void {
   if (!isRepository(root)) {
     throw new RecordError(root, "", "not a git repository");
   }
-  if (!git(root, ["rev-parse", "--verify", "--quiet", `${base}^{commit}`]).ok) {
-    throw new RecordError("", "/base", `base ref "${base}" does not exist. Next action: ${action}`);
-  }
+  if (hasCommit(root, base)) return;
+  const lines = (args: string[]): string[] => must(root, args).split("\n").filter((l) => l !== "");
+  const tracking = lines(["for-each-ref", "--format=%(refname:lstrip=2)", `refs/remotes/*/${base}`])[0];
+  const remote = tracking === undefined ? lines(["remote"]).find((r) => git(root, ["ls-remote", "--exit-code", "--heads", r, base]).ok) : undefined;
+  throw new RecordError("", "/base", `base ref "${base}" does not exist. Next action: ${action({ base, ...(tracking === undefined ? {} : { tracking }), ...(remote === undefined ? {} : { remote }) })}`);
 }
 
 export function changedFiles(root: string, base: string): string[] {
-  verifyBase(root, base, CHECK_BASE_ACTION);
+  verifyBase(root, base, checkBaseAction);
   const diff = ["diff", "-z", "--name-only", "--relative", "--diff-filter=ACMR"];
   const files = [
     ...names(must(root, [...diff, `${base}...HEAD`])),
@@ -52,7 +66,7 @@ export const headCommit = (root: string): string | undefined => {
 export const containsHead = (root: string, ref: string): boolean => git(root, ["merge-base", "--is-ancestor", "HEAD", ref]).ok;
 
 export function historyOf(root: string, path: string): string[] {
-  const commits = names(must(root, ["log", "-z", "--format=%H", "HEAD", "--", path]));
+  const commits = names(must(root, ["log", "-z", "--full-history", "--format=%H", "HEAD", "--", path]));
   if (commits.length === 0) return [];
   const out = execFileSync("git", ["cat-file", "--batch"], { cwd: root, input: commits.map((sha) => `${sha}:./${path}\n`).join(""), maxBuffer: 1 << 30, stdio: ["pipe", "pipe", "pipe"] });
   const texts: string[] = [];
@@ -84,7 +98,7 @@ export function lastCommittedText(root: string, path: string): string | undefine
   return before.ok ? before.out : undefined;
 }
 
-const mergeBase = (root: string, base: string): string => {
+export const mergeBase = (root: string, base: string): string => {
   const r = git(root, ["merge-base", base, "HEAD"]);
   if (r.ok) return r.out.trim();
   if (git(root, ["rev-parse", "--is-shallow-repository"]).out.trim() === "true") {

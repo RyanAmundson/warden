@@ -1,5 +1,8 @@
 import { RANK, benchSubject, pointsText, prefixOf, subjectsOf } from "../compiler/bench.js";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { wardenVersion } from "../compiler/compile.js";
+import { LOCK_PATH, canonicalJson, readLock } from "../compiler/lock.js";
 import { RecordError, loadRecords } from "../records/load.js";
 import { benchSettings } from "../records/types.js";
 import { ESLINT_PASS, appendEvidence } from "../runner/evidence.js";
@@ -20,6 +23,9 @@ export async function runBench(root, wardenRoot, opts) {
     try {
         const set = await loadRecords(root, wardenRoot);
         const cfg = benchSettings(set.config);
+        if (existsSync(join(root, LOCK_PATH)) && canonicalJson(readLock(root).config.bench ?? null) !== canonicalJson(cfg)) {
+            throw new RecordError(LOCK_PATH, "/config/bench", "holds bench settings that differ from .warden/config.yaml, which changed without a compile. Next action: run warden compile, then run warden bench again.");
+        }
         const subjects = subjectsOf(set, select(set, opts.rule, opts.pack));
         const warden = await wardenVersion(wardenRoot);
         const at = new Date().toISOString();

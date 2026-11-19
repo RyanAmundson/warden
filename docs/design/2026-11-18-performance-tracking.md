@@ -157,6 +157,12 @@ writes N copies of the Guardrail's `mustPass` example:
   the Guardrail. If one fails, it exits 2 with a next action that names the
   Guardrail. A fixture that stops matching the Guardrail's paths would
   otherwise give a false fast result.
+- Known limit: a `cmd` Guardrail is exempt from the paths check, because
+  its command, not a path glob, decides what it reads. A command that reads
+  only its example's own paths never reads the `bench-<i>/` copies, so its
+  time does not grow and the benchmark reports `constant`. Read a `constant`
+  verdict on a `cmd` Guardrail as unmeasured unless its command reads every
+  copy, for example by walking the project tree.
 
 Sizes are `base × 1, 2, 4, 8` files, where `base` is a config setting with a
 default of 25. That makes 25, 50, 100, and 200 files. For the whole-tree

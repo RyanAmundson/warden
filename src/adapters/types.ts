@@ -34,6 +34,7 @@ export interface RunContext {
   generatedDir: string;
   unbudgeted?: boolean;
   signal?: AbortSignal;
+  packDirs?: ReadonlyMap<string, string>;
   onGroup?: (adapter: string, guardrails: string[]) => void;
 }
 
