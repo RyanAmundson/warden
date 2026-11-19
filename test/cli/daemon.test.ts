@@ -104,8 +104,8 @@ afterEach(async () => {
 
 afterAll(restore);
 
-const start = async (): Promise<Served> => {
-  served = await serve(wardenRoot, 0, { intervalMs: 200, debounceMs: 20 });
+const start = async (port = 0): Promise<Served> => {
+  served = await serve(wardenRoot, port, { intervalMs: 200, debounceMs: 20 });
   await served.daemon.settled();
   return served;
 };
@@ -494,12 +494,13 @@ it("asks the owner to trust a published unstampable commit instead of naming a r
   await until("the commit is flagged", () => unchecked(s).includes(pushed));
   git(root, "push", "-q", "origin", "main");
   await s.daemon.rescan();
-  expect(openAlerts(root).find((d) => d.file === pushed)?.next).toBe(`ask the repository owner to stop the daemon with warden daemon uninstall, add commit ${pushed} with a reason to the trusted list of ${realpathSync(join(root, ".git"))} in ${stateFile()}, and start it again with warden daemon install, because it is published in refs/remotes/origin/main and ${why}`);
+  expect(openAlerts(root).find((d) => d.file === pushed)?.next).toBe(`ask the repository owner to stop the daemon with warden daemon uninstall, add commit ${pushed} with a reason to the trusted list of ${realpathSync(join(root, ".git"))} in ${stateFile()}, and start it again with warden daemon install --port ${s.port}, because it is published in refs/remotes/origin/main and ${why}`);
   await stop();
   const saved = JSON.parse(readFileSync(stateFile(), "utf8")) as { repos: Record<string, Record<string, unknown>> };
   (saved.repos[realpathSync(join(root, ".git"))] as Record<string, unknown>).trusted = [{ commit: pushed, reason: "owner reviewed it", at: new Date().toISOString() }];
   await writeFile(stateFile(), JSON.stringify(saved));
-  const again = await start();
+  const again = await start(s.port);
+  expect(again.port).toBe(s.port);
   expect(unchecked(again)).toEqual([]);
 });
 

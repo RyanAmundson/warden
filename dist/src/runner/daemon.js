@@ -141,19 +141,19 @@ const stampingVersion = (root, c, running) => {
     const version = lockVersionAt(root, c.commit);
     return version === undefined || !/^\d+\.\d+\.\d+$/.test(version) || olderThan(version, FIRST_STAMPING) || olderThan(running, version) ? undefined : version;
 };
-const unstampable = (root, repo, c, running) => {
+const unstampable = (root, repo, c, running, port) => {
     const why = `its ${LOCK_PATH} is missing, unreadable, older than Warden ${FIRST_STAMPING}, or newer than this daemon's Warden ${running}, so no release can stamp it`;
     const holders = holdersOf(root, c.commit);
     const published = holders.filter((h) => h.startsWith("refs/remotes/"));
     if (published.length > 0)
-        return `ask the repository owner to stop the daemon with warden daemon uninstall, add commit ${c.commit} with a reason to the trusted list of ${repo} in ${stateFile()}, and start it again with warden daemon install, because it is published in ${published.join(", ")} and ${why}`;
+        return `ask the repository owner to stop the daemon with warden daemon uninstall, add commit ${c.commit} with a reason to the trusted list of ${repo} in ${stateFile()}, and start it again with warden daemon install --port ${port}, because it is published in ${published.join(", ")} and ${why}`;
     return `remove commit ${c.commit.slice(0, 12)} from ${holders.join(", ")} by resetting or deleting each, because ${why}; then make its change again in a new commit with the hook`;
 };
-const uncheckedAlert = (root, repo, c, base, running) => {
+const uncheckedAlert = (root, repo, c, base, running, port) => {
     const short = c.commit.slice(0, 12);
     const version = stampingVersion(root, c, running);
     if (version === undefined)
-        return { file: c.commit, detail: "unchecked-commit", next: unstampable(root, repo, c, running) };
+        return { file: c.commit, detail: "unchecked-commit", next: unstampable(root, repo, c, running, port) };
     const warden = version === running ? "warden" : `npx --yes --package=${RELEASES}#v${version} warden`;
     const next = c.parents[0] === undefined
         ? `run git switch -c warden-check-${short} ${base}, then git read-tree -u --reset ${short}, then ${warden} check --base ${base}`
@@ -244,7 +244,7 @@ export function startWatching(opts) {
         for (const c of unchecked)
             flagged.add(c.commit);
         state.repos[w.repo] = { tips, unchecked, boundary, flagged: [...flagged], ...(known?.trusted === undefined ? {} : { trusted: known.trusted }) };
-        return unchecked.map((c) => uncheckedAlert(w.root, w.repo, c, base, running));
+        return unchecked.map((c) => uncheckedAlert(w.root, w.repo, c, base, running, opts.port));
     };
     const scanRoot = async (w) => {
         const own = (state.roots[w.root] ??= { open: [] });
