@@ -137,3 +137,26 @@ export function showAtMergeBase(root, base, path) {
         return undefined;
     return must(root, ["show", spec]);
 }
+export const indexTree = (root) => {
+    const r = git(root, ["write-tree"]);
+    return r.ok ? r.out.trim() : undefined;
+};
+export function localCommits(root, most) {
+    const r = git(root, ["reflog", "show", `-n${most}`, "--format=%H%x09%T%x09%gs", "HEAD"]);
+    if (!r.ok)
+        return [];
+    return r.out.split("\n").flatMap((line) => {
+        const [commit, tree, subject] = line.split("\t");
+        if (commit === undefined || tree === undefined || !(subject ?? "").startsWith("commit"))
+            return [];
+        return [{ commit, tree }];
+    });
+}
+export function restoreAction(root, path) {
+    if (git(root, ["cat-file", "-e", `HEAD:${path}`]).ok)
+        return `run git checkout HEAD -- .warden in ${root}`;
+    const removedBy = git(root, ["rev-list", "-1", "HEAD", "--", path]).out.trim();
+    if (removedBy === "")
+        return `run warden init in ${root}`;
+    return `run git checkout ${removedBy}^ -- .warden in ${root}`;
+}

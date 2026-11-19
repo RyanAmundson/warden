@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, watch, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
@@ -108,16 +108,15 @@ export async function serve(wardenRoot, port, opts = {}) {
         });
     });
     const bound = server.address().port;
-    const daemon = startWatching({ wardenRoot, port: bound, ...opts, onDetection: (d) => send("tamper", d) });
-    const evidenceDir = join(wardenHome(), "evidence");
-    mkdirSync(evidenceDir, { recursive: true });
-    const evidenceWatcher = watch(evidenceDir, (_event, file) => {
-        if (file !== null && file.endsWith(".jsonl") && !file.endsWith(".1.jsonl"))
-            send("evidence", { project: file.slice(0, -".jsonl".length) });
-    });
+    const hosts = new Set([`127.0.0.1:${bound}`, `localhost:${bound}`]);
+    const daemon = startWatching({ wardenRoot, port: bound, ...opts, onDetection: (d) => send("tamper", d), onEvidence: (project) => send("evidence", { project }) });
     const beat = setInterval(() => send("heartbeat", readHeartbeat() ?? null), opts.intervalMs ?? HEARTBEAT_MS);
     server.on("request", (req, res) => {
         const url = new URL(req.url ?? "/", `http://127.0.0.1:${bound}`);
+        if (!hosts.has(req.headers.host ?? "")) {
+            res.writeHead(403, { "content-type": "application/json" }).end(`${JSON.stringify({ error: `Host ${req.headers.host ?? "(none)"} is not this daemon`, next: `open http://127.0.0.1:${bound}/ directly` })}\n`);
+            return;
+        }
         if (req.method !== "GET") {
             res.writeHead(405, { "content-type": "application/json" }).end(`${JSON.stringify({ error: `${req.method} is not supported`, next: "send a GET request" })}\n`);
             return;
@@ -144,11 +143,10 @@ export async function serve(wardenRoot, port, opts = {}) {
         port: bound,
         close: async () => {
             clearInterval(beat);
-            evidenceWatcher.close();
             for (const res of clients)
                 res.end();
             clients.clear();
-            daemon.stop();
+            await daemon.stop();
             await new Promise((resolve) => server.close(() => resolve()));
         },
     };
@@ -175,7 +173,7 @@ export async function runDaemon(wardenRoot, port) {
 export const plistFile = () => join(homedir(), "Library/LaunchAgents", `${LABEL}.plist`);
 const xml = (text) => text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 export const plist = (main, port) => {
-    const env = { PATH: process.env.PATH ?? "/usr/bin:/bin", WARDEN_HOME: wardenHome() };
+    const env = { PATH: process.env.PATH ?? "/usr/bin:/bin", WARDEN_HOME: wardenHome(), ...(process.env.CLAUDE_CONFIG_DIR === undefined ? {} : { CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR }) };
     const log = join(wardenHome(), "daemon", "daemon.log");
     return [
         '<?xml version="1.0" encoding="UTF-8"?>',

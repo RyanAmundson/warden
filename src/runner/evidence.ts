@@ -5,7 +5,7 @@ import type { Kind, Tier } from "../records/types.js";
 
 export interface Evidence {
   at: string;
-  kind: "fired" | "cost" | "tampered" | "stalled" | "scaling" | "step";
+  kind: "fired" | "cost" | "tampered" | "stalled" | "scaling" | "step" | "registered" | "watching" | "plugin" | "commit" | "change" | "gate-off";
   guardrail?: string;
   file?: string;
   status?: string;
@@ -46,6 +46,7 @@ export interface Evidence {
   cachedRules?: string[];
   steps?: Partial<Record<Step, number>>;
   root?: string;
+  tree?: string;
 }
 
 export type Trigger = "agent-edit" | "git-commit" | "manual" | "daemon";
@@ -69,7 +70,7 @@ export interface Measurement {
   f: number;
 }
 
-export type Outcome = "ran" | "tampered" | "unstaged" | "empty" | "error";
+export type Outcome = "ran" | "tampered" | "unstaged" | "empty" | "error" | "refused";
 
 export const RUN_TOTAL = "run";
 
