@@ -1,19 +1,20 @@
 import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { RecordError } from "../records/load.js";
+const NEXT = ". Next action: update Claude Code, then retry the tool call";
 const parseInput = (input) => {
     try {
         return (JSON.parse(input) ?? {});
     }
     catch {
-        throw new RecordError("hook input", "", "is not JSON");
+        throw new RecordError("hook input", "", `is not JSON${NEXT}`);
     }
 };
 const real = (path) => (existsSync(path) ? realpathSync(path) : join(real(dirname(path)), basename(path)));
 export const hookTrigger = (root, input) => {
     const file = parseInput(input).tool_input?.file_path;
     if (typeof file !== "string")
-        throw new RecordError("hook input", "/tool_input/file_path", "is missing");
+        throw new RecordError("hook input", "/tool_input/file_path", `is missing${NEXT}`);
     return relative(root, real(resolve(root, file)));
 };
 const SEPARATORS = ";&|\n()`";
@@ -116,6 +117,8 @@ export function skipsCommitHook(words) {
             for (let j = 1; j < w.length; j++) {
                 if (w[j] === "n")
                     return w;
+                if (w[j] === "u" || w[j] === "S")
+                    break;
                 if (COMMIT_VALUE_SHORT.has(w[j])) {
                     if (j === w.length - 1)
                         i++;
@@ -132,7 +135,7 @@ export function refusal(root, input) {
     if (parsed.tool_name === "Bash") {
         const command = parsed.tool_input?.command;
         if (typeof command !== "string")
-            throw new RecordError("hook input", "/tool_input/command", "is missing");
+            throw new RecordError("hook input", "/tool_input/command", `is missing${NEXT}`);
         for (const words of shellCommands(command)) {
             const flag = skipsCommitHook(words);
             if (flag !== undefined)

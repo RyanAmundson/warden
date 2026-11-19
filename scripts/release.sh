@@ -9,7 +9,7 @@ tag=v$version
 again="run npm run release -- $version again"
 fail() {
   echo "release: $1 Next action: $2." >&2
-  exit 1
+  exit 2
 }
 root=$(git rev-parse --show-toplevel) || fail "this is not a git checkout." "run the release from the Warden checkout"
 cd "$root" || exit 1
