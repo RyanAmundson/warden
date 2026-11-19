@@ -2043,6 +2043,20 @@ describe("signed .warden changes", () => {
     expect(await tampered()).toEqual([{ file: ".warden/allowed_signers", detail: "unsigned" }]);
   });
 
+  it("a signed change checked without ssh-keygen on PATH says to install it, not to revert", async () => {
+    await write(".warden/allowed_signers", signers("ryan", "agent"));
+    git("add", "-A");
+    commitSigned("ryan", "add the agent key");
+    const bin = await mkdtemp(join(tmpdir(), "warden-bin-"));
+    await symlink(execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim(), join(bin, "git"));
+    vi.stubEnv("PATH", bin);
+    const { code, out, err } = await check();
+    await rm(bin, { recursive: true, force: true });
+    expect(code).toBe(2);
+    expect(`${out}${err}`.match(/Next action:/g)).toHaveLength(1);
+    expect(err).toContain("Next action: install OpenSSH so ssh-keygen is on PATH, then run warden check again.");
+  });
+
   it("a lowered baseline needs no signature", async () => {
     await write("a.ts", "const a = 1;\n");
     expect((await check()).code).toBe(0);

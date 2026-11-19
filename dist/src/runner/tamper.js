@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -139,9 +140,11 @@ const unsignedChanges = (root, base) => {
     const dir = mkdtempSync(join(tmpdir(), "warden-signers-"));
     try {
         writeFileSync(join(dir, "allowed_signers"), signers);
-        return [...changeSignatures(root, base, ".warden", join(dir, "allowed_signers"))]
-            .filter(([file, status]) => file !== BASELINE_PATH && status !== "G")
-            .map(([file, status]) => ({ file, detail: status === "N" ? "unsigned" : "untrusted-signature" }));
+        const failed = [...changeSignatures(root, base, ".warden", join(dir, "allowed_signers"))].filter(([file, status]) => file !== BASELINE_PATH && status !== "G");
+        if (failed.some(([, status]) => status !== "N") && spawnSync("ssh-keygen", ["-?"]).error !== undefined) {
+            throw new RecordError("", "", "ssh-keygen is not on PATH, so signatures on .warden changes cannot be checked. Next action: install OpenSSH so ssh-keygen is on PATH, then run warden check again.");
+        }
+        return failed.map(([file, status]) => ({ file, detail: status === "N" ? "unsigned" : "untrusted-signature" }));
     }
     finally {
         rmSync(dir, { recursive: true, force: true });
