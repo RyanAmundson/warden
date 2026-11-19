@@ -16,6 +16,21 @@ warden --version
 Replace `v0.1.8` with the release you want. Then run `warden init` in a
 project's git checkout.
 
+## Upgrade a project from Warden 0.1.7 or earlier
+
+Warden 0.1.7 and earlier wrote Claude Code hooks and deny rules into the
+project's `.claude/settings.json`. The plugin replaces them. After you
+install a newer `warden`:
+
+1. Run `warden compile`, stage `.warden`, and commit. Until then,
+   `warden check` stops with that one next action.
+2. Remove the old project-local Warden entries from `.claude/settings.json`:
+   the `PostToolUse` hook that runs `npx --no -- warden check`, and the
+   `permissions.deny` entries `Edit(.warden/**)`, `Write(.warden/**)`,
+   `Bash(git commit*--no-verify*)`, and `Bash(git commit* -n*)`. Commit the
+   change.
+3. Install the plugin, as described next.
+
 ## Claude Code plugin
 
 This repository is also a Claude Code plugin marketplace named `warden`, with

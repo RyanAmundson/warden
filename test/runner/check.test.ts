@@ -1541,16 +1541,42 @@ describe("engine review: the Warden that wrote the lock", () => {
     await write(".warden/lock.json", JSON.stringify(lock));
   };
 
-  it("a lock written by another Warden exits 2, names both versions, and says to install the lock's release", async () => {
+  it("a lock written by a newer Warden exits 2, names both versions, and says to install the lock's release", async () => {
     await editLock((lock) => {
-      lock.warden = "0.0.9";
+      lock.warden = "99.0.0";
     });
     const { code, out, err } = await check();
     expect(code).toBe(2);
     expect(out).toBe("");
-    expect(err).toContain(`was written by Warden 0.0.9; this is Warden ${running}.`);
-    expect(err).toContain("Next action: install Warden 0.0.9, the release that wrote the lock, then run warden check --base main again.");
+    expect(err).toContain(`was written by Warden 99.0.0; this is Warden ${running}.`);
+    expect(err).toContain("Next action: install Warden 99.0.0, the release that wrote the lock, then run warden check --base main again.");
     expect(await tampered()).toEqual([]);
+  });
+
+  it("a lock written by an older Warden says to recompile, never to install the older release, and recompiling clears it", async () => {
+    await editLock((lock) => {
+      lock.warden = "0.0.9";
+    });
+    const { code, err } = await check();
+    expect(code).toBe(2);
+    expect(err).toContain(`was written by Warden 0.0.9, an older release than this Warden ${running}. Next action: run warden compile, stage .warden, and commit.`);
+    expect(err).not.toContain("install Warden");
+    expect(await tampered()).toEqual([]);
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect((await check()).code).toBe(0);
+  });
+
+  it("a lock that still records the old .claude/settings.json entry is an older lock, not tampering", async () => {
+    await editLock((lock) => {
+      (lock.generated as Record<string, string>)[".claude/settings.json#warden"] = "0".repeat(64);
+    });
+    const { code, err } = await check();
+    expect(code).toBe(2);
+    expect(err).toContain("Next action: run warden compile, stage .warden, and commit.");
+    expect(await tampered()).toEqual([]);
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect(Object.keys(JSON.parse(await read(".warden/lock.json")).generated)).toEqual([".warden/generated/eslint.rules.json"]);
+    expect((await check()).code).toBe(0);
   });
 
   it("a working lock in a newer format exits 2 and says to install the lock's release", async () => {
