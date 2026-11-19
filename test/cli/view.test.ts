@@ -627,7 +627,7 @@ it("a record without kinds counts its recorded failures as unknown kind, in a co
   expect(lines).toContain(" █ deterministic   ▒ judgment   ░ prose   · unknown");
   const narrow = renderDeterminism({ ...threeProjects(), projects: [...threeProjects().projects, { project: "older", run: old }] }, { cols: 60, rows: 24 });
   for (const l of narrow) expect(l.length, l).toBeLessThanOrEqual(60);
-  expect(narrow[2]).toMatch(/^ DETERMINISM +deterministic {2}judgment {2}prose {2}unknown$/);
+  expect(narrow[2]).toMatch(/^ DETERMINISM BY PROJECT +deter {2}judgm {2}prose {2}unkno$/);
   expect(renderDeterminism(threeProjects(), { cols: 120, rows: 40 }).join("\n")).not.toContain("unknown");
 });
 
@@ -675,4 +675,35 @@ it("d toggles the determinism screen, every header names it, and l, v, and d swi
   expect(screen()).toContain(" DETERMINISM BY PROJECT");
   input.emit("data", Buffer.from("q"));
   expect(await done).toBe(0);
+});
+
+const withOlder = (): ViewModel => ({ ...threeProjects(), projects: [...threeProjects().projects, { project: "older", run: { ...blockRun, kinds: undefined } }] });
+
+it("at 50 and 40 columns with the unknown column showing, project names keep the marker and a readable width, and every count fits", () => {
+  for (const cols of [50, 40]) {
+    const lines = renderDeterminism(withOlder(), { cols, rows: 24 });
+    for (const l of lines) expect(l.length, l).toBeLessThanOrEqual(cols);
+    expect(lines[2]).toMatch(/^ DETERMINISM +deter {2}judgm {2}prose {2}unkno$/);
+    expect(lines[3]).toMatch(/^ ▸ conte\S* +[█▒░]+ +11 +2 +1 +0$/);
+    expect(lines).toContainEqual(expect.stringMatching(/^ {3}trq-b\S* +[█▒░]+ +1,200 +300 +4 +0$/));
+    expect(lines).toContainEqual(expect.stringMatching(/^ {3}older +· +0 +0 +0 +1$/));
+    expect(lines.join("\n")).toContain("· unknown");
+  }
+});
+
+it("a bar too narrow for every band keeps the band with the most failures", () => {
+  const line = renderDeterminism(withOlder(), { cols: 40, rows: 24 })[3] as string;
+  expect(line).toMatch(/^ ▸ \S+ █/);
+});
+
+it("the share never reads 100% while any judgment or prose failure exists", () => {
+  const lines = renderDeterminism({ ...model([]), projects: [{ project: "context-manager", run: ranWith({ lint: 1234567, model: 304 }) }, { project: "b", run: ranWith({ lint: 5 }) }] }, { cols: 120, rows: 24 });
+  expect(lines[3]).toMatch(/ 99%$/);
+  expect(lines[4]).toMatch(/ 100%$/);
+});
+
+it("a very short terminal still shows the current project above the hidden-projects line", () => {
+  const lines = renderDeterminism(withOlder(), { cols: 120, rows: 6 });
+  expect(lines).toContainEqual(expect.stringMatching(/^ ▸ context-manager /));
+  expect(lines).toContain(" 3 projects hidden. Next action: run warden --determinism | cat");
 });
