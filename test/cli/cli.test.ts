@@ -346,7 +346,7 @@ describe("warden CLI", () => {
       [
         "id: local", "layer: 1", "terms: []", "practices:", "  - id: locks", "    statement: Leaves a locked folder.", "    terms: []", "    paths: []", "    conflictsWith: []", "    guardrails:",
         "      - id: local-locker", "        kind: runtime", "        runs: [boundary]", "        budgetMs: 5000", "        version: 1",
-        "        implementation: \"cmd:mkdir -p locked/inner && chmod 500 locked && sleep $(ls src | awk 'END{print NR/2000}')\"",
+        "        implementation: \"cmd:mkdir -p locked/inner && chmod 500 locked && sleep $(ls src | awk 'END{print NR/4000}')\"",
         '        mustFail: "bad\\n"', '        mustPass: "const a = 1;\\n"', "",
       ].join("\n"),
     );

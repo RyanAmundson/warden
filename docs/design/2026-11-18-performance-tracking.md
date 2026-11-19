@@ -214,8 +214,11 @@ fastest. A sample times at least `4 × base` files of work: the 1x size runs 4
 times in a row, the 2x size twice, and the 4x and 8x sizes once, and the
 sample is the mean time of one run. On a loaded machine a short run can
 finish inside a gap that a long run cannot, so timing one run per size made
-small sizes look fast and a linear Guardrail look superlinear. Equal work per
-sample gives every size the same exposure to load. It measures fixed cost `f`
+small sizes look fast and a linear Guardrail look superlinear. The 1x, 2x,
+and 4x samples cover the same work; the 8x sample covers twice as much, so
+any bias left leans toward a superlinear verdict. A load that rises and falls
+over a period longer than one sample can still move `k` either way; the
+re-measure is the guard against it. It measures fixed cost `f`
 with a single file, as the fastest of 9 runs. The exponent `k` is the
 least-squares slope of `log(ms − f)` against `log(files)` over the four sizes.
 Subtracting `f` stops startup time, such as ESLint or `tsc` launching, from

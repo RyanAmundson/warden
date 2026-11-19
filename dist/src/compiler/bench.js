@@ -46,7 +46,7 @@ const measure = (project, s, cfg, rerun, signal) => withExampleProject(async (ro
     await writeTree(root, adapters.get(prefixOf(s.g)).emit([s.g], set));
     const files = [];
     let copies = 0;
-    const sample = async (n, runs = RUNS, reps = 1) => {
+    const timed = async (n, count) => {
         signal?.throwIfAborted();
         const tree = {};
         for (; copies < n; copies++) {
@@ -57,30 +57,31 @@ const measure = (project, s, cfg, rerun, signal) => withExampleProject(async (ro
         }
         await writeTree(root, tree);
         const times = [];
-        for (let i = 0; i < runs; i++) {
-            let ms = 0;
-            for (let j = 0; j < reps; j++) {
-                signal?.throwIfAborted();
-                const results = await runGuardrails(set, [s.g], files, ctx);
-                signal?.throwIfAborted();
-                const bad = results.find((r) => r.status !== "pass");
-                if (bad !== undefined) {
-                    throw new RecordError(s.pack.file, `/guardrails/${s.g.id}/mustPass`, `Guardrail ${s.g.id} failed on a copy of its mustPass example at ${bad.violations[0]?.file || files[0]}. Next action: change the mustPass example of Guardrail ${s.g.id} in ${s.pack.file} so every copy of it passes, then run ${rerun}.`);
-                }
-                const own = results.find((r) => r.guardrail === s.g.id);
-                if (own === undefined)
-                    throw new Error(`no result for guardrail ${s.g.id}`);
-                ms += s.time(own);
+        for (let i = 0; i < count; i++) {
+            signal?.throwIfAborted();
+            const results = await runGuardrails(set, [s.g], files, ctx);
+            signal?.throwIfAborted();
+            const bad = results.find((r) => r.status !== "pass");
+            if (bad !== undefined) {
+                throw new RecordError(s.pack.file, `/guardrails/${s.g.id}/mustPass`, `Guardrail ${s.g.id} failed on a copy of its mustPass example at ${bad.violations[0]?.file || files[0]}. Next action: change the mustPass example of Guardrail ${s.g.id} in ${s.pack.file} so every copy of it passes, then run ${rerun}.`);
             }
-            times.push(ms / reps);
+            const own = results.find((r) => r.guardrail === s.g.id);
+            if (own === undefined)
+                throw new Error(`no result for guardrail ${s.g.id}`);
+            times.push(s.time(own));
         }
-        return Math.min(...times);
+        return times;
     };
     const seen = new Map();
     const at = async (n) => {
         if (!seen.has(n))
-            seen.set(n, await sample(n));
-        return seen.get(n);
+            seen.set(n, await timed(n, RUNS));
+        return Math.min(...seen.get(n));
+    };
+    const sampled = async (n, reps) => {
+        const kept = seen.get(n) ?? [];
+        const all = [...kept, ...(await timed(n, RUNS * reps - kept.length))];
+        return Math.min(...Array.from({ length: RUNS }, (_, i) => mean(all.slice(i * reps, (i + 1) * reps))));
     };
     const sizes = async (base) => {
         const points = [];
@@ -88,7 +89,7 @@ const measure = (project, s, cfg, rerun, signal) => withExampleProject(async (ro
             points.push([base * m, await at(base * m)]);
         return points;
     };
-    const f = await sample(1, FIXED_RUNS);
+    const f = Math.min(...(await timed(1, FIXED_RUNS)));
     let base = cfg.baseFiles;
     while ((await at(base)) - f < cfg.minMarginalMs) {
         if (base * 16 > cfg.maxFiles)
@@ -97,7 +98,7 @@ const measure = (project, s, cfg, rerun, signal) => withExampleProject(async (ro
     }
     const points = [];
     for (const m of [1, 2, 4, 8])
-        points.push([base * m, await sample(base * m, RUNS, Math.max(1, 4 / m))]);
+        points.push([base * m, await sampled(base * m, Math.max(1, 4 / m))]);
     if (points[3][1] - f < cfg.constantMs)
         return { verdict: "constant", points, f };
     const k = slope(points, f);
