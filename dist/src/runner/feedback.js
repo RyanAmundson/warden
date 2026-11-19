@@ -20,6 +20,11 @@ const nextAction = (failures, set, notes) => {
     const weakened = notes.tampered?.find((t) => t.detail === "weakened-kind");
     if (weakened !== undefined)
         return `restore kind ${weakened.was} on ${weakened.guardrail} and run warden compile.`;
+    const tampered = (notes.tampered ?? []).filter((t) => t.commits === undefined);
+    const commits = [...new Set((notes.tampered ?? []).flatMap((t) => t.commits ?? []))];
+    if (tampered.length === 0 && commits.length > 0) {
+        return `run git revert --no-edit ${commits.join(" ")} to undo the commits that changed .warden/ without an allowed signature, then run warden check again.`;
+    }
     if (notes.tampered !== undefined && notes.tampered.length > 0) {
         const sources = notes.tampered.flatMap((t) => t.sources ?? []);
         if (sources.length === 0)

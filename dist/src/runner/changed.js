@@ -1,8 +1,10 @@
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { RecordError } from "../records/load.js";
+const env = () => ({ ...process.env, GIT_NO_REPLACE_OBJECTS: "1" });
 const git = (root, args) => {
     try {
-        return { ok: true, out: execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }), err: "" };
+        return { ok: true, out: execFileSync("git", args, { cwd: root, env: env(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }), err: "" };
     }
     catch (cause) {
         const e = cause;
@@ -59,7 +61,7 @@ export function historyOf(root, path) {
     const commits = names(must(root, ["log", "-z", "--full-history", "--format=%H", "HEAD", "--", path]));
     if (commits.length === 0)
         return [];
-    const out = execFileSync("git", ["cat-file", "--batch"], { cwd: root, input: commits.map((sha) => `${sha}:./${path}\n`).join(""), maxBuffer: 1 << 30, stdio: ["pipe", "pipe", "pipe"] });
+    const out = execFileSync("git", ["cat-file", "--batch"], { cwd: root, env: env(), input: commits.map((sha) => `${sha}:./${path}\n`).join(""), maxBuffer: 1 << 30, stdio: ["pipe", "pipe", "pipe"] });
     const texts = [];
     for (let at = 0; at < out.length;) {
         const end = out.indexOf(10, at);
@@ -140,21 +142,26 @@ export function showAtMergeBase(root, base, path) {
 export function changeSignatures(root, base, dir, allowedSignersFile) {
     const at = mergeBase(root, base);
     const paths = names(must(root, ["--literal-pathspecs", "diff", "-z", "--name-only", "--no-renames", "--relative", at, "HEAD", "--", dir]));
-    const status = new Map();
+    const found = new Map();
     if (paths.length === 0)
-        return status;
-    const verify = ["--no-replace-objects", "-c", "gpg.ssh.program=ssh-keygen", "-c", "gpg.program=false", "-c", "gpg.x509.program=false", "-c", `gpg.ssh.allowedSignersFile=${allowedSignersFile}`, "--literal-pathspecs"];
-    const log = must(root, [...verify, "log", "-z", "--topo-order", "--diff-merges=dense-combined", "--no-renames", "--relative", "--name-only", "--format=%x01%G?", `${at}..HEAD`, "--", ...paths]);
+        return found;
+    const verify = ["-c", "gpg.ssh.program=ssh-keygen", "-c", "gpg.program=false", "-c", "gpg.x509.program=false", "-c", `gpg.ssh.allowedSignersFile=${allowedSignersFile}`, "--literal-pathspecs"];
+    const mark = `\x01${randomUUID()}`;
+    const log = must(root, [...verify, "log", "-z", "--topo-order", "--diff-merges=dense-combined", "--no-renames", "--relative", "--name-only", `--format=${mark}%G?%H`, `${at}..HEAD`, "--", ...paths]);
     const seen = new Set();
-    for (const entry of log.split("\x01").slice(1)) {
-        for (const path of names(entry.slice(2).replace(/^\n/, ""))) {
+    for (const entry of log.split(mark).slice(1)) {
+        const end = entry.search(/[\n\0]/);
+        const [status, commit] = [entry[0], entry.slice(1, end)];
+        for (const path of names(entry.slice(end + 1).replace(/^\n/, ""))) {
             seen.add(path);
-            if (entry[0] !== "G" && !status.has(path))
-                status.set(path, entry[0]);
+            if (status === "G")
+                continue;
+            const was = found.get(path);
+            found.set(path, { status: was?.status ?? status, commits: [...(was?.commits ?? []), commit] });
         }
     }
     for (const path of paths)
         if (!seen.has(path))
-            status.set(path, "N");
-    return status;
+            found.set(path, { status: "N", commits: [] });
+    return found;
 }
