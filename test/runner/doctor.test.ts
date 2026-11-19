@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -208,4 +208,42 @@ describe("doctor", () => {
     execFileSync("sh", ["-c", repair as string], { cwd: root });
     expect((await doctor(set, true)).next).toBeUndefined();
   });
+
+  it("explicit doctor detects a stale installed Claude plugin and accepts its updated version", async () => {
+    execFileSync("git", ["init", "-q"], { cwd: root });
+    execFileSync("git", ["config", "core.hooksPath", ".warden/generated/hooks"], { cwd: root });
+    await mkdir(join(root, ".warden/generated/hooks"), { recursive: true });
+    await writeFile(join(root, ".warden/generated/hooks/pre-commit"), "", { mode: 0o755 });
+    const config = join(root, "claude-config");
+    const bin = join(root, "bin");
+    await mkdir(config);
+    await mkdir(bin);
+    await writeFile(join(config, "settings.json"), '{"enabledPlugins":{"warden@warden":true}}');
+    await writeFile(join(bin, "claude"), `#!/bin/sh
+case "$*" in
+  'plugin list --json') cat "$CLAUDE_CONFIG_DIR/plugins.json" ;;
+  'plugin marketplace update warden') exit 0 ;;
+  'plugin update warden@warden --scope user') cp "$CLAUDE_CONFIG_DIR/current.json" "$CLAUDE_CONFIG_DIR/plugins.json" ;;
+  *) exit 2 ;;
+esac
+`, { mode: 0o755 });
+    vi.stubEnv("CLAUDE_CONFIG_DIR", config);
+    vi.stubEnv("PATH", `${bin}:${process.env.PATH}`);
+    const inventory = (version: string) => JSON.stringify([{ id: "warden@warden", version, scope: "user", enabled: true }]);
+    await writeFile(join(config, "plugins.json"), inventory("0.0.1"));
+    const current = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8")) as { version: string };
+    await writeFile(join(config, "current.json"), inventory(current.version));
+    const automatic = await doctor(setWith());
+    expect(automatic.next).toBeUndefined();
+    const stale = await doctor(setWith(), true);
+    expect(stale.lines).toContain(`FAIL  Claude plugin warden@warden  installed version 0.0.1 is older than Warden CLI ${current.version}`);
+    const action = "run claude plugin marketplace update warden, then claude plugin update warden@warden --scope user, and restart Claude Code, then run warden doctor";
+    expect(stale.next).toBe(action);
+    const [, marketplace, update] = /^run (.*), then (.*), and restart Claude Code/.exec(stale.next!) ?? [];
+    execFileSync("sh", ["-c", `${marketplace} && ${update}`], { cwd: root });
+    const updated = await doctor(setWith(), true);
+    expect(updated.lines).toContain(`ok    Claude plugin warden@warden ${current.version}`);
+    expect(updated.next).toBeUndefined();
+  });
+
 });
