@@ -672,7 +672,7 @@ describe("warden CLI", () => {
     init();
     const r = warden("--violations");
     expect(r.code, r.err).toBe(0);
-    expect(r.out).toMatch(/^ WARDEN .* v back\n/);
+    expect(r.out).toMatch(/^ WARDEN .* v back {2}d determinism\n/);
     expect(r.out).toMatch(/\n VIOLATIONS BY PACK +baselined +new +last run\n/);
     expect(r.out).toMatch(/\n core +█+ +1 +– *\n/);
     expect(r.out).toMatch(/\n {3}warden-no-comments +█+ +1 +– *\n/);
@@ -685,7 +685,32 @@ describe("warden CLI", () => {
     const narrow = spawnSync("node", [main, "--violations"], { cwd: root, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home, COLUMNS: "60" } });
     expect(narrow.stdout.split("\n").every((l) => l.length <= 60)).toBe(true);
     expect(narrow.stdout).toContain(`${"─".repeat(60)}\n`);
-    expect(warden("--violations", "--layers").err).toBe("--layers and --violations each open one screen. Next action: run warden with only one of them\n");
+    expect(warden("--violations", "--layers").err).toBe("--layers, --violations, and --determinism each open one screen. Next action: run warden with only one of them\n");
+  });
+
+  it("warden --determinism outside a terminal prints every project's last run split by band, from the kinds warden check records", async () => {
+    init();
+    git("add", "-A");
+    git("commit", "-q", "-m", "adopt");
+    const project = (await readFile(join(root, ".warden/config.yaml"), "utf8")).match(/^project: "?([^"\n]+)"?$/m)?.[1] as string;
+    const before = warden("--determinism");
+    expect(before.code, before.err).toBe(0);
+    expect(before.out).toMatch(/\n ▸ \S+ +no completed run yet\n/);
+    expect(before.out).toContain(" No project has a completed run. Next action: press r to run warden check");
+    await writeFile(join(root, "src/add.ts"), "// eslint-disable-next-line\nexport const add = (a: number, b: number) => a + b;\n");
+    expect(warden("check", "--base", "main").code).toBe(1);
+    const run = (await readFile(join(home, "evidence", `${project}.jsonl`), "utf8")).trim().split("\n").map((l) => JSON.parse(l) as { guardrail?: string; outcome?: string; kinds?: Record<string, number> }).filter((e) => e.guardrail === "run").at(-1);
+    expect(run?.kinds).toEqual({ lint: 1 });
+    await writeFile(join(home, "evidence", "older.jsonl"), `${JSON.stringify({ at: "2026-11-18T10:00:00.000Z", kind: "cost", guardrail: "run", run: "o1", outcome: "ran", result: "fail", failures: [{ file: "a.ts", line: 1, guardrail: "x", practice: "x" }] })}\n`);
+    const wide = spawnSync("node", [main, "--determinism"], { cwd: root, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home, COLUMNS: "120" } });
+    const r = { code: wide.status, out: wide.stdout, err: wide.stderr };
+    expect(r.code, r.err).toBe(0);
+    expect(r.out).toMatch(/^ WARDEN .* d back\n/);
+    expect(r.out).toMatch(/\n DETERMINISM BY PROJECT +deterministic +judgment +prose +unknown +det\. share\n/);
+    expect(r.out).toMatch(new RegExp(`\\n ▸ ${project} +█+ +1 +0 +0 +0 +100%\\n`));
+    expect(r.out).toMatch(/\n {3}older +·+ +0 +0 +0 +1 +–\n/);
+    expect(r.out).not.toContain("\x1b");
+    expect(warden("--determinism", "--layers").code).toBe(2);
   });
 });
 

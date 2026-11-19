@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { LEAVE, type ViewModel, liveView, plainLayers, plainView, plainViolations, render, renderLayers, renderViolations } from "../../src/cli/view.js";
+import { LEAVE, type ViewModel, liveView, plainDeterminism, plainLayers, plainView, plainViolations, render, renderDeterminism, renderLayers, renderViolations } from "../../src/cli/view.js";
 import type { Evidence } from "../../src/runner/evidence.js";
 
 const at = (time: string): string => `2026-11-18T${time}.000Z`;
@@ -41,6 +41,7 @@ const model = (evidence: Evidence[]): ViewModel => ({
   layers: [],
   practices: [],
   packList: [{ id: "core", source: "bundled", on: true, rules: 2 }],
+  projects: [],
 });
 
 const size = { cols: 80, rows: 30 };
@@ -66,7 +67,7 @@ const fits = (lines: string[]): void => {
 it("renders a passing run at 80 columns", () => {
   const lines = render(model([...steps("r1", "14:01:40"), passRun]), size, 0);
   fits(lines);
-  expect(lines[0]).toBe(" WARDEN  context-manager · base origin/… q quit  r rerun  l layers  v violations");
+  expect(lines[0]).toBe(" WARDEN  context-manager… q quit  r rerun  l layers  v violations  d determinism");
   expect(lines[1]).toBe("─".repeat(80));
   expect(lines[2]).toBe(" NOW  commit check · 3 files · triggered by git commit · 13 ms");
   expect(lines[3]).toMatch(/^ {3}✓ 1 rules intact {6}lock matches, 0 tampered files +2\.0 ms$/);
@@ -375,7 +376,7 @@ const layered = (extra: Partial<ViewModel> = {}): ViewModel => ({
 it("renders the layers screen at 80 columns, strongest first, with every layer and the packs", () => {
   const lines = renderLayers(layered(), size);
   fits(lines);
-  expect(lines[0]).toMatch(/^ WARDEN {2}warden · base main · v0\.1\.5 +q quit {2}r rerun {2}l runs {2}v violations$/);
+  expect(lines[0]).toMatch(/^ WARDEN {2}warden · base mai… q quit {2}r rerun {2}l runs {2}v violations {2}d determinism$/);
   expect(lines[2]).toMatch(/^ LAYERS {2}strongest first · a rule can only move up +rules {2}proven$/);
   expect(lines[3]).toMatch(/^ ┌ DETERMINISTIC ─+┐$/);
   expect(lines[4]).toMatch(/^ │ 0 type +compiler proves it +\(none yet\) +0 +│$/);
@@ -463,7 +464,7 @@ const bar = (line: string): string => line.match(/[█▓▏]+/)?.[0] ?? "";
 it("renders the violations screen at 120 columns: a bar per pack and Guardrail, right-aligned counts, and the legend", () => {
   const lines = renderViolations(violated(), { cols: 120, rows: 40 });
   for (const l of lines) expect(l.length, l).toBeLessThanOrEqual(120);
-  expect(lines[0]).toMatch(/^ WARDEN {2}context-manager · base origin\/main · v9\.8\.7 +q quit {2}r rerun {2}v back$/);
+  expect(lines[0]).toMatch(/^ WARDEN {2}context-manager · base origin\/main · v9\.8\.7 +q quit {2}r rerun {2}v back {2}d determinism$/);
   expect(lines[1]).toBe("─".repeat(120));
   expect(lines[2]).toMatch(/^ VIOLATIONS BY PACK +baselined +new +last run$/);
   const row = (label: string): string => lines.find((l) => l.startsWith(` ${label} `)) as string;
@@ -582,4 +583,93 @@ it("a long pack label is cut so its counts stay, and a small baselined count sti
   expect(long).toContainEqual(expect.stringMatching(/^ a-very.*… █+ +5 +–$/));
   const small = renderViolations(violated([], { "warden-no-comments": 100000, "warden-no-suppressions": 3 }), { cols: 120, rows: 40 });
   expect(small).toContainEqual(expect.stringMatching(/^ {3}warden-no-suppressions +█ +3 +–/));
+});
+
+const ranWith = (kinds: Evidence["kinds"], extra: Partial<Evidence> = {}): Evidence => ({ ...passRun, result: "fail", kinds, ...extra });
+
+const threeProjects = (): ViewModel => ({
+  ...model([]),
+  projects: [
+    { project: "warden", run: ranWith({}) },
+    { project: "context-manager", run: ranWith({ lint: 9, type: 2, model: 1, review: 1, instruction: 1 }) },
+    { project: "trq-berry", run: ranWith({ runtime: 1200, model: 300, legacy: 4 }) },
+  ],
+});
+
+it("renders the determinism screen at 120 columns: the current project first and marked, a stacked bar, right-aligned counts, and the share", () => {
+  const lines = renderDeterminism(threeProjects(), { cols: 120, rows: 40 });
+  for (const l of lines) expect(l.length, l).toBeLessThanOrEqual(120);
+  expect(lines[0]).toMatch(/^ WARDEN {2}context-manager · base origin\/main · v9\.8\.7 +q quit {2}r rerun {2}d back$/);
+  expect(lines[2]).toMatch(/^ DETERMINISM BY PROJECT +deterministic {2}judgment {2}prose {2}det\. share$/);
+  expect(lines[3]).toMatch(/^ ▸ context-manager █+▒+░+ +11 +2 +1 +79%$/);
+  expect(lines[4]).toMatch(/^ {3}trq-berry +█+▒+░ +1,200 +300 +4 +80%$/);
+  expect(lines[5]).toMatch(/^ {3}warden +▏ +0 +0 +0 +–$/);
+  expect(lines.filter((l) => l.endsWith("%") || l.endsWith("–")).map((l) => l.length)).toEqual([120, 120, 120]);
+  expect(lines).toContain(" █ deterministic   ▒ judgment   ░ prose");
+  expect(lines.at(-1)).toBe(" Most non-deterministic failures: trq-berry, 304 of 1,504 in its last completed run.");
+});
+
+it("at 60 columns the determinism screen drops the share column first, and bars never wrap", () => {
+  const lines = renderDeterminism(threeProjects(), { cols: 60, rows: 24 });
+  expect(lines.length).toBeLessThanOrEqual(24);
+  for (const l of lines) expect(l.length, l).toBeLessThanOrEqual(60);
+  expect(lines[2]).toMatch(/^ DETERMINISM BY PROJECT +deterministic {2}judgment {2}prose$/);
+  expect(lines.join("\n")).not.toContain("%");
+  expect(lines[3]).toMatch(/^ ▸ context-manager █+▒+░+ +11 +2 +1$/);
+  expect(bar(lines[4] as string).length + (lines[4]?.match(/[▒░]+/g) ?? []).join("").length).toBeGreaterThanOrEqual(8);
+});
+
+it("a record without kinds counts its recorded failures as unknown kind, in a column shown only when nonzero", () => {
+  const old: Evidence = { ...blockRun, failures: [...(blockRun.failures ?? []), { file: "b.ts", line: 1, guardrail: "x", practice: "x" }] };
+  const lines = renderDeterminism({ ...threeProjects(), projects: [...threeProjects().projects, { project: "older", run: old }] }, { cols: 120, rows: 40 });
+  expect(lines[2]).toMatch(/ prose {2}unknown {2}det\. share$/);
+  expect(lines).toContainEqual(expect.stringMatching(/^ {3}older +· +0 +0 +0 +2 +–$/));
+  expect(lines).toContain(" █ deterministic   ▒ judgment   ░ prose   · unknown");
+  expect(renderDeterminism(threeProjects(), { cols: 120, rows: 40 }).join("\n")).not.toContain("unknown");
+});
+
+it("with an empty evidence folder the determinism screen says the current project has no completed run, with one next action", () => {
+  const lines = renderDeterminism({ ...model([]), projects: [{ project: "context-manager" }] }, { cols: 80, rows: 24 });
+  expect(lines[3]).toBe(" ▸ context-manager no completed run yet");
+  expect(lines.at(-1)).toBe(" No project has a completed run. Next action: press r to run warden check");
+});
+
+it("no judgment or prose failure anywhere says so", () => {
+  const lines = renderDeterminism({ ...model([]), projects: [{ project: "context-manager", run: ranWith({ lint: 3 }) }] }, { cols: 80, rows: 24 });
+  expect(lines.at(-1)).toBe(" No project has a judgment or prose failure in its last completed run.");
+});
+
+it("a short terminal keeps the current project and says how many projects are hidden and how to see them", () => {
+  const lines = renderDeterminism(threeProjects(), { cols: 120, rows: 8 });
+  expect(lines.length).toBeLessThanOrEqual(8);
+  expect(lines[3]).toMatch(/^ ▸ context-manager /);
+  expect(lines).toContain(" 2 projects hidden. Next action: run warden --determinism | cat");
+});
+
+it("plain determinism carries no escape codes and control characters stay visible", () => {
+  const text = plainDeterminism({ ...threeProjects(), projects: [{ project: "co\x1bntext", run: ranWith({ lint: 1 }) }] });
+  expect(text).not.toMatch(CONTROL);
+  expect(text).toContain("co\\u001bntext");
+});
+
+it("d toggles the determinism screen, every header names it, and l, v, and d switch between screens", async () => {
+  const input = new FakeInput();
+  const output = new FakeOutput();
+  const done = liveView({ input, output, watchDir: dir, file: "p.jsonl", rerun: vi.fn(), load: () => Promise.resolve({ ...violated(), projects: threeProjects().projects }) });
+  const screen = (): string => output.text.slice(output.text.lastIndexOf("\x1b[H"));
+  output.columns = 120;
+  await vi.waitFor(() => expect(screen()).toContain(" NOW  "));
+  expect(screen()).toContain("d determinism");
+  input.emit("data", Buffer.from("d"));
+  expect(screen()).toContain(" DETERMINISM BY PROJECT");
+  input.emit("data", Buffer.from("d"));
+  expect(screen()).toContain(" NOW  ");
+  input.emit("data", Buffer.from("l"));
+  expect(screen()).toContain("d determinism");
+  input.emit("data", Buffer.from("v"));
+  expect(screen()).toContain("d determinism");
+  input.emit("data", Buffer.from("d"));
+  expect(screen()).toContain(" DETERMINISM BY PROJECT");
+  input.emit("data", Buffer.from("q"));
+  expect(await done).toBe(0);
 });
