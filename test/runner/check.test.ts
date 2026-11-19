@@ -1682,6 +1682,19 @@ describe("performance: run records and input size", () => {
     expect(runs[2]).toMatchObject({ failures: [expect.objectContaining({ file: "b.ts", line: 1, guardrail: "warden-no-comments", doThis: expect.any(String) })], next: expect.stringContaining("Do this"), ratchet: [1, 1] });
   });
 
+  it("a run record names whether its ratchet counts came from the committed baseline or an uncommitted one", async () => {
+    await write("b.ts", "const b = 1;\n");
+    expect((await check({ paths: ["b.ts"], tier: "edit" })).code).toBe(0);
+    await write(".warden/baseline.json", "{}\n");
+    expect((await check({ paths: ["b.ts"], tier: "edit" })).code).toBe(0);
+    git("rm", "-q", "--cached", ".warden/baseline.json");
+    git("commit", "-q", "-m", "untrack");
+    await write(".warden/baseline.json", `${JSON.stringify({ "warden-no-comments": { "a.ts": 1 } })}\n`);
+    expect((await check({ paths: ["b.ts"], tier: "edit" })).code).toBe(0);
+    const runs = (await costs()).filter((e) => e.guardrail === "run");
+    expect(runs.map((e) => [e.ratchet, e.ratchetFrom])).toEqual([[[1, 1], "head"], [[0, 0], "uncommitted"], [[1, 1], "uncommitted"]]);
+  });
+
   it("a check that exits 2 writes an error record with its next action", async () => {
     expect((await check({ base: undefined })).code).toBe(2);
     const runs = (await costs()).filter((e) => e.guardrail === "run");
