@@ -51,7 +51,28 @@ const emit = (gs: Guardrail[], set: RecordSet): Record<string, string> => {
 
 const NO_COMMENTS = "warden/no-comments";
 const NO_SUPPRESSIONS = "warden/no-suppressions";
-const COMMENT_LINE = /^\s*(\/\/|\/\*)/;
+const BOM = /^\uFEFF/;
+
+const annotatedLine = (lines: string[]): string | undefined => {
+  let inBlock = false;
+  for (const line of lines) {
+    const text = line.trim();
+    if (inBlock || text.startsWith("/*")) {
+      inBlock = !text.slice(inBlock ? 0 : 2).includes("*/");
+      continue;
+    }
+    if (text !== "" && !text.startsWith("//")) return line;
+  }
+  return undefined;
+};
+
+const joined = (before: string, after: string): string => {
+  const head = before.trimEnd();
+  const tail = after.trimStart();
+  if (head === "") return `${before}${tail}`;
+  if (tail === "" || /[([]$/.test(head) || /^[)\],;.]/.test(tail)) return `${head}${tail}`;
+  return `${head} ${tail}`;
+};
 
 const hiddenRules = (removed: string): string[] => {
   const body = removed.replace(/^\/[/*]/, "").replace(/\*\/$/, "");
@@ -82,12 +103,11 @@ const rewrite = (source: string, m: Linter.LintMessage, id: string): string | un
   const before = (lines[m.line - 1] as string).slice(0, m.column - 1);
   const after = source.slice(to).split("\n")[0] as string;
   if (before.trim() === "" && after.trim() === "") {
-    const annotated = id === NO_SUPPRESSIONS ? lines.slice(endLine).find((l) => l.trim() !== "" && !COMMENT_LINE.test(l)) : undefined;
+    const annotated = id === NO_SUPPRESSIONS ? annotatedLine(lines.slice(endLine)) : undefined;
     if (annotated !== undefined) return `${annotated.trimEnd()}\n${hint(removed)}`;
     return `${endLine === m.line ? "Delete this line." : `Delete lines ${m.line} to ${endLine}.`}\n${hint(removed)}`;
   }
-  const seam = /\s$/.test(before) ? after.trimStart() : after;
-  return `${`${before}${seam}`.trimEnd()}\n${hint(removed)}`;
+  return `${joined(before, after).trimEnd()}\n${hint(removed)}`;
 };
 
 const doThisFor = (doThis: string | undefined): { doThis?: string } => (doThis === undefined ? {} : { doThis });
@@ -124,7 +144,8 @@ const run = async (gs: Guardrail[], files: string[], ctx: RunContext): Promise<R
     for (const pass of result.stats?.times.passes ?? []) {
       for (const [id, t] of Object.entries(pass.rules ?? {})) ruleMs.set(id, (ruleMs.get(id) ?? 0) + t.total);
     }
-    const source = result.messages.length > 0 ? await readFile(result.filePath, "utf8") : "";
+    if (result.messages.length > 0 && result.source === undefined) throw new Error(`eslint returned messages for ${result.filePath} without its source`);
+    const source = (result.source ?? "").replace(BOM, "");
     const suppressed = new Set(result.messages.filter((m) => m.ruleId === NO_SUPPRESSIONS).map((m) => `${m.line}:${m.column}`));
     for (const m of result.messages) {
       if (m.ruleId === NO_COMMENTS && suppressed.has(`${m.line}:${m.column}`)) continue;

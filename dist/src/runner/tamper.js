@@ -54,7 +54,7 @@ export function readBaseLock(root, base) {
         return undefined;
     const before = JSON.parse(text);
     if ((before.format ?? 0) > LOCK_FORMAT) {
-        throw new RecordError(LOCK_PATH, "/format", `the lock at the merge base with ${base} has format ${before.format}; this Warden reads formats up to ${LOCK_FORMAT}. Next action: update this project's Warden to the release that wrote the lock on ${base}, then run warden check --base ${base} again.`);
+        throw new RecordError(LOCK_PATH, "/format", `the lock at the merge base with ${base} has format ${before.format}; this Warden reads formats up to ${LOCK_FORMAT}. Next action: install Warden ${before.warden}, the release that wrote the lock on ${base}, then run warden check --base ${base} again.`);
     }
     return before;
 }

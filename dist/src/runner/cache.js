@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { canonicalJson, sha256 } from "../compiler/lock.js";
 import { wardenHome } from "./evidence.js";
-export const cacheKey = (file, contentSha, g, lockSha, warden) => sha256(canonicalJson(["violation-range", g.id, g.version, g.implementation, g.options ?? null, file, contentSha, lockSha, warden]));
+const VIOLATION_CACHE = "violation-range";
+export const cacheKey = (file, contentSha, g, lockSha, warden) => sha256(canonicalJson([VIOLATION_CACHE, g.id, g.version, g.implementation, g.options ?? null, file, contentSha, lockSha, warden]));
 const cacheDir = (project) => join(wardenHome(), "cache", project);
 export function readCache(project, key) {
     try {

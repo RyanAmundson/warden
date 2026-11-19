@@ -658,6 +658,32 @@ describe("warden CLI", () => {
     expect(await closed("runs", "--follow")).toEqual({ code: 0, err: "" });
   });
 
+  it("a bundled tool that does not load stops check and doctor with one line and one next action", async () => {
+    init();
+    git("add", "-A");
+    git("commit", "-q", "-m", "adopt");
+    const copy = await mkdtemp(join(tmpdir(), "warden-copy-"));
+    try {
+      for (const entry of ["dist", "packs", "package.json"]) await cp(join(wardenRoot, entry), join(copy, entry), { recursive: true });
+      await mkdir(join(copy, "node_modules"));
+      for (const entry of readdirSync(join(wardenRoot, "node_modules")).filter((e) => e !== "typescript-eslint")) {
+        await symlink(join(wardenRoot, "node_modules", entry), join(copy, "node_modules", entry));
+      }
+      const run = (...args: string[]) => spawnSync("node", [join(copy, "dist/src/cli/main.js"), ...args], { cwd: root, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home } });
+      const checked = run("check", "--base", "main");
+      expect(checked.status).toBe(2);
+      expect(checked.stderr).toContain("Warden's bundled typescript-eslint does not load: Cannot find module");
+      expect(checked.stderr).toContain("Next action: reinstall Warden so its bundled typescript-eslint loads, then run warden doctor.");
+      expect(checked.stderr).not.toContain("Require stack");
+      const doctor = run("doctor");
+      expect(doctor.status).toBe(2);
+      expect(doctor.stdout).toMatch(/^FAIL {2}tool typescript-eslint {2}Cannot find module [^\n]*$/m);
+      expect(doctor.stdout).not.toContain("Require stack");
+    } finally {
+      await rm(copy, { recursive: true, force: true });
+    }
+  });
+
   it("--version prints the version in Warden's package", async () => {
     const r = warden("--version");
     expect(r.code).toBe(0);

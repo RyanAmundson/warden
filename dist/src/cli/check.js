@@ -20,6 +20,7 @@ const selectGuardrails = (set, rule) => {
         throw new RecordError("", "/rule", `no Practice or Guardrail has id "${rule}"`);
     return gs;
 };
+const guardrailsOf = (set, implementation) => selectGuardrails(set, undefined).filter((g) => g.implementation === implementation);
 const requireBase = (base, configured) => {
     if (base !== undefined)
         return base;
@@ -262,6 +263,11 @@ const check = async (opts, live) => {
     const known = new Set(selectGuardrails(set, undefined).map((g) => g.id));
     const chosen = selectGuardrails(set, opts.rule).filter((g) => g.runs.includes(tier));
     const selected = new Set(chosen.map((g) => g.id));
+    const directives = guardrailsOf(set, "eslint:warden/no-suppressions");
+    if (guardrailsOf(set, "eslint:warden/no-comments").some((g) => selected.has(g.id)))
+        for (const g of directives)
+            if (g.runs.includes(tier))
+                selected.add(g.id);
     const lintChosen = chosen.some((g) => g.kind === "lint");
     const guardrails = selectGuardrails(set, undefined).filter((g) => (lintChosen && g.kind === "lint") || selected.has(g.id));
     const scanned = scannedFiles(root, base, opts.paths);
@@ -321,8 +327,11 @@ const check = async (opts, live) => {
     const failures = [...narrow.failures, ...wide.failures];
     if (tier !== "edit" && canonicalJson(wide.next) !== canonicalJson(baseline)) {
         writeBaseline(root, wide.next);
-        if (tier === "commit")
+        if (tier === "commit") {
             stageFile(root, BASELINE_PATH);
+            if (live.trigger === "manual" && opts.format !== "json")
+                process.stdout.write(`Staged ${BASELINE_PATH}, which now holds ${baselineTotal(wide.next)} baselined violations; it held ${baselineTotal(baseline)}.\n`);
+        }
     }
     const packOf = new Map(set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.map((g) => [g.id, p.id]))));
     const sharedPasses = new Set();

@@ -37,6 +37,8 @@ const selectGuardrails = (set: RecordSet, rule: string | undefined): Guardrail[]
   return gs;
 };
 
+const guardrailsOf = (set: RecordSet, implementation: string): Guardrail[] => selectGuardrails(set, undefined).filter((g) => g.implementation === implementation);
+
 const requireBase = (base: string | undefined, configured: string): string => {
   if (base !== undefined) return base;
   throw new RecordError("", "/base", `--base is missing; Warden takes the base branch from the command, never from the editable config. Next action: run warden check --base ${configured}`);
@@ -295,6 +297,8 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const known = new Set(selectGuardrails(set, undefined).map((g) => g.id));
   const chosen = selectGuardrails(set, opts.rule).filter((g) => g.runs.includes(tier));
   const selected = new Set(chosen.map((g) => g.id));
+  const directives = guardrailsOf(set, "eslint:warden/no-suppressions");
+  if (guardrailsOf(set, "eslint:warden/no-comments").some((g) => selected.has(g.id))) for (const g of directives) if (g.runs.includes(tier)) selected.add(g.id);
   const lintChosen = chosen.some((g) => g.kind === "lint");
   const guardrails = selectGuardrails(set, undefined).filter((g) => (lintChosen && g.kind === "lint") || selected.has(g.id));
   const scanned = scannedFiles(root, base, opts.paths);
@@ -353,7 +357,10 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const failures = [...narrow.failures, ...wide.failures];
   if (tier !== "edit" && canonicalJson(wide.next) !== canonicalJson(baseline)) {
     writeBaseline(root, wide.next);
-    if (tier === "commit") stageFile(root, BASELINE_PATH);
+    if (tier === "commit") {
+      stageFile(root, BASELINE_PATH);
+      if (live.trigger === "manual" && opts.format !== "json") process.stdout.write(`Staged ${BASELINE_PATH}, which now holds ${baselineTotal(wide.next)} baselined violations; it held ${baselineTotal(baseline)}.\n`);
+    }
   }
 
   const packOf = new Map(set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.map((g) => [g.id, p.id] as const))));

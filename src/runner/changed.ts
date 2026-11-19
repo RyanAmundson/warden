@@ -52,7 +52,7 @@ export const headCommit = (root: string): string | undefined => {
 export const containsHead = (root: string, ref: string): boolean => git(root, ["merge-base", "--is-ancestor", "HEAD", ref]).ok;
 
 export function historyOf(root: string, path: string): string[] {
-  const commits = names(must(root, ["log", "-z", "--format=%H", "HEAD", "--", path]));
+  const commits = names(must(root, ["log", "-z", "--full-history", "--format=%H", "HEAD", "--", path]));
   if (commits.length === 0) return [];
   const out = execFileSync("git", ["cat-file", "--batch"], { cwd: root, input: commits.map((sha) => `${sha}:./${path}\n`).join(""), maxBuffer: 1 << 30, stdio: ["pipe", "pipe", "pipe"] });
   const texts: string[] = [];
