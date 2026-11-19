@@ -20,7 +20,7 @@ const versionOf = (name) => {
 };
 export const bundledTools = () => Object.fromEntries(TOOLS.map((name) => [name, versionOf(name)]));
 const OS_JUNK = new Set([".DS_Store", ".localized", "Thumbs.db", "desktop.ini"].map((n) => n.toLowerCase()));
-export const isOsJunk = (name) => OS_JUNK.has(name.toLowerCase());
+export const isOsJunk = (name) => OS_JUNK.has(name.normalize("NFKC").toLowerCase());
 export const packFiles = async (base, dir) => {
     try {
         const entries = await readdir(join(base, dir), { recursive: true, withFileTypes: true });

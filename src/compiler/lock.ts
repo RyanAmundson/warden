@@ -48,7 +48,7 @@ export const bundledTools = (): Record<string, string> => Object.fromEntries(TOO
 
 const OS_JUNK = new Set([".DS_Store", ".localized", "Thumbs.db", "desktop.ini"].map((n) => n.toLowerCase()));
 
-export const isOsJunk = (name: string): boolean => OS_JUNK.has(name.toLowerCase());
+export const isOsJunk = (name: string): boolean => OS_JUNK.has(name.normalize("NFKC").toLowerCase());
 
 export const packFiles = async (base: string, dir: string): Promise<string[]> => {
   try {

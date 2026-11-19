@@ -65,7 +65,7 @@ async function refuseEscapes(packDir, entry, packFile, pointer) {
                 if (spec !== undefined)
                     follow(file, spec, node.expression.kind === ts.SyntaxKind.ImportKeyword ? "import" : "require");
             }
-            if (ts.isStringLiteralLike(node) && isOsJunk(basename(node.text))) {
+            if (ts.isStringLiteralLike(node) && namesJunk(node.text)) {
                 refuseJunk(`${file} names ${node.text}, an OS junk file that the lock does not hash`);
             }
             ts.forEachChild(node, visit);
@@ -74,6 +74,17 @@ async function refuseEscapes(packDir, entry, packFile, pointer) {
     }
     confined.add(entry);
 }
+const namesJunk = (text) => {
+    const decoded = text.replace(/(?:%[0-9a-f]{2})+/gi, (run) => {
+        try {
+            return decodeURIComponent(run);
+        }
+        catch {
+            return run;
+        }
+    });
+    return isOsJunk(basename(decoded)) || isOsJunk(basename(decoded.split(/[?#]/, 1)[0]));
+};
 export async function packEntry(g, adapter) {
     const target = targetOf(g);
     const [namespace, name] = target.split("/", 2);

@@ -36,6 +36,12 @@ describe("fs adapter", () => {
     ["a require of Thumbs.db", { "fs.js": "module.exports = require(\"./Thumbs.db\");\n", "Thumbs.db": "module.exports = {};\n" }],
     ["a require of thumbs.db in other case", { "fs.js": "module.exports = require(\"./thumbs.db\");\n", "Thumbs.db": "module.exports = {};\n" }],
     ["a string literal naming desktop.ini", { "fs.js": "const f = \"desktop.ini\";\nexport default {};\n" }],
+    ["a string literal naming Thumbs.db with a long s", { "fs.js": "const f = \"Thumb\u017f.db\";\nexport default {};\n" }],
+    ["a percent-encoded URL literal naming Thumbs.db", { "fs.js": "const f = new URL(\"./%54humbs.db\", import.meta.url);\nexport default {};\n" }],
+    ["a glob literal naming .DS_Store", { "fs.js": "const f = \"**/.DS_Store\";\nexport default {};\n" }],
+    ["a junk name under a directory with glob characters", { "fs.js": "const f = \"./x[1]/Thumbs.db\";\nexport default {};\n" }],
+    ["a URL literal with a query and fragment", { "fs.js": "const f = new URL(\"./Thumbs.db?v=1#x\", import.meta.url);\nexport default {};\n" }],
+    ["an encoded URL literal with a stray percent in its query", { "fs.js": "const f = new URL(\"./%54humbs.db?v=100%\", import.meta.url);\nexport default {};\n" }],
     ["a string literal naming a junk path in other case", { "fs.js": "const f = \"data/.DS_STORE\";\nexport default {};\n" }],
   ])("refuses pack code with %s, because the lock does not hash OS junk", async (_name, files) => {
     const pack = await shippedPack("fs", "");
