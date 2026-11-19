@@ -22,6 +22,7 @@ import { runPacks } from "./packs.js";
 import { runReport } from "./report.js";
 import { type ReviewOptions, reviewOptions, runBrief, runTriage } from "./review.js";
 import { runRuns } from "./runs.js";
+import { runWhere } from "./where.js";
 import { type Screen, liveView, loadView, plainDeterminism, plainLayers, plainView, plainViolations } from "./view.js";
 import { wardenHome } from "../runner/evidence.js";
 
@@ -111,6 +112,10 @@ program
   .action(async (o: { rule?: string; pack?: string }) => {
     process.exitCode = await runBench(root(), findWardenRoot(), o);
   });
+
+program.command("where <term-unit-or-path>").description("locate a Unit and its document").action(async (query: string) => {
+  process.exitCode = await runWhere(root(), findWardenRoot(), query);
+});
 
 program.command("explain <id>").description("explain a Practice or Guardrail").action(async (id: string) => {
   process.exitCode = await runExplain(root(), findWardenRoot(), id);
