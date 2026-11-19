@@ -1,5 +1,7 @@
 import { readSync, writeSync } from "node:fs";
-import { createRequire } from "node:module";
+import { createRequire, syncBuiltinESMExports } from "node:module";
+import net, { Server, Socket } from "node:net";
+import os from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -33,6 +35,31 @@ interface Failure {
   pointer: string;
   message: string;
 }
+
+const refuse = (owner: object, key: string, what: string): void => {
+  Object.defineProperty(owner, key, {
+    value: () => {
+      throw new Error(`Warden's sandbox refuses ${what}: pack code may not use ${key}`);
+    },
+    writable: false,
+    configurable: false,
+  });
+};
+
+const pipe = (process.stderr as unknown as { _handle?: { constructor: { name: string; prototype: object } } })._handle?.constructor;
+if (pipe?.name !== "Pipe") throw new Error(`Warden's sandbox found stderr on ${pipe?.name ?? "no handle"}, not a Pipe, so it cannot lock raw sockets. Next action: spawn the sandbox child with stdio set to pipe.`);
+
+refuse(Socket.prototype, "connect", "socket connections");
+refuse(pipe.prototype, "connect", "socket connections");
+refuse(Server.prototype, "listen", "socket servers");
+refuse(Server.prototype, "_listen2", "socket servers");
+refuse(net, "_createServerHandle", "socket servers");
+refuse(pipe.prototype, "bind", "socket servers");
+refuse(pipe.prototype, "listen", "socket servers");
+refuse(process, "kill", "process signals");
+refuse(process, "_kill", "process signals");
+refuse(os, "setPriority", "process priorities");
+syncBuiltinESMExports();
 
 const require = createRequire(import.meta.url);
 
