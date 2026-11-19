@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { chmod, cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -859,6 +859,18 @@ describe("final review: legacy feedback", () => {
     expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual([
       "Next action: run `test ! -e broken || { echo broken thing; exit 1; }` and fix what it reports.",
     ]);
+  });
+
+  it("a cmd Guardrail runs a script shipped in its pack, passes its examples at compile, and on failure names the expanded command that reproduces it", async () => {
+    await write(".warden/packs/legacy/bin/no-broken.mjs", 'import { existsSync } from "node:fs";\nprocess.exit(existsSync("broken") ? 1 : 0);\n');
+    await addLegacy("commit", 'node "$WARDEN_PACK_DIR/bin/no-broken.mjs"', 5000);
+    await write("broken", "x\n");
+    await write("b.ts", "const b = 1;\n");
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    const next = /^Next action: run `(.+)` and fix what it reports\.$/m.exec(out)?.[1] as string;
+    expect(next).toBe(`node "${join(root, ".warden/packs/legacy/bin/no-broken.mjs")}"`);
+    expect(spawnSync("sh", ["-c", next], { cwd: root }).status).toBe(1);
   });
 });
 
