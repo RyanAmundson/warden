@@ -51,7 +51,7 @@ const nextAction = (failures: Violation[], set: RecordSet, notes: Notes): string
   const restore = notes.tampered?.find((t) => t.restore !== undefined)?.restore;
   const others = (notes.tampered ?? []).filter((t) => t.restore === undefined);
   if (restore !== undefined && others.every((t) => [t.file, ...(t.sources ?? [])].every((f) => restore.paths.includes(f)))) {
-    const unstage = restore.unstage.length === 0 ? "" : `git --literal-pathspecs rm -q --cached --ignore-unmatch -- ${shellWords(restore.unstage)} && `;
+    const unstage = restore.unstage.length === 0 ? "" : `git --literal-pathspecs rm -q -f --cached --ignore-unmatch -- ${shellWords(restore.unstage)} && `;
     const stray = restore.stray.length === 0 ? "" : `${unstage}git --literal-pathspecs clean -ff -x -- ${shellWords(restore.stray)} && `;
     const back = restore.known.length === 0 ? "" : `git --literal-pathspecs restore --source=${restore.base} --staged --worktree -- ${shellWords(restore.known)} && `;
     const commit = restore.aliased ? "git commit --allow-empty -m 'Restore .warden files changed without an allowed signature'" : `git --literal-pathspecs commit --only --allow-empty -m 'Restore .warden files changed without an allowed signature' -- ${shellWords(restore.paths)}`;

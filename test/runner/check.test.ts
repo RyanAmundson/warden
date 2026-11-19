@@ -2459,7 +2459,56 @@ describe("signed .warden changes", () => {
       git("add", ".warden/sub");
       const { code, out } = await check({}, false);
       expect(code).toBe(1);
-      expect(out).toContain("Next action: run git --literal-pathspecs rm -q --cached --ignore-unmatch -- '.warden/sub' && git --literal-pathspecs clean -ff -x -- '.warden/sub' && ");
+      expect(out).toContain("Next action: run git --literal-pathspecs rm -q -f --cached --ignore-unmatch -- '.warden/sub' && git --literal-pathspecs clean -ff -x -- '.warden/sub' && ");
+      await fixes(false);
+      expect((await readdir(dir)).sort()).toEqual(["-rf x", "file"]);
+      expect(existsSync(join(root, ".warden/sub"))).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a staged symlinked parent pointed at a new target after staging is unstaged and removed, and the check converges", async () => {
+    await write(".warden/sub/file", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "add sub/file unsigned");
+    git("rm", "-r", "-q", "--cached", ".warden/sub");
+    await rm(join(root, ".warden/sub"), { recursive: true });
+    const first = await outside();
+    const second = await outside();
+    try {
+      await symlink(first, join(root, ".warden/sub"));
+      git("add", ".warden/sub");
+      await rm(join(root, ".warden/sub"));
+      await symlink(second, join(root, ".warden/sub"));
+      const { code, out } = await check({}, false);
+      expect(code).toBe(1);
+      expect(out).toContain("Next action: run git --literal-pathspecs rm -q -f --cached --ignore-unmatch -- '.warden/sub' && ");
+      await fixes(false);
+      for (const dir of [first, second]) expect((await readdir(dir)).sort()).toEqual(["-rf x", "file"]);
+      expect(existsSync(join(root, ".warden/sub"))).toBe(false);
+    } finally {
+      await rm(first, { recursive: true, force: true });
+      await rm(second, { recursive: true, force: true });
+    }
+  });
+
+  it("a staged symlinked parent whose index spelling differs in case from the disk is unstaged by its index spelling, and the check converges", async (ctx) => {
+    if (!existsSync(join(root, ".WARDEN"))) ctx.skip();
+    git("config", "core.ignorecase", "true");
+    await write(".warden/Sub/file", "evil\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "add Sub/file unsigned");
+    git("rm", "-r", "-q", "--cached", ".warden/Sub");
+    await rm(join(root, ".warden/Sub"), { recursive: true });
+    const dir = await outside();
+    try {
+      await symlink(dir, join(root, ".warden/sub"));
+      const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: root, input: dir, encoding: "utf8" }).trim();
+      git("update-index", "--add", "--cacheinfo", `120000,${blob},.warden/Sub`);
+      const { code, out } = await check({}, false);
+      expect(code).toBe(1);
+      expect(out).toContain("Next action: run git --literal-pathspecs rm -q -f --cached --ignore-unmatch -- '.warden/Sub' && git --literal-pathspecs clean -ff -x -- '.warden/sub' && ");
       await fixes(false);
       expect((await readdir(dir)).sort()).toEqual(["-rf x", "file"]);
       expect(existsSync(join(root, ".warden/sub"))).toBe(false);

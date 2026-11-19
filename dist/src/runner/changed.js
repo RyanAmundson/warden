@@ -201,8 +201,9 @@ export function changeSignatures(root, base, dir, allowedSignersFile, staged, al
         return path;
     };
     const stray = [...new Set(paths.filter((p) => !known.includes(p)).map(onDisk).filter((p) => p !== undefined))].sort();
-    const unstage = stray.filter((p) => lstatSync(join(root, p)).isSymbolicLink() && trackedFiles(root, [p]).has(p));
-    const indexed = icase ? names(must(root, ["ls-files", "-z", "--cached", "--", spec])) : [];
-    const aliased = new Set(paths.map((p) => p.toLowerCase())).size < paths.length || paths.some((p) => indexed.some((e) => e !== p && e.toLowerCase() === p.toLowerCase()));
+    const indexed = names(must(root, ["ls-files", "-z", "--cached", "--", spec]));
+    const same = (a, b) => a === b || (icase && a.toLowerCase() === b.toLowerCase());
+    const unstage = stray.filter((p) => lstatSync(join(root, p)).isSymbolicLink()).flatMap((p) => indexed.filter((e) => same(e, p)));
+    const aliased = new Set(paths.map((p) => p.toLowerCase())).size < paths.length || (icase && paths.some((p) => indexed.some((e) => e !== p && same(e, p))));
     return { files, restore: { base: at, paths, known, stray, unstage, aliased } };
 }
