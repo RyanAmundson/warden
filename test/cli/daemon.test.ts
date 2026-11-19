@@ -242,7 +242,7 @@ it("flags unchecked commits from another worktree and from a fast-forward of a c
   await until("the fast-forwarded commit is flagged", () => unchecked(s).includes(plumbed));
 });
 
-it("keeps its checkpoint across a restart past 1 MB of Evidence, and without a checkpoint judges every commit after the lock", async () => {
+it("keeps its checkpoint across a restart past 1 MB of Evidence, and without a checkpoint seeds one from the current tips", async () => {
   await start();
   await stop();
   await writeFile(join(root, "src/d.ts"), "export const d = 1;\n");
@@ -257,7 +257,41 @@ it("keeps its checkpoint across a restart past 1 MB of Evidence, and without a c
   await stop();
   await rm(stateFile());
   s = await start();
-  expect(unchecked(s)).toEqual([down]);
+  expect(unchecked(s)).toEqual([]);
+  expect(Object.values(JSON.parse(readFileSync(stateFile(), "utf8")).repos as Record<string, { tips: string[] }>).map((r) => r.tips)).toEqual([[down]]);
+  await writeFile(join(root, "src/e.ts"), "export const e = 1;\n");
+  git(root, "add", "-A");
+  commitUnhooked("after the seed");
+  const after = git(root, "rev-parse", "HEAD").trim();
+  await until("a commit after the seed is flagged", () => unchecked(s).includes(after));
+  expect(unchecked(s)).toEqual([after]);
+});
+
+it("judges a new root commit, which has no parent", async () => {
+  const s = await start();
+  const orphan = git(root, "commit-tree", git(root, "write-tree").trim(), "-m", "orphan").trim();
+  git(root, "branch", "orphan", orphan);
+  await until("the root commit is flagged", () => unchecked(s).includes(orphan));
+  expect(tampered().find((e) => e.file === orphan)?.next).toBe(`in a checkout of commit ${orphan.slice(0, 12)} with nothing staged, run warden check --base main`);
+});
+
+it("seeds the tips of a repository discovered after the daemon started", async () => {
+  const s = await start();
+  const other = join(scratch, "later");
+  await mkdir(join(other, "src"), { recursive: true });
+  await writeFile(join(other, "src/a.ts"), "export const a = 1;\n");
+  git(scratch, "init", "-q", "-b", "main", other);
+  git(other, "add", "-A");
+  git(other, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "seed");
+  expect(warden(other, {}, "init").code).toBe(0);
+  git(other, "add", "-A");
+  git(other, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "warden");
+  await writeFile(join(other, "src/b.ts"), "export const b = 1;\n");
+  git(other, "add", "-A");
+  git(other, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "after the lock, before discovery");
+  await until("the later repository is watched", () => s.daemon.projects.has(other));
+  await s.daemon.rescan();
+  expect(unchecked(s)).toEqual([]);
 });
 
 it("every check tier fails with the alert's next action while an alert is open, and passes once it is fixed", async () => {

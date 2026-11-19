@@ -4,7 +4,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { COMMIT_HOOK } from "../compiler/emit.js";
 import { LOCK_PATH, readLock } from "../compiler/lock.js";
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
-import { type Committed, commonDir, isAncestor, lockCommit, newCommits, repoTips, restoreAction, worktrees } from "./changed.js";
+import { type Committed, commonDir, isAncestor, newCommits, repoTips, restoreAction, worktrees } from "./changed.js";
 import { type PluginState, claudeDir, commitHookItem, pluginAction, pluginState } from "./doctor.js";
 import { type Evidence, LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, evidenceProjects, readEvidenceFrom, readEvidenceTail, wardenHome } from "./evidence.js";
 import { formatFeedback } from "./feedback.js";
@@ -297,9 +297,7 @@ export function startWatching(opts: DaemonOptions): Daemon {
     const tips = repoTips(w.root);
     const ix = indexFor(w.project);
     const known = state.repos[w.repo];
-    const lock = known === undefined ? lockCommit(w.root, tips) : undefined;
-    const since = known !== undefined ? { tips: known.tips } : lock !== undefined ? { lock } : { tips };
-    const fresh = newCommits(w.root, tips, since).filter((c) => {
+    const fresh = newCommits(w.root, tips, known?.tips ?? tips).filter((c) => {
       const checked = stamped(w.root, ix, c);
       appendEvidence(w.project, { at: now(), kind: "commit", trigger: "daemon", root: w.root, commit: c.commit, tree: c.tree, status: checked ? "checked" : "unchecked" });
       return !checked;

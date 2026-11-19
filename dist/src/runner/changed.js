@@ -153,18 +153,16 @@ export function worktrees(root) {
     });
 }
 export const repoTips = (root) => [...new Set([...must(root, ["for-each-ref", "--format=%(objectname)", "refs/heads"]).split("\n").filter((l) => l !== ""), ...worktrees(root).flatMap((w) => (w.head === undefined ? [] : [w.head]))])].sort();
-export const lockCommit = (root, tips) => tips.length === 0 ? undefined : git(root, ["rev-list", "--reverse", ...tips, "--", ".warden/lock.json"]).out.split("\n")[0] || undefined;
-export function newCommits(root, tips, since) {
+export function newCommits(root, tips, seen) {
     if (tips.length === 0)
         return [];
-    const known = "tips" in since ? since.tips.filter((t) => hasCommit(root, t)) : [];
-    const range = "lock" in since ? ["--ancestry-path", ...tips, `^${since.lock}`] : [...tips, ...known.map((t) => `^${t}`)];
+    const range = [...tips, ...seen.filter((t) => hasCommit(root, t)).map((t) => `^${t}`)];
     const commits = must(root, ["log", "--no-merges", "--format=%H %T %P", ...range, "--"])
         .split("\n")
         .filter((l) => l !== "")
         .map((l) => {
         const [commit, tree, ...parents] = l.split(" ");
-        return { commit, tree, parents };
+        return { commit, tree, parents: parents.filter((p) => p !== "") };
     });
     const parents = [...new Set(commits.flatMap((c) => c.parents))];
     const trees = new Map(parents.length === 0

@@ -145,7 +145,11 @@ fast-forward, cherry-pick, rebase, or `git am`. Tamper detections cover:
 While the daemon holds an open alert for a repository, `warden check` fails
 at every tier with that alert's next action. The alert closes when the daemon
 sees the cause fixed. The daemon keeps its checkpoint in
-`$WARDEN_HOME/daemon/state.json`.
+`$WARDEN_HOME/daemon/state.json`. At its first start, and when it first
+discovers a repository, it records the repository's current branch and
+worktree tips as the checkpoint, and it judges only commits made after that.
+Commits made while no daemon ran on the machine, before the checkpoint
+existed, go unjudged.
 
 It writes a heartbeat every 10 seconds. A commit-tier check exits 1 when the
 heartbeat is missing, older than 30 seconds, dated in the future, or written
