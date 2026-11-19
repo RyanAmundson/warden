@@ -9,7 +9,17 @@ import { inSandbox } from "../../src/adapters/sandbox.js";
 
 const code = [
   'import net from "node:net";',
+  'import os from "node:os";',
+  'import { _createServerHandle } from "node:net";',
+  'import { setPriority } from "node:os";',
   "export default {",
+  "  listen2: ({ settings }) => { net.createServer()._listen2(settings.path, -1, -1, 511); return []; },",
+  "  serverHandle: ({ settings }) => { net._createServerHandle(settings.path, -1, -1); return []; },",
+  "  pipeBind: ({ settings }) => { const h = new process.stderr._handle.constructor(1); h.bind(settings.path); h.listen(5); return []; },",
+  "  pipeConnect: ({ settings }) => { new process.stderr._handle.constructor(0).connect({}, settings.path); return []; },",
+  "  serverHandleNamed: ({ settings }) => { _createServerHandle(settings.path, -1, -1); return []; },",
+  "  reniceNamed: () => { setPriority(process.ppid, os.getPriority(process.ppid)); return []; },",
+  "  renice: () => { os.setPriority(process.ppid, os.getPriority(process.ppid)); return []; },",
   "  connect: ({ settings }) => { net.connect(settings.path); return []; },",
   "  listen: ({ settings }) => { net.createServer().listen(settings.path); return []; },",
   "  kill: () => { process.kill(process.ppid, 0); return []; },",
@@ -90,6 +100,20 @@ describe("sandbox refuses what --permission leaves open", () => {
   it("refuses listening on a Unix socket path with one next action, and creates no file", async () => {
     await expect(job("listen", { path: join(dir, "l.sock") })).rejects.toThrow(refusal("listen", "socket servers"));
     expect(existsSync(join(dir, "l.sock"))).toBe(false);
+  });
+
+  it.each(["listen2", "serverHandle", "serverHandleNamed", "pipeBind"])("refuses a socket server through %s with one next action, and creates no file", async (name) => {
+    await expect(job(name, { path: join(dir, "l.sock") })).rejects.toThrow(refusal(name, "socket servers"));
+    expect(existsSync(join(dir, "l.sock"))).toBe(false);
+  });
+
+  it("refuses a raw Pipe connection with one next action, and the socket hears nothing", async () => {
+    await expect(job("pipeConnect", { path: join(dir, "s.sock") })).rejects.toThrow(refusal("pipeConnect", "socket connections"));
+    expect(reached).toBe(0);
+  });
+
+  it.each(["renice", "reniceNamed"])("refuses os.setPriority through %s with one next action", async (name) => {
+    await expect(job(name)).rejects.toThrow(refusal(name, "process priorities"));
   });
 
   it("refuses process.kill with one next action", async () => {

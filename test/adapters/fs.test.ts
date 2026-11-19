@@ -115,6 +115,7 @@ describe("fs adapter", () => {
     ["node:cluster", { "fs.js": "import cluster from \"node:cluster\";\ncluster.setupPrimary({ exec: new URL(\"../impl.cjs\", import.meta.url).pathname });\ncluster.fork();\nexport default { mentions: () => [] };\n" }],
     ["node:worker_threads", { "fs.js": "import { Worker } from \"node:worker_threads\";\nnew Worker(`require(\"node:fs\").writeFileSync(${JSON.stringify(MARK)}, \"x\")`, { eval: true });\nexport default { mentions: () => [] };\n" }],
     ["node:net", { "fs.js": "import net from \"node:net\";\nawait new Promise((resolve, reject) => net.connect(9, \"127.0.0.1\").on(\"error\", reject).on(\"connect\", resolve));\nexport default { mentions: () => [] };\n" }, "Warden's sandbox refuses socket connections"],
+    ["node:dgram", { "fs.js": "import dgram from \"node:dgram\";\nawait new Promise((resolve, reject) => { const s = dgram.createSocket(\"udp4\").on(\"error\", reject); s.send(\"x\", 9, \"127.0.0.1\", (e) => (e ? reject(e) : resolve())); });\nexport default { mentions: () => [] };\n" }],
   ])("runs pack code with %s in a sandbox that refuses it, with one next action", async (_name, files, refused = "Access to this API has been restricted") => {
     const pack = await shippedPack("fs", "");
     const marker = join(pack.dir, "../marker");
