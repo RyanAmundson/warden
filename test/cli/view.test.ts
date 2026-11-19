@@ -67,7 +67,7 @@ const fits = (lines: string[]): void => {
 it("renders a passing run at 80 columns", () => {
   const lines = render(model([...steps("r1", "14:01:40"), passRun]), size, 0);
   fits(lines);
-  expect(lines[0]).toBe(" WARDEN  context-manager… q quit  r rerun  l layers  v violations  d determinism");
+  expect(lines[0]).toBe(" WARDEN  context-manager · base origin/main · v9.8.7    q quit  r rerun  l  v  d");
   expect(lines[1]).toBe("─".repeat(80));
   expect(lines[2]).toBe(" NOW  commit check · 3 files · triggered by git commit · 13 ms");
   expect(lines[3]).toMatch(/^ {3}✓ 1 rules intact {6}lock matches, 0 tampered files +2\.0 ms$/);
@@ -384,7 +384,7 @@ const layered = (extra: Partial<ViewModel> = {}): ViewModel => ({
 it("renders the layers screen at 80 columns, strongest first, with every layer and the packs", () => {
   const lines = renderLayers(layered(), size);
   fits(lines);
-  expect(lines[0]).toMatch(/^ WARDEN {2}warden · base mai… q quit {2}r rerun {2}l runs {2}v violations {2}d determinism$/);
+  expect(lines[0]).toMatch(/^ WARDEN {2}warden · base main · v\S+ +q quit {2}r rerun {2}l {2}v {2}d$/);
   expect(lines[2]).toMatch(/^ LAYERS {2}strongest first · a rule can only move up +rules {2}proven$/);
   expect(lines[3]).toMatch(/^ ┌ DETERMINISTIC ─+┐$/);
   expect(lines[4]).toMatch(/^ │ 0 type +compiler proves it +\(none yet\) +0 +│$/);
@@ -539,14 +539,14 @@ it("v toggles the violations screen, and l and v switch between screens", async 
   const done = liveView({ input, output, watchDir: dir, file: "p.jsonl", rerun: vi.fn(), load: () => Promise.resolve(violated()) });
   const screen = (): string => output.text.slice(output.text.lastIndexOf("\x1b[H"));
   await vi.waitFor(() => expect(screen()).toContain(" NOW  "));
-  expect(screen()).toMatch(/v violations/);
+  expect(screen()).toMatch(/q quit  r rerun  l  v  d/);
   input.emit("data", Buffer.from("v"));
   expect(screen()).toContain(" VIOLATIONS BY PACK");
   input.emit("data", Buffer.from("v"));
   expect(screen()).toContain(" NOW  ");
   input.emit("data", Buffer.from("l"));
   expect(screen()).toContain(" LAYERS  ");
-  expect(screen()).toMatch(/v violations/);
+  expect(screen()).toMatch(/q quit  r rerun  l  v  d/);
   input.emit("data", Buffer.from("v"));
   expect(screen()).toContain(" VIOLATIONS BY PACK");
   input.emit("data", Buffer.from("q"));
@@ -770,4 +770,40 @@ it("plain output outside a terminal never tells the reader to press r", () => {
     expect(out).toContain("Next action: run warden check");
     expect(out).not.toContain("press r");
   }
+});
+
+it("the runs header keeps the project, base, and version at 80 columns", () => {
+  for (const cols of [80, 70]) {
+    const lines = render(model([]), { cols, rows: 30 }, 0);
+    expect(lines[0]).toContain("context-manager · base origin/main · v9.8.7");
+    expect(lines[0]).toContain("q quit");
+    expect(lines[0]?.length).toBeLessThanOrEqual(cols);
+  }
+  expect(renderLayers(model([]), { cols: 80, rows: 30 })[0]).toContain("· v9.8.7");
+});
+
+it("with 9-digit counts at 40 columns every column name is whole, never cut with an ellipsis", () => {
+  const big = { ...withOlder(), projects: withOlder().projects.map((p) => (p.project === "trq-berry" ? { project: "trq-berry", run: ranWith({ runtime: 123456789, model: 98765432, legacy: 4 }) } : p)) };
+  const lines = renderDeterminism(big, { cols: 40, rows: 24 });
+  for (const l of lines) expect(l.length, l).toBeLessThanOrEqual(40);
+  expect(lines[2]).not.toContain("…");
+  expect(lines[2]).toMatch(/det +jud +pro +unk$/);
+  expect(lines).toContainEqual(expect.stringMatching(/^ {3}trq-b\S* +[█▒░]+ +123\.4M +98\.7M +4 +0$/));
+});
+
+it("on the determinism screen another project's Evidence file refreshes the view, and on the runs screen it does not", async () => {
+  const input = new FakeInput();
+  const output = new FakeOutput();
+  const load = vi.fn<() => Promise<ViewModel>>().mockResolvedValue(threeProjects());
+  const done = liveView({ input, output, watchDir: dir, file: "p.jsonl", screen: "determinism", rerun: vi.fn(), load });
+  await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(1));
+  await writeFile(join(dir, "other.jsonl"), "x\n");
+  await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+  input.emit("data", Buffer.from("d"));
+  await new Promise((r) => setTimeout(r, 50));
+  await writeFile(join(dir, "other.jsonl"), "y\n");
+  await new Promise((r) => setTimeout(r, 100));
+  expect(load).toHaveBeenCalledTimes(2);
+  input.emit("data", Buffer.from("q"));
+  await done;
 });
