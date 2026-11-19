@@ -193,7 +193,7 @@ it("records each commit, flags one that no full check stamped, and closes the al
   expect(empty).toMatchObject({ code: 1, err: expect.stringContaining(`unchecked-commit ${skipped}`) });
   await s.daemon.rescan();
   expect(unchecked(s)).toEqual([skipped]);
-  expect(warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", `${skipped.slice(0, 12)}^`).code).toBe(1);
+  expect(warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", `${skipped.slice(0, 12)}^`).code).toBe(0);
   await until("the commit's own check closes the alert", () => unchecked(s).length === 0);
 });
 
@@ -293,7 +293,7 @@ it("judges a root commit, its next action closes the alert, and a deleted branch
   expect(tampered().find((e) => e.file === orphan)?.next).toBe(`run git switch -c warden-check-${short} main, then git read-tree -u --reset ${short}, then warden check --base main`);
   git(root, "switch", "-q", "-c", `warden-check-${short}`, "main");
   git(root, "read-tree", "-u", "--reset", short);
-  expect(warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", "main").code).toBe(1);
+  expect(warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", "main").code).toBe(0);
   await until("the root commit's alert closes", () => !unchecked(s).includes(orphan));
   git(root, "reset", "-q", "--hard");
   git(root, "switch", "-q", "main");
@@ -385,6 +385,78 @@ it("a corrupt checkpoint stops startup with one next action", async () => {
   const r = warden(root, {}, "daemon", "--port", "0");
   expect(r.code).toBe(2);
   expect(r.err.match(/Next action: /g)).toHaveLength(1);
+  expect(r.err.startsWith(`the daemon could not start: ${stateFile()} is not valid JSON`)).toBe(true);
+});
+
+it("a commit-tier check judges the staged blob of a file that is missing from disk", async () => {
+  await writeFile(join(root, "src/bad.ts"), "// a comment\nexport const bad = 1;\n");
+  git(root, "add", "-A");
+  await rm(join(root, "src/bad.ts"));
+  const r = warden(root, {}, "check", "--base", "main");
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("Next action: run git add -- 'src/bad.ts', then run warden check --base main.");
+  git(root, "add", "--", "src/bad.ts");
+  expect(warden(root, {}, "check", "--base", "main").code).toBe(0);
+});
+
+it("a commit-tier check judges a skip-worktree or assume-unchanged blob, not the file on disk", async () => {
+  const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: root, input: "// bad comment\nexport const a = 1;\n", encoding: "utf8" }).trim();
+  git(root, "update-index", "--cacheinfo", `100644,${blob},src/a.ts`);
+  git(root, "update-index", "--skip-worktree", "src/a.ts");
+  const hidden = warden(root, {}, "check", "--base", "main");
+  expect(hidden.code).toBe(1);
+  expect(hidden.out).toContain("Next action: run git update-index --no-skip-worktree -- 'src/a.ts', then git update-index --no-assume-unchanged -- 'src/a.ts', then run warden check --base main.");
+  git(root, "update-index", "--no-skip-worktree", "--", "src/a.ts");
+  git(root, "update-index", "--assume-unchanged", "--", "src/a.ts");
+  expect(warden(root, {}, "check", "--base", "main").out).toContain("--no-assume-unchanged -- 'src/a.ts'");
+  git(root, "update-index", "--no-skip-worktree", "--", "src/a.ts");
+  git(root, "update-index", "--no-assume-unchanged", "--", "src/a.ts");
+  const shown = warden(root, {}, "check", "--base", "main");
+  expect(shown.code).toBe(1);
+  expect(shown.out).toContain("Next action: run git add -- 'src/a.ts'");
+  git(root, "add", "--", "src/a.ts");
+  expect(warden(root, {}, "check", "--base", "main").code).toBe(0);
+});
+
+const withRemote = (): string => {
+  const remote = join(scratch, "pushed.git");
+  git(scratch, "init", "-q", "--bare", "-b", "main", remote);
+  git(root, "remote", "add", "origin", remote);
+  return remote;
+};
+
+it("a flagged commit stays flagged after it is pushed, its branch is deleted, and the remote is fetched", async () => {
+  withRemote();
+  const s = await start();
+  git(root, "switch", "-q", "-c", "feat");
+  await writeFile(join(root, "src/feat.ts"), "export const feat = 1;\n");
+  git(root, "add", "-A");
+  commitUnhooked("feat");
+  const feat = git(root, "rev-parse", "HEAD").trim();
+  await until("the feature commit is flagged", () => unchecked(s).includes(feat));
+  git(root, "push", "-q", "origin", "feat", "feat:main");
+  git(root, "switch", "-q", "main");
+  git(root, "branch", "-q", "-D", "feat");
+  git(root, "fetch", "-q", "origin");
+  await s.daemon.rescan();
+  expect(unchecked(s)).toEqual([feat]);
+});
+
+it("a pushed or update-ref'd remote-tracking ref grants no exemption", async () => {
+  withRemote();
+  await start();
+  await stop();
+  await writeFile(join(root, "src/push.ts"), "export const push = 1;\n");
+  git(root, "add", "-A");
+  commitUnhooked("pushed at once");
+  const pushed = git(root, "rev-parse", "HEAD").trim();
+  git(root, "push", "-q", "origin", "main");
+  const hidden = git(root, "commit-tree", await treeWith("src/hide.ts"), "-p", pushed, "-m", "hidden").trim();
+  git(root, "update-ref", "refs/remotes/zz/hide", hidden);
+  git(root, "update-ref", "refs/heads/main", hidden);
+  git(root, "reset", "-q", "--hard");
+  const s = await start();
+  expect(unchecked(s).sort()).toEqual([pushed, hidden].sort());
 });
 
 it("seeds the tips of a repository discovered after the daemon started", async () => {

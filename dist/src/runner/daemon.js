@@ -4,7 +4,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { COMMIT_HOOK } from "../compiler/emit.js";
 import { LOCK_PATH, firstLine, readLock } from "../compiler/lock.js";
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
-import { commitsOf, commonDir, isAncestor, newCommits, reachable, repoTips, restoreAction, worktrees } from "./changed.js";
+import { allTips, commitsOf, commonDir, covers, newCommits, reachable, repoTips, restoreAction, worktrees } from "./changed.js";
 import { claudeDir, commitHookItem, pluginAction, pluginState } from "./doctor.js";
 import { LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, evidenceProjects, readEvidenceFrom, readEvidenceTail, wardenHome } from "./evidence.js";
 import { formatFeedback } from "./feedback.js";
@@ -129,12 +129,7 @@ const refresh = (index, project) => {
     }
     return ix;
 };
-const stamped = (root, index, c) => {
-    if (c.expectedTree === c.tree)
-        return true;
-    const parent = c.parents[0];
-    return index.stamps.some((s) => s.tree === c.tree && (parent === undefined || (s.mergeBase !== undefined && (s.mergeBase === parent || isAncestor(root, s.mergeBase, parent)))));
-};
+const stamped = (root, index, c) => c.expectedTree === c.tree || index.stamps.some((s) => covers(root, s, c));
 const uncheckedAlert = (c, base) => {
     const short = c.commit.slice(0, 12);
     const next = c.parents[0] === undefined
@@ -217,7 +212,8 @@ export function startWatching(opts) {
             return !checked;
         });
         const pending = [...(known?.unchecked ?? []), ...rebuilt, ...fresh];
-        const unchecked = pending.filter((c, i) => pending.findIndex((x) => x.commit === c.commit) === i && !stamped(w.root, ix, c) && reachable(w.root, c.commit, tips));
+        const refs = allTips(w.root);
+        const unchecked = pending.filter((c, i) => pending.findIndex((x) => x.commit === c.commit) === i && !stamped(w.root, ix, c) && reachable(w.root, c.commit, refs));
         state.repos[w.repo] = { tips, unchecked };
         return unchecked.map((c) => uncheckedAlert(c, base));
     };

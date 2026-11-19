@@ -27,6 +27,7 @@ export interface Notes {
   overBudget?: OverBudget[];
   killed?: Killed[];
   unstaged?: string[];
+  hidden?: string[];
   base?: string;
 }
 
@@ -53,6 +54,11 @@ const nextAction = (failures: Violation[], set: RecordSet, notes: Notes): string
     if (sources.length === 0) return `revert your change to ${[...new Set(notes.tampered.map((t) => t.file))].join(", ")}.`;
     const files = [...new Set([...sources, ...notes.tampered.filter((t) => t.sources === undefined && t.file !== ".warden/lock.json").map((t) => t.file)])];
     return `revert your change to ${files.join(", ")}, then run warden compile.`;
+  }
+  if ((notes.hidden ?? []).length > 0) {
+    if (notes.base === undefined) throw new Error("a hidden note needs the base to name the next command");
+    const files = notes.hidden?.map((f) => `'${f.replaceAll("'", "'\\''")}'`).join(" ") ?? "";
+    return `run git update-index --no-skip-worktree -- ${files}, then git update-index --no-assume-unchanged -- ${files}, then run warden check --base ${notes.base}.`;
   }
   if ((notes.unstaged ?? []).length > 0) {
     if (notes.base === undefined) throw new Error("an unstaged note needs the base to name the next command");

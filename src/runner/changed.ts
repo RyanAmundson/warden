@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { resolve } from "node:path";
+import { existsSync, lstatSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { RecordError } from "../records/load.js";
 
 const git = (root: string, args: string[]): { ok: boolean; out: string; err: string } => {
@@ -214,9 +215,59 @@ const described = (root: string, range: string[]): Committed[] => {
   });
 };
 
+const FETCHED = /^(fetch|pull|clone)/;
+
+export function fetchedTips(root: string): string[] {
+  const remotes = must(root, ["remote"]).split("\n").filter((r) => r !== "");
+  const refs = remotes.flatMap((r) => must(root, ["for-each-ref", "--format=%(refname)", `refs/remotes/${r}/`]).split("\n").filter((l) => l !== ""));
+  return [
+    ...new Set(
+      refs.flatMap((ref) => {
+        const r = git(root, ["reflog", "show", "--format=%H%x09%gs", ref, "--"]);
+        return r.ok ? r.out.split("\n").flatMap((line) => {
+          const [sha, subject] = line.split("\t");
+          return sha !== undefined && sha !== "" && FETCHED.test(subject ?? "") ? [sha] : [];
+        }) : [];
+      }),
+    ),
+  ];
+}
+
 export function newCommits(root: string, tips: string[], seen: string[]): Committed[] {
   if (tips.length === 0) return [];
-  return described(root, [...tips, ...seen.filter((t) => hasCommit(root, t)).map((t) => `^${t}`), "--not", "--remotes"]);
+  return described(root, [...tips, ...[...seen, ...fetchedTips(root)].filter((t) => hasCommit(root, t)).map((t) => `^${t}`)]);
+}
+
+export const allTips = (root: string): string[] => [...new Set([...must(root, ["for-each-ref", "--format=%(objectname)"]).split("\n").filter((l) => l !== ""), ...repoTips(root)])];
+
+export const covers = (root: string, run: { tree?: string; mergeBase?: string }, c: Committed): boolean => {
+  const parent = c.parents[0];
+  return run.tree === c.tree && (parent === undefined || (run.mergeBase !== undefined && (run.mergeBase === parent || isAncestor(root, run.mergeBase, parent))));
+};
+
+export interface StagedMismatch {
+  paths: string[];
+  hidden: string[];
+}
+
+export function stagedMismatch(root: string, base: string): StagedMismatch {
+  const literal = (args: string[]): string[] => names(must(root, ["--literal-pathspecs", ...args]));
+  const staged = literal(["diff", "-z", "--cached", "--name-only", "--relative", "--no-renames", "--diff-filter=AM", mergeBase(root, base)]);
+  if (staged.length === 0) return { paths: [], hidden: [] };
+  const index = new Map(
+    literal(["ls-files", "-s", "-z", "--", ...staged]).map((line) => {
+      const [meta = "", path = ""] = line.split("\t");
+      const [mode, sha] = meta.split(" ");
+      return [path, { mode, sha }] as const;
+    }),
+  );
+  const tags = new Map(literal(["ls-files", "-v", "-z", "--", ...staged]).map((line) => [line.slice(2), line[0] as string] as const));
+  const regular = staged.filter((p) => index.get(p)?.mode === "100644" || index.get(p)?.mode === "100755");
+  const present = regular.filter((p) => existsSync(join(root, p)) && lstatSync(join(root, p)).isFile());
+  const hashes = present.length === 0 ? [] : must(root, ["--literal-pathspecs", "hash-object", "--", ...present]).trim().split("\n");
+  const work = new Map(present.map((p, i) => [p, hashes[i]]));
+  const paths = regular.filter((p) => work.get(p) !== index.get(p)?.sha);
+  return { paths, hidden: paths.filter((p) => tags.get(p) === "S" || /^[a-z]$/.test(tags.get(p) ?? "")) };
 }
 
 export function commitsOf(root: string, shas: string[]): Committed[] {

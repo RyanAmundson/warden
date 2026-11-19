@@ -150,7 +150,8 @@ sees the cause fixed. The daemon keeps its checkpoint in
 discovers a repository, it records the repository's current branch and
 worktree tips as the checkpoint, and it judges only commits made after that.
 If `state.json` is lost, the daemon rebuilds open alerts from git and
-Evidence.
+Evidence. A commit made while the daemon was stopped and `state.json` was
+missing is not judged, because the daemon never recorded it.
 
 These commits go unjudged:
 
@@ -160,7 +161,17 @@ These commits go unjudged:
   already reaches when the daemon first sees it;
 - a commit pushed to a remote without ever being on a local branch or
   worktree HEAD here;
-- commits in a worktree whose branch has no commit yet.
+- commits in a worktree whose branch has no commit yet;
+- commits in a clone on this machine where no `warden init` or check has
+  run, because the daemon discovers a repository only from Warden's Evidence.
+  Origin-side enforcement, tracked as cm-wkqedr.52, covers what a
+  per-machine daemon cannot see.
+
+A commit counts as another machine's only when a remote-tracking ref of a
+configured remote reached it by fetch, pull, or clone, as that ref's reflog
+records. A remote-tracking ref moved by a push or by `git update-ref` grants
+no exemption. A commit the daemon has flagged stays flagged while any ref,
+remote-tracking refs included, reaches it.
 
 An open alert for a commit that no local branch or worktree HEAD reaches any
 more is dropped.
