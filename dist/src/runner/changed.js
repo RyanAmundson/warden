@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { lstatSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, lstatSync, readdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { RecordError } from "../records/load.js";
 const noGrafts = join(tmpdir(), `warden-no-grafts-${randomUUID()}`);
 const env = () => ({
@@ -151,6 +151,132 @@ export function showAtMergeBase(root, base, path) {
     if (!git(root, ["cat-file", "-e", spec]).ok)
         return undefined;
     return must(root, ["show", spec]);
+}
+export const indexTree = (root) => {
+    const r = git(root, ["write-tree"]);
+    return r.ok ? r.out.trim() : undefined;
+};
+export const commonDir = (root) => resolve(root, must(root, ["rev-parse", "--git-common-dir"]).trim());
+const UNBORN = /^0+$/;
+export function worktrees(root) {
+    return must(root, ["worktree", "list", "--porcelain"])
+        .split("\n\n")
+        .flatMap((block) => {
+        const path = /^worktree (.+)$/m.exec(block)?.[1];
+        const head = /^HEAD ([0-9a-f]+)$/m.exec(block)?.[1];
+        return path === undefined ? [] : [{ path, ...(head === undefined || UNBORN.test(head) ? {} : { head }), ...(/^detached$/m.test(block) ? { detached: true } : {}) }];
+    });
+}
+export const repoTips = (root) => [...new Set([...must(root, ["for-each-ref", "--format=%(objectname)", "refs/heads"]).split("\n").filter((l) => l !== ""), ...worktrees(root).flatMap((w) => (w.head === undefined ? [] : [w.head]))])].sort();
+const mergedTree = (root, parents) => {
+    if (parents.length !== 2)
+        return undefined;
+    const r = git(root, ["merge-tree", "--write-tree", ...parents]);
+    return r.ok || r.out !== "" ? r.out.split("\n")[0] : undefined;
+};
+const described = (root, range) => {
+    const commits = must(root, ["log", "--format=%H %T %P", ...range, "--"])
+        .split("\n")
+        .filter((l) => l !== "")
+        .map((l) => {
+        const [commit, tree, ...parents] = l.split(" ");
+        return { commit, tree, parents: parents.filter((p) => p !== "") };
+    });
+    const single = [...new Set(commits.flatMap((c) => (c.parents.length === 1 ? c.parents : [])))];
+    const trees = new Map(single.length === 0
+        ? []
+        : must(root, ["log", "--no-walk=unsorted", "--format=%H %T", ...single, "--"])
+            .split("\n")
+            .filter((l) => l !== "")
+            .map((l) => l.split(" ")));
+    return commits.map((c) => {
+        const expectedTree = c.parents.length === 1 ? trees.get(c.parents[0]) : mergedTree(root, c.parents);
+        return { ...c, ...(expectedTree === undefined ? {} : { expectedTree }) };
+    });
+};
+const FETCHED = /^(fetch|pull|clone)/;
+export function fetchedTips(root) {
+    const remotes = must(root, ["remote"]).split("\n").filter((r) => r !== "");
+    const refs = remotes.flatMap((r) => must(root, ["for-each-ref", "--format=%(refname)", `refs/remotes/${r}/`]).split("\n").filter((l) => l !== ""));
+    return [
+        ...new Set(refs.flatMap((ref) => {
+            const r = git(root, ["reflog", "show", "--format=%H%x09%gs", ref, "--"]);
+            return r.ok ? r.out.split("\n").flatMap((line) => {
+                const [sha, subject] = line.split("\t");
+                return sha !== undefined && sha !== "" && FETCHED.test(subject ?? "") ? [sha] : [];
+            }) : [];
+        })),
+    ];
+}
+export function newCommits(root, tips, seen) {
+    if (tips.length === 0)
+        return [];
+    return described(root, [...tips, ...[...seen, ...fetchedTips(root)].filter((t) => hasCommit(root, t)).map((t) => `^${t}`)]);
+}
+export const allTips = (root) => [...new Set([...must(root, ["for-each-ref", "--format=%(objectname)"]).split("\n").filter((l) => l !== ""), ...repoTips(root)])];
+export const covers = (root, run, c) => {
+    const parent = c.parents[0];
+    return run.tree === c.tree && (parent === undefined || (run.mergeBase !== undefined && (run.mergeBase === parent || isAncestor(root, run.mergeBase, parent))));
+};
+export function checkoutBlobs(root, paths, dir) {
+    execFileSync("git", ["--literal-pathspecs", "checkout-index", `--prefix=${dir}/`, "--ignore-skip-worktree-bits", "-z", "--stdin"], { cwd: root, env: env(), input: paths.map((p) => `${p}\0`).join(""), stdio: ["pipe", "ignore", "pipe"] });
+    return join(dir, must(root, ["rev-parse", "--show-prefix"]).trim());
+}
+export const sparseMode = (root) => {
+    const on = (key) => git(root, ["config", "--bool", key]).out.trim() === "true";
+    return !on("core.sparseCheckout") ? "off" : on("core.sparseCheckoutCone") ? "cone" : "patterns";
+};
+export function stagedMismatch(root, base) {
+    const literal = (args) => names(must(root, ["--literal-pathspecs", ...args]));
+    const staged = literal(["diff", "-z", "--cached", "--name-only", "--relative", "--no-renames", "--diff-filter=AM", mergeBase(root, base)]);
+    if (staged.length === 0)
+        return { paths: [], hidden: [], absent: [] };
+    const index = new Map(literal(["ls-files", "-s", "-z", "--", ...staged]).map((line) => {
+        const [meta = "", path = ""] = line.split("\t");
+        const [mode, sha] = meta.split(" ");
+        return [path, { mode, sha }];
+    }));
+    const tags = new Map(literal(["ls-files", "-v", "-z", "--", ...staged]).map((line) => [line.slice(2), line[0]]));
+    const regular = staged.filter((p) => index.get(p)?.mode === "100644" || index.get(p)?.mode === "100755");
+    const present = regular.filter((p) => existsSync(join(root, p)) && lstatSync(join(root, p)).isFile());
+    const hashes = present.length === 0 ? [] : must(root, ["--literal-pathspecs", "hash-object", "--", ...present]).trim().split("\n");
+    const work = new Map(present.map((p, i) => [p, hashes[i]]));
+    const absent = new Set(regular.filter((p) => tags.get(p)?.toUpperCase() === "S" && !existsSync(join(root, p))));
+    const paths = regular.filter((p) => !absent.has(p) && work.get(p) !== index.get(p)?.sha);
+    return { paths, hidden: paths.filter((p) => tags.get(p) === "S" || /^[a-z]$/.test(tags.get(p) ?? "")), absent: [...absent].map((path) => ({ path, sha: index.get(path)?.sha })) };
+}
+export function commitsOf(root, shas) {
+    const known = shas.filter((sha) => hasCommit(root, sha));
+    return known.length === 0 ? [] : described(root, ["--no-walk=unsorted", ...known]);
+}
+export const lockVersionAt = (root, commit) => {
+    const r = git(root, ["show", `${commit}:.warden/lock.json`]);
+    if (!r.ok)
+        return undefined;
+    try {
+        const version = JSON.parse(r.out).warden;
+        return typeof version === "string" ? version : undefined;
+    }
+    catch {
+        return undefined;
+    }
+};
+export const reachableFrom = (root, sha, tips) => execFileSync("git", ["rev-list", "-1", "--ignore-missing", "--stdin", sha], { cwd: root, env: env(), encoding: "utf8", input: tips.map((t) => `^${t}\n`).join(""), stdio: ["pipe", "pipe", "pipe"] }).trim() === "";
+export const holdersOf = (root, sha) => [
+    ...must(root, ["for-each-ref", "--contains", sha, "--format=%(refname)"]).split("\n").filter((l) => l !== ""),
+    ...worktrees(root)
+        .filter((w) => w.detached === true && w.head !== undefined && isAncestor(root, sha, w.head))
+        .map((w) => `the detached HEAD of worktree ${w.path}`),
+];
+export const isAncestor = (root, ancestor, of) => git(root, ["merge-base", "--is-ancestor", ancestor, of]).ok;
+export const reachable = (root, sha, tips) => hasCommit(root, sha) && tips.some((tip) => isAncestor(root, sha, tip));
+export function restoreAction(root, path) {
+    if (git(root, ["cat-file", "-e", `HEAD:${path}`]).ok)
+        return `run git checkout HEAD -- .warden in ${root}`;
+    const removedBy = git(root, ["rev-list", "-1", "HEAD", "--", path]).out.trim();
+    if (removedBy === "")
+        return `run warden init in ${root}`;
+    return `run git checkout ${removedBy}^ -- .warden in ${root}`;
 }
 export function changeSignatures(root, base, dir, allowedSignersFile, staged, alongside) {
     const at = mergeBase(root, base);

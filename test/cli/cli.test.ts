@@ -1,6 +1,6 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -335,6 +335,37 @@ describe("warden CLI", () => {
     expect(existsSync(join(root, ".claude"))).toBe(false);
   });
 
+  it("bench prints a superlinear verdict, then names the example projects it could not remove, and exits 2", async () => {
+    await mkdir(join(root, ".warden/packs/local"), { recursive: true });
+    await writeFile(
+      join(root, ".warden/config.yaml"),
+      'warden: "0.1.0"\nproject: p\nbase: main\npacks:\n  - id: local\n    paths: ["src/**"]\ntierBudgetMs: { edit: 1, commit: 1, boundary: 1 }\nloopBreakerRepeats: 3\nbench:\n  minMarginalMs: 5\n  linearMax: 0.5\n',
+    );
+    await writeFile(
+      join(root, ".warden/packs/local/pack.yaml"),
+      [
+        "id: local", "layer: 1", "terms: []", "practices:", "  - id: locks", "    statement: Leaves a locked folder.", "    terms: []", "    paths: []", "    conflictsWith: []", "    guardrails:",
+        "      - id: local-locker", "        kind: runtime", "        runs: [boundary]", "        budgetMs: 5000", "        version: 1",
+        "        implementation: \"cmd:mkdir -p locked/inner && chmod 500 locked && sleep $(ls src | awk 'END{print NR/4000}')\"",
+        '        mustFail: "bad\\n"', '        mustPass: "const a = 1;\\n"', "",
+      ].join("\n"),
+    );
+    const r = warden("bench", "--rule", "local-locker");
+    const projects = [...new Set(r.err.match(/\/\S*?warden-examples-[A-Za-z0-9]{6}/g) ?? [])];
+    try {
+      expect(r.out).toMatch(/local-locker +superlinear .*DEFECT/);
+      expect(projects).toHaveLength(2);
+      expect(r.err).toContain("Warden could not remove 2 example projects:");
+      expect(r.err.match(/Next action:/g)).toHaveLength(1);
+      expect(r.code).toBe(2);
+    } finally {
+      for (const project of projects) {
+        await chmod(join(project, "locked"), 0o700);
+        await rm(project, { recursive: true, force: true });
+      }
+    }
+  });
+
   it("compile exits 2 when records have findings", async () => {
     await mkdir(join(root, ".warden/packs/local"), { recursive: true });
     await writeFile(
@@ -613,7 +644,7 @@ describe("warden CLI", () => {
     expect(initialized.out).toContain("ok    tool typescript\n");
     const r = warden("doctor");
     expect(r.code, r.err).toBe(0);
-    expect(r.out).toBe("ok    tool eslint\nok    tool typescript-eslint\nok    tool typescript\nok    tool warden eslint plugin\nok    git pre-commit hook: .warden/generated/hooks/pre-commit\n");
+    expect(r.out).toBe("ok    tool eslint\nok    tool typescript-eslint\nok    tool typescript\nok    tool warden eslint plugin\nok    git pre-commit hook: .warden/generated/hooks/pre-commit\nnote  Claude plugin warden@warden is not installed, so Claude Code edits are not checked; to check them, run claude plugin marketplace add RyanAmundson/warden, then claude plugin install warden@warden\n");
   });
 
   it("doctor exits 2 with the failing item and one next action", async () => {
@@ -921,13 +952,24 @@ describe("the Claude Code plugin hook", () => {
     init();
     const preload = join(shims, "fake.cjs");
     await writeFile(preload, "Object.defineProperty(process, 'versions', { value: { ...process.versions, node: '22.11.0' } });\n");
-    await writeFile(join(shims, "warden"), `#!/bin/sh\nNODE_OPTIONS="--require ${preload}" exec "${process.execPath}" "${main}" "$@"\n`, { mode: 0o755 });
+    await writeFile(join(shims, "warden"), `#!/bin/sh\necho "(node:1) ExperimentalWarning: noise" >&2\nNODE_OPTIONS="--require ${preload}" exec "${process.execPath}" "${main}" "$@"\n`, { mode: 0o755 });
     for (const [event, input] of [["guard", edit("src/a.ts")], ["guard", bash("git commit -m x")], ["check", edit("src/a.ts")]] as const) {
       const r = hook(event, input);
       expect(r.code).toBe(2);
       expect(r.err).toBe("Warden needs Node 25 or newer; this is Node 22.11.0. Next action: install Node 25 or newer, then run warden again\n");
     }
     expect(hook("guard", bash("npm test"))).toEqual({ code: 0, out: "", err: "" });
+  });
+
+  it("with warden on PATH failing for another reason, shows that error and does not say warden is missing", async () => {
+    init();
+    await writeFile(join(shims, "warden"), `#!/bin/sh\necho "Error: Cannot find module x" >&2\nexit 1\n`, { mode: 0o755 });
+    const r = hook("guard", edit("src/a.ts"));
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("Error: Cannot find module x");
+    expect(r.err).toContain("exit status 1");
+    expect(r.err).not.toContain("not on PATH");
+    expect(r.err.match(/Next action/g)).toHaveLength(1);
   });
 
   it("with warden matching or newer than the plugin, hands the call to warden", async () => {

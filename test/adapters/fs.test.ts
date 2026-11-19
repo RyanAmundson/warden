@@ -36,6 +36,12 @@ describe("fs adapter", () => {
     ["a require of Thumbs.db", { "fs.js": "module.exports = require(\"./Thumbs.db\");\n", "Thumbs.db": "module.exports = {};\n" }],
     ["a require of thumbs.db in other case", { "fs.js": "module.exports = require(\"./thumbs.db\");\n", "Thumbs.db": "module.exports = {};\n" }],
     ["a string literal naming desktop.ini", { "fs.js": "const f = \"desktop.ini\";\nexport default {};\n" }],
+    ["a string literal naming Thumbs.db with a long s", { "fs.js": "const f = \"Thumb\u017f.db\";\nexport default {};\n" }],
+    ["a percent-encoded URL literal naming Thumbs.db", { "fs.js": "const f = new URL(\"./%54humbs.db\", import.meta.url);\nexport default {};\n" }],
+    ["a glob literal naming .DS_Store", { "fs.js": "const f = \"**/.DS_Store\";\nexport default {};\n" }],
+    ["a junk name under a directory with glob characters", { "fs.js": "const f = \"./x[1]/Thumbs.db\";\nexport default {};\n" }],
+    ["a URL literal with a query and fragment", { "fs.js": "const f = new URL(\"./Thumbs.db?v=1#x\", import.meta.url);\nexport default {};\n" }],
+    ["an encoded URL literal with a stray percent in its query", { "fs.js": "const f = new URL(\"./%54humbs.db?v=100%\", import.meta.url);\nexport default {};\n" }],
     ["a string literal naming a junk path in other case", { "fs.js": "const f = \"data/.DS_STORE\";\nexport default {};\n" }],
   ])("refuses pack code with %s, because the lock does not hash OS junk", async (_name, files) => {
     const pack = await shippedPack("fs", "");
@@ -108,8 +114,9 @@ describe("fs adapter", () => {
     ["node:inspector", { "fs.js": "import { Session } from \"node:inspector\";\nconst s = new Session();\ns.connect();\ns.post(\"Runtime.evaluate\", { expression: `process.getBuiltinModule(\"node:fs\").writeFileSync(${JSON.stringify(MARK)}, \"x\")` });\nexport default { mentions: () => [] };\n" }],
     ["node:cluster", { "fs.js": "import cluster from \"node:cluster\";\ncluster.setupPrimary({ exec: new URL(\"../impl.cjs\", import.meta.url).pathname });\ncluster.fork();\nexport default { mentions: () => [] };\n" }],
     ["node:worker_threads", { "fs.js": "import { Worker } from \"node:worker_threads\";\nnew Worker(`require(\"node:fs\").writeFileSync(${JSON.stringify(MARK)}, \"x\")`, { eval: true });\nexport default { mentions: () => [] };\n" }],
-    ["node:net", { "fs.js": "import net from \"node:net\";\nawait new Promise((resolve, reject) => net.connect(9, \"127.0.0.1\").on(\"error\", reject).on(\"connect\", resolve));\nexport default { mentions: () => [] };\n" }],
-  ])("runs pack code with %s in a sandbox that refuses it, with one next action", async (_name, files) => {
+    ["node:net", { "fs.js": "import net from \"node:net\";\nawait new Promise((resolve, reject) => net.connect(9, \"127.0.0.1\").on(\"error\", reject).on(\"connect\", resolve));\nexport default { mentions: () => [] };\n" }, "Warden's sandbox refuses socket connections"],
+    ["node:dgram", { "fs.js": "import dgram from \"node:dgram\";\nawait new Promise((resolve, reject) => { const s = dgram.createSocket(\"udp4\").on(\"error\", reject); s.send(\"x\", 9, \"127.0.0.1\", (e) => (e ? reject(e) : resolve())); });\nexport default { mentions: () => [] };\n" }],
+  ])("runs pack code with %s in a sandbox that refuses it, with one next action", async (_name, files, refused = "Access to this API has been restricted") => {
     const pack = await shippedPack("fs", "");
     const marker = join(pack.dir, "../marker");
     try {
@@ -117,7 +124,7 @@ describe("fs adapter", () => {
       for (const [file, code] of Object.entries(files)) await writeFile(join(pack.dir, file), `const MARK = ${JSON.stringify(marker)};\n${code}`);
       const g = treeGuardrail("fs:local/mentions", pack.dir);
       const refusal = conformance(fsAdapter, fixture, [g], treeSet(g), ["src/a.ts"], []);
-      await expect(refusal).rejects.toThrow("Access to this API has been restricted");
+      await expect(refusal).rejects.toThrow(refused);
       await expect(refusal).rejects.toThrow(/Next action: [^]*, then run warden compile\.$/);
       expect(existsSync(marker)).toBe(false);
     } finally {

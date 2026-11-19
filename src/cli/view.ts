@@ -8,7 +8,7 @@ import { type Evidence, type Step, evidenceProjects, readEvidence } from "../run
 import { MAX_RECORDED_FAILURES } from "./check.js";
 import { listPacks } from "./packs.js";
 import { buildReport } from "./report.js";
-import { clock, firstFailure, msText, noRules, older, ruleParts, runRecords, target, visible } from "./runs.js";
+import { clock, columns, cut, firstFailure, msText, noRules, older, padCells, ruleParts, runRecords, target, visible } from "./runs.js";
 
 export interface RuleRow {
   guardrail: string;
@@ -104,14 +104,14 @@ const BAR = 16;
 
 const clip = (raw: string, width: number): string => {
   const line = visible(raw);
-  return line.length > width ? `${line.slice(0, width - 1)}…` : line;
+  return columns(line) > width ? `${cut(line, width - 1)}…` : line;
 };
 
 const spread = (left: string, right: string, width: number): string => {
   if (right === "") return clip(left, width);
-  const room = width - right.length - 1;
+  const room = width - columns(right) - 1;
   if (room < 1) return clip(left, width);
-  return `${clip(left, room).padEnd(room)} ${right}`;
+  return `${padCells(clip(left, room), room)} ${right}`;
 };
 
 const wrap = (text: string, width: number, most: number): string[] => {
@@ -128,20 +128,17 @@ const wrap = (text: string, width: number, most: number): string[] => {
 
 const count = (n: number): string => n.toLocaleString("en-US");
 
-const HINT_WIDTHS = [
-  "q quit  r rerun  l layers  v violations  d determinism".length,
-  "q quit  r rerun  l layers  v viol  d det".length,
-  "q quit  r rerun".length,
-];
-
-const HEADER_ORDER = [[0, 0], [0, 1], [1, 0], [1, 1], [1, 2], [2, 2], [3, 2]] as const;
-
-const header = (model: ViewModel, [full, short]: [string, string], width: number): string => {
+const header = (model: ViewModel, [full, short]: [string, string], back: string, width: number): string => {
   const name = ` WARDEN  ${model.project}`;
-  const lefts = [`${name} · base ${model.base} · v${model.version}`, `${name} · v${model.version}`, name, " WARDEN"];
-  const hints = [full, short, "q quit  r rerun"];
-  const pick = HEADER_ORDER.find(([l, h]) => visible(lefts[l] as string).length + 1 + (HINT_WIDTHS[h] as number) <= width);
-  return pick === undefined ? spread(lefts[0] as string, "q quit", width) : spread(lefts[pick[0]] as string, hints[pick[1]] as string, width);
+  const withBack = (hint: string): string => (back === "" ? hint : `${hint}  ${back}`);
+  const rerun = withBack("q quit  r rerun");
+  const bare = withBack("q quit");
+  const base = `${name} · base ${model.base} · v${model.version}`;
+  const version = `${name} · v${model.version}`;
+  const tiers: [string, string][] = [[base, full], [base, short], [version, full], [version, short], [name, full], [name, short], [version, rerun], [name, rerun], [" WARDEN", rerun], ["", rerun], [" WARDEN", bare], ["", bare]];
+  const pick = tiers.find(([left, hint]) => columns(visible(left)) + (left === "" ? 0 : 1) + columns(hint) <= width);
+  if (pick === undefined) return spread(" WARDEN", bare, width);
+  return pick[0] === "" ? pick[1] : spread(pick[0], pick[1], width);
 };
 
 const DETAIL = 25;
@@ -259,7 +256,7 @@ export function render(model: ViewModel, size: Size, selected: number): string[]
     const where = shown.record === undefined ? shown.steps.find((e) => e.files !== undefined) : shown.record;
     return [` NOW  ${tier === "" ? "" : `${tier} `}check`, ...(where === undefined ? [] : [target(where)]), ...(trigger === undefined ? [] : [`triggered by ${TRIGGER[trigger] ?? trigger}`]), ...(shown.interrupted === true ? ["interrupted"] : []), ...(shown.record?.ms === undefined ? [] : [msText(shown.record.ms)])].join(" · ");
   })();
-  const top = [header(model, ["q quit  r rerun  l layers  v violations  d determinism", "q quit  r rerun  l layers  v viol  d det"], width), rule, clip(head, width), ...stepLines(shown, model.tools, width), ""];
+  const top = [header(model, ["q quit  r rerun  l layers  v violations  d determinism", "q quit  r rerun  l layers  v viol  d det"], "", width), rule, clip(head, width), ...stepLines(shown, model.tools, width), ""];
   const bottom = [rule, ...wrap(footer(shown, live, size), width, 3)];
   const room = Math.max(0, size.rows - top.length - bottom.length - 3);
   const ruleRows = Math.min(model.rules.length, Math.ceil(room / 2));
@@ -293,7 +290,7 @@ export function render(model: ViewModel, size: Size, selected: number): string[]
   return [...top, ...middle, ...bottom].slice(0, Math.max(size.rows, 2)).map((l) => visible(l).trimEnd());
 }
 
-const BANDS: { name: string; kinds: Kind[] }[] = [
+export const BANDS: { name: string; kinds: Kind[] }[] = [
   { name: "DETERMINISTIC", kinds: ["type", "lint", "runtime"] },
   { name: "JUDGMENT", kinds: ["model", "review"] },
   { name: "PROSE", kinds: ["instruction", "legacy"] },
@@ -340,7 +337,7 @@ export function renderLayers(model: ViewModel, size: Size): string[] {
     weakest === undefined || DETERMINISTIC.has(weakest.strongestKind)
       ? " Weakest practice: none. Every practice is held by a deterministic rule."
       : ` Weakest practice: ${weakest.practice}, held only by ${weakest.strongestKind}. Next action: add a type, lint, or runtime Guardrail to ${weakest.practice}`;
-  const top = [header(model, ["q quit  r rerun  l runs  v violations  d determinism", "q quit  r rerun  l runs  v viol  d det"], width), rule, spread(" LAYERS  strongest first · a rule can only move up", "rules  proven", width - 1)];
+  const top = [header(model, ["q quit  r rerun  l runs  v violations  d determinism", "q quit  r rerun  l runs  v viol  d det"], "l runs", width), rule, spread(" LAYERS  strongest first · a rule can only move up", "rules  proven", width - 1)];
   const bottom = [clip(` PACKS   ${packs}`, width), rule, ...wrap(verdict, width, 3)];
   const room = Math.max(0, size.rows - top.length - bottom.length);
   return [...top, ...body.slice(0, room), ...bottom].map((l) => visible(l).trimEnd());
@@ -350,12 +347,10 @@ const MIN_BAR = 8;
 
 const LEGEND = [" █ baselined, allowed until touched", " ▓ new in the last run, blocking"];
 
-export function renderViolations(model: ViewModel, size: Size): string[] {
-  const width = Math.max(20, size.cols);
-  const rule = "─".repeat(width);
+export const packViolations = (model: ViewModel) => {
   const runs = runRecords(model.evidence);
   const baselined = new Map(model.rules.map((r) => [r.guardrail, r.baselined]));
-  const packs = model.packs.map((pack) => {
+  return model.packs.map((pack) => {
     const ids = model.layers.filter((r) => r.pack === pack).map((r) => r.guardrail);
     const run = runs.filter((e) => ids.some((id) => e.rules?.[id] !== undefined || (e.cachedRules ?? []).includes(id))).at(-1);
     const fresh = (id: string): number | undefined => (run === undefined ? undefined : (run.failures ?? []).filter((f) => f.guardrail === id).length);
@@ -363,6 +358,13 @@ export function renderViolations(model: ViewModel, size: Size): string[] {
     const sum = (xs: (number | undefined)[]): number | undefined => (run === undefined ? undefined : xs.reduce<number>((a, b) => a + (b ?? 0), 0));
     return { label: pack, old: rows.reduce((a, r) => a + r.old, 0), fresh: sum(rows.map((r) => r.fresh)), last: run === undefined ? "" : `${clock(run.at).slice(0, 5)} ${SHORT[run.trigger ?? ""] ?? run.trigger ?? "-"}`, run, rows };
   });
+};
+
+export function renderViolations(model: ViewModel, size: Size): string[] {
+  const width = Math.max(20, size.cols);
+  const rule = "─".repeat(width);
+  const runs = runRecords(model.evidence);
+  const packs = packViolations(model);
   const newText = (n: number | undefined): string => (n === undefined ? "–" : count(n));
   const layout = (guardrails: boolean, lastRun: boolean) => {
     const rows = packs.flatMap((p) => [p, ...(guardrails ? p.rows.map((r) => ({ ...r, last: "" })) : [])]);
@@ -394,7 +396,7 @@ export function renderViolations(model: ViewModel, size: Size): string[] {
     const bar = b + n === 0 ? "▏" : `${"█".repeat(b)}${"▓".repeat(n)}`;
     return clip(`${` ${clip(r.label, chosen.labelW).padEnd(chosen.labelW)} ${bar}`.padEnd(width - chosen.right("", "", "").length)}${chosen.right(count(r.old), newText(r.fresh), r.last)}`, width);
   });
-  const top = [header(model, ["q quit  r rerun  v back  d determinism", "q quit  r rerun  v back  d det"], width), rule, clip(`${" VIOLATIONS BY PACK".padEnd(width - chosen.right("", "", "").length)}${chosen.right("baselined", "new", "last run")}`, width)];
+  const top = [header(model, ["q quit  r rerun  v back  d determinism", "q quit  r rerun  v back  d det"], "v back", width), rule, clip(`${" VIOLATIONS BY PACK".padEnd(width - chosen.right("", "", "").length)}${chosen.right("baselined", "new", "last run")}`, width)];
   const kept = body.length > room ? Math.max(0, room - 1) : body.length;
   const hidden = body.length - kept;
   const note = ` ${hidden} pack${hidden === 1 ? "" : "s"} hidden.${action.length === 0 ? " Next action: run warden --violations | cat" : ""}`;
@@ -410,7 +412,7 @@ const UNKNOWN = { name: "unknown", mark: "·" };
 
 const MIN_LABEL = 8;
 
-const bandCounts = (run: Evidence): number[] => {
+export const bandCounts = (run: Evidence): number[] => {
   const kinds = run.kinds ?? { unknown: (run.failures ?? []).length };
   return [...BANDS.map((b) => b.kinds.reduce((n, k) => n + (kinds[k] ?? 0), 0)), kinds.unknown ?? 0];
 };
@@ -477,7 +479,7 @@ export function renderDeterminism(model: ViewModel, size: Size): string[] {
   const hiddenLines = fits ? 0 : wrap(hiddenText(body.length), width, 3).length;
   const verdictLines = wrap(verdict, width, fits ? 3 : Math.min(3, Math.max(1, size.rows - fixed - 1 - hiddenLines)));
   const bottom = [rule, ...legend.map((l) => clip(l, width)), ...verdictLines];
-  const top = [header(model, ["q quit  r rerun  d back", "q quit  r rerun  d back"], width), rule, clip(`${(width - rightW > " DETERMINISM BY PROJECT".length ? " DETERMINISM BY PROJECT" : " DETERMINISM").padEnd(width - rightW)}${right(heads, SHARE)}`, width)];
+  const top = [header(model, ["q quit  r rerun  d back", "q quit  r rerun  d back"], "d back", width), rule, clip(`${(width - rightW > " DETERMINISM BY PROJECT".length ? " DETERMINISM BY PROJECT" : " DETERMINISM").padEnd(width - rightW)}${right(heads, SHARE)}`, width)];
   const kept = fits ? body.length : Math.max(1, size.rows - top.length - bottom.length - hiddenLines);
   const hidden = body.length - kept;
   const shown = hidden > 0 ? [...body.slice(0, kept), ...wrap(hiddenText(hidden), width, 3)] : body;

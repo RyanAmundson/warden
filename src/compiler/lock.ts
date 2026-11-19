@@ -48,7 +48,7 @@ export const bundledTools = (): Record<string, string> => Object.fromEntries(TOO
 
 const OS_JUNK = new Set([".DS_Store", ".localized", "Thumbs.db", "desktop.ini"].map((n) => n.toLowerCase()));
 
-export const isOsJunk = (name: string): boolean => OS_JUNK.has(name.toLowerCase());
+export const isOsJunk = (name: string): boolean => OS_JUNK.has(name.normalize("NFKC").toLowerCase());
 
 export const packFiles = async (base: string, dir: string): Promise<string[]> => {
   try {
@@ -78,6 +78,15 @@ export const scriptsOf = (root: string): Record<string, unknown> => {
 export const PROJECT_SOURCE = "./";
 
 export const LOCK_PATH = ".warden/lock.json";
+
+export const FIRST_STAMPING = "0.1.11";
+
+export const olderThan = (a: string, b: string): boolean => {
+  const [x, y] = [a, b].map((v) => v.split(".").map(Number)) as [number[], number[]];
+  const i = x.findIndex((n, j) => n !== y[j]);
+  return i !== -1 && (x[i] as number) < (y[i] ?? 0);
+};
+
 
 export const sha256 = (content: string | Buffer): string => createHash("sha256").update(content).digest("hex");
 

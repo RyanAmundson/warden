@@ -46,7 +46,7 @@ const measure = (project, s, cfg, rerun, signal) => withExampleProject(async (ro
     await writeTree(root, adapters.get(prefixOf(s.g)).emit([s.g], set));
     const files = [];
     let copies = 0;
-    const sample = async (n, runs = RUNS) => {
+    const timed = async (n, count) => {
         signal?.throwIfAborted();
         const tree = {};
         for (; copies < n; copies++) {
@@ -57,7 +57,7 @@ const measure = (project, s, cfg, rerun, signal) => withExampleProject(async (ro
         }
         await writeTree(root, tree);
         const times = [];
-        for (let i = 0; i < runs; i++) {
+        for (let i = 0; i < count; i++) {
             signal?.throwIfAborted();
             const results = await runGuardrails(set, [s.g], files, ctx);
             signal?.throwIfAborted();
@@ -70,13 +70,18 @@ const measure = (project, s, cfg, rerun, signal) => withExampleProject(async (ro
                 throw new Error(`no result for guardrail ${s.g.id}`);
             times.push(s.time(own));
         }
-        return Math.min(...times);
+        return times;
     };
     const seen = new Map();
     const at = async (n) => {
         if (!seen.has(n))
-            seen.set(n, await sample(n));
-        return seen.get(n);
+            seen.set(n, await timed(n, RUNS));
+        return Math.min(...seen.get(n));
+    };
+    const sampled = async (n, reps) => {
+        const kept = seen.get(n) ?? [];
+        const all = [...kept, ...(await timed(n, RUNS * reps - kept.length))];
+        return Math.min(...Array.from({ length: RUNS }, (_, i) => mean(all.slice(i * reps, (i + 1) * reps))));
     };
     const sizes = async (base) => {
         const points = [];
@@ -84,19 +89,21 @@ const measure = (project, s, cfg, rerun, signal) => withExampleProject(async (ro
             points.push([base * m, await at(base * m)]);
         return points;
     };
-    const f = await sample(1, FIXED_RUNS);
+    const f = Math.min(...(await timed(1, FIXED_RUNS)));
     let base = cfg.baseFiles;
     while ((await at(base)) - f < cfg.minMarginalMs) {
         if (base * 16 > cfg.maxFiles)
             return { verdict: "constant", points: await sizes(cfg.baseFiles), f };
         base *= 2;
     }
-    const points = await sizes(base);
+    const points = [];
+    for (const m of [1, 2, 4, 8])
+        points.push([base * m, await sampled(base * m, Math.max(1, 4 / m))]);
     if (points[3][1] - f < cfg.constantMs)
         return { verdict: "constant", points, f };
     const k = slope(points, f);
     return { verdict: k > cfg.linearMax ? "superlinear" : k < cfg.sublinearMax ? "sublinear" : "linear", k, points, f };
-}, true);
+});
 export const benchSubject = async (set, s, cfg, rerun, signal) => {
     refuseUnmatched(s, rerun);
     const first = await measure(set, s, cfg, rerun, signal);

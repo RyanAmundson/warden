@@ -82,3 +82,18 @@ export function readEvidenceTail(project, bytes) {
 export function readEvidence(project) {
     return readEvidenceTail(project, Number.POSITIVE_INFINITY);
 }
+export function readEvidenceFrom(project, offset) {
+    const size = sizeOf(evidenceFile(project));
+    if (offset === 0 || size < offset)
+        return { events: readEvidence(project), offset: size };
+    const fd = openSync(evidenceFile(project), "r");
+    try {
+        const buffer = Buffer.alloc(size - offset);
+        readSync(fd, buffer, 0, buffer.length, offset);
+        const end = buffer.lastIndexOf("\n") + 1;
+        return { events: parse(buffer.subarray(0, end).toString("utf8")), offset: offset + end };
+    }
+    finally {
+        closeSync(fd);
+    }
+}

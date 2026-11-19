@@ -38,7 +38,7 @@ export async function thenRemoveExampleProjects(run, report) {
         report(cause);
     }
 }
-export async function withExampleProject(fn, removeLater = false) {
+export async function withExampleProject(fn) {
     const project = await mkdtemp(join(tmpdir(), "warden-examples-"));
     try {
         await writeFile(join(project, "package.json"), "{}\n");
@@ -47,13 +47,8 @@ export async function withExampleProject(fn, removeLater = false) {
     }
     finally {
         const removal = rm(project, { recursive: true, force: true }).catch((cause) => Promise.reject({ project, cause: cause.message }));
-        if (removeLater) {
-            removals.add(removal);
-            removal.then(() => removals.delete(removal), () => undefined);
-        }
-        else {
-            await removal.catch((failure) => Promise.reject(unremoved([failure])));
-        }
+        removals.add(removal);
+        removal.then(() => removals.delete(removal), () => undefined);
     }
 }
 export async function runExamples(project) {

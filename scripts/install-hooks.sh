@@ -21,6 +21,7 @@ script=\$(mktemp "\${TMPDIR:-/tmp}/warden-self-check-script.XXXXXX")
 trap 'rm -f "\$script"' EXIT
 git -C "\$root" show "\$tag:scripts/self-check.sh" > "\$script" || exit 1
 cd "\$root"
-sh "\$script" "\$tag"
+sh "\$script" "\$tag" || exit \$?
+exec "\$root/.warden/generated/hooks/pre-commit"
 HOOK
 chmod +x "$hook"
