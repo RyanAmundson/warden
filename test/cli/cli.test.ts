@@ -1,6 +1,6 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -987,5 +987,59 @@ describe("the Claude Code plugin hook", () => {
     const r = hook("guard", edit("src/a.ts"));
     expect(r.code).toBe(2);
     expect(r.err).toContain("warden exited 7. Next action: run warden doctor");
+  });
+});
+
+describe("a sandbox child busy in a pack check", () => {
+  const spinPack = [
+    "id: spin",
+    "layer: 2",
+    "terms: []",
+    "practices:",
+    "  - id: p",
+    "    statement: s",
+    "    terms: []",
+    "    paths: []",
+    "    conflictsWith: []",
+    "    guardrails:",
+    "      - id: spin-loop",
+    "        kind: lint",
+    "        runs: [commit]",
+    "        budgetMs: 5000",
+    "        version: 1",
+    "        implementation: \"fs:spin/loop\"",
+    "        mustFail:",
+    "          a.ts: \"x\\n\"",
+    "        mustPass:",
+    "          b.ts: \"y\\n\"",
+    "",
+  ].join("\n");
+
+  const children = (packDir: string): string[] =>
+    spawnSync("pgrep", ["-f", "--", `--allow-fs-read=${packDir}`], { encoding: "utf8" }).stdout.split("\n").filter((l) => l !== "");
+
+  const until = async (done: () => boolean): Promise<void> => {
+    for (let i = 0; i < 100 && !done(); i++) await new Promise((r) => setTimeout(r, 50));
+    expect(done()).toBe(true);
+  };
+
+  it.each(["SIGKILL", "SIGTERM", "SIGINT"] as const)("exits when warden's own pid gets %s", async (signal) => {
+    const project = await realpath(await mkdtemp(join(tmpdir(), "warden-spin-")));
+    try {
+      await mkdir(join(project, ".warden/packs/spin"), { recursive: true });
+      await writeFile(join(project, ".warden/config.yaml"), ["warden: 0.1.0", "project: spin", "base: main", "packs:", "  - id: spin", '    paths: ["**/*"]', "tierBudgetMs: { edit: 1000, commit: 2000, boundary: 5000 }", "loopBreakerRepeats: 3", ""].join("\n"));
+      await writeFile(join(project, ".warden/packs/spin/pack.yaml"), spinPack);
+      await writeFile(join(project, ".warden/packs/spin/fs.js"), "export default { loop: () => { for (;;) {} } };\n");
+      const packDir = join(project, ".warden/packs/spin");
+      execFileSync("git", ["init", "-q", "-b", "main"], { cwd: project, stdio: "ignore" });
+      const run = spawn(process.execPath, [main, "compile"], { cwd: project, stdio: "ignore", env: { ...process.env, WARDEN_HOME: home } });
+      const exited = new Promise((r) => run.on("exit", r));
+      await until(() => children(packDir).length > 0);
+      run.kill(signal);
+      await exited;
+      await until(() => children(packDir).length === 0);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
   });
 });

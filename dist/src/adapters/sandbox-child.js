@@ -41,7 +41,7 @@ const nextLine = () => {
         buffered = Buffer.concat([buffered, chunk.subarray(0, n)]);
     }
 };
-const firstLine = (cause) => (cause instanceof Error ? cause.message : String(cause)).split("\n")[0].replace(/\.$/, "");
+const causeOf = (cause) => (cause instanceof Error ? cause.message : String(cause)).trim().replace(/\s*\n\s*/g, " ").replace(/\.$/, "");
 const failed = (failure) => Object.assign(new Error(failure.message), { failure });
 const fail = (e, what, action = `fix ${e.name} in ${e.file}`) => {
     throw failed({ file: e.packFile, pointer: e.pointer, message: `Guardrail ${e.guardrail}: ${what}. Next action: ${action}, then run warden compile.` });
@@ -52,7 +52,7 @@ const load = async (e) => {
         shipped = (await import(pathToFileURL(e.real).href)).default ?? {};
     }
     catch (cause) {
-        fail(e, `${e.file} does not load: ${firstLine(cause)}`, `fix ${e.file}`);
+        fail(e, `${e.file} does not load: ${causeOf(cause)}`, `fix ${e.file}`);
     }
     if (typeof shipped !== "object" || !Object.hasOwn(shipped, e.name))
         fail(e, `${e.file} exports no ${e.name}`, `add ${e.name} to the default export of ${e.file}`);
@@ -81,7 +81,7 @@ const tree = async ({ entry, input }) => {
         found = check({ ...input, read, ...(input.imports === undefined ? {} : { imports: new Map(input.imports) }) });
     }
     catch (cause) {
-        fail(entry, `${entry.implementation} in ${entry.file} threw: ${firstLine(cause)}`);
+        fail(entry, `${entry.implementation} in ${entry.file} threw: ${causeOf(cause)}`);
     }
     const ms = performance.now() - start;
     if (!Array.isArray(found) || !found.every(isFinding)) {
@@ -116,7 +116,7 @@ const lint = async ({ root, entries, config, texts }) => {
             const e = entries.find((x) => `${x.namespace}/${x.name}` === rule);
             if (e === undefined)
                 throw cause;
-            fail(e, `${e.implementation} in ${e.file} threw while linting ${file}: ${firstLine(cause)}`);
+            fail(e, `${e.implementation} in ${e.file} threw while linting ${file}: ${causeOf(cause)}`);
         }
         if (messages.some((m) => m.ruleId === null && m.fatal !== true && m.message.startsWith("No matching configuration found")))
             continue;
@@ -131,6 +131,6 @@ for (let line = nextLine(); line !== undefined; line = nextLine()) {
     }
     catch (cause) {
         const failure = cause.failure;
-        send(failure === undefined ? { crash: cause instanceof Error ? (cause.stack ?? cause.message) : String(cause) } : { failure });
+        send(failure === undefined ? { crash: `${cause instanceof Error ? cause.name : "Error"}: ${causeOf(cause)}` } : { failure });
     }
 }

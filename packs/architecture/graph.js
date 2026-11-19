@@ -66,29 +66,39 @@ const cycles = (edges) => {
   const onStack = new Set();
   const component = new Map();
   let next = 0;
-  const visit = (node) => {
+  const enter = (node) => {
     index.set(node, next);
     low.set(node, next);
     next += 1;
     stack.push(node);
     onStack.add(node);
-    for (const to of edges.get(node)?.keys() ?? []) {
-      if (!index.has(to)) {
-        visit(to);
-        low.set(node, Math.min(low.get(node), low.get(to)));
-      } else if (onStack.has(to)) {
-        low.set(node, Math.min(low.get(node), index.get(to)));
+    return { node, targets: (edges.get(node)?.keys() ?? [])[Symbol.iterator]() };
+  };
+  const visit = (root) => {
+    const work = [enter(root)];
+    while (work.length > 0) {
+      const frame = work[work.length - 1];
+      const step = frame.targets.next();
+      if (!step.done) {
+        const to = step.value;
+        if (!index.has(to)) work.push(enter(to));
+        else if (onStack.has(to)) low.set(frame.node, Math.min(low.get(frame.node), index.get(to)));
+        continue;
       }
+      work.pop();
+      const { node } = frame;
+      const parent = work[work.length - 1];
+      if (parent !== undefined) low.set(parent.node, Math.min(low.get(parent.node), low.get(node)));
+      if (low.get(node) !== index.get(node)) continue;
+      const members = [];
+      for (;;) {
+        const member = stack.pop();
+        onStack.delete(member);
+        members.push(member);
+        if (member === node) break;
+      }
+      if (members.length > 1) for (const member of members) component.set(member, node);
     }
-    if (low.get(node) !== index.get(node)) return;
-    const members = [];
-    for (;;) {
-      const member = stack.pop();
-      onStack.delete(member);
-      members.push(member);
-      if (member === node) break;
-    }
-    if (members.length > 1) for (const member of members) component.set(member, node);
   };
   for (const node of edges.keys()) if (!index.has(node)) visit(node);
   return component;

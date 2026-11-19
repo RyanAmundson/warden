@@ -461,6 +461,21 @@ describe("architecture pack tree checks stay linear", () => {
   });
 });
 
+describe("architecture pack graph checks", () => {
+  it("acyclic-groups walks a chain of 8,000 groups without overflowing the stack, and finds the cycle that closes it", async () => {
+    const checks = ((await import(join(wardenRoot, "packs/architecture/graph.js"))) as { default: Record<string, (input: unknown) => { file: string }[]> }).default;
+    const n = 8000;
+    const fileOf = (i: number): string => `src/[services]/g${i}-service/g${i}-service.ts`;
+    const files = Array.from({ length: n }, (_, i) => fileOf(i));
+    const settings = { groupCollections: [{ collection: "[services]", suffix: "-service", port: "{name}/{name}.ts" }], technicalCollections: [], compositionRoots: [], world: [], sinkModules: [] };
+    const chain = new Map(files.map((f, i) => [f, i + 1 < n ? [{ target: fileOf(i + 1), line: 1 }] : []]));
+    const acyclic = checks["acyclic-groups"] as (input: unknown) => { file: string }[];
+    expect(acyclic({ files, all: files, imports: chain, settings })).toEqual([]);
+    chain.set(fileOf(n - 1), [{ target: fileOf(0), line: 1 }]);
+    expect(acyclic({ files, all: files, imports: chain, settings })).toHaveLength(n);
+  });
+});
+
 describe("architecture pack helpers", () => {
   it("match globs exactly as Warden's own matcher does, negation included", async () => {
     const groups = (await import(join(wardenRoot, "packs/architecture/groups.js"))) as { matchesPath: (file: string, glob: string) => boolean };

@@ -474,19 +474,25 @@ the same folder `WARDEN_PACK_DIR` names for a `cmd` Guardrail. The lock hashes
 these files with the rest of the pack.
 
 Pack code runs in a sandbox: a child Node process under Node's permission
-model (`--permission`). Warden starts one such process and reuses it for every
-pack check in a run.
+model (`--permission`), which needs Node 25 or later, as `engines` in
+`package.json` states. Warden starts one such process for each pack and reuses
+it for that pack's checks in a run, so no pack's code shares a process with
+another pack's code or results.
 
 - It may read only the pack folders it runs and Warden's own install, its code
   and its `node_modules`. It reads no project file directly. Warden sends the
   file names, a tree check's `read` asks Warden for each file's text, and
   ESLint rules receive each file's text.
 - It has no write access, no child processes, no worker threads, no native
-  addons, no inspector, no WASI, and no network. A forbidden call fails with
-  Node's `ERR_ACCESS_DENIED`. Warden then refuses the run with exit 2, names
-  the pack file and the Guardrail, and gives one next action.
-- Its environment is empty. It exits when Warden closes its input, and Warden
-  kills it when Warden exits.
+  addons, no inspector, no WASI, no TCP, UDP, or DNS, and no `node:sqlite`
+  (`--no-experimental-sqlite`), which would read and write databases around
+  the permission model. A forbidden call fails, and Warden then refuses the
+  run with exit 2, names the pack file and the Guardrail, and gives one next
+  action with the whole cause.
+- Its environment is empty. A small guard process holds a pipe from Warden
+  and kills the child when that pipe closes, so the child stops even when
+  Warden is killed by SIGINT, SIGTERM, or SIGKILL in the middle of a check.
+  Warden also kills both when it exits normally.
 - A pack check that does not load, throws, or returns something other than a
   list of `{ file, message, line?, doThis? }` findings is refused the same
   way. So is an ESLint rule that throws.
@@ -498,6 +504,10 @@ rules to a file inside the pack folder.
 
 Known limits:
 
+- Node's permission model does not cover Unix-domain sockets or
+  `process.kill`, so pack code can connect to a local socket and signal any
+  process the user owns. Local pack code reaches main only with a signature,
+  so these are tracked as follow-up work rather than closed here.
 - Pack code can still read every file in Warden's install. Those files are
   Warden's own and are pinned by its version, not by the lock.
 - A pack check can spend CPU and memory without limit. No tree or ESLint

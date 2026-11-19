@@ -215,7 +215,8 @@ describe("eslint adapter", () => {
       const { g, set } = packed(dir);
       const refusal = conformance(eslintAdapter, resolve(fixtures, "nested"), [g], set, ["src/a.ts"], []);
       await expect(refusal).rejects.toMatchObject({ name: "RecordError", file: join(dir, "pack.yaml"), pointer: "/guardrails/no-x/implementation" });
-      await expect(refusal).rejects.toThrow(`Guardrail no-x: eslint:local/no-x in ${join(dir, "eslint.js")} threw while linting src/a.ts: Error while loading rule 'local/no-x': rule boom. Next action: fix no-x in ${join(dir, "eslint.js")}, then run warden compile.`);
+      await expect(refusal).rejects.toThrow(`Guardrail no-x: eslint:local/no-x in ${join(dir, "eslint.js")} threw while linting src/a.ts: Error while loading rule 'local/no-x': rule boom Occurred while linting `);
+      await expect(refusal).rejects.toThrow(`src/a.ts. Next action: fix no-x in ${join(dir, "eslint.js")}, then run warden compile.`);
     });
 
     it("names the pack file, with one next action, when a pack's eslint.js does not parse", async () => {
@@ -225,6 +226,12 @@ describe("eslint adapter", () => {
       await expect(refusal).rejects.toMatchObject({ name: "RecordError", file: join(dir, "pack.yaml"), pointer: "/guardrails/no-x/implementation" });
       await expect(refusal).rejects.toThrow(`${join(dir, "eslint.js")} does not load: `);
       await expect(refusal).rejects.toThrow(`. Next action: fix ${join(dir, "eslint.js")}, then run warden compile.`);
+    });
+
+    it("keeps the whole cause when ESLint refuses a pack rule's options", async () => {
+      const dir = await shipped("export default { \"no-x\": { create: () => ({}) } };\n");
+      const { g, set } = packed(dir);
+      await expect(conformance(eslintAdapter, resolve(fixtures, "nested"), [g], set, ["src/a.ts"], [])).rejects.toThrow(/Key "local\/no-x": Value .* should NOT have more than 0 items\. Next action: fix no-x in /);
     });
 
     it("refuses a rule namespaced by another pack", async () => {

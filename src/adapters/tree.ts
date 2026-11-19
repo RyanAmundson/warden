@@ -113,7 +113,7 @@ const treeAdapter = (id: "fs" | "graph"): Adapter => ({
         if (!known.has(file)) throw new Error(`${file} is not one of the files the check was given`);
         return read(file);
       };
-      const { found, ms } = await inSandbox<{ found: Found[]; ms: number }>([code], { kind: "tree", entry: code, input }, given, ctx.signal);
+      const { found, ms } = await inSandbox<{ found: Found[]; ms: number }>(code, { kind: "tree", entry: code, input }, given, ctx.signal);
       const violations = found.map((v): Violation => {
         if (!known.has(v.file)) {
           const file = join(g.packDir as string, `${id}.js`);

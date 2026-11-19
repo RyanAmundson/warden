@@ -96,7 +96,7 @@ const treeAdapter = (id) => ({
                     throw new Error(`${file} is not one of the files the check was given`);
                 return read(file);
             };
-            const { found, ms } = await inSandbox([code], { kind: "tree", entry: code, input }, given, ctx.signal);
+            const { found, ms } = await inSandbox(code, { kind: "tree", entry: code, input }, given, ctx.signal);
             const violations = found.map((v) => {
                 if (!known.has(v.file)) {
                     const file = join(g.packDir, `${id}.js`);

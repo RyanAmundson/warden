@@ -128,6 +128,53 @@ describe("fs adapter", () => {
     }
   });
 
+  it.each([
+    ["writes a database through node:sqlite", "const { DatabaseSync } = process.getBuiltinModule(\"node:sqlite\");\nnew DatabaseSync(MARK).exec(\"create table t (v)\");\nexport default { mentions: () => [] };\n"],
+    ["imports node:sqlite to write a database", "import { DatabaseSync } from \"node:sqlite\";\nnew DatabaseSync(MARK).exec(\"create table t (v)\");\nexport default { mentions: () => [] };\n"],
+    ["reads another database through node:sqlite", "const { DatabaseSync } = process.getBuiltinModule(\"node:sqlite\");\nconst secret = new DatabaseSync(VICTIM).prepare(\"select v from t\").get().v;\nexport default { mentions: () => [{ file: \"src/a.ts\", message: secret }] };\n"],
+  ])("runs pack code that %s in a sandbox without node:sqlite", async (_name, code) => {
+    const pack = await shippedPack("fs", "");
+    const marker = join(pack.dir, "../marker.db");
+    const victim = join(pack.dir, "../victim.db");
+    try {
+      const { DatabaseSync } = await import("node:sqlite");
+      const db = new DatabaseSync(victim);
+      db.exec("create table t (v); insert into t values ('hunter2')");
+      db.close();
+      await writeFile(join(pack.dir, "fs.js"), `const MARK = ${JSON.stringify(marker)};\nconst VICTIM = ${JSON.stringify(victim)};\n${code}`);
+      const g = treeGuardrail("fs:local/mentions", pack.dir);
+      const refusal = conformance(fsAdapter, fixture, [g], treeSet(g), ["src/a.ts"], []);
+      await expect(refusal).rejects.toThrow(/Next action: [^]*, then run warden compile\.$/);
+      await expect(refusal).rejects.not.toThrow("hunter2");
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      await pack.remove();
+    }
+  });
+
+  it("runs each pack in its own sandbox, so one pack's code cannot change another pack's results", async () => {
+    const pack = await shippedPack("fs", check);
+    const evilDir = join(dirname(pack.dir), "evil");
+    try {
+      await mkdir(evilDir);
+      await writeFile(join(evilDir, "fs.js"), "const stringify = JSON.stringify;\nJSON.stringify = (value, ...rest) => stringify(value?.done?.found === undefined ? value : { done: { found: [], ms: 0 } }, ...rest);\nexport default { quiet: () => [] };\n");
+      const local = treeGuardrail("fs:local/mentions", pack.dir);
+      const evil = { ...treeGuardrail("fs:evil/quiet", evilDir), id: "e" };
+      const set = treeSet(local);
+      set.config.packs.push({ id: "evil", paths: ["src/**"] });
+      set.packs.push({ id: "evil", file: "pack.yaml", layer: 0, terms: [], practices: [{ id: "y", pack: "evil", statement: "s", terms: [], paths: ["**/*.ts"], conflictsWith: [], guardrails: [evil] }] });
+      const found = [
+        { guardrail: "g", file: "src/a.ts", line: 1, message: "src/a.ts names b with 1 term", doThis: "Rename it." },
+        { guardrail: "g", file: "src/b.ts", line: 1, message: "src/b.ts names b with 1 term", doThis: "Rename it." },
+      ];
+      await conformance(fsAdapter, fixture, [local, evil], set, ["src/a.ts", "src/b.ts"], found);
+      await conformance(fsAdapter, fixture, [evil, local], set, ["src/a.ts", "src/b.ts"], found);
+      await conformance(fsAdapter, fixture, [local], set, ["src/a.ts", "src/b.ts"], found);
+    } finally {
+      await pack.remove();
+    }
+  });
+
   it("follows an extensionless require and a folder index inside the pack folder, as Node does", async () => {
     const pack = await shippedPack("fs", "module.exports = require(\"./lib\");\n");
     try {

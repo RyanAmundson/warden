@@ -73,7 +73,7 @@ const nextLine = (): string | undefined => {
   }
 };
 
-const firstLine = (cause: unknown): string => ((cause instanceof Error ? cause.message : String(cause)).split("\n")[0] as string).replace(/\.$/, "");
+const causeOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause)).trim().replace(/\s*\n\s*/g, " ").replace(/\.$/, "");
 
 const failed = (failure: Failure): Error => Object.assign(new Error(failure.message), { failure });
 
@@ -86,7 +86,7 @@ const load = async (e: Entry): Promise<unknown> => {
   try {
     shipped = ((await import(pathToFileURL(e.real).href)) as { default?: Record<string, unknown> }).default ?? {};
   } catch (cause) {
-    fail(e, `${e.file} does not load: ${firstLine(cause)}`, `fix ${e.file}`);
+    fail(e, `${e.file} does not load: ${causeOf(cause)}`, `fix ${e.file}`);
   }
   if (typeof shipped !== "object" || !Object.hasOwn(shipped, e.name)) fail(e, `${e.file} exports no ${e.name}`, `add ${e.name} to the default export of ${e.file}`);
   return shipped[e.name];
@@ -112,7 +112,7 @@ const tree = async ({ entry, input }: TreeJob): Promise<unknown> => {
   try {
     found = (check as (i: unknown) => unknown)({ ...input, read, ...(input.imports === undefined ? {} : { imports: new Map(input.imports) }) });
   } catch (cause) {
-    fail(entry, `${entry.implementation} in ${entry.file} threw: ${firstLine(cause)}`);
+    fail(entry, `${entry.implementation} in ${entry.file} threw: ${causeOf(cause)}`);
   }
   const ms = performance.now() - start;
   if (!Array.isArray(found) || !found.every(isFinding)) {
@@ -145,7 +145,7 @@ const lint = async ({ root, entries, config, texts }: LintJob): Promise<unknown>
       const rule = said?.[1] ?? said?.[2];
       const e = entries.find((x) => `${x.namespace}/${x.name}` === rule);
       if (e === undefined) throw cause;
-      fail(e, `${e.implementation} in ${e.file} threw while linting ${file}: ${firstLine(cause)}`);
+      fail(e, `${e.implementation} in ${e.file} threw while linting ${file}: ${causeOf(cause)}`);
     }
     if (messages.some((m) => m.ruleId === null && m.fatal !== true && m.message.startsWith("No matching configuration found"))) continue;
     results.push({ filePath, messages, source: messages.length > 0 ? text : undefined, stats: { times: linter.getTimes() } });
@@ -159,6 +159,6 @@ for (let line = nextLine(); line !== undefined; line = nextLine()) {
     send({ done: await (job.kind === "tree" ? tree(job) : lint(job)) });
   } catch (cause) {
     const failure = (cause as { failure?: Failure }).failure;
-    send(failure === undefined ? { crash: cause instanceof Error ? (cause.stack ?? cause.message) : String(cause) } : { failure });
+    send(failure === undefined ? { crash: `${cause instanceof Error ? cause.name : "Error"}: ${causeOf(cause)}` } : { failure });
   }
 }

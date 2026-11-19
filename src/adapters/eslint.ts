@@ -178,8 +178,15 @@ const lintInSandbox = async (gs: Guardrail[], entries: Linter.Config[], files: s
   const unread = (file: string): string => {
     throw new Error(`pack ESLint rules read no files, but one asked for ${file}`);
   };
+  const byPack = new Map<string, typeof codes>();
+  for (const c of codes) byPack.set(c.packDir, [...(byPack.get(c.packDir) ?? []), c]);
   const start = performance.now();
-  const { results } = await inSandbox<{ results: ESLint.LintResult[] }>(codes, { kind: "eslint", root: ctx.root, entries: codes, config: entries, texts }, unread, ctx.signal);
+  const results: ESLint.LintResult[] = [];
+  for (const pack of byPack.values()) {
+    const ids = new Set(pack.map((c) => `${c.namespace}/${c.name}`));
+    const config = entries.filter((e) => Object.keys(e.rules ?? {}).every((r) => ids.has(r)));
+    results.push(...(await inSandbox<{ results: ESLint.LintResult[] }>(pack[0] as (typeof codes)[number], { kind: "eslint", root: ctx.root, entries: pack, config, texts }, unread, ctx.signal)).results);
+  }
   return { results, ms: performance.now() - start };
 };
 
