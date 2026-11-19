@@ -42,6 +42,16 @@ describe("cmd adapter", () => {
     expect(r?.violations[0]?.file).toBe("");
   });
 
+  it("a long or multi-line command shows only its first line, cut short, before the output", async () => {
+    const script = `node -e '\nconsole.log("${"x".repeat(150)}");\nprocess.exit(3)\n'`;
+    const [r] = await cmdAdapter.run([legacy(`cmd:${script}`)], [], ctx);
+    const [first, ...rest] = (r?.violations[0]?.message ?? "").split("\n");
+    expect(first).toBe("node -e ' … exited with 3");
+    expect(rest).toEqual(["x".repeat(150)]);
+    const [long] = await cmdAdapter.run([legacy(`cmd:test -z ${"y".repeat(220)}`)], [], ctx);
+    expect(long?.violations[0]?.message).toBe(`test -z ${"y".repeat(192)} … exited with 1`);
+  });
+
   it("cmd killed at its budget names the command", async () => {
     const killed = legacy("cmd:sleep 4.731", 200);
     const [r] = await runGuardrails(setOf(killed), [killed], [], ctx);

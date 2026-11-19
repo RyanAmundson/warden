@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runExamples } from "../src/compiler/examples.js";
 import { loadRecords } from "../src/records/load.js";
 import type { Guardrail, RecordSet } from "../src/records/types.js";
+import { fsAdapter } from "../src/adapters/tree.js";
+import { measureBaseline, projectFiles, writeBaseline } from "../src/runner/baseline.js";
 import { runGuardrails } from "../src/runner/run.js";
 
 const wardenRoot = resolve(import.meta.dirname, "..");
@@ -27,18 +29,28 @@ let root: string;
 let set: RecordSet;
 let guardrails: Guardrail[];
 
+let written: string[];
+
 const write = async (file: string, content = "export const a = 1;\n"): Promise<void> => {
   await mkdir(dirname(join(root, file)), { recursive: true });
   await writeFile(join(root, file), content);
+  if (!file.startsWith(".")) written.push(file);
 };
 
-const run = async (id: string) => {
+const run = async (id: string, files: string[] = written) => {
   const g = guardrails.find((x) => x.id === id) as Guardrail;
-  const [result] = await runGuardrails(set, [g], [], { root, generatedDir: join(root, ".warden/generated") });
+  for (const [path, content] of Object.entries(fsAdapter.emit([g], set))) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), content);
+  }
+  const [result] = await runGuardrails(set, [g], files, { root, generatedDir: join(root, ".warden/generated") });
   return result;
 };
 
+const messages = async (id: string): Promise<string[] | undefined> => (await run(id))?.violations.map((v) => v.message);
+
 beforeEach(async () => {
+  written = [];
   root = await mkdtemp(join(tmpdir(), "warden-collection-folders-"));
   await write(".warden/config.yaml", config);
   set = await loadRecords(root, wardenRoot);
@@ -58,18 +70,46 @@ describe("collection-folders pack", () => {
     expect(await runExamples(set)).toEqual([]);
   });
 
-  it("in a git repository reads tracked and untracked files, ignores ignored ones, and ends with a next action", async () => {
+  it("reports each loose file as its own violation, with one next action, so it can be baselined", async () => {
+    await write("src/[widgets]/button/index.ts");
+    await write("src/[widgets]/stray.ts");
+    await write("src/[widgets]/other.ts");
+    const failed = await run("warden-collection-holds-only-folders");
+    expect(failed?.violations.map((v) => [v.file, v.message, v.doThis])).toEqual([
+      ["src/[widgets]/stray.ts", "src/[widgets]/stray.ts is a file directly inside a collection.", "Move this file into an item folder of its collection."],
+      ["src/[widgets]/other.ts", "src/[widgets]/other.ts is a file directly inside a collection.", "Move this file into an item folder of its collection."],
+    ]);
+  });
+
+  it("baselines existing deviations file by file, as warden init does", async () => {
+    execFileSync("git", ["init", "-q"], { cwd: root });
+    await write("src/[widgets]/button/index.ts");
+    await write("src/[widgets]/stray.ts");
+    await write("src/[Widget]/knob/index.ts");
+    for (const [path, content] of Object.entries(fsAdapter.emit(guardrails, set))) await write(path, content);
+    const { baseline } = await measureBaseline(set, guardrails);
+    expect(baseline).toEqual({
+      "warden-collection-holds-only-folders": { "src/[widgets]/stray.ts": 1 },
+      "warden-collection-names-are-plural-kebab-case": { "src/[Widget]/knob/index.ts": 1 },
+    });
+    expect(() => writeBaseline(root, baseline)).not.toThrow();
+  });
+
+  it("checks the files warden check lists, which in a git repository skip ignored ones", async () => {
     execFileSync("git", ["init", "-q"], { cwd: root });
     await write(".gitignore", "dist/\n");
     await write("dist/[widgets]/bundle.js");
     await write("src/[widgets]/button/index.ts");
-    expect((await run("warden-collection-holds-only-folders"))?.status).toBe("pass");
-    await write("src/[widgets]/stray.ts");
-    const failed = await run("warden-collection-holds-only-folders");
-    expect(failed?.status).toBe("fail");
-    const lines = failed?.violations[0]?.message.split("\n") ?? [];
-    expect(lines).toContain("src/[widgets]/stray.ts is a file directly inside a collection");
-    expect(lines.at(-1)).toMatch(/Next action: move each listed file into an item folder of its collection\.$/);
+    expect((await run("warden-collection-holds-only-folders", projectFiles(root, ["**/*"])))?.status).toBe("pass");
+  });
+
+  it("reports a nested and a misnamed collection on the first file inside it", async () => {
+    await write("src/[widgets]/[parts]/knob/index.ts");
+    await write("src/[Widget]/button/index.ts");
+    expect((await run("warden-collections-do-not-nest"))?.violations.map((v) => [v.file, v.message])).toEqual([["src/[widgets]/[parts]/knob/index.ts", "src/[widgets]/[parts] is a collection directly inside a collection."]]);
+    expect((await run("warden-collection-names-are-plural-kebab-case"))?.violations.map((v) => [v.file, v.doThis])).toEqual([
+      ["src/[Widget]/button/index.ts", "Rename src/[Widget] to lowercase kebab-case ending in s, such as [quality-gates]."],
+    ]);
   });
 
   it("names what an item lacks and what it has extra", async () => {
@@ -77,7 +117,7 @@ describe("collection-folders pack", () => {
     await write("src/[widgets]/card/index.ts");
     await write("src/[widgets]/knob/knob.ts");
     const failed = await run("warden-collection-items-share-one-shape");
-    expect(failed?.violations[0]?.message).toContain("src/[widgets]/knob differs from the shape most items in src/[widgets] share: lacks [index.ts], has extra [knob.ts]");
+    expect(failed?.violations.map((v) => [v.file, v.message])).toEqual([["src/[widgets]/knob/knob.ts", "src/[widgets]/knob differs from the shape most items in src/[widgets] share: lacks [index.ts], has extra [knob.ts]."]]);
   });
 
   it("compares entries named after their item as one shape", async () => {
@@ -92,16 +132,14 @@ describe("collection-folders pack", () => {
     await write("src/[widgets]/a/data.ts");
     await write("src/[widgets]/b/data.ts");
     await write("src/[widgets]/c/index.ts");
-    const failed = await run("warden-collection-items-share-one-shape");
-    expect(failed?.violations[0]?.message).toContain("src/[widgets]/c differs from the shape most items in src/[widgets] share: lacks [data.ts], has extra [index.ts]");
+    expect(await messages("warden-collection-items-share-one-shape")).toContainEqual(expect.stringContaining("src/[widgets]/c differs from the shape most items in src/[widgets] share: lacks [data.ts], has extra [index.ts]"));
   });
 
   it("names a missing item-named file after the item it belongs to", async () => {
     await write("src/[widgets]/Button/Button.tsx");
     await write("src/[widgets]/Card/Card.tsx");
     await write("src/[widgets]/Knob/index.ts");
-    const failed = await run("warden-collection-items-share-one-shape");
-    expect(failed?.violations[0]?.message).toContain("src/[widgets]/Knob differs from the shape most items in src/[widgets] share: lacks [Knob.tsx], has extra [index.ts]");
+    expect(await messages("warden-collection-items-share-one-shape")).toContainEqual(expect.stringContaining("src/[widgets]/Knob differs from the shape most items in src/[widgets] share: lacks [Knob.tsx], has extra [index.ts]"));
   });
 
   it("leaves out an empty lacks list", async () => {
@@ -109,8 +147,7 @@ describe("collection-folders pack", () => {
     await write("src/[widgets]/card/index.ts");
     await write("src/[widgets]/knob/index.ts");
     await write("src/[widgets]/knob/notes.md");
-    const failed = await run("warden-collection-items-share-one-shape");
-    expect(failed?.violations[0]?.message).toContain("src/[widgets]/knob differs from the shape most items in src/[widgets] share: has extra [notes.md]\n");
+    expect(await messages("warden-collection-items-share-one-shape")).toEqual(["src/[widgets]/knob differs from the shape most items in src/[widgets] share: has extra [notes.md]."]);
   });
 
   it("passes an item named like a file the other items share", async () => {

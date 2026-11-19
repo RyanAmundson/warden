@@ -68,6 +68,11 @@ export const withPackDir = (command, packDir) => {
     }
     return out;
 };
+export const COMMAND_CHARS = 200;
+const brief = (command) => {
+    const line = command.trim().split("\n")[0];
+    return line.length > COMMAND_CHARS || line !== command.trim() ? `${line.slice(0, COMMAND_CHARS)} …` : line;
+};
 const tail = (output) => output.trimEnd().split("\n").filter((l) => l !== "").slice(-OUTPUT_LINES);
 const runOne = async (g, ctx) => {
     const run = g.implementation.slice(g.implementation.indexOf(":") + 1);
@@ -80,7 +85,7 @@ const runOne = async (g, ctx) => {
     return {
         guardrail: g.id,
         status: "fail",
-        violations: [{ guardrail: g.id, file: "", line: 0, message: [`${command} exited with ${code}`, ...tail(output)].join("\n") }],
+        violations: [{ guardrail: g.id, file: "", line: 0, message: [`${brief(command)} exited with ${code}`, ...tail(output)].join("\n") }],
         ms,
     };
 };

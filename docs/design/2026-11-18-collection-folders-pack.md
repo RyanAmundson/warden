@@ -16,7 +16,7 @@ array: it holds item folders of one kind. Every other folder is an object.
 | `collection-names-are-plural-kebab-case` | `warden-collection-names-are-plural-kebab-case` | a collection name that is not `[kebab-case]` ending in `s` |
 | `collection-items-share-one-shape` | `warden-collection-items-share-one-shape` | an item whose top-level file and folder names differ from the shape most items in its collection share |
 
-Each failure lists the offending paths, then a count and one next action.
+Each failure names one file, says what is wrong there, and gives one "Do this" line.
 
 ## Decisions (Ryan, November 18, 2026)
 
@@ -39,34 +39,27 @@ Each failure lists the offending paths, then a count and one next action.
 
 ## How the Guardrails run
 
-There is no `fs` adapter yet, so each Guardrail is a `cmd` Guardrail running an
-inline `node -e` script. The script lists files with
-`git ls-files --cached --others --exclude-standard` inside a git work tree, so
-ignored files are skipped. Outside a work tree, such as Warden's example
-project, it walks the directory and skips `node_modules` and `.git`. Only folders
-that contain at least one file are seen.
+Each Guardrail is an `fs` Guardrail of kind `lint`, whose check ships in
+`packs/collection-folders/fs.js`. `warden check` runs it over every file in
+the config's pack paths that `git ls-files --cached --others --exclude-standard`
+lists, so ignored files are skipped. Only folders that contain at least one
+file are seen.
 
-The kind is `runtime`, not `lint`. `warden check` treats `lint` results as
-per-file and drops a `cmd` violation, whose file is empty, so a `cmd` Guardrail
-of kind `lint` would never fail. `type` would run, but it would misstate a
-filesystem script as a type check.
+Each violation names a file, so `warden init` and `warden compile` baseline
+existing deviations file by file:
+
+- A loose file is reported on itself.
+- A nested or misnamed collection is reported on the first file inside it, in
+  path order.
+- An item that differs in shape is reported on its first file.
 
 ## Limits
 
-- A `cmd` failure is project-wide, and `writeBaseline` refuses project-wide
-  failures. `warden init` with this pack therefore fails in a repository that
-  already has a violation, and existing deviations cannot be baselined. An `fs`
-  adapter that reports per-file violations removes this limit.
-- The failure message starts with the whole inline command, because the `cmd`
-  adapter prints the command before the output. The adapter keeps the last 20
-  output lines, so a failure shows at most 19 paths before its count line.
-- The same file-listing prefix is repeated in all four scripts, because a `cmd`
-  command cannot reference a file inside the pack.
-- A `cmd` script scans the whole repository and ignores the pack's configured
-  paths. Next.js dynamic route folders such as `[id]` look like collections, so
-  do not enable this pack in a repository that uses them.
-- Outside a git work tree, the walk descends into `node_modules` before
-  filtering it, and skips symbolic links.
+- A collection or an item is anchored to its first file. When a file sorts
+  before the anchor, the baselined entry moves to the new file and counts as a
+  new violation there.
+- The checks read the config's pack paths, so Next.js dynamic route folders
+  such as `[id]` look like collections. Leave them out of the pack's paths.
 
 ## Measured in Context Manager (November 18, 2026)
 
