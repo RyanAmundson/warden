@@ -3,7 +3,7 @@ import { dirname, join, relative, sep } from "node:path";
 import { RecordError, loadRecords, readText } from "../records/load.js";
 import { BASELINE_PATH, measureBaseline, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { hasCommit, isRepository } from "../runner/changed.js";
-import { readBaseLock } from "../runner/tamper.js";
+import { SIGNERS_FILE, readBaseLock } from "../runner/tamper.js";
 import { adapters, prefixOf, refuseUnknownAdapters } from "../runner/run.js";
 import { admit } from "./bench.js";
 import { checkConsistency } from "./consistency.js";
@@ -27,6 +27,9 @@ const sourceFiles = async (set, projectRoot, wardenRoot) => {
     if (config === undefined)
         throw new RecordError(join(projectRoot, ".warden/config.yaml"), "", "file not found");
     out[".warden/config.yaml"] = config;
+    const signers = await readText(join(wardenRoot, SIGNERS_FILE));
+    if (signers !== undefined)
+        out[SIGNERS_FILE] = signers;
     for (const { id } of set.config.packs) {
         for (const [dir, base] of [[`packs/${id}`, wardenRoot], [`.warden/packs/${id}`, projectRoot]]) {
             for (const key of await packFiles(base, dir))

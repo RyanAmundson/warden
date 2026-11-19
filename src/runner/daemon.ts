@@ -2,9 +2,9 @@ import { execFileSync } from "node:child_process";
 import { type FSWatcher, existsSync, mkdirSync, readFileSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { COMMIT_HOOK } from "../compiler/emit.js";
-import { LOCK_PATH, readLock } from "../compiler/lock.js";
+import { LOCK_PATH, firstLine, readLock } from "../compiler/lock.js";
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
-import { type Committed, commonDir, isAncestor, newCommits, repoTips, restoreAction, worktrees } from "./changed.js";
+import { type Committed, allTips, commitsOf, commonDir, covers, newCommits, reachable, repoTips, restoreAction, worktrees } from "./changed.js";
 import { type PluginState, claudeDir, commitHookItem, pluginAction, pluginState } from "./doctor.js";
 import { type Evidence, LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, evidenceProjects, readEvidenceFrom, readEvidenceTail, wardenHome } from "./evidence.js";
 import { formatFeedback } from "./feedback.js";
@@ -147,9 +147,11 @@ interface Index {
   gateOff: Evidence[];
   offRuns: Set<string | undefined>;
   lastGated: Map<string, string>;
+  unchecked: Set<string>;
+  enabledRoots: Set<string>;
 }
 
-const emptyIndex = (): Index => ({ offset: 0, stamps: [], gateOff: [], offRuns: new Set(), lastGated: new Map() });
+const emptyIndex = (): Index => ({ offset: 0, stamps: [], gateOff: [], offRuns: new Set(), lastGated: new Map(), unchecked: new Set(), enabledRoots: new Set() });
 
 const refresh = (index: Index, project: string): Index => {
   const { events, offset } = readEvidenceFrom(project, index.offset);
@@ -160,6 +162,11 @@ const refresh = (index: Index, project: string): Index => {
       ix.gateOff.push(e);
       ix.offRuns.add(e.run);
     }
+    if (e.kind === "commit" && e.commit !== undefined) {
+      if (e.status === "unchecked") ix.unchecked.add(e.commit);
+      else ix.unchecked.delete(e.commit);
+    }
+    if (e.kind === "plugin" && e.status === "enabled" && e.root !== undefined) ix.enabledRoots.add(e.root);
     if (!isRun(e) || e.tier !== "commit") continue;
     if (e.tree !== undefined && e.scope === "full" && (e.result === "pass" || e.outcome === "empty")) ix.stamps.push(e);
     if (e.root !== undefined && e.outcome !== "refused" && !ix.offRuns.has(e.run)) ix.lastGated.set(e.root, e.at);
@@ -167,17 +174,17 @@ const refresh = (index: Index, project: string): Index => {
   return ix;
 };
 
-const stamped = (root: string, index: Index, c: Committed): boolean => {
-  if (c.parentTree === c.tree) return true;
-  const parent = c.parents[0];
-  return index.stamps.some((s) => s.tree === c.tree && (parent === undefined || (s.mergeBase !== undefined && (s.mergeBase === parent || isAncestor(root, s.mergeBase, parent)))));
-};
+const stamped = (root: string, index: Index, c: Committed): boolean => c.expectedTree === c.tree || index.stamps.some((s) => covers(root, s, c));
 
 type Found = Omit<Detection, "project" | "root" | "repo">;
 
 const uncheckedAlert = (c: Committed, base: string): Found => {
   const short = c.commit.slice(0, 12);
-  return { file: c.commit, detail: "unchecked-commit", next: `in a checkout of commit ${short} with nothing staged, run warden check --base ${c.parents[0] === undefined ? base : `${short}^`}` };
+  const next =
+    c.parents[0] === undefined
+      ? `run git switch -c warden-check-${short} ${base}, then git read-tree -u --reset ${short}, then warden check --base ${base}`
+      : `in a checkout of commit ${short} with nothing staged, run warden check --base ${short}^`;
+  return { file: c.commit, detail: "unchecked-commit", next };
 };
 
 const projectOf = (root: string): string => {
@@ -268,7 +275,7 @@ export function startWatching(opts: DaemonOptions): Daemon {
   };
   const owner = (w: Watched): boolean => [...projects.values()].find((x) => x.repo === w.repo) === w;
 
-  const pluginFound = (w: Watched, own: RootState): Found[] => {
+  const pluginFound = (w: Watched, own: RootState, ix: Index): Found[] => {
     let plugin: PluginState;
     try {
       plugin = pluginState(w.root);
@@ -282,7 +289,7 @@ export function startWatching(opts: DaemonOptions): Daemon {
       own.plugin = plugin.state;
     }
     if (plugin.state === "enabled") own.pluginEnabled = true;
-    if (plugin.state === "enabled" || own.pluginEnabled !== true) return [];
+    if (plugin.state === "enabled" || (own.pluginEnabled !== true && !ix.enabledRoots.has(w.root))) return [];
     return [{ file: plugin.file, detail: `plugin-${plugin.state}`, next: pluginAction(plugin) }];
   };
 
@@ -297,13 +304,15 @@ export function startWatching(opts: DaemonOptions): Daemon {
     const tips = repoTips(w.root);
     const ix = indexFor(w.project);
     const known = state.repos[w.repo];
+    const rebuilt = known === undefined ? commitsOf(w.root, [...ix.unchecked]) : [];
     const fresh = newCommits(w.root, tips, known?.tips ?? tips).filter((c) => {
       const checked = stamped(w.root, ix, c);
       appendEvidence(w.project, { at: now(), kind: "commit", trigger: "daemon", root: w.root, commit: c.commit, tree: c.tree, status: checked ? "checked" : "unchecked" });
       return !checked;
     });
-    const pending = [...(known?.unchecked ?? []), ...fresh];
-    const unchecked = pending.filter((c, i) => pending.findIndex((x) => x.commit === c.commit) === i && !stamped(w.root, ix, c));
+    const pending = [...(known?.unchecked ?? []), ...rebuilt, ...fresh];
+    const refs = allTips(w.root);
+    const unchecked = pending.filter((c, i) => pending.findIndex((x) => x.commit === c.commit) === i && !stamped(w.root, ix, c) && reachable(w.root, c.commit, refs));
     state.repos[w.repo] = { tips, unchecked };
     return unchecked.map((c) => uncheckedAlert(c, base));
   };
@@ -314,25 +323,40 @@ export function startWatching(opts: DaemonOptions): Daemon {
     if (!existsSync(join(w.root, ".warden/config.yaml"))) return [at({ file: ".warden/config.yaml", detail: "removed", next: restoreAction(w.root, ".warden/config.yaml") })];
     const ix = indexFor(w.project);
     const found: Detection[] = [];
-    const hook = commitHookItem(w.root);
-    if (hook.fix !== undefined) found.push(at({ file: COMMIT_HOOK, detail: "hook-unwired", next: hook.fix }));
-    found.push(...gateOffFound(w, ix).map(at), ...pluginFound(w, own).map(at));
+    const guarded = (source: string, run: () => Found[]): void => {
+      try {
+        found.push(...run().map(at));
+      } catch (cause) {
+        report(cause);
+        found.push(at({ file: source, detail: "scan-error", next: `fix what this error names in ${w.root}, and the daemon scans again: ${firstLine((cause as Error).message)}` }));
+      }
+    };
+    guarded("git hooks", () => {
+      const hook = commitHookItem(w.root);
+      return hook.fix === undefined ? [] : [{ file: COMMIT_HOOK, detail: "hook-unwired", next: hook.fix }];
+    });
+    guarded("gate-off Evidence", () => gateOffFound(w, ix));
+    guarded("Claude settings", () => pluginFound(w, own, ix));
     if (w.filesChanged || w.base === undefined) {
       w.filesChanged = false;
       w.recordFound = [];
       try {
         const set = await loadRecords(w.root, opts.wardenRoot);
         w.base = existsSync(join(w.root, LOCK_PATH)) ? readLock(w.root).config.base : set.config.base;
-        for (const t of await findTampering(set, opts.wardenRoot, w.base)) {
+        for (const t of await findTampering(set, opts.wardenRoot, w.base, false)) {
           const next = (JSON.parse(formatFeedback([], set, "json", { tampered: [t] })) as { next: string }).next.replace(/\.$/, "");
           w.recordFound.push(at({ file: t.file, detail: t.guardrail === undefined ? t.detail : `${t.detail} ${t.guardrail}`, next }));
         }
       } catch (cause) {
-        if (!(cause instanceof RecordError)) throw cause;
-        w.recordFound.push(at({ file: cause.file, detail: "record-error", next: nextOf(cause.message) ?? `run warden compile in ${w.root} and fix what it reports` }));
+        report(cause);
+        w.recordFound.push(
+          cause instanceof RecordError
+            ? at({ file: cause.file, detail: "record-error", next: nextOf(cause.message) ?? `run warden compile in ${w.root} and fix what it reports` })
+            : at({ file: ".warden", detail: "scan-error", next: `fix what this error names in ${w.root}, and the daemon scans again: ${firstLine((cause as Error).message)}` }),
+        );
       }
     }
-    if (owner(w)) found.push(...commitFound(w, w.base ?? "main").map(at));
+    if (owner(w)) guarded("git history", () => commitFound(w, w.base ?? "main"));
     return [...found, ...w.recordFound];
   };
 
@@ -370,6 +394,10 @@ export function startWatching(opts: DaemonOptions): Daemon {
       return w.scanning;
     }
     w.scanning = (async () => {
+      if (!existsSync(w.root)) {
+        drop(w);
+        return;
+      }
       ensureWatchers(w);
       for (const file of w.changes) appendEvidence(w.project, { at: now(), kind: "change", trigger: "daemon", root: w.root, file });
       w.changes.clear();
@@ -394,6 +422,16 @@ export function startWatching(opts: DaemonOptions): Daemon {
         }
       });
     return w.scanning;
+  };
+  const drop = (w: Watched): void => {
+    clearTimeout(w.timer);
+    w.timer = undefined;
+    for (const watcher of w.watchers.values()) watcher.close();
+    projects.delete(w.root);
+    delete state.roots[w.root];
+    saveState();
+    const next = [...projects.values()].find((x) => x.repo === w.repo);
+    if (next !== undefined) schedule(next);
   };
   const watchRoot = (root: string): void => {
     if (projects.has(root)) return;
@@ -433,9 +471,13 @@ export function startWatching(opts: DaemonOptions): Daemon {
     } catch (cause) {
       report(cause);
     }
-    for (const w of projects.values()) {
+    for (const w of [...projects.values()]) {
+      if (!existsSync(w.root)) {
+        if (w.scanning === undefined) drop(w);
+        continue;
+      }
       try {
-        if (existsSync(w.root) && ensureWatchers(w)) {
+        if (ensureWatchers(w)) {
           w.filesChanged = true;
           schedule(w);
         }

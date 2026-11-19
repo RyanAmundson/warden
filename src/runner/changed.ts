@@ -1,10 +1,24 @@
 import { execFileSync } from "node:child_process";
-import { resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { existsSync, lstatSync, readdirSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { RecordError } from "../records/load.js";
+
+const noGrafts = join(tmpdir(), `warden-no-grafts-${randomUUID()}`);
+
+const env = (): NodeJS.ProcessEnv => ({
+  ...process.env,
+  GIT_NO_REPLACE_OBJECTS: "1",
+  GIT_GRAFT_FILE: noGrafts,
+  GIT_CONFIG_COUNT: "1",
+  GIT_CONFIG_KEY_0: "core.commitGraph",
+  GIT_CONFIG_VALUE_0: "false",
+});
 
 const git = (root: string, args: string[]): { ok: boolean; out: string; err: string } => {
   try {
-    return { ok: true, out: execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }), err: "" };
+    return { ok: true, out: execFileSync("git", args, { cwd: root, env: env(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }), err: "" };
   } catch (cause) {
     const e = cause as { status?: number | null; stdout?: string; stderr?: string };
     if (typeof e.status !== "number") throw cause;
@@ -71,7 +85,7 @@ export const containsHead = (root: string, ref: string): boolean => git(root, ["
 export function historyOf(root: string, path: string): string[] {
   const commits = names(must(root, ["log", "-z", "--full-history", "--format=%H", "HEAD", "--", path]));
   if (commits.length === 0) return [];
-  const out = execFileSync("git", ["cat-file", "--batch"], { cwd: root, input: commits.map((sha) => `${sha}:./${path}\n`).join(""), maxBuffer: 1 << 30, stdio: ["pipe", "pipe", "pipe"] });
+  const out = execFileSync("git", ["cat-file", "--batch"], { cwd: root, env: env(), input: commits.map((sha) => `${sha}:./${path}\n`).join(""), maxBuffer: 1 << 30, stdio: ["pipe", "pipe", "pipe"] });
   const texts: string[] = [];
   for (let at = 0; at < out.length; ) {
     const end = out.indexOf(10, at);
@@ -90,6 +104,10 @@ export const stageFile = (root: string, path: string): void => {
 };
 
 export const unstagedFiles = (root: string): string[] => names(must(root, ["diff", "-z", "--name-only", "--relative"]));
+
+export const trackedFiles = (root: string, paths: string[]): Set<string> => new Set(paths.length === 0 ? [] : names(must(root, ["--literal-pathspecs", "ls-files", "-z", "--cached", "--", ...paths])));
+
+export const stagedFiles = (root: string): string[] => names(must(root, ["diff", "-z", "--name-only", "--relative", "--cached", "HEAD"]));
 
 export function lastCommittedText(root: string, path: string): string | undefined {
   if (!isRepository(root)) return undefined;
@@ -162,7 +180,7 @@ export interface Committed {
   commit: string;
   tree: string;
   parents: string[];
-  parentTree?: string;
+  expectedTree?: string;
 }
 
 export interface Worktree {
@@ -170,46 +188,163 @@ export interface Worktree {
   head?: string;
 }
 
+const UNBORN = /^0+$/;
+
 export function worktrees(root: string): Worktree[] {
   return must(root, ["worktree", "list", "--porcelain"])
     .split("\n\n")
     .flatMap((block) => {
       const path = /^worktree (.+)$/m.exec(block)?.[1];
       const head = /^HEAD ([0-9a-f]+)$/m.exec(block)?.[1];
-      return path === undefined ? [] : [{ path, ...(head === undefined ? {} : { head }) }];
+      return path === undefined ? [] : [{ path, ...(head === undefined || UNBORN.test(head) ? {} : { head }) }];
     });
 }
 
 export const repoTips = (root: string): string[] =>
   [...new Set([...must(root, ["for-each-ref", "--format=%(objectname)", "refs/heads"]).split("\n").filter((l) => l !== ""), ...worktrees(root).flatMap((w) => (w.head === undefined ? [] : [w.head]))])].sort();
 
-export function newCommits(root: string, tips: string[], seen: string[]): Committed[] {
-  if (tips.length === 0) return [];
-  const range = [...tips, ...seen.filter((t) => hasCommit(root, t)).map((t) => `^${t}`)];
-  const commits = must(root, ["log", "--no-merges", "--format=%H %T %P", ...range, "--"])
+const mergedTree = (root: string, parents: string[]): string | undefined => {
+  if (parents.length !== 2) return undefined;
+  const r = git(root, ["merge-tree", "--write-tree", ...parents]);
+  return r.ok || r.out !== "" ? r.out.split("\n")[0] : undefined;
+};
+
+const described = (root: string, range: string[]): Committed[] => {
+  const commits = must(root, ["log", "--format=%H %T %P", ...range, "--"])
     .split("\n")
     .filter((l) => l !== "")
     .map((l) => {
       const [commit, tree, ...parents] = l.split(" ") as [string, string, ...string[]];
       return { commit, tree, parents: parents.filter((p) => p !== "") };
     });
-  const parents = [...new Set(commits.flatMap((c) => c.parents))];
+  const single = [...new Set(commits.flatMap((c) => (c.parents.length === 1 ? c.parents : [])))];
   const trees = new Map(
-    parents.length === 0
+    single.length === 0
       ? []
-      : must(root, ["log", "--no-walk=unsorted", "--format=%H %T", ...parents, "--"])
+      : must(root, ["log", "--no-walk=unsorted", "--format=%H %T", ...single, "--"])
           .split("\n")
           .filter((l) => l !== "")
           .map((l) => l.split(" ") as [string, string]),
   );
-  return commits.map((c) => ({ ...c, ...(c.parents[0] === undefined ? {} : { parentTree: trees.get(c.parents[0]) }) }));
+  return commits.map((c) => {
+    const expectedTree = c.parents.length === 1 ? trees.get(c.parents[0] as string) : mergedTree(root, c.parents);
+    return { ...c, ...(expectedTree === undefined ? {} : { expectedTree }) };
+  });
+};
+
+const FETCHED = /^(fetch|pull|clone)/;
+
+export function fetchedTips(root: string): string[] {
+  const remotes = must(root, ["remote"]).split("\n").filter((r) => r !== "");
+  const refs = remotes.flatMap((r) => must(root, ["for-each-ref", "--format=%(refname)", `refs/remotes/${r}/`]).split("\n").filter((l) => l !== ""));
+  return [
+    ...new Set(
+      refs.flatMap((ref) => {
+        const r = git(root, ["reflog", "show", "--format=%H%x09%gs", ref, "--"]);
+        return r.ok ? r.out.split("\n").flatMap((line) => {
+          const [sha, subject] = line.split("\t");
+          return sha !== undefined && sha !== "" && FETCHED.test(subject ?? "") ? [sha] : [];
+        }) : [];
+      }),
+    ),
+  ];
+}
+
+export function newCommits(root: string, tips: string[], seen: string[]): Committed[] {
+  if (tips.length === 0) return [];
+  return described(root, [...tips, ...[...seen, ...fetchedTips(root)].filter((t) => hasCommit(root, t)).map((t) => `^${t}`)]);
+}
+
+export const allTips = (root: string): string[] => [...new Set([...must(root, ["for-each-ref", "--format=%(objectname)"]).split("\n").filter((l) => l !== ""), ...repoTips(root)])];
+
+export const covers = (root: string, run: { tree?: string; mergeBase?: string }, c: Committed): boolean => {
+  const parent = c.parents[0];
+  return run.tree === c.tree && (parent === undefined || (run.mergeBase !== undefined && (run.mergeBase === parent || isAncestor(root, run.mergeBase, parent))));
+};
+
+export interface StagedMismatch {
+  paths: string[];
+  hidden: string[];
+}
+
+export function stagedMismatch(root: string): StagedMismatch {
+  const literal = (args: string[]): string[] => names(must(root, ["--literal-pathspecs", ...args]));
+  const staged = literal(["diff", "-z", "--cached", "--name-only", "--relative", "--no-renames", "--diff-filter=AM"]);
+  if (staged.length === 0) return { paths: [], hidden: [] };
+  const index = new Map(
+    literal(["ls-files", "-s", "-z", "--", ...staged]).map((line) => {
+      const [meta = "", path = ""] = line.split("\t");
+      const [mode, sha] = meta.split(" ");
+      return [path, { mode, sha }] as const;
+    }),
+  );
+  const tags = new Map(literal(["ls-files", "-v", "-z", "--", ...staged]).map((line) => [line.slice(2), line[0] as string] as const));
+  const regular = staged.filter((p) => index.get(p)?.mode === "100644" || index.get(p)?.mode === "100755");
+  const present = regular.filter((p) => existsSync(join(root, p)) && lstatSync(join(root, p)).isFile());
+  const hashes = present.length === 0 ? [] : must(root, ["--literal-pathspecs", "hash-object", "--", ...present]).trim().split("\n");
+  const work = new Map(present.map((p, i) => [p, hashes[i]]));
+  const paths = regular.filter((p) => work.get(p) !== index.get(p)?.sha);
+  return { paths, hidden: paths.filter((p) => tags.get(p) === "S" || /^[a-z]$/.test(tags.get(p) ?? "")) };
+}
+
+export function commitsOf(root: string, shas: string[]): Committed[] {
+  const known = shas.filter((sha) => hasCommit(root, sha));
+  return known.length === 0 ? [] : described(root, ["--no-walk=unsorted", ...known]);
 }
 
 export const isAncestor = (root: string, ancestor: string, of: string): boolean => git(root, ["merge-base", "--is-ancestor", ancestor, of]).ok;
+
+export const reachable = (root: string, sha: string, tips: string[]): boolean => hasCommit(root, sha) && tips.some((tip) => isAncestor(root, sha, tip));
 
 export function restoreAction(root: string, path: string): string {
   if (git(root, ["cat-file", "-e", `HEAD:${path}`]).ok) return `run git checkout HEAD -- .warden in ${root}`;
   const removedBy = git(root, ["rev-list", "-1", "HEAD", "--", path]).out.trim();
   if (removedBy === "") return `run warden init in ${root}`;
   return `run git checkout ${removedBy}^ -- .warden in ${root}`;
+}
+
+export interface Restore {
+  base: string;
+  paths: string[];
+  known: string[];
+  stray: string[];
+  aliased: boolean;
+}
+
+export interface Signatures {
+  files: Map<string, string>;
+  restore: Restore;
+}
+
+export function changeSignatures(root: string, base: string, dir: string, allowedSignersFile: string, staged: boolean, alongside: string[]): Signatures {
+  const at = mergeBase(root, base);
+  const spec = `:(literal${git(root, ["config", "--bool", "core.ignorecase"]).out.trim() === "true" ? ",icase" : ""})${dir}`;
+  const diff = (...trees: string[]): string[] => names(must(root, ["diff", "-z", "--name-only", "--no-renames", "--ignore-submodules=none", "--relative", ...trees, "--", spec]));
+  const committed = diff(at, "HEAD");
+  const judged = staged ? diff("--cached", at) : committed;
+  const scope = [...new Set([...committed, ...judged])];
+  const files = new Map<string, string>();
+  if (scope.length === 0) return { files, restore: { base: at, paths: [], known: [], stray: [], aliased: false } };
+  const verify = ["-c", "gpg.ssh.program=ssh-keygen", "-c", "gpg.program=false", "-c", "gpg.x509.program=false", "-c", `gpg.ssh.allowedSignersFile=${allowedSignersFile}`, "--literal-pathspecs"];
+  const mark = `\x01${randomUUID()}`;
+  const log = must(root, [...verify, "log", "-z", "--topo-order", "--diff-merges=dense-combined", "--no-renames", "--ignore-submodules=none", "--relative", "--name-only", `--format=${mark}%G?`, `${at}..HEAD`, "--", ...scope]);
+  const seen = new Set<string>();
+  const bad = new Map<string, string>();
+  for (const entry of log.split(mark).slice(1)) {
+    const end = entry.search(/[\n\0]/);
+    const status = entry[0] as string;
+    for (const path of names(entry.slice(end + 1).replace(/^\n/, ""))) {
+      seen.add(path);
+      if (status !== "G" && !bad.has(path)) bad.set(path, status);
+    }
+  }
+  for (const path of committed) if (!seen.has(path)) bad.set(path, "N");
+  for (const path of judged) if (bad.has(path)) files.set(path, bad.get(path) as string);
+  const paths = [...new Set([...bad.keys(), ...scope.filter((p) => alongside.includes(p))])].sort();
+  const listed = (args: string[]): string[] => (paths.length === 0 ? [] : names(must(root, ["--literal-pathspecs", ...args, "--", ...paths])));
+  const known = [...new Set([...listed(["ls-tree", "-r", "-z", "--name-only", "--full-tree", at]), ...listed(["ls-files", "-z", "--cached"])])].sort();
+  const onDisk = (p: string): boolean => existsSync(join(root, dirname(p))) && readdirSync(join(root, dirname(p))).includes(basename(p));
+  const stray = paths.filter((p) => !known.includes(p) && onDisk(p));
+  const aliased = new Set(paths.map((p) => p.toLowerCase())).size < paths.length;
+  return { files, restore: { base: at, paths, known, stray, aliased } };
 }

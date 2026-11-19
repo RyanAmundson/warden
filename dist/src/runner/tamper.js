@@ -1,12 +1,14 @@
-import { existsSync, readdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { expectedOutputs } from "../compiler/compile.js";
 import { LOCK_FORMAT, LOCK_PATH, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError, readText } from "../records/load.js";
 import { kindRank } from "../records/types.js";
 import { BASELINE_PATH, carryRenames, projectWideEntries, readBaseline } from "./baseline.js";
-import { changesSinceMergeBase, containsHead, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
+import { changeSignatures, trackedFiles, changesSinceMergeBase, containsHead, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
 const SETTINGS_FILES = [".claude/settings.json", ".claude/settings.local.json"];
+export const SIGNERS_FILE = "allowed_signers";
 const isObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const tempsIn = (root, dir, recursive) => {
     if (!existsSync(join(root, dir)))
@@ -130,7 +132,19 @@ const loosened = (root, base, lock) => {
     const sources = Object.keys({ ...before.sources, ...lock.sources }).filter((k) => k.startsWith(".warden/") && before.sources?.[k] !== lock.sources[k]);
     return sources.length === 0 ? found : found.map((t) => (t.file === LOCK_PATH && t.detail === "loosened" ? { ...t, sources } : t));
 };
-export async function findTampering(set, wardenRoot, base) {
+const unsignedChanges = (root, base, wardenRoot, staged) => {
+    const signers = join(wardenRoot, SIGNERS_FILE);
+    const listed = existsSync(signers) && readFileSync(signers, "utf8").trim() !== "";
+    const { files, restore } = changeSignatures(root, base, ".warden", signers, staged, [BASELINE_PATH]);
+    const failed = [...files].filter(([file]) => file !== BASELINE_PATH);
+    if (!listed)
+        return failed.map(([file]) => ({ file, detail: "no-allowed-signers" }));
+    if (failed.some(([, status]) => status !== "N") && spawnSync("ssh-keygen", ["-?"]).error !== undefined) {
+        throw new RecordError("", "", "ssh-keygen is not on PATH, so signatures on .warden changes cannot be checked. Next action: install OpenSSH so ssh-keygen is on PATH, then run warden check again.");
+    }
+    return failed.map(([file, status]) => ({ file, detail: status === "N" ? "unsigned" : "untrusted-signature", restore }));
+};
+export async function findTampering(set, wardenRoot, base, staged) {
     const root = set.root;
     const lock = existsSync(join(root, LOCK_PATH)) ? readLock(root) : undefined;
     const found = leftoverTemps(root, lock).map((file) => ({ file, detail: "leftover-temp" }));
@@ -144,7 +158,8 @@ export async function findTampering(set, wardenRoot, base) {
     const expected = await expectedOutputs(set, root, wardenRoot);
     const sources = [...new Set([...Object.keys(lock.sources), ...Object.keys(expected.lock.sources)])].sort();
     const sourceDrift = sources.filter((file) => lock.sources[file] !== expected.lock.sources[file]);
-    found.push(...sourceDrift.map((file) => ({ file, detail: "source-drift" })));
+    const tracked = trackedFiles(root, sourceDrift.filter((file) => file.startsWith(".warden/") && existsSync(join(root, file))));
+    found.push(...sourceDrift.map((file) => ({ file, detail: "source-drift", ...(file.startsWith(".warden/") && existsSync(join(root, file)) && !tracked.has(file) ? { untracked: true } : {}) })));
     if (sourceDrift.length === 0 && canonicalJson({ ...lock, tools: null }) !== canonicalJson({ ...expected.lock, tools: null })) {
         found.push({ file: LOCK_PATH, detail: "lock-drift" });
     }
@@ -154,5 +169,5 @@ export async function findTampering(set, wardenRoot, base) {
             found.push({ file, detail: "generated-drift" });
     }
     found.push(...projectWideEntries(readBaseline(root)).map((guardrail) => ({ file: BASELINE_PATH, detail: "loosened", guardrail })));
-    return [...found, ...loosened(root, base, lock)];
+    return [...found, ...loosened(root, base, lock), ...unsignedChanges(root, base, wardenRoot, staged)];
 }

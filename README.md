@@ -42,6 +42,75 @@ agent edits under `.warden`:
 3. Stage the file, finish the merge, and run `warden check --base <base>`.
    The check lowers any count that is still above the code's real count.
 
+## Sign changes to .warden
+
+Every commit since the merge base that changed a file under `.warden/` must
+carry a git SSH signature from a key in the `allowed_signers` file at the root
+of the installed Warden package. The list ships with Warden, so no file in the
+consuming repository, `.warden/allowed_signers` included, can add a key. The
+lock records the list's hash as a source, so a changed list shows up as source
+drift. `warden check` verifies signatures with `ssh-keygen`, whatever the
+repository's own `gpg.ssh` settings say. An unsigned change is reported as
+`unsigned`, and a signature from any other key as `untrusted-signature`. The
+next action restores every path changed without an allowed signature, plus
+`.warden/baseline.json` when the branch changed it, to its merge-base
+content with `git restore`, then commits only those paths with
+`git commit --only`. Files the branch added are removed, and files it deleted
+come back; a file the branch added that is no longer in the index is deleted
+from disk with `rm -rf`. Other staged and unstaged work stays where it is. An
+untracked file at a restored path is replaced by the merge-base content. When
+two restored paths differ only in case, `git commit --only` refuses them as
+aliases, so the action commits the whole index with a plain `git commit`
+instead, and other staged work joins that commit. The commit uses
+`--allow-empty` so it is still made when a replace ref or a commit-graph file
+makes git's own view of `HEAD` already match the merge base. The restore also
+drops any signed edit to those paths made since the merge base; sign that
+edit again after the restore. When another tamper finding names a file
+outside the restored paths, such as an untracked pack file, the check names
+that file first (an untracked one is to be deleted) and the restore after
+it.
+
+A path needs a signature only while its content differs from the merge base,
+so unsigned commits that leave a path as it was at the merge base are not
+reported. Warden's pre-commit hook judges the index the commit uses, the
+temporary index during `git commit --only`, so it accepts a staged restore
+while `HEAD` still holds the unsigned commit. It refuses a staged tree that
+keeps an unsigned commit's change, and its next action restores every
+unsigned path in `HEAD` or the index. Only during `git commit --only`, which
+git runs on a temporary index rather than `index` or `index.lock`, do
+working-copy changes to files outside the commit not refuse it; that commit
+also leaves `.warden/baseline.json` alone, and the next check lowers it. A
+plain or partial `git commit` is still refused while a scanned file differs
+from the index. It cannot judge the signature of the commit
+being made, which does not exist yet: a staged `.warden/` change on top of
+signed history passes the hook, and the next check reports the commit if it
+is unsigned. Where git ignores case (`core.ignorecase`), the check also
+matches case variants of `.warden`, such as `.WARDEN/`.
+
+The check ignores replace refs, grafts, the commit-graph file, and submodule
+`ignore` settings. It trusts its own process and the installed package. It
+cannot detect a commit object or alternate object store that was rewritten in
+place in the local repository. If the real commit is already on the remote,
+for example because the feature branch was pushed, a merge made from that
+local copy can still put the unsigned commit into the history of `main`,
+though `main`'s tree keeps the original content. These also redirect the
+check: `GIT_DIR`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`,
+`GIT_CONFIG_PARAMETERS`, a `git` or `ssh-keygen` earlier on `PATH`, and an edit
+to the installed package's `allowed_signers` file. If
+the package's list is missing or empty, every `.warden/` change is reported
+as `no-allowed-signers`. A file that matches the base again at `HEAD` needs no
+signature; an uncommitted revert does not count. `.warden/baseline.json` is
+exempt, because a check only ever lowers it and a raised count is already
+reported as loosening.
+
+Sign your commits that change `.warden/`:
+
+```bash
+git config gpg.format ssh
+git config user.signingkey ~/.ssh/id_ed25519.pub
+git commit -S
+```
+
 ## Claude Code plugin
 
 This repository is also a Claude Code plugin marketplace named `warden`, with
@@ -131,15 +200,16 @@ foreground. The daemon watches every project whose root appears in Warden's
 Evidence, which `warden init` and every check write, and every worktree of
 those repositories that has `.warden/config.yaml`. It records each change to
 `.warden/` and each tamper detection as Evidence with one next action. It
-also records each new non-merge commit reachable from the repository's local
-branches or any worktree's HEAD, whether it arrived by commit, merge,
-fast-forward, cherry-pick, rebase, or `git am`. Tamper detections cover:
+also records each new commit reachable from the repository's local branches
+or any worktree's HEAD, whether it arrived by commit, merge, fast-forward,
+cherry-pick, rebase, or `git am`. Tamper detections cover:
 
 - a commit hook that git no longer runs;
 - `.warden/` contents that no longer match the lock;
 - a Claude plugin that was enabled and is now disabled or removed;
 - a commit whose tree no full commit-tier check passed on, measured from the
-  commit's parent or an ancestor of it;
+  commit's parent or an ancestor of it. A merge whose tree equals the
+  automatic merge of its two parents needs no check; any other merge does;
 - a check that ran with `WARDEN_DAEMON=off`.
 
 While the daemon holds an open alert for a repository, `warden check` fails
@@ -148,8 +218,35 @@ sees the cause fixed. The daemon keeps its checkpoint in
 `$WARDEN_HOME/daemon/state.json`. At its first start, and when it first
 discovers a repository, it records the repository's current branch and
 worktree tips as the checkpoint, and it judges only commits made after that.
-Commits made while no daemon ran on the machine, before the checkpoint
-existed, go unjudged.
+If `state.json` is lost, the daemon rebuilds open alerts from git and
+Evidence. A commit made while the daemon was stopped and `state.json` was
+missing is not judged, because the daemon never recorded it.
+
+These commits go unjudged:
+
+- commits made before the checkpoint existed, while no daemon ran on the
+  machine;
+- commits made on another machine: a commit that a remote-tracking ref
+  already reaches when the daemon first sees it;
+- a commit pushed to a remote without ever being on a local branch or
+  worktree HEAD here;
+- commits in a worktree whose branch has no commit yet;
+- commits in a clone on this machine where no `warden init` or check has
+  run, because the daemon discovers a repository only from Warden's Evidence.
+  Origin-side enforcement, tracked as cm-wkqedr.52, covers what a
+  per-machine daemon cannot see.
+
+A commit counts as another machine's only when a remote-tracking ref of a
+configured remote reached it by fetch, pull, or clone, as that ref's reflog
+records. A remote-tracking ref moved by a push or by `git update-ref` grants
+no exemption. A commit the daemon has flagged stays flagged while any ref,
+remote-tracking refs included, reaches it. A commit pulled while the daemon
+was stopped loses its exemption when `git fetch --prune` deletes that
+remote-tracking ref and its reflog before the daemon restarts; the daemon then
+flags it, and `warden check --base <base>` on that branch clears it.
+
+An open alert for a commit that no local branch or worktree HEAD reaches any
+more is dropped.
 
 It writes a heartbeat every 10 seconds. A commit-tier check exits 1 when the
 heartbeat is missing, older than 30 seconds, dated in the future, or written
@@ -157,6 +254,12 @@ by a process that is no longer running.
 
 `WARDEN_DAEMON=off` skips the heartbeat check, for tests and CI only. Each
 check that skips it is recorded, and the daemon flags it.
+
+Detection is tamper-evident, not tamper-proof. The heartbeat, Evidence, and
+`state.json` live under your own user, so a process running as you can forge
+them: a heartbeat that names another live process passes the check, a forged
+Evidence run line can stamp a commit, and an edited `state.json` can let one
+check pass before the daemon's next scan rewrites it.
 
 The daemon serves a JSON API on `http://127.0.0.1:7419` (`--port` changes
 it). It answers only requests whose `Host` is `127.0.0.1` or `localhost` on

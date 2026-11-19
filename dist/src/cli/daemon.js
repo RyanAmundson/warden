@@ -164,7 +164,7 @@ export async function runDaemon(wardenRoot, port) {
         served = await serve(wardenRoot, port);
     }
     catch (cause) {
-        const next = cause.code === "EADDRINUSE" ? `port ${port} on 127.0.0.1 is in use, perhaps by another warden daemon. Next action: run warden daemon --port <a free port>` : `the daemon could not start: ${cause.message}. Next action: fix what that names under ${wardenHome()}, then run warden daemon`;
+        const next = cause.code === "EADDRINUSE" ? `port ${port} on 127.0.0.1 is in use, perhaps by another warden daemon. Next action: run warden daemon --port <a free port>` : cause.message.includes("Next action: ") ? `the daemon could not start: ${cause instanceof RecordError ? `${cause.file} ` : ""}${cause.message}` : `the daemon could not start: ${cause.message}. Next action: fix what that names under ${wardenHome()}, then run warden daemon`;
         process.stderr.write(`${next}\n`);
         return 2;
     }

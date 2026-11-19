@@ -32,6 +32,7 @@
     "dist/eslint-plugin",
     "dist/schema",
     "packs",
-    "web"
+    "web",
+    "allowed_signers"
   ]
 }

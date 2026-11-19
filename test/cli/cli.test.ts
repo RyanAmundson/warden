@@ -274,7 +274,13 @@ describe("warden CLI", () => {
     expect(r.code).toBe(2);
     expect(r.err).toContain("Next action: run warden init --base origin/main");
     expect(warden("init", "--base", "origin/main").code).toBe(0);
-    await adoptedBase("origin/main");
+    expect(await readFile(join(root, ".warden/config.yaml"), "utf8")).toContain('base: "origin/main"');
+    git("add", "-A");
+    git("commit", "-q", "-m", "adopt");
+    const adopted = warden("check", "--base", "origin/main");
+    expect(adopted.err).toBe("");
+    expect(adopted.code).toBe(1);
+    expect(adopted.out).toContain("Next action: run git --literal-pathspecs restore --source=");
     expect(execFileSync("git", ["branch", "--list"], { cwd: root, encoding: "utf8" }).replace(/[* ]/g, "").split("\n").filter(Boolean)).toEqual(["feat"]);
   });
 
@@ -745,11 +751,11 @@ describe("warden CLI", () => {
     init();
     const r = warden("--violations");
     expect(r.code, r.err).toBe(0);
-    expect(r.out).toMatch(/^ WARDEN .* v back {2}d determinism\n/);
+    expect(r.out).toMatch(/^ WARDEN .* v back {2}d (determinism|det)\n/);
     expect(r.out).toMatch(/\n VIOLATIONS BY PACK +baselined +new +last run\n/);
     expect(r.out).toMatch(/\n core +█+ +1 +– *\n/);
     expect(r.out).toMatch(/\n {3}warden-no-comments +█+ +1 +– *\n/);
-    expect(r.out).toContain(" Next action: press r to run warden check");
+    expect(r.out).toContain(" Next action: run warden check");
     expect(r.out).not.toContain("\x1b");
     await rm(join(root, ".warden/baseline.json"));
     const bare = warden("--violations");
@@ -769,7 +775,7 @@ describe("warden CLI", () => {
     const before = warden("--determinism");
     expect(before.code, before.err).toBe(0);
     expect(before.out).toMatch(/\n ▸ \S+ +no completed run yet\n/);
-    expect(before.out).toContain(" No project has a completed run. Next action: press r to run warden check");
+    expect(before.out).toContain(" No project has a completed run. Next action: run warden check");
     await writeFile(join(root, "src/add.ts"), "// eslint-disable-next-line\nexport const add = (a: number, b: number) => a + b;\n");
     expect(warden("check", "--base", "main").code).toBe(1);
     const run = (await readFile(join(home, "evidence", `${project}.jsonl`), "utf8")).trim().split("\n").map((l) => JSON.parse(l) as { guardrail?: string; outcome?: string; kinds?: Record<string, number> }).filter((e) => e.guardrail === "run").at(-1);
