@@ -15,7 +15,7 @@ import { LOCK_PATH, type Lock, computeLock, sha256 } from "./lock.js";
 const localPackFiles = async (projectRoot: string, id: string): Promise<string[]> => {
   try {
     const entries = await readdir(join(projectRoot, ".warden/packs", id), { recursive: true, withFileTypes: true });
-    return entries.filter((e) => e.isFile()).map((e) => relative(projectRoot, join(e.parentPath, e.name)).split(sep).join("/"));
+    return entries.filter((e) => e.isFile() && e.name !== ".DS_Store").map((e) => relative(projectRoot, join(e.parentPath, e.name)).split(sep).join("/"));
   } catch (cause) {
     if ((cause as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw cause;

@@ -384,6 +384,16 @@ describe("compile", () => {
     expect(written).toContain(".warden/lock.json");
   });
 
+  it("hashes a local pack's files into the lock but not a Finder .DS_Store", async () => {
+    await usePack(localPack(legacyGuardrail("test -e ok.txt && test ! -e broken", PROVEN_TREES)));
+    await writeFile(join(root, ".warden/packs/local/check.sh"), "true\n");
+    await writeFile(join(root, ".warden/packs/local/.DS_Store"), "x");
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    const sources = Object.keys(JSON.parse(await read(".warden/lock.json")).sources as Record<string, string>);
+    expect(sources).toContain(".warden/packs/local/check.sh");
+    expect(sources).not.toContain(".warden/packs/local/.DS_Store");
+  });
+
   it("a legacy Guardrail whose mustPass tree fails says to make the command pass on it", async () => {
     await usePack(localPack(legacyGuardrail("test ! -e broken", ["        mustFail:", '          broken: "x\\n"', "        mustPass:", '          broken: "x\\n"'])));
     const { findings } = await compile(root, wardenRoot);
