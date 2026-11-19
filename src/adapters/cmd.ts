@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { Guardrail } from "../records/types.js";
-import type { Adapter, RunContext, RunResult } from "./types.js";
+import type { Adapter, RunContext, RunResult, Violation } from "./types.js";
 
 export interface Spawned {
   stdout: string;
@@ -88,12 +88,26 @@ export const withPackDir = (command: string, packDir: string | undefined): strin
 
 const tail = (output: string): string[] => output.trimEnd().split("\n").filter((l) => l !== "").slice(-OUTPUT_LINES);
 
+const LOCATED = /^(.+?):(\d+)(?:-(\d+))?: (.+)$/;
+
+const NEXT = /Next action: (.+)$/;
+
+const located = (g: Guardrail, stdout: string): Violation[] | undefined => {
+  const lines = stdout.trimEnd().split("\n");
+  const next = NEXT.exec(lines.at(-1) ?? "")?.[1];
+  const found = lines.slice(0, -1).map((l) => LOCATED.exec(l));
+  if (next === undefined || found.length === 0 || found.some((m) => m === null)) return undefined;
+  return (found as RegExpExecArray[]).map(([, file, line, end, message]) => ({ guardrail: g.id, file: file as string, line: Number(line), ...(end === undefined ? {} : { endLine: Number(end) }), message: message as string, doThis: next }));
+};
+
 const runOne = async (g: Guardrail, ctx: RunContext): Promise<RunResult> => {
   const run = g.implementation.slice(g.implementation.indexOf(":") + 1);
   const command = withPackDir(run, g.packDir);
-  const { code, killed, ms, output } = await spawnBudgeted(run, [], ctx.root, ctx.unbudgeted === true ? undefined : g.budgetMs, true, g.packDir === undefined ? {} : { [PACK_DIR]: g.packDir });
+  const { code, killed, ms, output, stdout } = await spawnBudgeted(run, [], ctx.root, ctx.unbudgeted === true ? undefined : g.budgetMs, true, g.packDir === undefined ? {} : { [PACK_DIR]: g.packDir });
   if (killed) return { guardrail: g.id, status: "killed", violations: [], ms, command };
   if (code === 0) return { guardrail: g.id, status: "pass", violations: [], ms };
+  const perFile = code === 1 && output === stdout ? located(g, stdout) : undefined;
+  if (perFile !== undefined) return { guardrail: g.id, status: "fail", violations: perFile, ms };
   return {
     guardrail: g.id,
     status: "fail",

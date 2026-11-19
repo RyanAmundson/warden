@@ -130,6 +130,21 @@ each a `cmd` Guardrail of kind `runtime` at `boundary`:
   (YAGNI).
 - One name exported from two files (SSOT).
 - Unused parameters through `tsc`, once the adapter maps their codes.
+
+Shipped in `cm-wkqedr.27`: Practices `no-repeated-code`
+(`principles-duplicate-blocks`), `no-speculative-code`
+(`principles-unused-exports`, `principles-single-implementation`), and
+`one-home-per-name` (`principles-duplicate-exports`), each running a script
+from `packs/principles/bin/` through `$WARDEN_PACK_DIR`. The scripts share
+`project.mjs`, which lists files with `git ls-files` (or walks the folder
+outside git), skips test, spec, story, and declaration files, and parses with
+the TypeScript parser in one process. They print one `<file>:<line>` line per
+violation, which the `cmd` adapter reads as per-file violations, so they can be
+baselined. A port is the file named after its group folder inside a bracketed
+collection. Files named `create` are skipped by the SSOT check, because the
+architecture layout gives every group one. Unused parameters and
+`composition-and-narrow-interfaces` stay open: they wait on the `tsc` code
+mapping and on `cm-wkqedr.25`.
 - Practice `composition-and-narrow-interfaces` (Liskov and interface
   segregation): no class extends anything except `Error`, and an interface
   has at most 7 members. It uses `no-restricted-syntax` once

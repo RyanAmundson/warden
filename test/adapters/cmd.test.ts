@@ -81,6 +81,25 @@ describe("cmd adapter", () => {
     await rm(pack, { recursive: true });
   });
 
+  it("reads file:line lines that end in a next action as per-file violations, with that action as Do this", async () => {
+    const [r] = await cmdAdapter.run([legacy("cmd:printf 'src/a.ts:3: a is bad\\nsrc/b.ts:4-9: b is bad\\n2 bad. Next action: fix a and b.\\n'; exit 1")], [], ctx);
+    expect(r?.status).toBe("fail");
+    expect(r?.violations).toEqual([
+      { guardrail: "g", file: "src/a.ts", line: 3, message: "a is bad", doThis: "fix a and b." },
+      { guardrail: "g", file: "src/b.ts", line: 4, endLine: 9, message: "b is bad", doThis: "fix a and b." },
+    ]);
+  });
+
+  it.each([
+    ["exits with 2", "printf 'src/a.ts:3: a is bad\\nNext action: fix a.\\n'; exit 2"],
+    ["writes to stderr", "printf 'src/a.ts:3: a is bad\\nNext action: fix a.\\n'; echo oops >&2; exit 1"],
+    ["prints a line without a location", "printf 'src/a.ts:3: a is bad\\nsomething else\\nNext action: fix a.\\n'; exit 1"],
+    ["ends without a next action", "printf 'src/a.ts:3: a is bad\\n'; exit 1"],
+  ])("stays one project-wide violation when the command %s", async (_, command) => {
+    const [r] = await cmdAdapter.run([legacy(`cmd:${command}`)], [], ctx);
+    expect(r?.violations.map((v) => v.file)).toEqual([""]);
+  });
+
   it("emits nothing", () => {
     expect(cmdAdapter.emit([legacy("cmd:true")], emptySet)).toEqual({});
   });

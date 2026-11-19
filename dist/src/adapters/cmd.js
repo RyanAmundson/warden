@@ -69,14 +69,27 @@ export const withPackDir = (command, packDir) => {
     return out;
 };
 const tail = (output) => output.trimEnd().split("\n").filter((l) => l !== "").slice(-OUTPUT_LINES);
+const LOCATED = /^(.+?):(\d+)(?:-(\d+))?: (.+)$/;
+const NEXT = /Next action: (.+)$/;
+const located = (g, stdout) => {
+    const lines = stdout.trimEnd().split("\n");
+    const next = NEXT.exec(lines.at(-1) ?? "")?.[1];
+    const found = lines.slice(0, -1).map((l) => LOCATED.exec(l));
+    if (next === undefined || found.length === 0 || found.some((m) => m === null))
+        return undefined;
+    return found.map(([, file, line, end, message]) => ({ guardrail: g.id, file: file, line: Number(line), ...(end === undefined ? {} : { endLine: Number(end) }), message: message, doThis: next }));
+};
 const runOne = async (g, ctx) => {
     const run = g.implementation.slice(g.implementation.indexOf(":") + 1);
     const command = withPackDir(run, g.packDir);
-    const { code, killed, ms, output } = await spawnBudgeted(run, [], ctx.root, ctx.unbudgeted === true ? undefined : g.budgetMs, true, g.packDir === undefined ? {} : { [PACK_DIR]: g.packDir });
+    const { code, killed, ms, output, stdout } = await spawnBudgeted(run, [], ctx.root, ctx.unbudgeted === true ? undefined : g.budgetMs, true, g.packDir === undefined ? {} : { [PACK_DIR]: g.packDir });
     if (killed)
         return { guardrail: g.id, status: "killed", violations: [], ms, command };
     if (code === 0)
         return { guardrail: g.id, status: "pass", violations: [], ms };
+    const perFile = code === 1 && output === stdout ? located(g, stdout) : undefined;
+    if (perFile !== undefined)
+        return { guardrail: g.id, status: "fail", violations: perFile, ms };
     return {
         guardrail: g.id,
         status: "fail",

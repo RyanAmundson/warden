@@ -914,6 +914,19 @@ describe("a cmd Guardrail that runs a script in its pack", () => {
     expect(await tampered()).toContainEqual({ file: ".warden/packs/legacy/check.sh", detail: "source-drift" });
   });
 
+  it("a script that prints file:line lines fails each file it names, with the script's next action as Do this and one Next action", async () => {
+    await write(".warden/packs/legacy/bin/no-broken.mjs", 'import { existsSync } from "node:fs";\nif (existsSync("broken")) { console.log("broken:1: broken exists\\n1 broken file. Next action: delete broken."); process.exit(1); }\n');
+    await addLegacy("commit", 'node "$WARDEN_PACK_DIR/bin/no-broken.mjs"', 5000);
+    git("add", "-A");
+    git("commit", "-q", "-m", "base");
+    git("branch", "-f", "main", "HEAD");
+    await write("broken", "x\n");
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    expect(out).toContain("FAIL broken:1  legacy-check\n  Rule:     The legacy script passes.\n  Output:   broken exists\n  Do this:  delete broken.");
+    expect(out.split("\n").filter((l) => l.startsWith("Next action:"))).toEqual(['Next action: change the code at the lines above to match "Do this". Do not edit .warden/ or generated config; that is recorded as tampering.']);
+  });
+
   it("moving a base-locked cmd Guardrail from lint to runtime, as compile asks, is not tampering", async () => {
     await write(".warden/config.yaml", config(["core", "local", "legacy"]));
     await write(".warden/packs/legacy/pack.yaml", legacyPack("commit", "test ! -e broken", 5000).replace("kind: legacy", "kind: runtime"));

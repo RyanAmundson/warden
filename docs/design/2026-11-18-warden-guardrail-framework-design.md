@@ -279,8 +279,11 @@ folder of the Guardrail's pack, so a pack can ship a script and run it as
 `cmd:node "$WARDEN_PACK_DIR/check.js"`; failures and next actions show the
 command with the folder substituted and shell-quoted, `warden doctor` checks
 that each named pack file exists, and every file in a bundled or local pack's
-folder but `.DS_Store` is hashed into the lock. A `cmd` Guardrail reports one project-wide result, so
-compile refuses one whose kind is `lint`; moving such a Guardrail from `lint`
+folder but `.DS_Store` is hashed into the lock. A `cmd` Guardrail reports one project-wide result,
+unless it exits 1 and prints only `<file>:<line>[-<end>]: <message>` lines to stdout followed by
+one line that ends in `Next action: <action>`; then each line is a violation in that file, with
+the action as its Do this, so its results can be baselined per file. Compile refuses a `cmd`
+Guardrail whose kind is `lint`; moving such a Guardrail from `lint`
 to `runtime` is not weakening, since its `lint` result never failed. Because every adapter normalizes to the same Violation, the
 baseline, cache, budgets, Evidence, and report work the same for every tool.
 
