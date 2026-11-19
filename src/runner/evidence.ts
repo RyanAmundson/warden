@@ -37,6 +37,8 @@ export interface Evidence {
   failures?: RunFailure[];
   kinds?: Partial<Record<Kind | "unknown", number>>;
   ratchet?: [number, number];
+  base?: string;
+  mergeBase?: string;
   step?: Step;
   state?: "start" | "done" | "fail";
   passes?: Record<string, number>;

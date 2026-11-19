@@ -31,6 +31,17 @@ install a newer `warden`:
    change.
 3. Install the plugin, as described next.
 
+## Resolve a conflict in .warden/baseline.json
+
+Every commit-tier check rewrites `.warden/baseline.json`, so parallel branches
+can conflict on it. A person resolves the conflict, because the plugin refuses
+agent edits under `.warden`:
+
+1. For each Guardrail and file that both sides list, keep the lower count.
+2. Keep an entry that either side removed removed.
+3. Stage the file, finish the merge, and run `warden check --base <base>`.
+   The check lowers any count that is still above the code's real count.
+
 ## Claude Code plugin
 
 This repository is also a Claude Code plugin marketplace named `warden`, with

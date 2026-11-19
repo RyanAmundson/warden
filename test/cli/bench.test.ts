@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Adapter } from "../../src/adapters/types.js";
 import { runBench } from "../../src/cli/bench.js";
+import { BENCH_DEFAULTS } from "../../src/records/types.js";
 import { adapters } from "../../src/runner/run.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
@@ -165,4 +166,16 @@ it("a copy that lands outside the Guardrail's paths exits 2 with one next action
   expect(err.match(/Next action:/g)).toHaveLength(1);
   expect(err).toContain("Guardrail tree would not run on src/bench-1/src/a.ts, a copy of its mustPass example, because it is outside src/*.ts.");
   expect(roots).toEqual([]);
+});
+
+it("bench refuses settings in config.yaml that the lock does not hold, and runs once they match", async () => {
+  await setup({ local: [guardrail("lin", "linear")] }, ["bench:", "  linearMax: 5"]);
+  const lock = (bench: Record<string, number>): Promise<void> => writeFile(join(root, ".warden/lock.json"), JSON.stringify({ format: 2, warden: version, config: { bench } }));
+  await lock(BENCH_DEFAULTS as unknown as Record<string, number>);
+  const loosened = await bench();
+  expect(loosened.code).toBe(2);
+  expect(loosened.out).toBe("");
+  expect(loosened.err).toContain("Next action: run warden compile, then run warden bench again.");
+  await lock({ ...BENCH_DEFAULTS, linearMax: 5 });
+  expect((await bench()).code).toBe(0);
 });
