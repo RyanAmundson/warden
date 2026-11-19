@@ -2,12 +2,11 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, posix } from "node:path";
 import { adapters, runGuardrails, unknownAdapters } from "../runner/run.js";
-import { enabledOn, pathGroups } from "../records/paths.js";
+import { enabledOn, literalOf, pathGroups } from "../records/paths.js";
 import { exampleSet } from "../records/load.js";
 import { PARSE_ERROR } from "../adapters/types.js";
 const TSCONFIG = JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", skipLibCheck: true }, include: ["**/*.ts"] });
-const literal = (glob) => (glob.startsWith("!") ? "" : (glob.split("*", 1)[0] ?? ""));
-export const examplePrefix = (group) => (group ?? []).map(literal).reduce((a, b) => (b.length > a.length ? b : a), "");
+export const examplePrefix = (group) => (group ?? []).map(literalOf).reduce((a, b) => (b.length > a.length ? b : a), "");
 const exampleFile = (group) => `${examplePrefix(group)}warden-example.ts`;
 const SCAFFOLD = ["package.json", "tsconfig.json"];
 const ownedBy = (owned) => (key) => {

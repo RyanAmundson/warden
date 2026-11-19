@@ -130,11 +130,24 @@ describe("checkConsistency", () => {
     ]);
   });
 
-  it("flags conflict-overlap once per pair", () => {
+  it("flags a conflict between two Practices of one pack once per pair, as conflict-same-pack", () => {
     const set = build([
       pack("a", 1, [practice("p1", "a", { conflictsWith: ["p2"] }), practice("p2", "a", { conflictsWith: ["p1"] })]),
     ]);
-    expect(codes(set)).toEqual(["conflict-overlap"]);
+    expect(checkConsistency(set)).toEqual([
+      {
+        code: "conflict-same-pack",
+        record: "p1",
+        message: "Practices p1 and p2 are both in pack a and conflict, so the pack contradicts itself. Next action: remove the conflictsWith entries between Practices p1 and p2 in packs/a/pack.yaml, or move one of them into its own pack, then run warden compile.",
+      },
+    ]);
+    for (const p of set.packs[0]?.practices ?? []) p.conflictsWith.splice(0);
+    expect(checkConsistency(set)).toEqual([]);
+  });
+
+  it("never reports conflict-overlap for a same-pack pair on disjoint practice paths", () => {
+    const set = build([pack("a", 1, [practice("p1", "a", { conflictsWith: ["p2"], paths: ["src/x/**"] }), practice("p2", "a", { paths: ["src/y/**"] })])]);
+    expect(codes(set)).toEqual(["conflict-same-pack"]);
   });
 
   it("does not flag conflicts on disjoint paths", () => {
@@ -145,12 +158,78 @@ describe("checkConsistency", () => {
     expect(codes(set)).toEqual([]);
   });
 
-  it("a negated glob overlaps every path it does not exclude", () => {
-    const set = build(
-      [pack("a", 1, [practice("p1", "a", { conflictsWith: ["p2"] })]), pack("b", 2, [practice("p2", "b")])],
-      { a: ["!**/sources/**"], b: ["docs/**"] },
+  const conflicting = (a: string[], b: string[]): RecordSet =>
+    build([pack("a", 1, [practice("p1", "a", { conflictsWith: ["p2"] })]), pack("b", 2, [practice("p2", "b")])], { a, b });
+
+  it("a negated pack path is refused as a conflict scope", () => {
+    expect(checkConsistency(conflicting(["!**/sources/**"], ["docs/**"]))).toEqual([
+      {
+        code: "conflict-scope",
+        record: "a",
+        message: "Pack a has path !**/sources/** in /w/.warden/config.yaml, and Practice p1 conflicts with p2, so its paths must be folder scopes. Next action: replace !**/sources/** in the paths of pack a in /w/.warden/config.yaml with folder scopes such as src/ui/**, then run warden compile.",
+      },
+    ]);
+  });
+
+  it("src/{ui,core}/** against src/ui/** is refused as a conflict scope", () => {
+    const found = checkConsistency(conflicting(["src/{ui,core}/**"], ["src/ui/**"]));
+    expect(found.map((f) => [f.code, f.record])).toEqual([["conflict-scope", "a"]]);
+    expect(found[0]?.message.split("Next action:")).toHaveLength(2);
+  });
+
+  it("empty pack paths are refused as a conflict scope", () => {
+    const message = "Pack a has no paths in /w/.warden/config.yaml, and Practice p1 conflicts with p2, so its paths must be folder scopes. Next action: add a folder scope such as src/** to the paths of pack a in /w/.warden/config.yaml, then run warden compile.";
+    const set = conflicting([], ["docs/**"]);
+    expect(checkConsistency(set)).toEqual([{ code: "conflict-scope", record: "a", message }]);
+    const alone = build([pack("a", 1, [practice("p1", "a", { conflictsWith: ["p2"] })])], { a: [] });
+    const elsewhere = new Map([["p2", "b"]]);
+    expect(checkConsistency(alone, elsewhere)).toEqual([{ code: "conflict-scope", record: "a", message }]);
+    alone.config.packs[0]?.paths.push("src/**");
+    set.config.packs[0]?.paths.push("src/**");
+    expect(checkConsistency(alone, elsewhere)).toEqual([]);
+    expect(checkConsistency(set)).toEqual([]);
+  });
+
+  it("refuses the named Practice's pack scope too", () => {
+    expect(checkConsistency(conflicting(["src/**"], ["docs/*.md"])).map((f) => [f.code, f.record])).toEqual([["conflict-scope", "b"]]);
+  });
+
+  it.each([
+    ["src/ui/**", "src/ui/**", true],
+    ["src/**", "src/ui/**", true],
+    ["src/ui/**", "src/ui-kit/**", false],
+    ["src/ui/**", "docs/**", false],
+    ["[[]plugins]/a/**", "[[]plugins]/**", true],
+  ])("%s against %s overlapping is %s", (a, b, overlapping) => {
+    const found = checkConsistency(conflicting([a], [b]));
+    const folder = (glob: string) => glob.slice(0, -3).replaceAll("[[]", "[");
+    expect(found).toEqual(
+      overlapping
+        ? [
+            {
+              code: "conflict-overlap",
+              record: "p1",
+              message: `Practices p1 and p2 conflict and both apply under ${folder(a)} and ${folder(b)}. Next action: change the paths of pack b in /w/.warden/config.yaml so that no folder contains or is inside ${folder(a)}, then run warden compile.`,
+            },
+          ]
+        : [],
     );
-    expect(codes(set)).toEqual(["conflict-overlap"]);
+  });
+
+  it("the conflict-overlap next action clears it", () => {
+    const set = conflicting(["src/**"], ["src/**"]);
+    const [finding] = checkConsistency(set);
+    expect(finding?.code).toBe("conflict-overlap");
+    expect(finding?.message.split("Next action:")).toHaveLength(2);
+    set.config.packs[1]?.paths.splice(0, 1, "docs/**");
+    expect(checkConsistency(set)).toEqual([]);
+  });
+
+  it("the conflict-scope next action clears it", () => {
+    const set = conflicting(["!**/sources/**"], ["docs/**"]);
+    expect(codes(set)).toEqual(["conflict-scope"]);
+    set.config.packs[0]?.paths.splice(0, 1, "src/**");
+    expect(checkConsistency(set)).toEqual([]);
   });
 
   it("narrows conflict paths by a practice's own paths", () => {
@@ -169,6 +248,15 @@ describe("checkConsistency", () => {
     const findings = checkConsistency(set);
     expect(findings.map((f) => f.code)).toEqual(["undefined-conflict"]);
     expect(findings[0]?.record).toBe("p");
+    expect(findings[0]?.message.split("Next action:")).toHaveLength(2);
+    expect(findings[0]?.message).toContain("remove ghost from conflictsWith of Practice p in packs/a/pack.yaml");
+    set.packs[0]?.practices[0]?.conflictsWith.splice(0);
+    expect(codes(set)).toEqual([]);
+  });
+
+  it("a conflict with a practice in a disabled pack gives no finding", () => {
+    const set = build([pack("a", 1, [practice("p1", "a", { conflictsWith: ["p2"] })])]);
+    expect(checkConsistency(set, new Map([["p2", "b"]])).map((f) => f.code)).toEqual([]);
   });
 
   it("flags undefined-term", () => {

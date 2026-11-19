@@ -1,0 +1,35 @@
+id: signals
+layer: 7
+terms:
+  - id: signal
+    definition: "A writable Angular signal, made by signal()."
+    bans: []
+  - id: computed-signal
+    definition: "A read-only signal made by computed(), derived from other signals."
+    bans: []
+  - id: signal-effect
+    definition: "A function passed to Angular's effect(), which runs when the signals it reads change."
+    bans: []
+  - id: signal-bridge
+    definition: "toSignal or toObservable from @angular/core/rxjs-interop."
+    bans: []
+practices:
+  - id: signals-state-is-signal
+    statement: State that changes over time is a signal; code makes no RxJS subject.
+    terms: [signal]
+    paths: ["!**/{*.test.*,*.spec.*,*.stories.*,test/**,tests/**,__tests__/**,e2e/**}"]
+    conflictsWith: [rxjs-state-is-observable]
+    guardrails:
+      - id: signals-no-subjects
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:no-restricted-imports"
+        options:
+          paths:
+            - name: rxjs
+              importNames: [Subject, BehaviorSubject, ReplaySubject, AsyncSubject]
+              message: "Changing state is a signal. Hold the state in signal(), and turn an observable into a signal with toSignal."
+        mustFail: "import { BehaviorSubject } from \"rxjs\";\nexport const open = new BehaviorSubject(0);\n"
+        mustPass: "import { toSignal } from \"@angular/core/rxjs-interop\";\nimport { of } from \"rxjs\";\nexport const open = toSignal(of(0));\n"

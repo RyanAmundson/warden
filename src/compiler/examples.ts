@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, posix } from "node:path";
 import { adapters, runGuardrails, unknownAdapters } from "../runner/run.js";
-import { enabledOn, pathGroups } from "../records/paths.js";
+import { enabledOn, literalOf, pathGroups } from "../records/paths.js";
 import { exampleSet } from "../records/load.js";
 import type { Example, Guardrail, RecordSet } from "../records/types.js";
 import { type Adapter, PARSE_ERROR } from "../adapters/types.js";
@@ -10,9 +10,7 @@ import type { Finding } from "./consistency.js";
 
 const TSCONFIG = JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", skipLibCheck: true }, include: ["**/*.ts"] });
 
-const literal = (glob: string): string => (glob.startsWith("!") ? "" : (glob.split("*", 1)[0] ?? ""));
-
-export const examplePrefix = (group: string[] | undefined): string => (group ?? []).map(literal).reduce((a, b) => (b.length > a.length ? b : a), "");
+export const examplePrefix = (group: string[] | undefined): string => (group ?? []).map(literalOf).reduce((a, b) => (b.length > a.length ? b : a), "");
 
 const exampleFile = (group: string[] | undefined): string => `${examplePrefix(group)}warden-example.ts`;
 

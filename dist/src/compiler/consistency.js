@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { unmappedFlag } from "../adapters/tsc.js";
 import { ESLINT_PASS, RUN_TOTAL } from "../runner/evidence.js";
+import { folderOf } from "../records/paths.js";
 const CODES = [
     "duplicate-term",
     "duplicate-practice",
@@ -10,23 +11,30 @@ const CODES = [
     "unmapped-tsc-flag",
     "prose-only",
     "conflict-overlap",
+    "conflict-scope",
+    "conflict-same-pack",
     "undefined-conflict",
     "undefined-term",
     "banned-synonym",
     "layer-order",
 ];
-const prefix = (glob) => (glob.startsWith("!") ? "" : (glob.split("*", 1)[0] ?? ""));
-const overlaps = (a, b) => prefix(a).startsWith(prefix(b)) || prefix(b).startsWith(prefix(a));
-const longer = (a, b) => (prefix(a).length >= prefix(b).length ? a : b);
-const effectiveGlobs = (set, practice) => {
-    const packGlobs = set.config.packs.find((p) => p.id === practice.pack)?.paths ?? [];
+const contains = (outer, inner) => inner === outer || inner.startsWith(`${outer}/`);
+const overlaps = (a, b) => contains(a, b) || contains(b, a);
+const packPaths = (set, pack) => set.config.packs.find((p) => p.id === pack)?.paths ?? [];
+const effectiveFolders = (set, practice) => {
+    const packFolders = packPaths(set, practice.pack).flatMap((g) => folderOf(g) ?? []);
     if (practice.paths.length === 0)
-        return packGlobs;
-    return packGlobs.flatMap((g) => practice.paths.filter((p) => overlaps(g, p)).map((p) => longer(g, p)));
+        return packFolders;
+    return packFolders.flatMap((f) => practice.paths.flatMap((p) => {
+        const g = folderOf(p);
+        if (g === undefined)
+            return [f];
+        return contains(f, g) ? [g] : contains(g, f) ? [f] : [];
+    }));
 };
 const escape = (word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const duplicates = (ids) => ids.filter((id, i) => ids.indexOf(id) !== i);
-export function checkConsistency(set) {
+export function checkConsistency(set, elsewhere = new Map()) {
     const findings = [];
     const add = (code, record, message) => {
         findings.push({ code, record, message });
@@ -61,24 +69,48 @@ export function checkConsistency(set) {
         }
     }
     const byId = new Map(practices.map((p) => [p.id, p]));
+    const config = join(set.root, ".warden", "config.yaml");
+    const scoped = new Set();
+    const checkScope = (packId, p, q) => {
+        if (scoped.has(packId))
+            return;
+        scoped.add(packId);
+        const paths = packPaths(set, packId);
+        const why = `and Practice ${p} conflicts with ${q}, so its paths must be folder scopes.`;
+        if (paths.length === 0) {
+            add("conflict-scope", packId, `Pack ${packId} has no paths in ${config}, ${why} Next action: add a folder scope such as src/** to the paths of pack ${packId} in ${config}, then run warden compile.`);
+        }
+        for (const glob of paths.filter((g) => folderOf(g) === undefined)) {
+            add("conflict-scope", packId, `Pack ${packId} has path ${glob} in ${config}, ${why} Next action: replace ${glob} in the paths of pack ${packId} in ${config} with folder scopes such as src/ui/**, then run warden compile.`);
+        }
+    };
     const seen = new Set();
     for (const p of practices) {
         for (const otherId of p.conflictsWith) {
+            checkScope(p.pack, p.id, otherId);
             const other = byId.get(otherId);
             const key = [p.id, otherId].sort().join("\0");
             if (!other) {
-                add("undefined-conflict", p.id, `Practice ${p.id} conflicts with ${otherId}, which is not defined.`);
+                if (elsewhere.has(otherId))
+                    continue;
+                const file = set.packs.find((pack) => pack.id === p.pack)?.file;
+                add("undefined-conflict", p.id, `Practice ${p.id} conflicts with ${otherId}, which no pack defines. Next action: remove ${otherId} from conflictsWith of Practice ${p.id} in ${file}, then run warden compile.`);
                 continue;
             }
+            checkScope(other.pack, p.id, otherId);
             if (seen.has(key))
                 continue;
-            const left = effectiveGlobs(set, p);
-            const right = effectiveGlobs(set, other);
-            if (left.some((a) => right.some((b) => overlaps(a, b)))) {
-                seen.add(key);
-                const first = p.id < otherId ? p.id : otherId;
-                const second = first === p.id ? otherId : p.id;
-                add("conflict-overlap", first, `Practices ${first} and ${second} conflict and apply to overlapping paths.`);
+            seen.add(key);
+            const [first, second] = p.id < otherId ? [p, other] : [other, p];
+            if (first.pack === second.pack) {
+                const file = set.packs.find((pack) => pack.id === first.pack)?.file;
+                add("conflict-same-pack", first.id, `Practices ${first.id} and ${second.id} are both in pack ${first.pack} and conflict, so the pack contradicts itself. Next action: remove the conflictsWith entries between Practices ${first.id} and ${second.id} in ${file}, or move one of them into its own pack, then run warden compile.`);
+                continue;
+            }
+            const right = effectiveFolders(set, second);
+            const pair = effectiveFolders(set, first).flatMap((a) => right.filter((b) => overlaps(a, b)).map((b) => [a, b]))[0];
+            if (pair) {
+                add("conflict-overlap", first.id, `Practices ${first.id} and ${second.id} conflict and both apply under ${pair[0]} and ${pair[1]}. Next action: change the paths of pack ${second.pack} in ${config} so that no folder contains or is inside ${pair[0]}, then run warden compile.`);
             }
         }
     }

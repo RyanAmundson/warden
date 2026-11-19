@@ -1,6 +1,6 @@
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { RecordError, loadRecords, readText } from "../records/load.js";
+import { RecordError, loadRecords, readPack, readText } from "../records/load.js";
 import { BASELINE_PATH, measureBaseline, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { hasCommit, isRepository } from "../runner/changed.js";
 import { SIGNERS_FILE, readBaseLock } from "../runner/tamper.js";
@@ -87,9 +87,36 @@ const previousGuardrails = (text) => {
         return undefined;
     }
 };
+const packDirs = async (dir) => {
+    const entries = await readdir(dir, { withFileTypes: true }).catch((error) => {
+        if (error.code === "ENOENT")
+            return [];
+        throw error;
+    });
+    return entries.filter((e) => e.isDirectory()).map((e) => e.name);
+};
+export async function practicesElsewhere(set, wardenRoot) {
+    const elsewhere = new Map();
+    const enabled = new Set(set.packs.flatMap((p) => p.practices.map((x) => x.id)));
+    if (set.packs.every((p) => p.practices.every((x) => x.conflictsWith.every((id) => enabled.has(id)))))
+        return elsewhere;
+    const on = new Set(set.packs.map((p) => p.id));
+    const configFile = join(set.root, ".warden", "config.yaml");
+    const ids = [...(await packDirs(join(wardenRoot, "packs"))), ...(await packDirs(join(set.root, ".warden", "packs")))];
+    for (const id of new Set(ids)) {
+        if (on.has(id))
+            continue;
+        if ((await readText(join(wardenRoot, "packs", id, "pack.yaml"))) === undefined && (await readText(join(set.root, ".warden", "packs", id, "pack.yaml"))) === undefined)
+            continue;
+        const { pack } = await readPack(set.root, wardenRoot, id, configFile);
+        for (const practice of pack.practices)
+            elsewhere.set(practice.id, pack.id);
+    }
+    return elsewhere;
+}
 export async function compile(projectRoot, wardenRoot) {
     const set = await loadRecords(projectRoot, wardenRoot);
-    const findings = [...checkConsistency(set), ...(await runExamples(set))];
+    const findings = [...checkConsistency(set, await practicesElsewhere(set, wardenRoot)), ...(await runExamples(set))];
     if (findings.length > 0)
         return { findings, written: [] };
     const slow = await admit(set, await wardenVersion(wardenRoot));

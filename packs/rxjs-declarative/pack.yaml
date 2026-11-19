@@ -1,0 +1,116 @@
+id: rxjs-declarative
+layer: 6
+terms:
+  - id: observable
+    definition: "An RxJS Observable: a value the reader subscribes to and that pushes each change."
+    bans: [stream]
+  - id: subject
+    definition: "An RxJS Subject, BehaviorSubject, ReplaySubject, or AsyncSubject: an observable that code can push values into."
+    bans: []
+  - id: subscription
+    definition: The result of calling subscribe on an observable, which ends the subscription when unsubscribe is called.
+    bans: []
+  - id: operator
+    definition: A function passed to pipe that turns one observable into another.
+    bans: []
+practices:
+  - id: rxjs-state-is-observable
+    statement: State that changes over time is an observable, never a signal.
+    terms: [observable]
+    paths: ["!**/{*.test.*,*.spec.*,*.stories.*,test/**,tests/**,__tests__/**,e2e/**}"]
+    conflictsWith: [signals-state-is-signal]
+    guardrails:
+      - id: rxjs-no-signal-imports
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:no-restricted-syntax"
+        options:
+          - selector: "ImportDeclaration[source.value='@angular/core'] > ImportSpecifier[imported.name=/^(signal|computed|effect|linkedSignal)$/]"
+            message: "Changing state is an observable. Hold the state in an Observable, and use toSignal from @angular/core/rxjs-interop only at a signal boundary."
+          - selector: "ExportNamedDeclaration[source.value='@angular/core'] > ExportSpecifier[local.name=/^(signal|computed|effect|linkedSignal)$/]"
+            message: "Changing state is an observable. Hold the state in an Observable, and use toSignal from @angular/core/rxjs-interop only at a signal boundary."
+          - selector: ":matches(ImportDeclaration, ExportNamedDeclaration, ExportAllDeclaration)[source.value=/^@preact.signals/]"
+            message: "Changing state is an observable. Hold the state in an Observable, and use toSignal from @angular/core/rxjs-interop only at a signal boundary."
+        mustFail: "import { signal } from \"@angular/core\";\nexport const count = signal(0);\n"
+        mustPass: "import { Observable, of } from \"rxjs\";\nexport const count: Observable<number> = of(0);\n"
+  - id: rxjs-subjects-stay-private
+    statement: A subject is never exported or public; code outside its owner reads an observable.
+    terms: [subject, observable]
+    paths: ["!**/{*.test.*,*.spec.*,*.stories.*,test/**,tests/**,__tests__/**,e2e/**}"]
+    conflictsWith: []
+    guardrails:
+      - id: rxjs-no-exposed-subjects
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:no-restricted-syntax"
+        options:
+          - selector: "ExportNamedDeclaration > VariableDeclaration > VariableDeclarator > NewExpression[callee.name=/Subject$/]"
+            message: "A subject is never exported or public. Make the subject private, and expose subject.asObservable()."
+          - selector: "PropertyDefinition:not([accessibility='private']):not([accessibility='protected']):not([key.type='PrivateIdentifier']) > NewExpression[callee.name=/Subject$/]"
+            message: "A subject is never exported or public. Make the subject private, and expose subject.asObservable()."
+          - selector: "ExportDefaultDeclaration > NewExpression[callee.name=/Subject$/]"
+            message: "A subject is never exported or public. Make the subject private, and expose subject.asObservable()."
+          - selector: "ExportNamedDeclaration > VariableDeclaration > VariableDeclarator > :matches(TSAsExpression, TSSatisfiesExpression) > NewExpression[callee.name=/Subject$/]"
+            message: "A subject is never exported or public. Make the subject private, and expose subject.asObservable()."
+          - selector: "TSParameterProperty:not([accessibility='private']):not([accessibility='protected']) > AssignmentPattern > NewExpression[callee.name=/Subject$/]"
+            message: "A subject is never exported or public. Make the subject private, and expose subject.asObservable()."
+        mustFail: "import { BehaviorSubject } from \"rxjs\";\nexport const open$ = new BehaviorSubject(0);\n"
+        mustPass: "import { BehaviorSubject } from \"rxjs\";\nexport class Dialogs {\n  readonly #open = new BehaviorSubject(0);\n  readonly open$ = this.#open.asObservable();\n}\n"
+  - id: rxjs-subscriptions-kept
+    statement: The subscription that subscribe returns is always kept, so the code can end it.
+    terms: [subscription]
+    paths: ["!**/{*.test.*,*.spec.*,*.stories.*,test/**,tests/**,__tests__/**,e2e/**}"]
+    conflictsWith: []
+    guardrails:
+      - id: rxjs-kept-subscriptions
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:no-restricted-syntax"
+        options:
+          - selector: "ExpressionStatement > CallExpression[callee.property.name='subscribe']"
+            message: "Every subscription is kept. Assign the result of subscribe, and call unsubscribe when its owner ends."
+          - selector: "ExpressionStatement > UnaryExpression[operator='void'] > CallExpression[callee.property.name='subscribe']"
+            message: "Every subscription is kept. Assign the result of subscribe, and call unsubscribe when its owner ends."
+          - selector: "ExpressionStatement > ChainExpression > CallExpression[callee.property.name='subscribe']"
+            message: "Every subscription is kept. Assign the result of subscribe, and call unsubscribe when its owner ends."
+        mustFail: "import { of } from \"rxjs\";\nof(1).subscribe(() => undefined);\n"
+        mustPass: "import { of } from \"rxjs\";\nexport const kept = of(1).subscribe(() => undefined);\n"
+  - id: rxjs-no-nested-subscribe
+    statement: Code never calls subscribe inside a subscribe callback; it composes with an operator such as switchMap.
+    terms: [subscription, operator]
+    paths: ["!**/{*.test.*,*.spec.*,*.stories.*,test/**,tests/**,__tests__/**,e2e/**}"]
+    conflictsWith: []
+    guardrails:
+      - id: rxjs-nested-subscribe
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:no-restricted-syntax"
+        options:
+          - selector: "CallExpression[callee.property.name='subscribe'] > :function CallExpression[callee.property.name='subscribe']"
+            message: "Code never subscribes inside a subscribe callback. Replace the inner subscribe with switchMap, mergeMap, or concatMap in the outer pipe."
+          - selector: "CallExpression[callee.property.name='subscribe'] > ObjectExpression > Property > :function CallExpression[callee.property.name='subscribe']"
+            message: "Code never subscribes inside a subscribe callback. Replace the inner subscribe with switchMap, mergeMap, or concatMap in the outer pipe."
+        mustFail: "import { of } from \"rxjs\";\nexport const s = of(1).subscribe(() => {\n  const t = of(2).subscribe();\n  t.unsubscribe();\n});\n"
+        mustPass: "import { of, switchMap } from \"rxjs\";\nexport const s = of(1).pipe(switchMap(() => of(2))).subscribe();\n"
+  - id: rxjs-no-relay
+    statement: A subscribe callback never calls next on a subject; derived values come from an operator.
+    terms: [subject, operator]
+    paths: ["!**/{*.test.*,*.spec.*,*.stories.*,test/**,tests/**,__tests__/**,e2e/**}"]
+    conflictsWith: []
+    guardrails:
+      - id: rxjs-relay
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:rxjs-declarative/no-relay"
+        mustFail: "import { of, Subject } from \"rxjs\";\nconst out = new Subject<number>();\nexport const s = of(1).subscribe((v) => out.next(v));\n"
+        mustPass: "import { Observable, type Subscriber } from \"rxjs\";\nexport const copy = (src: Observable<number>): Observable<number> =>\n  new Observable<number>((subscriber: Subscriber<number>) => {\n    const s = src.subscribe((v: number) => subscriber.next(v));\n    return () => s.unsubscribe();\n  });\n"

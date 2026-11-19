@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { Ajv, type ErrorObject } from "ajv";
 import { parse } from "yaml";
 import schema from "../../schema/records.schema.json" with { type: "json" };
+import { backslashFix } from "./paths.js";
 import type { Pack, ProjectConfig, RecordSet } from "./types.js";
 
 export const findWardenRoot = (): string => {
@@ -77,9 +78,17 @@ function check(file: string, validate: typeof validateConfig, value: unknown): v
   throw new RecordError(file, pointerOf(error), `${error.message ?? "invalid"}${next}`);
 }
 
+function refuseBackslashes(file: string, pointer: string, paths: string[]): void {
+  paths.forEach((glob, i) => {
+    if (!glob.includes("\\")) return;
+    throw new RecordError(file, `${pointer}/${i}`, `path ${glob} holds a backslash, which Node's glob matcher does not read as an escape. Next action: write ${backslashFix(glob)} in place of ${glob} in ${file}, then run warden compile.`);
+  });
+}
+
 export function parseConfig(file: string, text: string): ProjectConfig {
   const value = parseYaml(file, text);
   check(file, validateConfig, value);
+  (value as ProjectConfig).packs.forEach((entry, i) => refuseBackslashes(file, `/packs/${i}/paths`, entry.paths));
   return value as ProjectConfig;
 }
 
@@ -102,6 +111,7 @@ export async function readPack(projectRoot: string, wardenRoot: string, id: stri
     throw new RecordError(file, "/id", `pack id ${pack.id} does not match directory ${id}`);
   }
   pack.file = file;
+  pack.practices.forEach((practice, i) => refuseBackslashes(file, `/practices/${i}/paths`, practice.paths));
   for (const practice of pack.practices) {
     practice.pack = pack.id;
     for (const g of practice.guardrails) g.packDir = resolve(dirname(file));

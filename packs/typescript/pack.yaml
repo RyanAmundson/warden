@@ -1,0 +1,97 @@
+id: typescript
+layer: 5
+terms:
+  - id: escape-hatch
+    definition: "A construct that tells the compiler to stop checking a value: the any type, a non-null assertion (x!), or a type assertion (x as T, <T>x) other than as const."
+    bans: [cast]
+  - id: floating-promise
+    definition: A Promise that is neither awaited, returned, nor given a rejection handler.
+    bans: []
+practices:
+  - id: typescript-strict-compiler
+    statement: The compiler checks null, implicit any, implicit returns, overrides, and optional properties.
+    terms: []
+    paths: []
+    conflictsWith: []
+    guardrails:
+      - id: typescript-strict-null
+        kind: type
+        runs: [commit]
+        budgetMs: 60000
+        version: 1
+        implementation: "tsc:strictNullChecks"
+        mustFail: "export const len = (s: string | undefined): number => s.length;\n"
+        mustPass: "export const len = (s: string | undefined): number => s?.length ?? 0;\n"
+      - id: typescript-no-implicit-any
+        kind: type
+        runs: [commit]
+        budgetMs: 60000
+        version: 1
+        implementation: "tsc:noImplicitAny"
+        mustFail: "export const id = (v) => v;\n"
+        mustPass: "export const id = (v: number): number => v;\n"
+      - id: typescript-implicit-returns
+        kind: type
+        runs: [commit]
+        budgetMs: 60000
+        version: 1
+        implementation: "tsc:noImplicitReturns"
+        mustFail: "export const first = (xs: number[]) => {\n  if (xs.length > 0) return xs[0];\n};\n"
+        mustPass: "export const first = (xs: number[]) => {\n  if (xs.length > 0) return xs[0];\n  return 0;\n};\n"
+      - id: typescript-implicit-override
+        kind: type
+        runs: [commit]
+        budgetMs: 60000
+        version: 1
+        implementation: "tsc:noImplicitOverride"
+        mustFail: "class A {\n  run(): number {\n    return 1;\n  }\n}\nexport class B extends A {\n  run(): number {\n    return 2;\n  }\n}\n"
+        mustPass: "class A {\n  run(): number {\n    return 1;\n  }\n}\nexport class B extends A {\n  override run(): number {\n    return 2;\n  }\n}\n"
+      - id: typescript-exact-optional
+        kind: type
+        runs: [commit]
+        budgetMs: 60000
+        version: 1
+        implementation: "tsc:exactOptionalPropertyTypes"
+        mustFail: "export const o: { a?: number } = { a: undefined };\n"
+        mustPass: "export const o: { a?: number } = {};\n"
+  - id: typescript-no-escape-hatches
+    statement: Code uses no escape-hatch.
+    terms: [escape-hatch]
+    paths: ["!**/{*.test.*,*.spec.*,*.stories.*,test/**,tests/**,__tests__/**,e2e/**}"]
+    conflictsWith: []
+    guardrails:
+      - id: typescript-no-any
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:no-restricted-syntax"
+        options:
+          - selector: TSAnyKeyword
+            message: Code uses no escape-hatch. Replace any with the precise type, or with unknown and a check that narrows it.
+        mustFail: "export const n: any = 1;\n"
+        mustPass: "export const n: number = 1;\n"
+      - id: typescript-no-non-null
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:no-restricted-syntax"
+        options:
+          - selector: TSNonNullExpression
+            message: Code uses no escape-hatch. Remove the ! and handle the missing value with a check or a default.
+        mustFail: "export const len = (v: string | undefined): number => v!.length;\n"
+        mustPass: "export const len = (v: string | undefined): number => (v ?? \"\").length;\n"
+      - id: typescript-no-assertion
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:no-restricted-syntax"
+        options:
+          - selector: "TSAsExpression:not([typeAnnotation.type='TSTypeReference'][typeAnnotation.typeName.name='const'])"
+            message: Code uses no escape-hatch. Remove the assertion and narrow the value with a check, or write as const or satisfies.
+          - selector: TSTypeAssertion
+            message: Code uses no escape-hatch. Remove the assertion and narrow the value with a check, or write as const or satisfies.
+        mustFail: "export const n = (v: unknown): number => v as number;\n"
+        mustPass: "export const n = (v: unknown): number => (typeof v === \"number\" ? v : 0);\n"

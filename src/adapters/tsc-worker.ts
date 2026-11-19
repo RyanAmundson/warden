@@ -30,6 +30,10 @@ const parameterNames = (file: ts.SourceFile): [number, number][] => {
 const atParameter = (d: ts.Diagnostic): boolean =>
   d.file !== undefined && d.start !== undefined && parameterNames(d.file).some(([from, to]) => (d.start as number) >= from && (d.start as number) < to);
 
+const registry = ts.createDocumentRegistry();
+
+export const parseKey = (options: ts.CompilerOptions): string => registry.getKeyForCompilationSettings(options);
+
 let reusedFor = "";
 const parsed = new Map<string, { text: string; file: ts.SourceFile }>();
 
@@ -45,7 +49,7 @@ const check = ({ cwd, project, parameterCodes }: TscRequest): TscReply => {
     },
   });
   if (config === undefined) return { stdout: format(fatal === undefined ? [] : [fatal]), code: 1, parameters: [] };
-  const key = JSON.stringify(config.options);
+  const key = parseKey(config.options);
   if (key !== reusedFor) {
     parsed.clear();
     reusedFor = key;

@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { examplePrefix } from "../../src/compiler/examples.js";
 import { RecordError, exampleSet, loadRecords } from "../../src/records/load.js";
-import { enabledOn } from "../../src/records/paths.js";
+import { enabledOn, folderOf } from "../../src/records/paths.js";
 
 const fixtures = "test/fixtures";
 const wardenRoot = `${fixtures}/warden-root`;
@@ -135,5 +135,66 @@ describe("path globs", () => {
 
   it("an example under a negated Practice glob goes under the config's folder, not a file named !", () => {
     expect(examplePrefix(["!**/sources/**", "src/**"])).toBe("src/");
+  });
+});
+
+describe("backslash in a pack glob", () => {
+  const project = async (configPath: string, practicePath: string, run: (root: string) => Promise<void>): Promise<void> => {
+    const root = await mkdtemp(join(tmpdir(), "warden-glob-"));
+    try {
+      await mkdir(join(root, ".warden/packs/local"), { recursive: true });
+      await writeFile(
+        join(root, ".warden/packs/local/pack.yaml"),
+        ["id: local", "layer: 1", "terms: []", "practices:", "  - id: p", "    statement: s", "    terms: []", `    paths: [${JSON.stringify(practicePath)}]`, "    conflictsWith: []", "    guardrails: []", ""].join("\n"),
+      );
+      await writeFile(join(root, ".warden/config.yaml"), ["project: p", "base: main", "packs:", `  - { id: local, paths: [${JSON.stringify(configPath)}] }`, "tierBudgetMs: { edit: 1, commit: 1, boundary: 1 }", "loopBreakerRepeats: 3", ""].join("\n"));
+      await run(root);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  };
+
+  it("a config path with a backslash is refused with the [[] form", async () => {
+    await project("\\[plugins\\]/**", "src/**", async (root) => {
+      const error = (await loadRecords(root, wardenRoot).catch((e: unknown) => e)) as RecordError;
+      expect(error).toBeInstanceOf(RecordError);
+      expect(error.pointer).toBe("/packs/0/paths/0");
+      expect(error.message).toBe(
+        `path \\[plugins\\]/** holds a backslash, which Node's glob matcher does not read as an escape. Next action: write [[]plugins]/** in place of \\[plugins\\]/** in ${join(root, ".warden/config.yaml")}, then run warden compile.`,
+      );
+    });
+    await project("[[]plugins]/**", "src/**", async (root) => {
+      await expect(loadRecords(root, wardenRoot)).resolves.toBeDefined();
+    });
+  });
+
+  it("a practice path with a backslash is refused", async () => {
+    await project("src/**", "\\[plugins\\]/**", async (root) => {
+      const error = (await loadRecords(root, wardenRoot).catch((e: unknown) => e)) as RecordError;
+      expect(error).toBeInstanceOf(RecordError);
+      expect(error.pointer).toBe("/practices/0/paths/0");
+      expect(error.file).toBe(join(root, ".warden/packs/local/pack.yaml"));
+      expect(error.message).toContain("Next action: write [[]plugins]/** in place of");
+    });
+    await project("src/**", "[[]plugins]/**", async (root) => {
+      await expect(loadRecords(root, wardenRoot)).resolves.toBeDefined();
+    });
+  });
+
+  it("examplePrefix reads [[] as [", () => {
+    expect(examplePrefix(["!**/sources/**", "[[]plugins]/**"])).toBe("[plugins]/");
+  });
+
+  it.each([
+    ["src/ui/**", "src/ui"],
+    ["[[]plugins]/frame/**", "[plugins]/frame"],
+    ["**", undefined],
+    ["src/*.ts", undefined],
+    ["src/{a,b}/**", undefined],
+    ["!src/**", undefined],
+    ["../src/**", undefined],
+    ["src/ui", undefined],
+  ])("folderOf accepts only plain folder scopes: %s", (glob, folder) => {
+    expect(folderOf(glob)).toBe(folder);
   });
 });

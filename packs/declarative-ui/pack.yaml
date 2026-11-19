@@ -1,0 +1,73 @@
+id: declarative-ui
+layer: 8
+terms:
+  - id: view
+    definition: A React component or hook that returns or computes what to render.
+    bans: [widget]
+  - id: view-state
+    definition: A value held by useState or useReducer in a view.
+    bans: []
+  - id: react-effect
+    definition: A function passed to useEffect or useLayoutEffect.
+    bans: []
+  - id: bridge-hook
+    definition: "A hook in a bridges folder, or from a library, that turns a subscription-model value into view-state, such as useObservableState or useSyncExternalStore."
+    bans: []
+practices:
+  - id: declarative-ui-reads-through-bridge-hooks
+    statement: A view reads changing state through a bridge-hook; a react-effect never calls subscribe.
+    terms: [view, bridge-hook, react-effect]
+    paths: ["!**/{bridges/**,*.test.*,*.spec.*,*.stories.*,test/**,tests/**,__tests__/**,e2e/**}"]
+    conflictsWith: []
+    guardrails:
+      - id: declarative-ui-subscribe-in-effect
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:no-restricted-syntax"
+        options:
+          - selector: "CallExpression[callee.name=/^use(Layout)?Effect$/] CallExpression[callee.property.name='subscribe']"
+            message: "A react-effect never subscribes. Read the observable with a bridge-hook such as useObservableState."
+        mustFail: "import { useEffect, useState } from \"react\";\nimport type { Observable } from \"rxjs\";\nexport const useN = (n$: Observable<number>): number => {\n  const [n, setN] = useState(0);\n  useEffect(() => {\n    const s = n$.subscribe(setN);\n    return () => s.unsubscribe();\n  }, [n$]);\n  return n;\n};\n"
+        mustPass: "import { useObservableState } from \"observable-hooks\";\nimport type { Observable } from \"rxjs\";\nexport const useN = (n$: Observable<number>): number => useObservableState(n$, 0);\n"
+  - id: declarative-ui-derives-while-rendering
+    statement: A react-effect never sets view-state directly in its body; a value derived from inputs is computed while rendering.
+    terms: [react-effect, view-state]
+    paths: ["!**/{bridges/**,*.test.*,*.spec.*,*.stories.*,test/**,tests/**,__tests__/**,e2e/**}"]
+    conflictsWith: []
+    guardrails:
+      - id: declarative-ui-set-in-effect
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:no-restricted-syntax"
+        options:
+          - selector: "CallExpression[callee.name=/^use(Layout)?Effect$/] > :function > BlockStatement > ExpressionStatement > CallExpression[callee.name=/^set(?!Timeout|Interval|Immediate)[A-Z]/]"
+            message: "A react-effect never sets view-state directly. Compute the value while rendering, or with useMemo."
+          - selector: "CallExpression[callee.name=/^use(Layout)?Effect$/] > :function > CallExpression[callee.name=/^set(?!Timeout|Interval|Immediate)[A-Z]/]"
+            message: "A react-effect never sets view-state directly. Compute the value while rendering, or with useMemo."
+        mustFail: "import { useEffect, useState } from \"react\";\nexport const useDouble = (n: number): number => {\n  const [d, setD] = useState(0);\n  useEffect(() => {\n    setD(n * 2);\n  }, [n]);\n  return d;\n};\n"
+        mustPass: "import { useEffect } from \"react\";\nexport const useDouble = (n: number): number => n * 2;\nexport const useTick = (tick: () => void): void => {\n  useEffect(() => {\n    setTimeout(tick, 10);\n  }, [tick]);\n};\n"
+  - id: declarative-ui-dom-by-rendering
+    statement: A view never queries the document and never writes markup or classes on an element directly.
+    terms: [view]
+    paths: ["!**/{bridges/**,*.test.*,*.spec.*,*.stories.*,test/**,tests/**,__tests__/**,e2e/**}"]
+    conflictsWith: []
+    guardrails:
+      - id: declarative-ui-dom-writes
+        kind: lint
+        runs: [edit, commit]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:no-restricted-syntax"
+        options:
+          - selector: "MemberExpression[object.name='document'][property.name=/^(querySelector|querySelectorAll|getElementById|getElementsByClassName|getElementsByTagName)$/]"
+            message: "A view changes the DOM only by rendering. Render the markup or className from state."
+          - selector: "AssignmentExpression > MemberExpression.left[property.name=/^(innerHTML|outerHTML)$/]"
+            message: "A view changes the DOM only by rendering. Render the markup or className from state."
+          - selector: "CallExpression[callee.object.property.name='classList'][callee.property.name=/^(add|remove|toggle|replace)$/]"
+            message: "A view changes the DOM only by rendering. Render the markup or className from state."
+        mustFail: "export const mark = (): void => {\n  document.querySelector(\"#a\")?.classList.add(\"on\");\n};\n"
+        mustPass: "export const mark = (on: boolean): string => (on ? \"on\" : \"off\");\n"

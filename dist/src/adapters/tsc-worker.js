@@ -17,6 +17,8 @@ const parameterNames = (file) => {
     return out;
 };
 const atParameter = (d) => d.file !== undefined && d.start !== undefined && parameterNames(d.file).some(([from, to]) => d.start >= from && d.start < to);
+const registry = ts.createDocumentRegistry();
+export const parseKey = (options) => registry.getKeyForCompilationSettings(options);
 let reusedFor = "";
 const parsed = new Map();
 const check = ({ cwd, project, parameterCodes }) => {
@@ -31,7 +33,7 @@ const check = ({ cwd, project, parameterCodes }) => {
     });
     if (config === undefined)
         return { stdout: format(fatal === undefined ? [] : [fatal]), code: 1, parameters: [] };
-    const key = JSON.stringify(config.options);
+    const key = parseKey(config.options);
     if (key !== reusedFor) {
         parsed.clear();
         reusedFor = key;

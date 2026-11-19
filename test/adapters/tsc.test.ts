@@ -2,8 +2,11 @@ import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import ts from "typescript";
 import { tscAdapter } from "../../src/adapters/tsc.js";
+import { parseKey } from "../../src/adapters/tsc-worker.js";
 import { PARSE_ERROR } from "../../src/adapters/types.js";
+import { RecordError } from "../../src/records/load.js";
 import type { Guardrail, RecordSet } from "../../src/records/types.js";
 import { conformance } from "./conformance.js";
 
@@ -199,6 +202,72 @@ describe("tsc adapter", () => {
     });
   });
 
+  it("exactOptionalPropertyTypes runs on a program without strictNullChecks", async () => {
+    await withProject(async (root) => {
+      await writeFile(join(root, "src/b.ts"), "export const o: { a?: number } = { a: undefined };\n");
+      const g = guardrail("exact", "tsc:exactOptionalPropertyTypes");
+      await emitInto(root, [g]);
+      const results = await tscAdapter.run([g], [], ctxFor(root));
+      const exact = results.find((r) => r.guardrail === "exact");
+      expect(exact?.status).toBe("fail");
+      expect(exact?.violations.map((v) => v.message.slice(0, 6))).toEqual(["TS2375"]);
+    });
+  });
+
+  it("an options error exits as a usage failure with one next action", async () => {
+    await withProject(async (root) => {
+      const path = join(root, "tsconfig.json");
+      const config = JSON.parse(await readFile(path, "utf8"));
+      const write = (strictNullChecks: boolean) =>
+        writeFile(path, JSON.stringify({ ...config, compilerOptions: { ...config.compilerOptions, exactOptionalPropertyTypes: true, strictNullChecks } }));
+      await write(false);
+      await writeFile(join(root, "src/a.ts"), "export const n = 1;\n");
+      const g = guardrail("returns", "tsc:noImplicitReturns");
+      await emitInto(root, [g]);
+      const error = await tscAdapter.run([g], [], ctxFor(root)).then(() => undefined, (e: unknown) => e);
+      expect(error).toBeInstanceOf(RecordError);
+      expect((error as RecordError).file).toBe(path);
+      expect((error as RecordError).pointer).toBe("/compilerOptions");
+      expect((error as RecordError).message.split("Next action:")).toHaveLength(2);
+      await write(true);
+      const results = await tscAdapter.run([g], [], ctxFor(root));
+      expect(results.find((r) => r.guardrail === "returns")?.status).toBe("pass");
+    });
+  });
+
+  it("a compiler-option code in a source file stays a violation with its file and line", async () => {
+    await withProject(async (root) => {
+      await writeFile(join(root, "src/b.ts"), 'export * from "./a.ts";\n');
+      const g = guardrail("returns", "tsc:noImplicitReturns");
+      await emitInto(root, [g]);
+      const results = await tscAdapter.run([g], [], ctxFor(root));
+      expect(results.find((r) => r.guardrail === "tsc:baseline-errors")?.violations.map((v) => `${v.file}:${v.line} ${v.message.slice(0, 6)}`)).toEqual(["src/b.ts:1 TS5097"]);
+    });
+  });
+
+  for (const options of [false, "yes"]) {
+    it(`Guardrail options ${JSON.stringify(options)} that tsc refuses name the Guardrail, and its next action clears it`, async () => {
+      await withProject(async (root) => {
+        await writeFile(join(root, "src/a.ts"), "export const n = 1;\n");
+        const exact = guardrail("exact", "tsc:exactOptionalPropertyTypes");
+        const nulls = { ...guardrail("nulls", "tsc:strictNullChecks"), options };
+        await emitInto(root, [exact, nulls]);
+        const error = await tscAdapter.run([exact, nulls], [], ctxFor(root)).then(() => undefined, (e: unknown) => e);
+        expect(error).toBeInstanceOf(RecordError);
+        expect((error as RecordError).file).toBe(join(root, ".warden/generated/tsconfig.json"));
+        expect((error as RecordError).message).toContain(".warden/generated/tsconfig.json(");
+        const [, next] = (error as RecordError).message.split("Next action:");
+        expect((error as RecordError).message.split("Next action:")).toHaveLength(2);
+        expect(next).toContain("nulls");
+        expect(next).not.toContain("exact");
+        const fixed = guardrail("nulls", "tsc:strictNullChecks");
+        await emitInto(root, [exact, fixed]);
+        const results = await tscAdapter.run([exact, fixed], [], ctxFor(root));
+        expect(results.map((r) => r.status)).toEqual(["pass", "pass", "pass"]);
+      });
+    });
+  }
+
   it("a project with no typescript of its own runs tsc Guardrails with Warden's bundled typescript", async () => {
     const root = await mkdtemp(join(tmpdir(), "warden-tsc-none-"));
     try {
@@ -264,11 +333,47 @@ describe("tsc adapter", () => {
     });
   });
 
+  it("an options error with no file position is a usage failure", async () => {
+    await withStubTsc('parentPort.postMessage({ stdout: "error TS5052: refused.\\n", code: 1, parameters: [] });', async (root) => {
+      const error = await fresh.run([g], [], ctxFor(root)).then(() => undefined, (e: unknown) => e);
+      expect((error as Error).name).toBe("RecordError");
+      expect((error as RecordError).pointer).toBe("/compilerOptions");
+      expect((error as RecordError).message.split("Next action:")).toHaveLength(2);
+    });
+  });
+
   it("a compiler still running at the budget is stopped and reported as killed", async () => {
     await withStubTsc("for (;;);", async (root) => {
       const results = await fresh.run([{ ...g, budgetMs: 100 }], [], ctxFor(root));
       expect(results.map((r) => r.status)).toEqual(["killed", "killed"]);
       expect(results[0]?.command).toBe("npx tsc -p .warden/generated/tsconfig.json --pretty false");
+    });
+  });
+});
+
+describe("tsc worker parse cache", () => {
+  it("keeps one key across programs that differ only in check flags", () => {
+    const base = { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext };
+    const checks: ts.CompilerOptions[] = [{ strictNullChecks: true }, { noImplicitAny: true }, { exactOptionalPropertyTypes: true, strictNullChecks: true }, { noImplicitOverride: true, noEmit: true }];
+    expect(checks.map((flags) => parseKey({ ...base, ...flags }))).toEqual(checks.map(() => parseKey(base)));
+  });
+
+  it.each([
+    ["allowUnreachableCode", "export const f = (): number => {\n  return 1;\n  f();\n};\n", "TS7027"],
+    ["allowUnusedLabels", "export const f = (): number => {\n  loop: for (;;) return 1;\n};\n", "TS7028"],
+  ])("a node_modules file reused after a program without %s reports its bind error", async (flag, text, code) => {
+    await withProject(async (root) => {
+      const vendored = "vendor/node_modules/pkg/index.ts";
+      await mkdir(join(root, dirname(vendored)), { recursive: true });
+      await writeFile(join(root, vendored), text);
+      await writeFile(join(root, "src/c.ts"), "import \"../vendor/node_modules/pkg/index\";\n");
+      const first = guardrail("returns", "tsc:noImplicitReturns");
+      await emitInto(root, [first]);
+      await tscAdapter.run([first], [], ctxFor(root));
+      const bind = { ...guardrail("bind", `tsc:${flag}`), options: false };
+      await emitInto(root, [bind]);
+      const results = await tscAdapter.run([bind], [], ctxFor(root));
+      expect(results.find((r) => r.guardrail === "bind")?.violations.map((v) => `${v.file} ${v.message.slice(0, 6)}`)).toEqual([`${vendored} ${code}`]);
     });
   });
 });

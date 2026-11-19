@@ -72,6 +72,26 @@ describe("eslint adapter", () => {
     ]);
   });
 
+  it("a Guardrail scoped to [[]plugins]/** lints [plugins]/a.ts", async () => {
+    const g = guardrail("no-var", "eslint:no-var");
+    const set = setFor(g);
+    set.config.packs[0]!.paths = ["[[]plugins]/**"];
+    const root = await mkdtemp(join(tmpdir(), "warden-bracket-"));
+    try {
+      await mkdir(join(root, "[plugins]"));
+      await mkdir(join(root, "src"));
+      await Promise.all(["[plugins]/a.ts", "src/a.ts"].map((f) => writeFile(join(root, f), "var a = 1;\n")));
+      for (const [path, content] of Object.entries(eslintAdapter.emit([g], { ...set, root }))) {
+        await mkdir(join(root, path, ".."), { recursive: true });
+        await writeFile(join(root, path), content);
+      }
+      const [r] = await eslintAdapter.run([g], ["[plugins]/a.ts", "src/a.ts"], { root, generatedDir: join(root, ".warden/generated") });
+      expect(r?.violations.map((v) => v.file)).toEqual(["[plugins]/a.ts"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("emits byte-identical output from different roots", () => {
     const g = guardrail("shallow", "eslint:max-depth", [{ max: 1 }]);
     const a = eslintAdapter.emit([g], { ...setFor(g), root: "/tmp/one" });

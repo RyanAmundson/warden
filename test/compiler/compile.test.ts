@@ -122,6 +122,52 @@ describe("compile", () => {
     expect(await read("package.json")).toBe('{"name":"x"}\n');
   });
 
+  it("a conflict names a practice in a local pack the project has not enabled", async () => {
+    const practicePack = (id: string, layer: number, practiceId: string, conflictsWith: string[]): string =>
+      [
+        `id: ${id}`,
+        `layer: ${layer}`,
+        "terms: []",
+        "practices:",
+        `  - id: ${practiceId}`,
+        "    statement: Declare with const.",
+        "    terms: []",
+        "    paths: []",
+        `    conflictsWith: ${JSON.stringify(conflictsWith)}`,
+        "    guardrails:",
+        `      - id: ${practiceId}-no-var`,
+        "        kind: lint",
+        "        runs: [edit]",
+        "        budgetMs: 5000",
+        "        version: 1",
+        '        implementation: "eslint:no-var"',
+        '        mustFail: "var a = 1;\\n"',
+        '        mustPass: "const a = 1;\\n"',
+      ].join("\n");
+    const config = join(root, ".warden/config.yaml");
+    await writeFile(config, (await readFile(config, "utf8")).replace("tierBudgetMs:", '  - id: left\n    paths: ["src/**"]\ntierBudgetMs:'));
+    const leftFile = join(root, ".warden/packs/left/pack.yaml");
+    await mkdir(join(root, ".warden/packs/left"), { recursive: true });
+    await mkdir(join(root, ".warden/packs/right"), { recursive: true });
+    await writeFile(leftFile, practicePack("left", 1, "left-p", ["right-p"]));
+    await writeFile(join(root, ".warden/packs/right/pack.yaml"), practicePack("right", 2, "right-p", []));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+
+    await writeFile(join(root, ".warden/packs/right/pack.yaml"), practicePack("right", 2, "other-p", []));
+    const { findings, written } = await compile(root, wardenRoot);
+    expect(findings).toEqual([
+      {
+        code: "undefined-conflict",
+        record: "left-p",
+        message: `Practice left-p conflicts with right-p, which no pack defines. Next action: remove right-p from conflictsWith of Practice left-p in ${leftFile}, then run warden compile.`,
+      },
+    ]);
+    expect(written).toEqual([]);
+
+    await writeFile(leftFile, practicePack("left", 1, "left-p", []));
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+  });
+
   it("an unknown adapter fails compile, writes no lock, and its next action compiles", async () => {
     await usePack(
       localPack(
