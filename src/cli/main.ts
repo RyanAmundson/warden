@@ -15,7 +15,7 @@ import { runDoctor, runInit } from "./init.js";
 import { runPacks } from "./packs.js";
 import { runReport } from "./report.js";
 import { runRuns } from "./runs.js";
-import { type Screen, liveView, loadView, plainLayers, plainView, plainViolations } from "./view.js";
+import { type Screen, liveView, loadView, plainDeterminism, plainLayers, plainView, plainViolations } from "./view.js";
 import { wardenHome } from "../runner/evidence.js";
 
 const findWardenRoot = (): string => {
@@ -32,6 +32,14 @@ const oneOf = <T extends string>(command: string, name: string, value: string, a
   if (!(allowed as readonly string[]).includes(value)) throw new Error(`--${name} must be one of ${allowed.join(", ")}. Next action: run warden ${command} --help`);
   return value as T;
 };
+
+const outputClosed = new AbortController();
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on("error", (cause: NodeJS.ErrnoException) => {
+    if (cause.code !== "EPIPE") throw cause;
+    outputClosed.abort();
+  });
+}
 
 const program = new Command("warden").exitOverride();
 const root = (): string => {
@@ -126,7 +134,7 @@ program
       limit: Number(o.limit),
       format: oneOf("runs", "format", o.format, ["text", "json"] as const),
       follow: o.follow === true,
-      signal: stop.signal,
+      signal: AbortSignal.any([stop.signal, outputClosed.signal]),
       ...(o.html === undefined ? {} : { html: o.html }),
     });
   });
@@ -134,16 +142,18 @@ program
 program
   .option("--layers", "show the layers screen: every rule by strength, and the packs")
   .option("--violations", "show the violations screen: baselined and new violations for each pack and Guardrail")
-  .action(async (options: { layers?: boolean; violations?: boolean }, command: Command) => {
+  .option("--determinism", "show the determinism screen: each project's last-run failures split into deterministic, judgment, and prose")
+  .action(async (options: { layers?: boolean; violations?: boolean; determinism?: boolean }, command: Command) => {
     if (command.args.length > 0) throw new Error(`unknown command ${command.args[0] as string}. Next action: run warden --help`);
     const project = root();
     const wardenRoot = findWardenRoot();
-    if (options.layers === true && options.violations === true) throw new Error("--layers and --violations each open one screen. Next action: run warden with only one of them");
-    const screen: Screen = options.violations === true ? "violations" : options.layers === true ? "layers" : "runs";
+    const screens = (["layers", "violations", "determinism"] as const).filter((name) => options[name] === true);
+    if (screens.length > 1) throw new Error("--layers, --violations, and --determinism each open one screen. Next action: run warden with only one of them");
+    const screen: Screen = screens[0] ?? "runs";
     const model = await loadView(project, wardenRoot);
     if (process.stdout.isTTY !== true || process.stdin.isTTY !== true) {
       const cols = Number(process.env.COLUMNS) || 80;
-      process.stdout.write(screen === "violations" ? plainViolations(model, cols) : screen === "layers" ? plainLayers(model, cols) : plainView(model, cols));
+      process.stdout.write(screen === "violations" ? plainViolations(model, cols) : screen === "layers" ? plainLayers(model, cols) : screen === "determinism" ? plainDeterminism(model, cols) : plainView(model, cols));
       return;
     }
     const watchDir = join(wardenHome(), "evidence");

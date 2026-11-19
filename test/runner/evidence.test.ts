@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ROTATE_BYTES, appendEvidence, evidenceFile, previousEvidenceFile, readEvidence, readEvidenceTail } from "../../src/runner/evidence.js";
+import { ROTATE_BYTES, appendEvidence, evidenceFile, evidenceProjects, previousEvidenceFile, readEvidence, readEvidenceTail } from "../../src/runner/evidence.js";
 
 let home: string;
 
@@ -45,5 +45,13 @@ describe("evidence", () => {
     expect(readEvidenceTail("p", 1 << 20).map((e) => e.detail)).toEqual(["a", "b", "c"]);
     expect(readEvidenceTail("q", 1 << 20)).toEqual([]);
     expect(existsSync(evidenceFile("q"))).toBe(false);
+  });
+
+  it("a moved-aside Evidence file is history of its project, not a project of its own", () => {
+    appendEvidence("p", { at: "t", kind: "fired", detail: "one" });
+    pad("p");
+    appendEvidence("p", { at: "t", kind: "fired", detail: "two" });
+    expect(existsSync(previousEvidenceFile("p"))).toBe(true);
+    expect(evidenceProjects()).toEqual(["p"]);
   });
 });

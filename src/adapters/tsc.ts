@@ -14,9 +14,25 @@ const DIAGNOSTIC = /^(.+)\((\d+),\d+\): error TS(\d+): (.*)$/;
 const FLAG_CODES: Record<string, number[]> = {
   strictNullChecks: [2531, 2532, 2533, 18047, 18048],
   noImplicitAny: [7005, 7006, 7031],
+  noUnusedLocals: [6133, 6192, 6196, 6198, 6199, 6205],
+  noImplicitReturns: [7030],
+  noFallthroughCasesInSwitch: [7029],
+  noImplicitThis: [2683],
+  noImplicitOverride: [4114, 4116],
+  noPropertyAccessFromIndexSignature: [4111],
+  exactOptionalPropertyTypes: [2375, 2379, 2412],
+  strictPropertyInitialization: [2564],
+  allowUnreachableCode: [7027],
+  allowUnusedLabels: [7028],
 };
 
 const flagOf = (g: Guardrail): string => g.implementation.slice(g.implementation.indexOf(":") + 1);
+
+export const unmappedFlag = (g: Guardrail): string | undefined => {
+  if (!g.implementation.startsWith("tsc:")) return undefined;
+  const flag = flagOf(g);
+  return flag === BASELINE || flag in FLAG_CODES ? undefined : `tsc:${flag} has no known diagnostic codes, so its errors would count as tsc:${BASELINE}. Next action: change the implementation to one of ${Object.keys(FLAG_CODES).map((f) => `tsc:${f}`).join(", ")}, then run warden compile.`;
+};
 
 const emit = (gs: Guardrail[], _set: RecordSet): Record<string, string> => {
   const compilerOptions: Record<string, unknown> = { noEmit: true };

@@ -1,7 +1,7 @@
-import { appendFileSync, closeSync, fstatSync, mkdirSync, openSync, readSync, renameSync, statSync } from "node:fs";
+import { appendFileSync, closeSync, fstatSync, mkdirSync, openSync, readSync, readdirSync, renameSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Tier } from "../records/types.js";
+import type { Kind, Tier } from "../records/types.js";
 
 export interface Evidence {
   at: string;
@@ -35,7 +35,10 @@ export interface Evidence {
   result?: "pass" | "fail";
   next?: string;
   failures?: RunFailure[];
+  kinds?: Partial<Record<Kind | "unknown", number>>;
   ratchet?: [number, number];
+  base?: string;
+  mergeBase?: string;
   step?: Step;
   state?: "start" | "done" | "fail";
   passes?: Record<string, number>;
@@ -101,6 +104,17 @@ export function appendEvidence(project: string, e: Evidence): void {
   mkdirSync(join(wardenHome(), "evidence"), { recursive: true });
   if (sizeOf(evidenceFile(project)) >= ROTATE_BYTES) rotate(project);
   appendFileSync(evidenceFile(project), `${JSON.stringify(e)}\n`);
+}
+
+export function evidenceProjects(): string[] {
+  try {
+    return readdirSync(join(wardenHome(), "evidence"))
+      .filter((f) => f.endsWith(".jsonl") && !f.endsWith(".1.jsonl"))
+      .map((f) => f.slice(0, -".jsonl".length));
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw cause;
+  }
 }
 
 const tailOf = (file: string, bytes: number): Buffer => {

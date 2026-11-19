@@ -1,4 +1,4 @@
-import { appendFileSync, closeSync, fstatSync, mkdirSync, openSync, readSync, renameSync, statSync } from "node:fs";
+import { appendFileSync, closeSync, fstatSync, mkdirSync, openSync, readSync, readdirSync, renameSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 export const RUN_TOTAL = "run";
@@ -32,6 +32,18 @@ export function appendEvidence(project, e) {
     if (sizeOf(evidenceFile(project)) >= ROTATE_BYTES)
         rotate(project);
     appendFileSync(evidenceFile(project), `${JSON.stringify(e)}\n`);
+}
+export function evidenceProjects() {
+    try {
+        return readdirSync(join(wardenHome(), "evidence"))
+            .filter((f) => f.endsWith(".jsonl") && !f.endsWith(".1.jsonl"))
+            .map((f) => f.slice(0, -".jsonl".length));
+    }
+    catch (cause) {
+        if (cause.code === "ENOENT")
+            return [];
+        throw cause;
+    }
 }
 const tailOf = (file, bytes) => {
     let fd;

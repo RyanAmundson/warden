@@ -1,7 +1,7 @@
 import { accessSync, constants, existsSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { delimiter, join, resolve } from "node:path";
-import { TOOLS } from "../compiler/lock.js";
+import { TOOLS, firstLine } from "../compiler/lock.js";
 import type { RecordSet } from "../records/types.js";
 
 export interface DoctorResult {
@@ -61,7 +61,7 @@ const toolItem = async (name: string, load: () => unknown): Promise<Item> => {
     await load();
     return { name: `tool ${name}` };
   } catch (cause) {
-    return { name: `tool ${name}`, problem: (cause as Error).message, fix: `reinstall Warden so its bundled ${name} loads` };
+    return { name: `tool ${name}`, problem: firstLine((cause as Error).message), fix: `reinstall Warden so its bundled ${name} loads` };
   }
 };
 

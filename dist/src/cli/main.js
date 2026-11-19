@@ -13,7 +13,7 @@ import { runDoctor, runInit } from "./init.js";
 import { runPacks } from "./packs.js";
 import { runReport } from "./report.js";
 import { runRuns } from "./runs.js";
-import { liveView, loadView, plainLayers, plainView, plainViolations } from "./view.js";
+import { liveView, loadView, plainDeterminism, plainLayers, plainView, plainViolations } from "./view.js";
 import { wardenHome } from "../runner/evidence.js";
 const findWardenRoot = () => {
     let dir = dirname(fileURLToPath(import.meta.url));
@@ -30,6 +30,14 @@ const oneOf = (command, name, value, allowed) => {
         throw new Error(`--${name} must be one of ${allowed.join(", ")}. Next action: run warden ${command} --help`);
     return value;
 };
+const outputClosed = new AbortController();
+for (const stream of [process.stdout, process.stderr]) {
+    stream.on("error", (cause) => {
+        if (cause.code !== "EPIPE")
+            throw cause;
+        outputClosed.abort();
+    });
+}
 const program = new Command("warden").exitOverride();
 const root = () => {
     try {
@@ -118,25 +126,27 @@ program
         limit: Number(o.limit),
         format: oneOf("runs", "format", o.format, ["text", "json"]),
         follow: o.follow === true,
-        signal: stop.signal,
+        signal: AbortSignal.any([stop.signal, outputClosed.signal]),
         ...(o.html === undefined ? {} : { html: o.html }),
     });
 });
 program
     .option("--layers", "show the layers screen: every rule by strength, and the packs")
     .option("--violations", "show the violations screen: baselined and new violations for each pack and Guardrail")
+    .option("--determinism", "show the determinism screen: each project's last-run failures split into deterministic, judgment, and prose")
     .action(async (options, command) => {
     if (command.args.length > 0)
         throw new Error(`unknown command ${command.args[0]}. Next action: run warden --help`);
     const project = root();
     const wardenRoot = findWardenRoot();
-    if (options.layers === true && options.violations === true)
-        throw new Error("--layers and --violations each open one screen. Next action: run warden with only one of them");
-    const screen = options.violations === true ? "violations" : options.layers === true ? "layers" : "runs";
+    const screens = ["layers", "violations", "determinism"].filter((name) => options[name] === true);
+    if (screens.length > 1)
+        throw new Error("--layers, --violations, and --determinism each open one screen. Next action: run warden with only one of them");
+    const screen = screens[0] ?? "runs";
     const model = await loadView(project, wardenRoot);
     if (process.stdout.isTTY !== true || process.stdin.isTTY !== true) {
         const cols = Number(process.env.COLUMNS) || 80;
-        process.stdout.write(screen === "violations" ? plainViolations(model, cols) : screen === "layers" ? plainLayers(model, cols) : plainView(model, cols));
+        process.stdout.write(screen === "violations" ? plainViolations(model, cols) : screen === "layers" ? plainLayers(model, cols) : screen === "determinism" ? plainDeterminism(model, cols) : plainView(model, cols));
         return;
     }
     const watchDir = join(wardenHome(), "evidence");

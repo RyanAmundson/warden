@@ -1,24 +1,13 @@
 {
-  "permissions": {
-    "deny": [
-      "Bash(git commit -n*)",
-      "Edit(.warden/**)",
-      "Write(.warden/**)",
-      "Bash(git commit*--no-verify*)",
-      "Bash(git commit* -n*)"
-    ]
-  },
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write|MultiEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "npx --no -- warden check --format agent --hook claude --base 'main'"
-          }
-        ]
+  "extraKnownMarketplaces": {
+    "warden": {
+      "source": {
+        "source": "github",
+        "repo": "RyanAmundson/warden"
       }
-    ]
+    }
+  },
+  "enabledPlugins": {
+    "warden@warden": true
   }
 }

@@ -6,10 +6,10 @@ import { PARSE_ERROR, type RunContext, type RunResult, type Violation } from "..
 import { wardenVersion } from "../compiler/compile.js";
 import { LOCK_PATH, bundledTools, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
-import type { Guardrail, RecordSet, Tier } from "../records/types.js";
+import type { Guardrail, Kind, RecordSet, Tier } from "../records/types.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { CHECK_BASE_ACTION, changedFiles, changesSinceMergeBase, containsHead, headCommit, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
+import { checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, lastCommittedText, showAtMergeBase, stageFile, unstagedFiles, verifyBase } from "../runner/changed.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { type Evidence, LOOP_TAIL_BYTES, type Outcome, RUN_TOTAL, type RunFailure, type Step, type Trigger, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
 import { type Format, type Notes, type Repeated, formatFeedback } from "../runner/feedback.js";
@@ -36,6 +36,8 @@ const selectGuardrails = (set: RecordSet, rule: string | undefined): Guardrail[]
   if (rule !== undefined && gs.length === 0) throw new RecordError("", "/rule", `no Practice or Guardrail has id "${rule}"`);
   return gs;
 };
+
+const guardrailsOf = (set: RecordSet, implementation: string): Guardrail[] => selectGuardrails(set, undefined).filter((g) => g.implementation === implementation);
 
 const requireBase = (base: string | undefined, configured: string): string => {
   if (base !== undefined) return base;
@@ -73,7 +75,7 @@ const removedWarden = (root: string, given: string | undefined): { set: RecordSe
   if (text === undefined) return undefined;
   const config = parseConfig(".warden/config.yaml", text);
   const base = requireBase(given, config.base);
-  verifyBase(root, base, CHECK_BASE_ACTION);
+  verifyBase(root, base, checkBaseAction);
   refuseOwnBranch(root, base);
   if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined) return undefined;
   const file = existsSync(join(root, ".warden")) ? ".warden/config.yaml" : ".warden";
@@ -147,6 +149,16 @@ const report = (failures: Violation[], set: RecordSet, opts: CheckOptions, notes
 
 export const MAX_RECORDED_FAILURES = 10;
 
+const kindCounts = (failures: Violation[], set: RecordSet): Partial<Record<Kind | "unknown", number>> => {
+  const kindOf = new Map(set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.map((g) => [g.id, g.kind] as const))));
+  const counts: Partial<Record<Kind | "unknown", number>> = {};
+  for (const v of failures) {
+    const kind = kindOf.get(v.guardrail) ?? "unknown";
+    counts[kind] = (counts[kind] ?? 0) + 1;
+  }
+  return counts;
+};
+
 interface Live {
   run: string;
   at: string;
@@ -154,6 +166,7 @@ interface Live {
   trigger: Trigger;
   started: number;
   project?: string;
+  base?: { base: string; mergeBase: string };
   open?: { step: Step; at: number };
   steps: Partial<Record<Step, number>>;
 }
@@ -205,7 +218,9 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
       ...(files.length === 1 ? { file: files[0] } : {}),
       bytes,
       ...(commit === undefined ? {} : { commit }),
+      ...live.base,
       ...(recorded.length === 0 ? {} : { failures: recorded }),
+      ...(outcome === "ran" && judged !== undefined ? { kinds: kindCounts(failures, judged.set) } : {}),
       ...(feedback?.next == null ? {} : { next: feedback.next.replace(/\.$/, "") }),
       ...judged?.extra,
     });
@@ -227,8 +242,9 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const { project, loopBreakerRepeats } = set.config;
   live.project = project;
   const base = requireBase(opts.base ?? (opts.hook === "claude" ? hookBase(root) : undefined), set.config.base);
-  verifyBase(root, base, CHECK_BASE_ACTION);
+  verifyBase(root, base, checkBaseAction);
   refuseOwnBranch(root, base);
+  live.base = { base, mergeBase: mergeBase(root, base) };
   openStep(live, "rules-intact");
   if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined) {
     throw new RecordError(LOCK_PATH, "", "not found; this project was never compiled. Next action: run warden compile.");
@@ -275,7 +291,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   openStep(live, "tools-ready");
   const fileSha = (file: string): string => (existsSync(join(root, file)) ? sha256(readFileSync(join(root, file))) : "");
   const doctorKey = sha256(canonicalJson(["doctor", fileSha(LOCK_PATH), fileSha("package.json")]));
-  const doctorCached = readCache(project, doctorKey) !== undefined;
+  const doctorCached = tier === "edit" && readCache(project, doctorKey) !== undefined;
   if (!doctorCached) {
     const health = await doctor(set);
     if (health.next !== undefined) {
@@ -295,6 +311,8 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const known = new Set(selectGuardrails(set, undefined).map((g) => g.id));
   const chosen = selectGuardrails(set, opts.rule).filter((g) => g.runs.includes(tier));
   const selected = new Set(chosen.map((g) => g.id));
+  const directives = guardrailsOf(set, "eslint:warden/no-suppressions");
+  if (guardrailsOf(set, "eslint:warden/no-comments").some((g) => selected.has(g.id))) for (const g of directives) if (g.runs.includes(tier)) selected.add(g.id);
   const lintChosen = chosen.some((g) => g.kind === "lint");
   const guardrails = selectGuardrails(set, undefined).filter((g) => (lintChosen && g.kind === "lint") || selected.has(g.id));
   const scanned = scannedFiles(root, base, opts.paths);
@@ -353,7 +371,10 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const failures = [...narrow.failures, ...wide.failures];
   if (tier !== "edit" && canonicalJson(wide.next) !== canonicalJson(baseline)) {
     writeBaseline(root, wide.next);
-    if (tier === "commit") stageFile(root, BASELINE_PATH);
+    if (tier === "commit") {
+      stageFile(root, BASELINE_PATH);
+      if (live.trigger === "manual" && opts.format !== "json") process.stdout.write(`Staged ${BASELINE_PATH}, which now holds ${baselineTotal(wide.next)} baselined violations; it held ${baselineTotal(baseline)}.\n`);
+    }
   }
 
   const packOf = new Map(set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.map((g) => [g.id, p.id] as const))));
@@ -416,7 +437,7 @@ export async function runCheck(opts: CheckOptions): Promise<number> {
     if (live.project !== undefined) {
       const commit = headCommit(resolve(opts.root));
       const next = known ? nextOf(cause.message) : `run warden check again; it stopped with: ${(cause as Error).message}`;
-      appendEvidence(live.project, { at: live.at, kind: "cost", guardrail: RUN_TOTAL, run: live.run, tier: live.tier, trigger: live.trigger, outcome: "error", exit: 2, ms: performance.now() - live.started, steps: live.steps, files: 0, bytes: 0, next, ...(commit === undefined ? {} : { commit }) });
+      appendEvidence(live.project, { at: live.at, kind: "cost", guardrail: RUN_TOTAL, run: live.run, tier: live.tier, trigger: live.trigger, outcome: "error", exit: 2, ms: performance.now() - live.started, steps: live.steps, files: 0, bytes: 0, next, ...(commit === undefined ? {} : { commit }), ...live.base });
     }
     if (!known) throw cause;
     return 2;

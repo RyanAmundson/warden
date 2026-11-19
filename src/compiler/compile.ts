@@ -4,7 +4,8 @@ import type { Adapter } from "../adapters/types.js";
 import { RecordError, loadRecords, readText } from "../records/load.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
 import { BASELINE_PATH, measureBaseline, readBaseline, writeBaseline } from "../runner/baseline.js";
-import { isRepository } from "../runner/changed.js";
+import { hasCommit, isRepository } from "../runner/changed.js";
+import { readBaseLock } from "../runner/tamper.js";
 import { adapters, prefixOf, refuseUnknownAdapters } from "../runner/run.js";
 import { admit } from "./bench.js";
 import { checkConsistency, type Finding } from "./consistency.js";
@@ -107,7 +108,8 @@ export async function compile(projectRoot: string, wardenRoot: string): Promise<
   const written = [...Object.keys(outputs), LOCK_PATH];
   if (previous === undefined || !isRepository(projectRoot)) return { findings: [], written };
   const checked = set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.filter((g) => g.kind !== "instruction")));
-  const added = new Set(checked.filter((g) => !(g.id in previous)).map((g) => g.id));
+  const atBase = hasCommit(projectRoot, set.config.base) ? (readBaseLock(projectRoot, set.config.base)?.guardrails ?? {}) : {};
+  const added = new Set(checked.filter((g) => !(g.id in previous) && !(g.id in atBase)).map((g) => g.id));
   const prefixes = new Set(checked.filter((g) => added.has(g.id)).map(prefixOf));
   const { baseline } = await measureBaseline(set, checked.filter((g) => prefixes.has(prefixOf(g))));
   const located = Object.entries(baseline)
