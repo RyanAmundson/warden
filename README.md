@@ -188,6 +188,11 @@ next action:
   `.warden/generated/hooks/pre-commit` and exit with its status, for example
   with the line `.warden/generated/hooks/pre-commit || exit $?`.
 
+For a pack with skill Capabilities, `warden compile` writes a single locked
+`SKILL.md` per skill under `.warden/generated/skills/`. Run `warden doctor`
+for Claude Code or `warden doctor --harness codex` for Codex to check the
+corresponding repository skill links and get the command to create them.
+
 ## Daemon
 
 A commit-tier check, which includes the pre-commit hook and a plain

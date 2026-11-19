@@ -23,6 +23,7 @@ import { runReport } from "./report.js";
 import { type ReviewOptions, reviewOptions, runBrief, runTriage } from "./review.js";
 import { runRuns } from "./runs.js";
 import { type Screen, liveView, loadView, plainDeterminism, plainLayers, plainView, plainViolations } from "./view.js";
+import { SKILL_HARNESSES } from "../runner/doctor.js";
 import { wardenHome } from "../runner/evidence.js";
 
 const oneOf = <T extends string>(command: string, name: string, value: string, allowed: readonly T[]): T => {
@@ -59,9 +60,13 @@ program
     process.exitCode = await runInit(root(), findWardenRoot(), o.packs.split(",").map((id) => id.trim()), o.base);
   });
 
-program.command("doctor").description("check that Warden's bundled tools load and every cmd Guardrail's command resolves").action(async () => {
-  process.exitCode = await runDoctor(root(), findWardenRoot());
-});
+program
+  .command("doctor")
+  .description("check Warden's tools, commands, hooks and generated skill links")
+  .option("--harness <harness>", "which harness to check: claude or codex", "claude")
+  .action(async ({ harness }: { harness: string }) => {
+    process.exitCode = await runDoctor(root(), findWardenRoot(), oneOf("doctor", "harness", harness, SKILL_HARNESSES));
+  });
 
 program.command("packs").description("list available packs and which are on").option("--format <format>", "text or json", "text").action(async (o: { format: string }) => {
   process.exitCode = await runPacks(root(), findWardenRoot(), oneOf("packs", "format", o.format, ["text", "json"] as const) === "json");

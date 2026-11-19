@@ -80,8 +80,8 @@ async function initialize(root, wardenRoot, packs, base) {
     const total = Object.values(baseline).reduce((n, e) => n + Object.values(e).reduce((a, b) => a + b, 0), 0);
     process.stdout.write(`Initialized .warden in ${root}: ${guardrails.length} Guardrails, ${total} existing violations baselined across ${files} files.\n`);
 }
-export async function runDoctor(root, wardenRoot) {
-    const health = await doctor(await loadRecords(root, wardenRoot), true);
+export async function runDoctor(root, wardenRoot, harness) {
+    const health = await doctor(await loadRecords(root, wardenRoot), true, harness);
     process.stdout.write(`${formatDoctor(health)}\n`);
     return health.next === undefined ? 0 : 2;
 }
