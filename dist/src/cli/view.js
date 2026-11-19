@@ -224,7 +224,7 @@ export function render(model, size, selected) {
         }
         const left = `${lead}${verdictCell(e).padEnd(22)} ${ms.padStart(7)}  `;
         const n = e.guardrails ?? Object.keys(e.rules).length;
-        const ratchet = e.ratchet === undefined ? "" : `${count(e.ratchet[0])} → ${count(e.ratchet[1])}`;
+        const ratchet = e.ratchet === undefined ? "" : `${count(e.ratchet[0])} → ${count(e.ratchet[1])}${e.ratchetFrom === "uncommitted" ? " uncommitted" : ""}`;
         const counted = `${n} rule${n === 1 ? "" : "s"}`;
         const named = `${counted}: ${Object.keys(e.rules ?? {}).join(" · ")}`;
         const rules = left.length + named.length <= width ? named : counted;
