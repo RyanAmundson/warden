@@ -1923,3 +1923,73 @@ describe("engine review: one next action", () => {
     }
   });
 });
+
+describe("signed .warden changes", () => {
+  let keys: string;
+  const pub = (name: string): string => readFileSync(join(keys, `${name}.pub`), "utf8").trim();
+  const signers = (...names: string[]): string => names.map((n) => `ryan ${pub(n)}\n`).join("");
+  const commitSigned = (key: string, message: string): void => {
+    git("-c", "gpg.format=ssh", "-c", "gpg.ssh.program=ssh-keygen", "-c", `user.signingkey=${join(keys, key)}`, "commit", "-q", "-S", "-m", message);
+  };
+
+  beforeAll(async () => {
+    keys = await mkdtemp(join(tmpdir(), "warden-keys-"));
+    for (const name of ["ryan", "agent"]) execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", name, "-f", join(keys, name)]);
+  });
+
+  afterAll(async () => {
+    await rm(keys, { recursive: true, force: true });
+  });
+
+  beforeEach(async () => {
+    await write(".warden/allowed_signers", signers("ryan"));
+    git("add", "-A");
+    git("commit", "-q", "-m", "allowed signers");
+    git("branch", "-f", "main", "HEAD");
+  });
+
+  it("an unsigned commit that changes .warden is tampering with one next action", async () => {
+    await write(".warden/allowed_signers", signers("ryan", "agent"));
+    git("commit", "-q", "-am", "add my key");
+    const { code, out } = await check();
+    expect(code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/allowed_signers", detail: "unsigned" }]);
+    expect(out).toContain("Next action: revert your change to .warden/allowed_signers.");
+  });
+
+  it("a key outside the base's allowed signers is untrusted, whatever the repository config says", async () => {
+    await write(".warden/allowed_signers", signers("ryan", "agent"));
+    await writeFile(join(keys, "agent_signers"), signers("agent"));
+    git("config", "gpg.ssh.allowedSignersFile", join(keys, "agent_signers"));
+    git("add", "-A");
+    commitSigned("agent", "add my key");
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/allowed_signers", detail: "untrusted-signature" }]);
+  });
+
+  it("a .warden change signed by an allowed key passes", async () => {
+    await write(".warden/allowed_signers", signers("ryan", "agent"));
+    git("add", "-A");
+    commitSigned("ryan", "add the agent key");
+    expect((await check()).code).toBe(0);
+    expect(await tampered()).toEqual([]);
+  });
+
+  it("reverting an unsigned .warden change in the working tree clears it", async () => {
+    await write(".warden/allowed_signers", signers("ryan", "agent"));
+    git("commit", "-q", "-am", "add my key");
+    await write(".warden/allowed_signers", signers("ryan"));
+    expect((await check()).code).toBe(0);
+    git("commit", "-q", "-m", "revert my key");
+    expect((await check()).code).toBe(0);
+    expect(await tampered()).toEqual([]);
+  });
+
+  it("a lowered baseline needs no signature", async () => {
+    await write("a.ts", "const a = 1;\n");
+    expect((await check()).code).toBe(0);
+    git("commit", "-q", "-m", "fix a.ts");
+    expect((await check()).code).toBe(0);
+    expect(await tampered()).toEqual([]);
+  });
+});

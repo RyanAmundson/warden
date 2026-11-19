@@ -42,6 +42,27 @@ agent edits under `.warden`:
 3. Stage the file, finish the merge, and run `warden check --base <base>`.
    The check lowers any count that is still above the code's real count.
 
+## Sign changes to .warden
+
+When `.warden/allowed_signers` exists on the base branch, every commit since
+the merge base that last changed a file under `.warden/` must carry a git SSH
+signature from a key in that base-branch list. `warden check` verifies it with
+`ssh-keygen`, whatever the repository's own `gpg.ssh` settings say. An
+unsigned change is reported as `unsigned`, and a signature from any other key
+as `untrusted-signature`. `.warden/baseline.json` is exempt, because a check
+only ever lowers it and a raised count is already reported as loosening.
+
+1. Add `.warden/allowed_signers` on the base branch, one line per key in the
+   `ssh-keygen` allowed-signers format, for example
+   `ryan ssh-ed25519 AAAA...`.
+2. Sign your commits that change `.warden/`:
+
+   ```bash
+   git config gpg.format ssh
+   git config user.signingkey ~/.ssh/id_ed25519.pub
+   git commit -S
+   ```
+
 ## Claude Code plugin
 
 This repository is also a Claude Code plugin marketplace named `warden`, with
