@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative, resolve, sep } from "node:path";
 import { hookTriggers } from "../adapters/claude.js";
@@ -248,6 +248,9 @@ const baselineTotal = (b: Record<string, Record<string, number>>): number => Obj
 
 const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const root = resolve(opts.root);
+  if (lstatSync(join(root, ".warden"), { throwIfNoEntry: false })?.isSymbolicLink() === true) {
+    throw new RecordError(".warden", "", "is a symbolic link. Next action: move the link aside, restore the tracked .warden directory, then run warden check again.");
+  }
   const { at, run, tier } = live;
   const finish = (project: string, outcome: Outcome, files: string[], code: number, judged?: { set: RecordSet; failures?: Violation[]; notes: Notes; extra?: Partial<Evidence> }): number => {
     const bytes = files.reduce((n, f) => n + statSync(join(root, f)).size, 0);
