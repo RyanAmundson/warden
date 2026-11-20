@@ -59,6 +59,22 @@ completed round that still has blocking findings. Use the returned escalation
 signal to send that round and its blocking findings to the designated reviewer
 or repository owner.
 
+Record a reviewer error using the completed round ID and original finding
+number:
+
+```bash
+warden review rule --series "$change_id" --target "$unit" --capability "$capability" \
+  --round "$round_id" --finding 2 --role independent-reviewer \
+  --actor "$reviewer_id" --reason "$rationale" --evidence "$evidence_reference"
+```
+
+The controller supplies the identity of the reviewer or repository owner who
+made the ruling. Warden records the attribution locally. The history summary
+returns it in `signals.reviewerErrors` and excludes that finding from current
+recurrence and escalation. The full saved round, its verdict, and the exit
+status of the original recording stay available. A repeated submission with
+the same details returns the existing ruling.
+
 ## Derive signals from the records
 
 | Signal | Evidence required | Next action |

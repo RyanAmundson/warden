@@ -19,7 +19,7 @@ import { runDoctor, runInit } from "./init.js";
 import { runNewUnit } from "./new-unit.js";
 import { runPacks } from "./packs.js";
 import { runReport } from "./report.js";
-import { reviewOptions, runBrief, runReviewHistory, runReviewRecord, runTriage } from "./review.js";
+import { reviewOptions, runBrief, runReviewHistory, runReviewRecord, runReviewRule, runTriage } from "./review.js";
 import { runRuns } from "./runs.js";
 import { runWhere } from "./where.js";
 import { liveView, loadView, plainDeterminism, plainLayers, plainView, plainViolations } from "./view.js";
@@ -194,6 +194,17 @@ reviewSeriesFlags(review.command("history").description("list completed review r
     .option("--round <id>", "show the full record and native report for this round")
     .action((o) => {
     process.exitCode = runReviewHistory(root(), o);
+});
+reviewSeriesFlags(review.command("rule").description("record a reviewer error on one finding"))
+    .requiredOption("--capability <id>", "the recording Capability")
+    .requiredOption("--round <id>", "the completed round ID")
+    .requiredOption("--finding <n>", "the original finding number")
+    .requiredOption("--role <role>", "independent-reviewer or repository-owner")
+    .requiredOption("--actor <name>", "the identity of the person or reviewer who made the ruling")
+    .requiredOption("--reason <text>", "why the reported finding is incorrect")
+    .requiredOption("--evidence <reference>", "evidence supporting the ruling")
+    .action((o) => {
+    process.exitCode = runReviewRule(root(), { ...o, role: oneOf("review rule", "role", o.role, ["independent-reviewer", "repository-owner"]) });
 });
 program
     .command("daemon [action]")

@@ -8,7 +8,7 @@ import type { Capability } from "../records/types.js";
 import { type ReviewAdapter, type ReviewScope, reviewAdapters } from "../review/adapter.js";
 import { codeReview, codeReviewBase, isPullRequestUrl } from "../review/code-review.js";
 import { type Touched, type Triage, exitCode, touchedLines, triage } from "../review/findings.js";
-import { type ReviewRound, type ReviewSeries, getRound, listRounds, recordRound, reviewSignals } from "../review/history.js";
+import { type ReviewRound, type ReviewRulingInput, type ReviewSeries, getRound, listRounds, recordReviewerError, recordRound, reviewSignals, reviewState } from "../review/history.js";
 import { isAncestor } from "../runner/changed.js";
 
 export interface ReviewOptions {
@@ -215,11 +215,27 @@ const printRecord = (value: unknown): void => {
 export function runReviewHistory(root: string, o: SeriesOptions & { round?: string }): number {
   const key = seriesKey(root, o);
   if (o.round === undefined) {
-    const rounds = listRounds(key);
-    printRecord(rounds.map((round, index) => ({ ...roundSummary(round), signals: reviewSignals(round, rounds[index - 1]) })));
+    const rounds = listRounds(key).map(reviewState);
+    printRecord(rounds.map((state, index) => ({ ...roundSummary(state.round), signals: reviewSignals(state, rounds[index - 1]) })));
   } else {
     printRecord(getRound(key, o.round));
   }
+  return 0;
+}
+
+export function runReviewRule(root: string, o: SeriesOptions & Omit<ReviewRulingInput, "finding"> & { round: string; finding: string }): number {
+  const round = getRound(seriesKey(root, o), o.round);
+  const finding = /^[1-9]\d*$/.test(o.finding) ? Number(o.finding) : NaN;
+  const actor = o.actor.trim();
+  const reason = o.reason.trim();
+  const evidence = o.evidence.trim();
+  if (actor === "" || reason === "" || evidence === "") {
+    throw new Error("A review ruling needs an actor, reason and evidence. Next action: supply nonempty --actor, --reason and --evidence values.");
+  }
+  if (!round.result.findings.some(({ n }) => n === finding)) {
+    throw new Error(`Round ${round.id} has no finding ${o.finding}. Next action: run warden review history for this series and select an existing finding number.`);
+  }
+  printRecord(recordReviewerError(round, { finding, role: o.role, actor, reason, evidence }));
   return 0;
 }
 
@@ -265,7 +281,8 @@ export async function runReviewRecord(
       normalized.findings.some((finding) => finding.earlier !== undefined && !previous?.result.findings.some(({ n }) => n === finding.earlier))) {
     throw new Error("The report has invalid finding numbers or a missing earlier finding. Next action: correct the finding references and rerun warden review record.");
   }
-  const round = recordRound({
+  const priorState = previous === undefined ? undefined : reviewState(previous);
+  const state = recordRound({
     input: {
       ...key,
       previous: previous?.id ?? null,
@@ -284,6 +301,6 @@ export async function runReviewRecord(
     },
     result: { verdict: result.verdict, findings: result.findings },
   }, previous);
-  printRecord({ ...roundSummary(round), signals: reviewSignals(round, previous) });
+  printRecord({ ...roundSummary(state.round), signals: reviewSignals(state, priorState) });
   return exitCode(result);
 }

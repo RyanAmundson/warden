@@ -1,5 +1,5 @@
 import { execFile, execFileSync, spawnSync } from "node:child_process";
-import { chmod, readFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, readFile, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -116,6 +116,15 @@ describe("record a completed review", () => {
         });
         previous = ["--previous-round", round.id];
       }
+      if (series === "unresolved") {
+        const ruling = await run(root, "rule", ...seriesFlags(series), "--round", previous[1] as string,
+          "--finding", "4", "--role", "repository-owner", "--actor", "Project owner",
+          "--reason", "The requirement was already met.", "--evidence", "requirements.md:1");
+        expect(ruling.code, ruling.err).toBe(0);
+        expect(JSON.parse((await history(series)).out)[3]).toMatchObject({
+          verdict: "fail", signals: { escalation: null, reviewerErrors: [{ finding: 4, role: "repository-owner" }] },
+        });
+      }
     }
     const unrelatedId = JSON.parse((await history("fixed")).out)[0].id;
     const report = await writeReport("unknown-previous.txt");
@@ -140,6 +149,73 @@ describe("record a completed review", () => {
     const saved = await record("attempts", pass);
     expect(saved.code).toBe(0);
     expect(JSON.parse(saved.out).number).toBe(1);
+  });
+
+  it("records an identified reviewer error without rewriting the round or other findings", async () => {
+    const series = "reviewer-error";
+    const first = await record(series, await writeReport("error-first.txt", finding(1) + finding(2, "- Spec: no")));
+    expect(first.code).toBe(1);
+    const { id } = JSON.parse(first.out);
+    const before = JSON.parse((await history(series, "--round", id)).out);
+    const next = await record(series, await writeReport("error-second.txt", finding(3)), "--previous-round", id);
+    expect(JSON.parse(next.out).signals.repeated).toEqual([{ kind: "spec-unmet", previous: [1], current: [3] }]);
+
+    const flags = ["rule", ...seriesFlags(series), "--round", id, "--finding", "1", "--role", "independent-reviewer",
+      "--actor", "Independent reviewer", "--reason", "The requirement permits both return values.", "--evidence", "requirements.md:1"];
+    const [ruling, retry] = await Promise.all([run(root, ...flags), run(root, ...flags)]);
+    expect(ruling.code, ruling.err).toBe(0);
+    expect(retry).toEqual(ruling);
+    expect(JSON.parse(ruling.out)).toMatchObject({
+      finding: 1, round: id, actor: "Independent reviewer", role: "independent-reviewer",
+      reason: "The requirement permits both return values.", evidence: "requirements.md:1",
+    });
+    const conflict = await run(root, ...flags, "--reason", "A different ruling");
+    expect(conflict.code).toBe(2);
+    const absent = await run(root, ...flags, "--finding", "99");
+    expect(absent.code).toBe(2);
+    expect((await run(root, ...flags, "--role", "author")).code).toBe(2);
+    expect((await run(root, ...flags, "--actor", " ")).code).toBe(2);
+
+    const rounds = JSON.parse((await history(series)).out);
+    expect(rounds[0]).toMatchObject({
+      verdict: "fail", findings: [{ n: 1, blocks: true }, { n: 2, blocks: true }],
+      signals: { reviewerErrors: [{ finding: 1 }] },
+    });
+    expect(rounds[1]).toMatchObject({
+      verdict: "fail", findings: [{ n: 3, blocks: true }], signals: { repeated: [] },
+    });
+    expect(JSON.parse((await history(series, "--round", id)).out)).toEqual(before);
+    expect((await record(series, await writeReport("error-first.txt", finding(1) + finding(2, "- Spec: no")))).code).toBe(1);
+  });
+
+  it("keeps the next round available when a prior ruling is unreadable", async () => {
+    const series = "damaged-ruling";
+    const first = await record(series, await writeReport("damaged-first.txt", finding(1)));
+    expect(first.code).toBe(1);
+    const { id } = JSON.parse(first.out);
+    const ruled = await run(root, "rule", ...seriesFlags(series), "--round", id, "--finding", "1",
+      "--role", "repository-owner", "--actor", "Project owner", "--reason", "That is expected.", "--evidence", "requirements.md:1");
+    expect(ruled.code, ruled.err).toBe(0);
+    const reviewHome = join(home, "review");
+    const paths = (await readdir(reviewHome)).map((dir) => join(reviewHome, dir));
+    const records = await Promise.all(paths.map((dir) => readFile(join(dir, "round-1.json"), "utf8")));
+    const index = records.findIndex((entry) => JSON.parse(entry).input.series === series);
+    expect(index).toBeGreaterThanOrEqual(0);
+    const directory = paths[index] as string;
+    const damaged = join(directory, "error-1-1.json");
+    const original = await readFile(damaged);
+    await writeFile(damaged, "{");
+
+    const nextReport = await writeReport("damaged-second.txt");
+    const refused = await record(series, nextReport, "--previous-round", id);
+    expect(refused.code).toBe(2);
+    expect(refused.err).toContain("Invalid review ruling");
+    expect(await readdir(directory)).not.toContain("round-2.json");
+
+    await writeFile(damaged, original);
+    const recovered = await record(series, nextReport, "--previous-round", id);
+    expect(recovered.code, recovered.err).toBe(0);
+    expect(JSON.parse(recovered.out)).toMatchObject({ number: 2, previous: id });
   });
 
   it("names the Git prerequisite when recording on an older Git", async () => {

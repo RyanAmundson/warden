@@ -89,7 +89,19 @@ export function listRounds(key: ReviewSeries): ReviewRound[] {
   }
 }
 
-export function recordRound(entry: ReviewEntry, previous: ReviewRound | undefined): ReviewRound {
+const linkRecord = (directory: string, path: string, value: object): void => {
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const temp = mkdtempSync(join(directory, ".pending-"));
+  try {
+    const candidate = join(temp, "record.json");
+    writeFileSync(candidate, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600, flush: true });
+    linkSync(candidate, path);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+};
+
+export function recordRound(entry: ReviewEntry, previous: ReviewRound | undefined): ReturnType<typeof reviewState> {
   const { input } = entry;
   const number = (previous?.number ?? 0) + 1;
   const directory = seriesPath(input);
@@ -100,22 +112,73 @@ export function recordRound(entry: ReviewEntry, previous: ReviewRound | undefine
       throw new Error(`This report already belongs to round ${round.id}. Next action: use that round's ID or submit a new report.`);
     }
   }
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const temp = mkdtempSync(join(directory, ".pending-"));
-  const candidate = join(temp, "round.json");
   const round: ReviewRound = { schema: 1, id, number, recordedAt: new Date().toISOString(), ...entry };
   try {
-    writeFileSync(candidate, `${JSON.stringify(round, null, 2)}\n`, { mode: 0o600, flush: true });
-    linkSync(candidate, roundPath(directory, number));
-    return round;
+    linkRecord(directory, roundPath(directory, number), round);
+    return { round, rulings: [], active: round.result.findings };
   } catch (cause) {
     if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
     const recorded = readRound(directory, number);
-    if (recorded?.id === id) return recorded;
+    if (recorded?.id === id) return reviewState(recorded);
     throw new Error(`Review series ${input.series} already has a different round ${number}. Next action: run warden review history for this series and use its latest completed round ID.`);
-  } finally {
-    rmSync(temp, { recursive: true, force: true });
   }
+}
+
+export interface ReviewRulingInput {
+  finding: number;
+  role: "independent-reviewer" | "repository-owner";
+  actor: string;
+  reason: string;
+  evidence: string;
+}
+
+interface ReviewRuling extends ReviewRulingInput {
+  round: string;
+  ruledAt: string;
+}
+
+const rulingPath = (directory: string, round: ReviewRound, finding: number): string =>
+  join(directory, `error-${round.number}-${finding}.json`);
+
+const readRuling = (directory: string, round: ReviewRound, finding: number): ReviewRuling | undefined => {
+  const path = rulingPath(directory, round, finding);
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw cause;
+  }
+  try {
+    const ruling = JSON.parse(text) as ReviewRuling;
+    if (ruling.round === round.id && ruling.finding === finding &&
+        (ruling.role === "independent-reviewer" || ruling.role === "repository-owner") &&
+        [ruling.actor, ruling.reason, ruling.evidence, ruling.ruledAt].every((value) => typeof value === "string" && value.trim() !== "")) return ruling;
+    throw new Error("invalid ruling");
+  } catch {
+    throw new Error(`Invalid review ruling at ${path}. Next action: restore the recorded ruling from backup.`);
+  }
+};
+
+export function recordReviewerError(round: ReviewRound, input: ReviewRulingInput): ReviewRuling {
+  const directory = seriesPath(round.input);
+  const ruling = { ...input, round: round.id, ruledAt: new Date().toISOString() };
+  try {
+    linkRecord(directory, rulingPath(directory, round, input.finding), ruling);
+    return ruling;
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
+    const prior = readRuling(directory, round, input.finding);
+    if (prior?.role === input.role && prior.actor === input.actor && prior.reason === input.reason && prior.evidence === input.evidence) return prior;
+    throw new Error(`Finding ${input.finding} already has a different ruling. Next action: run warden review history for this series to inspect it.`);
+  }
+}
+
+export function reviewState(round: ReviewRound) {
+  const directory = seriesPath(round.input);
+  const rulings = round.result.findings.flatMap(({ n }) => readRuling(directory, round, n) ?? []);
+  const errors = new Set(rulings.map(({ finding }) => finding));
+  return { round, rulings, active: round.result.findings.filter(({ n }) => !errors.has(n)) };
 }
 
 interface RepeatedKind {
@@ -124,9 +187,9 @@ interface RepeatedKind {
   current: number[];
 }
 
-export function reviewSignals(round: ReviewRound, previous: ReviewRound | undefined) {
-  const earlier = previous?.result.findings ?? [];
-  const current = round.result.findings;
+export function reviewSignals(state: ReturnType<typeof reviewState>, previous: ReturnType<typeof reviewState> | undefined) {
+  const { round, rulings, active: current } = state;
+  const earlier = previous?.active ?? [];
   const repeated: RepeatedKind[] = [...new Set(current.map((finding) => finding.kind))].flatMap((kind) => {
     const numbers = earlier.filter((finding) => finding.kind === kind).map((finding) => finding.n);
     return numbers.length === 0 ? [] : [{ kind, previous: numbers, current: current.filter((finding) => finding.kind === kind).map((finding) => finding.n) }];
@@ -134,6 +197,7 @@ export function reviewSignals(round: ReviewRound, previous: ReviewRound | undefi
   const limit = round.input.settings.roundLimit;
   const blocking = current.filter((finding) => finding.blocks).map((finding) => finding.n);
   return {
+    reviewerErrors: rulings,
     repeated,
     escalation: limit !== undefined && round.number >= limit && blocking.length > 0 ? { limit, blocking } : null,
   };
