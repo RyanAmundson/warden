@@ -91,14 +91,29 @@ the Capability's approved configuration.
 
 ## Feed learning from confirmed findings
 
+To record a finding as an escape, have an independent reviewer or repository
+owner confirm the finding and name its Practice.
+
+```bash
+warden review confirm --series "$change_id" --target "$unit" --capability "$capability" \
+  --round "$round_id" --finding 2 --practice "$practice_id" --role independent-reviewer \
+  --actor "$reviewer_id" --reason "$rationale" --evidence "$evidence_reference"
+```
+
+The controller supplies the confirming reviewer identity, as for a
+reviewer-error ruling. The Practice must be configured in the repository.
+Warden stores the first confirmation with the exact reviewed head, finding
+number, Practice and supporting evidence. Retries and confirmations from
+different reviewers return the same record. Separate Practices and findings
+retain their own confirmations.
+
+`warden review history` returns the active confirmations in
+`signals.escapes` under their source rounds. An error ruling excludes the
+finding's confirmations from that list and preserves the stored records.
+Malformed and operational reports cannot supply a completed round.
+
 The [learning layer](2026-11-18-warden-guardrail-framework-design.md#the-learning-layer)
-can consume normalized findings from recorded rounds. A reviewer confirms the
-finding and its Practice before the runner records an escape. The source
-identity is the repository registration, series, round, finding number, and
-Practice. Keep the exact head and confirming ruling as provenance. Ingestion
-must be idempotent for the source identity across retries and confirmations
-from different reviewers. Keep malformed
-reports, operational findings, and findings ruled erroneous out of proposals.
+can consume these active escapes as evidence.
 When a recurring finding supports an Add proposal, link the source findings
 and Practices. The existing approval rules govern any proposed Guardrail
 change.

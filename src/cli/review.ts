@@ -8,7 +8,7 @@ import type { Capability } from "../records/types.js";
 import { type ReviewAdapter, type ReviewScope, reviewAdapters } from "../review/adapter.js";
 import { codeReview, codeReviewBase, isPullRequestUrl } from "../review/code-review.js";
 import { type Touched, type Triage, exitCode, touchedLines, triage } from "../review/findings.js";
-import { type ReviewRound, type ReviewRulingInput, type ReviewSeries, getRound, listRounds, recordReviewerError, recordRound, reviewSignals, reviewState } from "../review/history.js";
+import { type ReviewRound, type ReviewRulingInput, type ReviewSeries, getRound, listRounds, recordEscape, recordReviewerError, recordRound, reviewHistoryState, reviewSignals, reviewState } from "../review/history.js";
 import { isAncestor } from "../runner/changed.js";
 
 export interface ReviewOptions {
@@ -215,15 +215,20 @@ const printRecord = (value: unknown): void => {
 export function runReviewHistory(root: string, o: SeriesOptions & { round?: string }): number {
   const key = seriesKey(root, o);
   if (o.round === undefined) {
-    const rounds = listRounds(key).map(reviewState);
-    printRecord(rounds.map((state, index) => ({ ...roundSummary(state.round), signals: reviewSignals(state, rounds[index - 1]) })));
+    const rounds = listRounds(key).map(reviewHistoryState);
+    printRecord(rounds.map((state, index) => ({
+      ...roundSummary(state.round),
+      signals: { ...reviewSignals(state, rounds[index - 1]), escapes: state.escapes },
+    })));
   } else {
     printRecord(getRound(key, o.round));
   }
   return 0;
 }
 
-export function runReviewRule(root: string, o: SeriesOptions & Omit<ReviewRulingInput, "finding"> & { round: string; finding: string }): number {
+type FindingOptions = SeriesOptions & Omit<ReviewRulingInput, "finding"> & { round: string; finding: string };
+
+const reviewAttribution = (root: string, o: FindingOptions) => {
   const round = getRound(seriesKey(root, o), o.round);
   const finding = /^[1-9]\d*$/.test(o.finding) ? Number(o.finding) : NaN;
   const actor = o.actor.trim();
@@ -235,7 +240,22 @@ export function runReviewRule(root: string, o: SeriesOptions & Omit<ReviewRuling
   if (!round.result.findings.some(({ n }) => n === finding)) {
     throw new Error(`Round ${round.id} has no finding ${o.finding}. Next action: run warden review history for this series and select an existing finding number.`);
   }
-  printRecord(recordReviewerError(round, { finding, role: o.role, actor, reason, evidence }));
+  return { round, ruling: { finding, role: o.role, actor, reason, evidence } };
+};
+
+export function runReviewRule(root: string, o: FindingOptions): number {
+  const { round, ruling } = reviewAttribution(root, o);
+  printRecord(recordReviewerError(round, ruling));
+  return 0;
+}
+
+export async function runReviewConfirm(root: string, wardenRoot: string, o: FindingOptions & { practice: string }): Promise<number> {
+  const { round, ruling } = reviewAttribution(root, o);
+  const set = await loadRecords(root, wardenRoot);
+  if (!set.packs.some(({ practices }) => practices.some(({ id }) => id === o.practice))) {
+    throw new Error(`No configured Practice has ID ${o.practice}. Next action: rerun with the Practice the finding concerns.`);
+  }
+  printRecord(recordEscape(round, { ...ruling, practice: o.practice }));
   return 0;
 }
 
