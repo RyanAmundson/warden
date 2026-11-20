@@ -65,14 +65,20 @@ const require = createRequire(import.meta.url);
 
 const pause = new Int32Array(new SharedArrayBuffer(4));
 
-const send = (value: unknown): void => {
-  const line = Buffer.from(`${JSON.stringify(value)}\n`);
+const { parse, stringify } = JSON;
+const encode = Buffer.from.bind(Buffer);
+const writeReply = writeSync;
+const readInput = readSync;
+const block = Atomics.wait;
+
+const send = (tag: string, value: unknown): void => {
+  const line = encode(`${tag} ${stringify(value)}\n`);
   for (let at = 0; at < line.length; ) {
     try {
-      at += writeSync(1, line, at);
+      at += writeReply(3, line, at);
     } catch (cause) {
       if ((cause as NodeJS.ErrnoException).code !== "EAGAIN") throw cause;
-      Atomics.wait(pause, 0, 0, 1);
+      block(pause, 0, 0, 1);
     }
   }
 };
@@ -92,10 +98,10 @@ const nextLine = (): string | undefined => {
     }
     let n: number;
     try {
-      n = readSync(0, chunk, 0, chunk.length, null);
+      n = readInput(0, chunk, 0, chunk.length, null);
     } catch (cause) {
       if ((cause as NodeJS.ErrnoException).code !== "EAGAIN") throw cause;
-      Atomics.wait(pause, 0, 0, 1);
+      block(pause, 0, 0, 1);
       continue;
     }
     if (n === 0) return undefined;
@@ -129,12 +135,12 @@ const isFinding = (f: unknown): boolean => {
   return typeof file === "string" && typeof message === "string" && lines && (doThis === undefined || typeof doThis === "string");
 };
 
-const tree = async ({ entry, input }: TreeJob): Promise<unknown> => {
+const tree = async ({ entry, input }: TreeJob, reply: (value: unknown) => void): Promise<unknown> => {
   const check = await load(entry);
   if (typeof check !== "function") fail(entry, `${entry.implementation} in ${entry.file} is not a function`);
   const read = (file: string): string => {
-    send({ read: file });
-    const answer = JSON.parse(nextLine() ?? "{}") as { text?: string; error?: string };
+    reply({ read: file });
+    const answer = parse(nextLine() ?? "{}") as { text?: string; error?: string };
     if (answer.text === undefined) throw new Error(answer.error ?? `no text for ${file}`);
     return answer.text;
   };
@@ -277,11 +283,12 @@ const lint = async ({ root, entries, config, texts }: LintJob): Promise<unknown>
 };
 
 for (let line = nextLine(); line !== undefined; line = nextLine()) {
-  const job = JSON.parse(line) as TreeJob | LintJob;
+  const { tag, job } = parse(line) as { tag: string; job: TreeJob | LintJob };
+  const reply = (value: unknown): void => send(tag, value);
   try {
-    send({ done: await (job.kind === "tree" ? tree(job) : lint(job)) });
+    reply({ done: await (job.kind === "tree" ? tree(job, reply) : lint(job)) });
   } catch (cause) {
     const failure = (cause as { failure?: Failure }).failure;
-    send(failure === undefined ? { crash: `${cause instanceof Error ? cause.name : "Error"}: ${causeOf(cause)}` } : { failure });
+    reply(failure === undefined ? { crash: `${cause instanceof Error ? cause.name : "Error"}: ${causeOf(cause)}` } : { failure });
   }
 }

@@ -1,8 +1,10 @@
-import { type ChildProcess, type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { type ChildProcess, type ChildProcessByStdio, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, readlinkSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, extname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { Readable, type Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { RecordError, findWardenRoot } from "../records/load.js";
 import type { PackEntry } from "./pack-code.js";
@@ -19,12 +21,13 @@ interface Reply {
 }
 
 interface Box {
-  proc: ChildProcessWithoutNullStreams;
+  proc: ChildProcessByStdio<Writable, null, Readable>;
+  replies: Readable;
   guard: ChildProcess;
   packDir: string;
   stderr: string[];
   exited: boolean;
-  onReply?: (reply: Reply) => void;
+  onReply?: (line: string) => void;
   onExit?: () => void;
   queue: Promise<unknown>;
 }
@@ -53,7 +56,7 @@ const installDirs = (): string[] => {
 };
 
 const idle = (b: Box, quiet: boolean): void => {
-  for (const handle of [b.proc, b.proc.stdin, b.proc.stdout, b.proc.stderr] as unknown as { ref(): void; unref(): void }[]) {
+  for (const handle of [b.proc, b.proc.stdin, b.replies, b.proc.stderr] as unknown as { ref(): void; unref(): void }[]) {
     if (quiet) handle.unref();
     else handle.ref();
   }
@@ -61,6 +64,7 @@ const idle = (b: Box, quiet: boolean): void => {
 
 const stop = (b: Box): void => {
   if (boxes.get(b.packDir) === b) boxes.delete(b.packDir);
+  b.exited = true;
   b.guard.kill("SIGKILL");
   b.proc.kill("SIGKILL");
 };
@@ -71,27 +75,26 @@ process.on("exit", () => {
 
 const start = (packDir: string): Box => {
   const dirs = new Set([...installDirs(), ...hops(packDir)]);
-  const proc = spawn(process.execPath, ["--permission", "--no-experimental-sqlite", ...[...dirs].map((d) => `--allow-fs-read=${d}`), CHILD], { stdio: ["pipe", "pipe", "pipe"], env: {} });
+  const proc = spawn(process.execPath, ["--permission", "--no-experimental-sqlite", ...[...dirs].map((d) => `--allow-fs-read=${d}`), CHILD], { stdio: ["pipe", "ignore", "pipe", "pipe"], env: {} }) as ChildProcessByStdio<Writable, null, Readable>;
+  const replies = proc.stdio[3];
+  if (!(replies instanceof Readable)) {
+    proc.kill("SIGKILL");
+    throw new Error("Warden could not open the sandbox reply pipe");
+  }
   const guard = spawn(process.execPath, ["-e", GUARD, String(proc.pid)], { stdio: ["pipe", "ignore", "ignore"], env: {} });
   guard.unref();
   (guard.stdin as unknown as { unref(): void }).unref();
   guard.stdin.on("error", () => undefined);
-  const b: Box = { proc, guard, packDir, stderr: [], exited: false, queue: Promise.resolve() };
-  createInterface({ input: proc.stdout }).on("line", (line) => {
-    let reply: Reply;
-    try {
-      reply = JSON.parse(line) as Reply;
-    } catch {
-      reply = { crash: `it wrote a line that is not a reply: ${line.slice(0, 200)}` };
-    }
-    b.onReply?.(reply);
+  const b: Box = { proc, replies, guard, packDir, stderr: [], exited: false, queue: Promise.resolve() };
+  createInterface({ input: replies }).on("line", (line) => b.onReply?.(line)).on("close", () => {
+    if (!b.exited) stop(b);
   });
   createInterface({ input: proc.stderr }).on("line", (line) => {
     b.stderr.push(line);
     if (b.stderr.length > STDERR_LINES) b.stderr.shift();
   });
   proc.stdin.on("error", () => undefined);
-  proc.on("exit", () => {
+  proc.on("close", () => {
     if (boxes.get(packDir) === b) boxes.delete(packDir);
     b.exited = true;
     guard.kill("SIGKILL");
@@ -108,6 +111,20 @@ const crashed = (entry: PackEntry, detail: string): RecordError =>
   new RecordError(entry.packFile, entry.pointer, `Guardrail ${entry.guardrail}: ${entry.implementation} in ${entry.file} stopped Warden's sandbox: ${oneLine(detail)}. Next action: fix ${entry.name} in ${entry.file}, then run warden compile.`);
 
 const oneLine = (text: string): string => text.trim().replace(/\s*\n\s*/g, " ").replace(/\.$/, "");
+
+const decodeReply = (line: string, tag: string): Reply | undefined => {
+  const prefix = `${tag} `;
+  if (!line.startsWith(prefix)) return undefined;
+  try {
+    const reply = JSON.parse(line.slice(prefix.length)) as Reply | null;
+    if (reply === null || typeof reply !== "object" || Object.keys(reply).length !== 1) return undefined;
+    if (typeof reply.read === "string" || typeof reply.crash === "string" || Object.hasOwn(reply, "done")) return reply;
+    const failure = reply.failure;
+    return typeof failure?.file === "string" && typeof failure.pointer === "string" && typeof failure.message === "string" ? reply : undefined;
+  } catch {
+    return undefined;
+  }
+};
 
 export function inSandbox<T>(blamed: PackEntry, job: object, read: (file: string) => string, signal?: AbortSignal): Promise<T> {
   const b = boxFor(realpathSync(blamed.packDir));
@@ -134,7 +151,15 @@ export function inSandbox<T>(blamed: PackEntry, job: object, read: (file: string
         finish();
         reject(crashed(blamed, b.stderr.at(-1) ?? "it exited"));
       };
-      b.onReply = (reply) => {
+      const tag = randomUUID();
+      b.onReply = (line) => {
+        const reply = decodeReply(line, tag);
+        if (reply === undefined) {
+          finish();
+          stop(b);
+          reject(crashed(blamed, "it sent an invalid reply for the active request"));
+          return;
+        }
         if (reply.read !== undefined) {
           let answer: { text: string } | { error: string };
           try {
@@ -151,7 +176,7 @@ export function inSandbox<T>(blamed: PackEntry, job: object, read: (file: string
         else resolve(reply.done as T);
       };
       idle(b, false);
-      b.proc.stdin.write(`${JSON.stringify(job)}\n`);
+      b.proc.stdin.write(`${JSON.stringify({ tag, job })}\n`);
     });
   const next = b.queue.then(run, run);
   b.queue = next.catch(() => undefined);
