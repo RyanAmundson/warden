@@ -6,7 +6,7 @@ import { Ajv, type ErrorObject } from "ajv";
 import { parse } from "yaml";
 import schema from "../../schema/records.schema.json" with { type: "json" };
 import { backslashFix, ignoresPathCase, pathCaseKey } from "./paths.js";
-import type { Pack, ProjectConfig, RecordSet } from "./types.js";
+import type { Capability, Pack, ProjectConfig, RecordSet } from "./types.js";
 
 export const findWardenRoot = (): string => {
   let dir = dirname(fileURLToPath(import.meta.url));
@@ -33,6 +33,7 @@ const ajv = new Ajv();
 ajv.addSchema(schema);
 const validateConfig = ajv.getSchema("records#/$defs/config")!;
 const validatePack = ajv.getSchema("records#/$defs/pack")!;
+const validateCapability = ajv.getSchema("records#/$defs/capability")!;
 
 function pointerOf(error: ErrorObject): string {
   const params = error.params as { additionalProperty?: string; missingProperty?: string };
@@ -127,6 +128,10 @@ export function parseConfig(file: string, text: string): ProjectConfig {
   check(file, validateConfig, value);
   (value as ProjectConfig).packs.forEach((entry, i) => refuseBackslashes(file, `/packs/${i}/paths`, entry.paths));
   return value as ProjectConfig;
+}
+
+export function checkCapability(file: string, value: Omit<Capability, "pack">): void {
+  check(file, validateCapability, value);
 }
 
 export async function readPack(projectRoot: string, wardenRoot: string, id: string, configFile: string): Promise<{ pack: Pack; source: "bundled" | "local" }> {

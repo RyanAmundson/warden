@@ -32,6 +32,7 @@ const ajv = new Ajv();
 ajv.addSchema(schema);
 const validateConfig = ajv.getSchema("records#/$defs/config");
 const validatePack = ajv.getSchema("records#/$defs/pack");
+const validateCapability = ajv.getSchema("records#/$defs/capability");
 function pointerOf(error) {
     const params = error.params;
     const leaf = params.additionalProperty ?? params.missingProperty;
@@ -126,6 +127,9 @@ export function parseConfig(file, text) {
     check(file, validateConfig, value);
     value.packs.forEach((entry, i) => refuseBackslashes(file, `/packs/${i}/paths`, entry.paths));
     return value;
+}
+export function checkCapability(file, value) {
+    check(file, validateCapability, value);
 }
 export async function readPack(projectRoot, wardenRoot, id, configFile) {
     const bundled = join(wardenRoot, "packs", id, "pack.yaml");
