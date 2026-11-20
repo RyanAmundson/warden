@@ -28,7 +28,7 @@ practices:
           "service/CONTRACT.md": "# service\n\n## Interfaces\n\n## Purpose\n"
           "service/src/port.ts": "export const ready = true;\n"
   - id: unit-document-links
-    statement: Local links in Unit and root documents resolve to repository files or folders. Fragments in Markdown destinations resolve to headings or explicit anchors.
+    statement: Local links in Unit and root documents resolve to repository files or folders. Fragments in Markdown destinations resolve to headings or explicit anchors. Term destinations name configured Term IDs.
     terms: []
     paths: []
     conflictsWith: []
@@ -37,7 +37,7 @@ practices:
         kind: lint
         runs: [boundary]
         budgetMs: 5000
-        version: 2
+        version: 3
         implementation: "fs:unit-layout/document-links"
         scope: project
         unitExample:

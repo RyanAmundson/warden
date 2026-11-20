@@ -89,11 +89,20 @@ const localTarget = (file, href) => {
   return { path: target.replace(/\/$/, "") || ".", directory: decoded.endsWith("/") };
 };
 
-const documentLinks = ({ files, nonRegular = [], read, markdownLinks, markdownAnchors, unitStructure }) => {
+const termTarget = (href) => {
+  try {
+    return decodeURIComponent(href.slice("term:".length));
+  } catch {
+    return undefined;
+  }
+};
+
+const documentLinks = ({ files, nonRegular = [], read, markdownLinks, markdownAnchors, terms, unitStructure }) => {
   if (unitStructure === undefined) return [];
   const { units, ignoreCase } = unitStructure;
   const key = (path) => ignoreCase ? path.normalize("NFC").toLowerCase() : path;
   const documents = new Set([...ROOT_DOCS, ...units.map((unit) => unit.document)].map(key));
+  const termIds = new Set(terms.map(({ id }) => id));
   const nonRegularEntries = new Set(nonRegular);
   const regularFiles = new Map(files.filter((file) => !nonRegularEntries.has(file)).map((file) => [key(file), file]));
   const folders = new Set(["."]);
@@ -115,6 +124,15 @@ const documentLinks = ({ files, nonRegular = [], read, markdownLinks, markdownAn
   for (const file of files) {
     if (!documents.has(key(file)) || nonRegularEntries.has(file)) continue;
     for (const href of new Set(markdownLinks(read(file)))) {
+      if (/^term:/i.test(href)) {
+        if (termIds.has(termTarget(href))) continue;
+        found.push({
+          file,
+          message: `The link ${href} does not name a configured Term.`,
+          doThis: `In ${file}, point ${href} to the exact Term ID from a configured pack. Percent-encode spaces and special characters.`,
+        });
+        continue;
+      }
       if (isExternal(href)) continue;
       const target = localTarget(file, href);
       if (target !== undefined) {

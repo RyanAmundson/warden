@@ -19,6 +19,8 @@ packs:
     paths: ["**/*.ts"]
   - id: unit-layout
     paths: ["**/*"]
+  - id: project-terms
+    paths: ["**/*"]
 tierBudgetMs: { edit: 5000, commit: 10000, boundary: 120000 }
 loopBreakerRepeats: 3
 bench: { baseFiles: 1, maxFiles: 8, minMarginalMs: 1000 }
@@ -48,6 +50,8 @@ beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "warden-unit-layout-"));
   git("init", "-q", "-b", "main");
   await write(".warden/config.yaml", config);
+  await write(".warden/packs/project-terms/pack.yaml",
+    'id: project-terms\nlayer: 11\nterms: [{ id: "Data Source/Δ", definition: "An origin for records.", bans: [] }]\npractices: []\n');
   await write("api/CONTRACT.md", doc);
   await write("api/src/port.ts", "export const ready = true;\n");
   await write("api/monitor/UNIT.md", "# Monitor\n\n## Purpose\n");
@@ -184,4 +188,29 @@ it("checks local rendered links from declared documents and the permitted root d
     await Promise.all([ampersandFile, dangling, reference].map((file) => rm(join(root, file), { force: true })));
   }
   expect(links().status).toBe(0);
+});
+
+
+it("resolves explicit Markdown Term links against configured pack records", async () => {
+  const links = () => run("check", "--rule", "warden-unit-document-links", "--tier", "boundary", "--base", "main", "--format", "json");
+  try {
+    await write("api/CONTRACT.md", `${doc}\n[Guardrail][rule] and [data source](term:Data%20Source%2F%CE%94).\n\n[rule]: term:guardrail\n`);
+    await write("README.md", "# Fixture\n\n[Guardrail](term:guardrail) and `[literal](term:sample)`.\n");
+    const valid = links();
+    expect(valid.status, valid.stderr + valid.stdout).toBe(0);
+
+    await write("api/CONTRACT.md", `${doc}\n[Unknown](term:made-up) and [Wrong case](term:Guardrail).\n`);
+    await write("README.md", "# Fixture\n\n[Malformed](term:%ZZ) and [Empty](term:).\n");
+    const invalid = links();
+    expect(invalid.status, invalid.stderr + invalid.stdout).toBe(1);
+    expect(JSON.parse(invalid.stdout).failures).toEqual(expect.arrayContaining([
+      expect.objectContaining({ file: "api/CONTRACT.md", message: expect.stringContaining("term:made-up") }),
+      expect.objectContaining({ file: "api/CONTRACT.md", message: expect.stringContaining("term:Guardrail") }),
+      expect.objectContaining({ file: "README.md", message: expect.stringContaining("term:%ZZ") }),
+      expect.objectContaining({ file: "README.md", message: expect.stringContaining("term: does not") }),
+    ]));
+  } finally {
+    await write("api/CONTRACT.md", doc);
+    await write("README.md", "# Fixture\n");
+  }
 });

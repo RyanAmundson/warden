@@ -118,8 +118,11 @@ per Unit kind (for example `CONTRACT.md`). Nothing else documents that Unit.
   requires, in order (for a contract: Purpose, Owns, Interfaces, Invariants).
 - No document exists outside a Unit, except the fixed root set (`README.md`,
   `AGENTS.md`).
-- A Term is defined once, in its Term record. Documents link to Terms; a
-  document that restates a definition fails.
+- A Term is defined once, in its Term record. Use a Markdown destination such
+  as `[Guardrail](term:guardrail)` to reference the configured Term. Warden
+  resolves the exact, case-sensitive ID across configured packs. Percent-encode
+  spaces and special characters in the ID. A document that restates a
+  definition fails.
 - Every symbol a Unit exports from its public entry is listed in the
   Interfaces section of its document. This replaces JSDoc.
 - Every link in a document resolves. The `unit-layout` pack checks local file and
