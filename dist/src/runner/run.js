@@ -3,6 +3,7 @@ import { eslintAdapter } from "../adapters/eslint.js";
 import { fsAdapter, graphAdapter } from "../adapters/tree.js";
 import { tscAdapter } from "../adapters/tsc.js";
 import { RecordError } from "../records/load.js";
+import { declaredUnits } from "../records/units.js";
 export const adapters = new Map([eslintAdapter, tscAdapter, cmdAdapter, fsAdapter, graphAdapter].map((a) => [a.id, a]));
 export const prefixOf = (g) => g.implementation.slice(0, g.implementation.indexOf(":"));
 export const unknownAdapters = (set) => {
@@ -31,7 +32,8 @@ export async function runGuardrails(set, gs, files, ctx) {
     refuseUnknownAdapters(set);
     const packOf = new Map(set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.map((g) => [g, p.id]))));
     const settingsOf = (g) => set.config.packs.find((p) => p.id === packOf.get(g))?.settings;
-    ctx = { ...ctx, settingsOf };
+    const units = gs.some((g) => g.scope === "project") ? declaredUnits(set) : undefined;
+    ctx = { ...ctx, settingsOf, ...(units === undefined ? {} : { unitStructure: { units, ignoreCase: set.unitIgnoreCase === true } }) };
     const groups = new Map();
     for (const g of gs)
         groups.set(prefixOf(g), [...(groups.get(prefixOf(g)) ?? []), g]);

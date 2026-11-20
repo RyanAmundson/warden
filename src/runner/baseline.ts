@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, lstatSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { PARSE_ERROR, type RunResult, type Violation } from "../adapters/types.js";
 import { matchesPath } from "../records/paths.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
+import { listWorktreeEntries } from "./changed.js";
 import { prefixOf, runGuardrails } from "./run.js";
 
 export type Baseline = Record<string, Record<string, number>>;
@@ -76,16 +77,42 @@ export function applyBaseline(
   return { failures, next };
 }
 
-export const projectFiles = (root: string, globs: string[], untracked = true): string[] => {
-  const out = execFileSync("git", ["ls-files", "-z", "--cached", ...(untracked ? ["--others", "--exclude-standard"] : [])], { cwd: root, encoding: "utf8" });
-  return out
+const gitFiles = (root: string, untracked: boolean): string[] =>
+  execFileSync("git", ["ls-files", "-z", "--cached", ...(untracked ? ["--others", "--exclude-standard"] : [])], { cwd: root, encoding: "utf8" })
     .split("\0")
-    .filter((f) => f !== "" && existsSync(join(root, f)) && statSync(join(root, f)).isFile() && globs.some((g) => matchesPath(f, g)));
-};
+    .filter((file) => file !== "");
+
+export const projectFiles = (root: string, globs: string[], untracked = true): string[] =>
+  gitFiles(root, untracked).filter((file) => (
+    existsSync(join(root, file)) && statSync(join(root, file)).isFile() && globs.some((glob) => matchesPath(file, glob))
+  ));
+
+export async function projectInventory(root: string): Promise<{ entries: string[]; nonRegular: string[]; bytes: number }> {
+  const parents = new Map<string, boolean>([[".", true]]);
+  const isDirectory = (folder: string): boolean => {
+    const cached = parents.get(folder);
+    if (cached !== undefined) return cached;
+    const directory = isDirectory(dirname(folder)) && lstatSync(join(root, folder), { throwIfNoEntry: false })?.isDirectory() === true;
+    parents.set(folder, directory);
+    return directory;
+  };
+  const entries: string[] = [];
+  const nonRegular: string[] = [];
+  let bytes = 0;
+  for (const [file, submodule] of await listWorktreeEntries(root)) {
+    if (!isDirectory(dirname(file))) continue;
+    const stat = lstatSync(join(root, file), { throwIfNoEntry: false });
+    if (stat === undefined && !submodule) continue;
+    entries.push(file);
+    if (stat?.isFile() === true && !submodule) bytes += stat.size;
+    else nonRegular.push(file);
+  }
+  return { entries, nonRegular, bytes };
+}
 
 export async function measureBaseline(set: RecordSet, guardrails: Guardrail[]): Promise<{ baseline: Baseline; files: number; unparsed: string[] }> {
   const files = projectFiles(set.root, set.config.packs.flatMap((p) => p.paths));
-  const measured = guardrails.filter((g) => prefixOf(g) !== "cmd");
+  const measured = guardrails.filter((g) => prefixOf(g) !== "cmd" && g.scope !== "project");
   const results = files.length === 0 || measured.length === 0 ? [] : await runGuardrails(set, measured, files, { root: set.root, generatedDir: join(set.root, ".warden/generated"), unbudgeted: true });
   const unparsed = results.filter((r) => r.guardrail === PARSE_ERROR).flatMap((r) => r.violations.map((v) => `${v.file}:${v.line}`));
   const baseline: Baseline = {};

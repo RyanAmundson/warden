@@ -7,6 +7,16 @@ import { enabledOn, literalOf, pathGroups } from "../records/paths.js";
 import { exampleSet } from "../records/load.js";
 import { PARSE_ERROR } from "../adapters/types.js";
 const TSCONFIG = JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", skipLibCheck: true }, include: ["**/*.ts"] });
+export function withExampleUnits(set, guardrail, folders) {
+    const fixture = guardrail.unitExample;
+    if (fixture === undefined)
+        return set;
+    return { ...set, config: {
+            ...set.config,
+            unitKinds: { fixture: fixture.kind },
+            units: folders.map((folder, i) => ({ id: `fixture-${i}`, kind: "fixture", folder: posix.join(folder, fixture.folder) })),
+        } };
+}
 export const examplePrefix = (group) => (group ?? []).map(literalOf).reduce((a, b) => (b.length > a.length ? b : a), "");
 const exampleFile = (group) => `${examplePrefix(group)}warden-example.ts`;
 const SCAFFOLD = ["package.json", "tsconfig.json"];
@@ -118,7 +128,7 @@ export async function runExamples(project) {
             if (typeof g.mustPass !== "string")
                 continue;
             for (const other of checked) {
-                if (other.g === g || other.g.implementation.startsWith("cmd:") || !enabledOn(file, other.groups))
+                if (other.g === g || other.g.implementation.startsWith("cmd:") || other.g.scope === "project" || !enabledOn(file, other.groups))
                     continue;
                 const adapter = adapters.get(other.g.implementation.slice(0, other.g.implementation.indexOf(":")));
                 const status = await runExample(set, other.g, adapter.emit([other.g], set), g.mustPass, file, ctx);
@@ -144,7 +154,7 @@ async function runExample(set, g, emitted, source, file, ctx) {
                 made.push(dir);
             await writeFile(join(ctx.root, path), content);
         }
-        const results = await runGuardrails(set, [g], Object.keys(tree), ctx);
+        const results = await runGuardrails(withExampleUnits(set, g, [""]), [g], Object.keys(tree), ctx);
         if (results.some((r) => r.guardrail === PARSE_ERROR && r.status === "fail"))
             return "parse-error";
         const own = results.find((r) => r.guardrail === g.id);

@@ -42,7 +42,7 @@ const hops = (path: string): string[] => {
   return [...seen, realpathSync(path)];
 };
 
-const TOOLS = ["eslint", "typescript-eslint", "typescript"];
+const TOOLS = ["eslint", "typescript-eslint", "typescript", "marked"];
 
 const installDirs = (): string[] => {
   const root = findWardenRoot();

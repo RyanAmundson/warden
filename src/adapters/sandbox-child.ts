@@ -138,10 +138,16 @@ const tree = async ({ entry, input }: TreeJob): Promise<unknown> => {
     if (answer.text === undefined) throw new Error(answer.error ?? `no text for ${file}`);
     return answer.text;
   };
+  const markdownSections = (text: string): string[] => {
+    const { marked } = require("marked") as typeof import("marked");
+    return marked.lexer(text)
+      .filter((token): token is import("marked").Tokens.Heading => token.type === "heading" && token.depth === 2)
+      .map((token) => token.text);
+  };
   const start = performance.now();
   let found: unknown;
   try {
-    const given = { ...input, read, ...(input.imports === undefined ? {} : { imports: new Map(input.imports) }) };
+    const given = { ...input, read, markdownSections, ...(input.imports === undefined ? {} : { imports: new Map(input.imports) }) };
     Object.defineProperty(given, "ts", { get: () => require("typescript") as unknown, enumerable: true });
     found = (check as (i: unknown) => unknown)(given);
   } catch (cause) {

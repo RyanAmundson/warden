@@ -1,8 +1,9 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join, relative, sep } from "node:path";
+import { isAbsolute, join, posix, relative, sep } from "node:path";
 import { RecordError } from "../records/load.js";
 import { enabledOn, pathGroups } from "../records/paths.js";
+import { unitLookup } from "../records/units.js";
 import { packEntry } from "./pack-code.js";
 import { inSandbox } from "./sandbox.js";
 const CODE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
@@ -101,29 +102,45 @@ const treeAdapter = (id) => ({
         };
         const start = performance.now();
         const imports = id === "graph" ? await importGraph(ctx.root, files, read) : undefined;
-        const graphMs = performance.now() - start;
         const known = new Set(files);
+        const nonRegular = new Set(ctx.projectInventory?.nonRegular);
+        const projectRoot = ctx.projectInventory === undefined ? undefined : realpathSync(ctx.root);
+        const unitStructure = ctx.unitStructure;
+        const owner = unitStructure === undefined ? undefined : unitLookup(unitStructure.units, unitStructure.ignoreCase);
+        const structure = owner === undefined ? undefined : {
+            ...unitStructure,
+            owners: Object.fromEntries(files.map((file) => [file, owner(posix.dirname(file))?.id ?? null])),
+        };
+        const prepMs = performance.now() - start + (ctx.projectInventory?.discoveryMs ?? 0);
         const out = [];
         for (const g of gs) {
             const entry = entries.find((e) => e.guardrail === g.id);
             if (entry === undefined)
                 throw new RecordError(generated(id), "", `has no entry for Guardrail ${g.id}. Next action: run warden compile.`);
             const code = await packEntry(g, id);
-            const input = { files: files.filter((f) => enabledOn(f, entry.groups)), all: files, ...(imports === undefined ? {} : { imports: [...imports] }), settings: entry.settings ?? {}, options: g.options ?? null, terms };
+            const input = { files: g.scope === "project" ? files : files.filter((f) => enabledOn(f, entry.groups)), ...(nonRegular.size > 0 ? { nonRegular: [...nonRegular] } : {}), all: files, ...(imports === undefined ? {} : { imports: [...imports] }), settings: entry.settings ?? {}, options: g.options ?? null, terms, ...(g.scope === "project" && structure !== undefined ? { unitStructure: structure } : {}) };
             const given = (file) => {
                 if (!known.has(file))
                     throw new Error(`${file} is not one of the files the check was given`);
+                if (projectRoot !== undefined) {
+                    const path = join(projectRoot, file);
+                    const actual = realpathSync(path);
+                    const rel = relative(projectRoot, actual);
+                    if (nonRegular.has(file) || isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`) || !lstatSync(path).isFile()) {
+                        throw new Error(`${file} must be a regular file in the worktree to be read`);
+                    }
+                }
                 return read(file);
             };
             const { found, ms } = await inSandbox(code, { kind: "tree", entry: code, input }, given, ctx.signal);
             const violations = found.map((v) => {
-                if (!known.has(v.file)) {
+                if (!known.has(v.file) && !(g.scope === "project" && v.file === "")) {
                     const file = join(g.packDir, `${id}.js`);
                     throw new RecordError(file, "", `${g.implementation} reported ${v.file}, which is not one of the files it was given. Next action: make ${g.implementation} in ${file} report only files from its input, then run warden compile.`);
                 }
                 return { guardrail: g.id, file: v.file, line: v.line ?? 1, ...(v.endLine === undefined ? {} : { endLine: v.endLine }), message: v.message, ...(v.doThis === undefined ? {} : { doThis: v.doThis }) };
             });
-            out.push({ guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms: graphMs + ms });
+            out.push({ guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms: prepMs + ms });
         }
         return out;
     },

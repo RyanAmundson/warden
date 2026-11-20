@@ -83,7 +83,8 @@ export function computeLock(set, generated, sources, warden) {
                 implementation: g.implementation,
                 options: g.options ?? null,
                 runs: [...g.runs].sort(),
-                paths: [...paths].sort(),
+                paths: g.scope === "project" ? [] : [...paths].sort(),
+                ...(g.scope === undefined ? {} : { scope: g.scope }),
                 ...(entry?.settings === undefined ? {} : { settings: entry.settings }),
             },
         ]);

@@ -219,6 +219,17 @@ the declared order. It refuses to overwrite a document. Add `units: []` for
 a project starting without any declared Units. Run `warden compile` after
 adding a Unit record, then sign the commit that changes `.warden/`.
 
+Local packs can use `scope: project` on `fs:` Guardrails that run at the
+boundary. Run these checks from a full checkout. They receive tracked and
+non-ignored untracked paths, including paths outside the pack's globs. The
+adapter identifies non-regular entries and reads regular project files.
+
+For a check that depends on declared Units, set `unitExample` with a `folder`
+and `kind` matching its `mustPass` and `mustFail` examples. During compilation,
+Warden uses that example Unit to verify both cases. During a boundary check,
+the Guardrail receives the project's declared Units and their file ownership.
+Warden skips checks with `unitExample` in projects that omit `units`.
+
 ## Git pre-commit hook
 
 `warden compile` writes `.warden/generated/hooks/pre-commit`, an executable

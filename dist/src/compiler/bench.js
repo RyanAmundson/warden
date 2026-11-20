@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { examplePrefix, withExampleProject } from "./examples.js";
+import { examplePrefix, withExampleProject, withExampleUnits } from "./examples.js";
 import { canonicalJson, packFiles, sha256 } from "./lock.js";
 import { RecordError, exampleSet } from "../records/load.js";
 import { enabledOn, pathGroups } from "../records/paths.js";
@@ -23,7 +23,7 @@ const copyOf = (g, prefix, i) => typeof g.mustPass === "string"
     ? [{ path: `${prefix}warden-example-${i}.ts`, original: `${prefix}warden-example.ts`, content: g.mustPass }]
     : Object.entries(g.mustPass ?? {}).map(([path, content]) => ({ path: i === 0 ? path : `${prefix}bench-${i}/${path}`, original: path, content }));
 const refuseUnmatched = (s, rerun) => {
-    if (prefixOf(s.g) === "cmd")
+    if (prefixOf(s.g) === "cmd" || s.g.scope === "project")
         return;
     const lost = copyOf(s.g, s.prefix, 1).find((c) => enabledOn(c.original, s.groups) && !enabledOn(c.path, s.groups));
     if (lost === undefined)
@@ -46,21 +46,25 @@ const measure = (project, s, cfg, rerun, signal) => withExampleProject(async (ro
     const ctx = { root, generatedDir: join(root, ".warden/generated"), base: commit, unbudgeted: true, signal };
     await writeTree(root, adapters.get(prefixOf(s.g)).emit([s.g], set));
     const files = [];
+    const folders = [];
     let copies = 0;
     const timed = async (n, count) => {
         signal?.throwIfAborted();
         const tree = {};
         for (; copies < n; copies++) {
+            if (s.g.unitExample !== undefined)
+                folders.push(copies === 0 ? "" : `${s.prefix}bench-${copies}`);
             for (const c of copyOf(s.g, s.prefix, copies)) {
                 tree[c.path] = c.content;
                 files.push(c.path);
             }
         }
         await writeTree(root, tree);
+        const scenario = withExampleUnits(set, s.g, folders);
         const times = [];
         for (let i = 0; i < count; i++) {
             signal?.throwIfAborted();
-            const results = await runGuardrails(set, [s.g], files, ctx);
+            const results = await runGuardrails(scenario, [s.g], files, ctx);
             signal?.throwIfAborted();
             const bad = results.find((r) => r.status !== "pass");
             if (bad !== undefined) {
@@ -115,7 +119,7 @@ export const benchSubject = async (set, s, cfg, rerun, signal) => {
 export const subjectsOf = (set, gs) => set.packs.flatMap((pack) => pack.practices.flatMap((x) => {
     const groups = pathGroups(x.paths, set.config.packs.find((p) => p.id === pack.id)?.paths ?? []);
     const prefix = examplePrefix(groups[0]);
-    return x.guardrails.filter((g) => gs.includes(g)).map((g) => ({ id: g.id, g, pack, practice: x.id, prefix, groups, time: (r) => r.ruleMs ?? r.ms }));
+    return x.guardrails.filter((g) => gs.includes(g)).map((g) => ({ id: g.id, g, pack, practice: x.id, prefix: g.scope === "project" ? "" : prefix, groups: g.scope === "project" ? [] : groups, time: (r) => r.ruleMs ?? r.ms }));
 }));
 const r1 = (n) => Math.round(n * 10) / 10;
 export const pointsText = (m) => `${m.points.map(([n, ms]) => `${n} files ${r1(ms)}ms`).join(", ")}; fixed ${r1(m.f)}ms`;

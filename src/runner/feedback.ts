@@ -109,6 +109,8 @@ const nextAction = (failures: Violation[], set: RecordSet, notes: Notes): string
     const { guardrail } = ownerOf(set, legacy.guardrail) as { guardrail: Guardrail };
     return runIt(guardrail);
   }
+  if (located.length === 0 && failures.length === 1 && failures[0]?.doThis !== undefined) return failures[0].doThis;
+  if (located.length === 0 && failures.some((failure) => failure.doThis !== undefined)) return 'follow "Do this" for the project findings above.';
   const outside = [...new Set(failures.map((v) => v.file).filter((f) => notes.outside?.includes(f) === true))].sort();
   if (outside.length > 0) {
     const dirs = [...new Set(outside.map((f) => (dirname(f) === "." ? f : dirname(f))))];

@@ -148,6 +148,7 @@ const loosened = (set: RecordSet, wardenRoot: string, base: string, lock: Lock):
       now === undefined ||
       now.budgetMs > g.budgetMs ||
       !covers(now.runs, g.runs) ||
+      (g.scope === "project" && now.scope !== "project") ||
       !pathsCover(now.paths, g.paths) ||
       (!stronger && (now.implementation !== g.implementation || canonicalJson(now.options) !== canonicalJson(g.options) || canonicalJson(now.settings ?? null) !== canonicalJson(previousSettings)));
     if (weaker) found.push({ file: LOCK_PATH, detail: "loosened", guardrail: id });
