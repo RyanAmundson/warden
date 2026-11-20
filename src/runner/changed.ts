@@ -218,12 +218,12 @@ export async function listWorktreeEntries(root: string): Promise<Map<string, boo
   return entries;
 }
 
-export async function skippedIndexPaths(root: string, paths: Set<string>): Promise<Set<string>> {
+export async function skippedIndexPaths(root: string, paths?: Set<string>): Promise<Set<string>> {
   const skipped = new Set<string>();
-  if (paths.size === 0) return skipped;
+  if (paths?.size === 0) return skipped;
   const failure = await gitRecords(root, ["ls-files", "-t", "-z"], "\0", (row) => {
     const path = row.slice(2);
-    if (row.startsWith("S ") && paths.has(path)) skipped.add(path);
+    if (row.startsWith("S ") && (paths === undefined || paths.has(path))) skipped.add(path);
   });
   if (failure !== undefined) {
     throw new RecordError(root, "", `Git could not read sparse checkout paths: ${failure}. Next action: run git ls-files -t from the project root to diagnose the Git error.`);
@@ -389,7 +389,9 @@ export const sparseMode = (root: string): SparseMode => {
 
 export function stagedMismatch(root: string, base: BaseRef): StagedMismatch {
   const literal = (args: string[]): string[] => names(must(root, ["--literal-pathspecs", ...args]));
-  const staged = literal(["diff", "-z", "--cached", "--name-only", "--relative", "--no-renames", "--diff-filter=AM", mergeBase(root, base)]);
+  const at = mergeBase(root, base);
+  const changed = (against: string): string[] => literal(["diff", "-z", "--cached", "--name-only", "--relative", "--no-renames", "--diff-filter=AMT", against]);
+  const staged = [...new Set([...changed(at), ...changed("HEAD")])];
   if (staged.length === 0) return { paths: [], hidden: [], absent: [] };
   const index = new Map(
     literal(["ls-files", "-s", "-z", "--", ...staged]).map((line) => {

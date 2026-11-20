@@ -52,6 +52,8 @@ export interface Evidence {
   root?: string;
   tree?: string;
   scope?: "full" | "partial";
+  sparseCoverage?: Record<string, Kind[]>;
+  sparseProjectFiles?: number;
   alert?: string;
 }
 

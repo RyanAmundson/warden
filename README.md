@@ -386,7 +386,9 @@ A commit-tier check judges a skip-worktree file that is missing from disk,
 such as a file outside a sparse checkout, by its staged content: it copies
 the staged blob to a temporary folder outside the repository and runs the
 ESLint Guardrails on it. Whole-project Guardrails, such as `tsc` and
-commands, still see only the files on disk.
+commands, still see only the files on disk. A check with changed files outside
+the checkout, or missing files needed for whole-project rules, records partial
+coverage. Use a full worktree when Warden needs to verify the complete commit.
 If `state.json` is lost, the daemon rebuilds open alerts from git and
 Evidence. A commit made while the daemon was stopped and `state.json` was
 missing is not judged, because the daemon never recorded it.

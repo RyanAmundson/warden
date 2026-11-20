@@ -37,7 +37,7 @@ export function carryRenames(b, renames) {
     }
     return out;
 }
-export function applyBaseline(results, baseline, scanned, existing, touched = () => false) {
+export function applyBaseline(results, baseline, scanned, existing, touched = () => false, canRatchet = () => true) {
     const next = {};
     for (const [g, entries] of Object.entries(baseline)) {
         next[g] = Object.fromEntries(Object.entries(entries).filter(([f]) => existing(f)));
@@ -60,10 +60,12 @@ export function applyBaseline(results, baseline, scanned, existing, touched = ()
             const vs = all.filter((v) => !touched(v));
             if (vs.length > (entries[file] ?? 0))
                 failures.push(...vs);
-            else if (vs.length === 0)
-                delete entries[file];
-            else
-                entries[file] = vs.length;
+            else if (canRatchet(r, file)) {
+                if (vs.length === 0)
+                    delete entries[file];
+                else
+                    entries[file] = vs.length;
+            }
         }
         next[r.guardrail] = entries;
     }

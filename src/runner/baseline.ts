@@ -48,6 +48,7 @@ export function applyBaseline(
   scanned: string[],
   existing: (f: string) => boolean,
   touched: (v: Violation) => boolean = () => false,
+  canRatchet: (result: RunResult, file: string) => boolean = () => true,
 ): { failures: Violation[]; next: Baseline } {
   const next: Baseline = {};
   for (const [g, entries] of Object.entries(baseline)) {
@@ -68,8 +69,10 @@ export function applyBaseline(
       failures.push(...all.filter(touched));
       const vs = all.filter((v) => !touched(v));
       if (vs.length > (entries[file] ?? 0)) failures.push(...vs);
-      else if (vs.length === 0) delete entries[file];
-      else entries[file] = vs.length;
+      else if (canRatchet(r, file)) {
+        if (vs.length === 0) delete entries[file];
+        else entries[file] = vs.length;
+      }
     }
     next[r.guardrail] = entries;
   }

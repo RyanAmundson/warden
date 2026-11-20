@@ -192,11 +192,11 @@ export async function listWorktreeEntries(root) {
 }
 export async function skippedIndexPaths(root, paths) {
     const skipped = new Set();
-    if (paths.size === 0)
+    if (paths?.size === 0)
         return skipped;
     const failure = await gitRecords(root, ["ls-files", "-t", "-z"], "\0", (row) => {
         const path = row.slice(2);
-        if (row.startsWith("S ") && paths.has(path))
+        if (row.startsWith("S ") && (paths === undefined || paths.has(path)))
             skipped.add(path);
     });
     if (failure !== undefined) {
@@ -321,7 +321,9 @@ export const sparseMode = (root) => {
 };
 export function stagedMismatch(root, base) {
     const literal = (args) => names(must(root, ["--literal-pathspecs", ...args]));
-    const staged = literal(["diff", "-z", "--cached", "--name-only", "--relative", "--no-renames", "--diff-filter=AM", mergeBase(root, base)]);
+    const at = mergeBase(root, base);
+    const changed = (against) => literal(["diff", "-z", "--cached", "--name-only", "--relative", "--no-renames", "--diff-filter=AMT", against]);
+    const staged = [...new Set([...changed(at), ...changed("HEAD")])];
     if (staged.length === 0)
         return { paths: [], hidden: [], absent: [] };
     const index = new Map(literal(["ls-files", "-s", "-z", "--", ...staged]).map((line) => {
