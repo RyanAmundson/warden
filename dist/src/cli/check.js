@@ -10,14 +10,15 @@ import { LOCK_FORMAT, LOCK_PATH, bundledTools, canonicalJson, olderThan, readLoc
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, projectFiles, projectInventory, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { commitsOf, covers, indexTree, stagedMismatch, checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, hasPathCommitIndex, headCommit, matchesHead, lastCommittedText, showAtMergeBase, skippedIndexPaths, stageFile, sparseMode, stagedFiles, trackedFiles, unstagedFiles, verifyBase, checkoutBlobs } from "../runner/changed.js";
+import { commitsOf, covers, indexTree, stagedMismatch, changedFiles, mergeBase, changesSinceMergeBase, hasPathCommitIndex, headCommit, matchesHead, lastCommittedText, showAtMergeBase, skippedIndexPaths, stageFile, sparseMode, stagedFiles, trackedFiles, unstagedFiles, checkoutBlobs } from "../runner/changed.js";
 import { heartbeatProblem, openAlerts } from "../runner/daemon.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
 import { formatFeedback } from "../runner/feedback.js";
 import { recordResolutions } from "../runner/resolutions.js";
 import { runGuardrails, unknownAdapters, wholeTree } from "../runner/run.js";
-import { findTampering, readBaseLock, recordedBases } from "../runner/tamper.js";
+import { findTampering, readBaseLock } from "../runner/tamper.js";
+import { verifyCheckBase } from "./base.js";
 const selectGuardrails = (set, rule) => {
     const gs = set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.filter((g) => g.kind !== "instruction" && (rule === undefined || g.id === rule || x.id === rule))));
     if (rule !== undefined && gs.length === 0)
@@ -25,31 +26,10 @@ const selectGuardrails = (set, rule) => {
     return gs;
 };
 const guardrailsOf = (set, implementation) => selectGuardrails(set, undefined).filter((g) => g.implementation === implementation);
-const requireBase = (base, configured) => {
-    if (base !== undefined)
-        return base;
-    throw new RecordError("", "/base", `--base is missing; Warden takes the base branch from the command, never from the editable config. Next action: run warden check --base ${configured}`);
-};
 const hookBase = (root) => {
     if (!existsSync(join(root, LOCK_PATH)))
         throw new RecordError(LOCK_PATH, "", "is missing, so the edit hook has no base branch. Next action: run warden compile");
     return readLock(root).config.base;
-};
-const refuseOwnBranch = (root, comparison) => {
-    if (!containsHead(root, comparison))
-        return;
-    const base = comparison.name;
-    const recorded = recordedBases(root);
-    if (recorded.every((b) => b === base))
-        return;
-    const original = recorded.at(-1);
-    const working = existsSync(join(root, LOCK_PATH)) ? readLock(root).config?.base : undefined;
-    if (original === base && working === base)
-        return;
-    const next = original === base
-        ? `the lock's base changed in this branch's history and now reads ${working}. Next action: revert base in .warden/config.yaml to ${original} and run warden compile`
-        : `the lock first recorded base ${original}. Next action: run warden check --base ${original}`;
-    throw new RecordError("", "/base", `--base ${base} already contains this work, so the merge-base lock would compare with itself; ${next}`);
 };
 const removedWarden = (root, given) => {
     if (existsSync(join(root, ".warden/config.yaml")))
@@ -58,9 +38,7 @@ const removedWarden = (root, given) => {
     if (text === undefined)
         return undefined;
     const config = parseConfig(".warden/config.yaml", text);
-    const base = requireBase(given, config.base);
-    const comparison = verifyBase(root, base, checkBaseAction);
-    refuseOwnBranch(root, comparison);
+    const comparison = verifyCheckBase(root, given, config.base);
     if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, comparison, LOCK_PATH) === undefined)
         return undefined;
     const file = existsSync(join(root, ".warden")) ? ".warden/config.yaml" : ".warden";
@@ -311,9 +289,8 @@ const check = async (opts, live) => {
             }
         }
     }
-    const base = requireBase(opts.base ?? (opts.hook === "claude" ? hookBase(root) : undefined), set.config.base);
-    const comparison = verifyBase(root, base, checkBaseAction);
-    refuseOwnBranch(root, comparison);
+    const comparison = verifyCheckBase(root, opts.base ?? (opts.hook === "claude" ? hookBase(root) : undefined), set.config.base);
+    const base = comparison.name;
     live.base = { base, mergeBase: mergeBase(root, comparison) };
     const alerts = openAlerts(root);
     openStep(live, "rules-intact");

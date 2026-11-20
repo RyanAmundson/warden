@@ -232,7 +232,9 @@ export async function runLearningReport(root: string, wardenRoot: string, json: 
   process.stdout.write("Learning scorecard from retained checkout Evidence, dispute rulings, and repository review confirmations\n");
   for (const row of scorecard) {
     const precision = row.precision === null ? "unmeasured" : `${Math.round(row.precision * 100)}%`;
-    process.stdout.write(`${row.pack}/${row.guardrail}  resolved=${row.resolved}  upheld=${row.upheldDisputes}  precision=${precision}  confirmed ${row.practice} escapes=${row.confirmedPracticeEscapes}  stalls=${row.stalls}\n`);
+    const strength = row.mutationStrength === null ? "unmeasured" : `${Math.round(row.mutationStrength * 100)}%`;
+    process.stdout.write(`${row.pack}/${row.guardrail}  resolved=${row.resolved}  upheld=${row.upheldDisputes}  precision=${precision}  confirmed ${row.practice} escapes=${row.confirmedPracticeEscapes}  stalls=${row.stalls}  mutation strength=${strength}\n`);
+    if (row.mutationPolicyIssue !== undefined) process.stdout.write(`  Mutation evidence could not be verified: ${row.mutationPolicyIssue}\n`);
   }
   return 0;
 }

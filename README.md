@@ -64,6 +64,15 @@ session end, Warden records a stall if a completed edit check proved a
 Guardrail failure, the judged file still has the same contents, and the
 retained evidence shows no fix or dispute covering that failure.
 
+To measure a Guardrail's strength, add named `mutations` to its record.
+Each entry uses the same format as `mustFail` and expresses a distinct
+example of the same violation. After activating the policy, run
+`warden review mutations --base main --rule <id>`. Warden checks the must-fail control
+and then runs each variant in its own example project using the pack's
+example settings. The learning report shows how many variants the adapter
+caught for the current policy. A surviving variant records hollow evidence
+for review.
+
 ## Resolve a conflict in .warden/baseline.json
 
 Every commit-tier check rewrites `.warden/baseline.json`, so parallel branches

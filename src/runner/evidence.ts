@@ -5,7 +5,7 @@ import type { Kind, Tier } from "../records/types.js";
 
 export interface Evidence {
   at: string;
-  kind: "disputed" | "fired" | "resolved" | "cost" | "tampered" | "stalled" | "scaling" | "step" | "registered" | "plugin" | "commit" | "change" | "gate-off";
+  kind: "disputed" | "fired" | "resolved" | "cost" | "tampered" | "stalled" | "scaling" | "step" | "registered" | "plugin" | "commit" | "change" | "gate-off" | "mutation" | "hollow";
   guardrail?: string;
   file?: string;
   status?: string;
@@ -21,6 +21,7 @@ export interface Evidence {
   sourceRun?: string;
   session?: string;
   policy?: string;
+  mutations?: { caught: string[]; missed: string[] };
   tier?: Tier;
   pack?: string;
   files?: number;

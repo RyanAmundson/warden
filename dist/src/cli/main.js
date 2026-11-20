@@ -16,6 +16,7 @@ import { DEFAULT_PORT, installDaemon, runDaemon, uninstallDaemon } from "./daemo
 import { runDispute, runDisputeRuling } from "./dispute.js";
 import { runExplain } from "./explain.js";
 import { runDoctor, runInit } from "./init.js";
+import { runMutationReview } from "./mutations.js";
 import { runNewCapability } from "./new-capability.js";
 import { runNewUnit } from "./new-unit.js";
 import { runPacks } from "./packs.js";
@@ -238,6 +239,13 @@ review.command("proposals").description("list Add proposals for the repository o
     .option("--capability <id>", "the recording Capability for a series query")
     .action((o) => {
     process.exitCode = runReviewProposals(root(), o);
+});
+review.command("mutations").description("measure the Guardrails against their declared must-fail variants")
+    .requiredOption("--base <ref>", "the trusted branch the policy is compared against")
+    .option("--rule <id>", "select one Practice or Guardrail")
+    .option("--format <format>", "text or json", "text")
+    .action(async (o) => {
+    process.exitCode = await runMutationReview(root(), findWardenRoot(), o.base, o.rule, oneOf("review mutations", "format", o.format, ["text", "json"]));
 });
 const attributionFlags = (c) => c.requiredOption("--role <role>", "independent-reviewer or repository-owner")
     .requiredOption("--actor <name>", "the identity of the person or reviewer who made the ruling")

@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { dirname, join, posix } from "node:path";
 import { adapters, runGuardrails, unknownAdapters } from "../runner/run.js";
 import { enabledOn, literalOf, pathGroups } from "../records/paths.js";
-import { exampleSet } from "../records/load.js";
+import { RecordError, exampleSet } from "../records/load.js";
 import { PARSE_ERROR } from "../adapters/types.js";
+import { canonicalJson } from "./lock.js";
 const TSCONFIG = JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", skipLibCheck: true }, include: ["**/*.ts"] });
 export function withExampleUnits(set, guardrail, folders) {
     const fixture = guardrail.unitExample;
@@ -22,11 +23,22 @@ export function withExampleUnits(set, guardrail, folders) {
 }
 export const examplePrefix = (group) => (group ?? []).map(literalOf).reduce((a, b) => (b.length > a.length ? b : a), "");
 const exampleFile = (group) => `${examplePrefix(group)}warden-example.ts`;
+const exampleTree = (source, file) => typeof source === "string" ? { [posix.normalize(file)]: source } :
+    Object.fromEntries(Object.entries(source).map(([path, content]) => [posix.normalize(path), content]));
 const SCAFFOLD = ["package.json", "tsconfig.json"];
 const ownedBy = (owned) => (key) => {
     const path = posix.normalize(key).toLowerCase();
     const first = path.split("/")[0];
     return first === "node_modules" || first === ".warden" || [...owned].some((o) => path === o || path.startsWith(`${o}/`));
+};
+const emittedOwnership = (set) => {
+    const emitted = set.packs
+        .flatMap((pack) => pack.practices.flatMap((practice) => practice.guardrails))
+        .flatMap((guardrail) => {
+        const adapter = guardrail.kind === "instruction" ? undefined : adapters.get(guardrail.implementation.split(":", 1)[0]);
+        return adapter === undefined ? [] : Object.keys(adapter.emit([guardrail], set));
+    });
+    return ownedBy(new Set([...SCAFFOLD, ...emitted].map((path) => path.toLowerCase())));
 };
 const unremoved = (failures) => new Error(`Warden could not remove ${failures.length === 1 ? "its example project" : `${failures.length} example projects:`} ${failures.map((f) => `${f.project} (${f.cause})`).join(", ")}. Next action: delete ${failures.map((f) => f.project).join(" and ")}, then run the command again.`);
 const removals = new Set();
@@ -85,13 +97,7 @@ export async function runExamples(project) {
     await withExampleProject(async (project, base) => {
         const checked = [];
         const ctx = { root: project, generatedDir: join(project, ".warden/generated"), base };
-        const emittedPaths = set.packs
-            .flatMap((p) => p.practices.flatMap((x) => x.guardrails))
-            .flatMap((g) => {
-            const adapter = g.kind === "instruction" ? undefined : adapters.get(g.implementation.slice(0, g.implementation.indexOf(":")));
-            return adapter === undefined ? [] : Object.keys(adapter.emit([g], set));
-        });
-        const owned = ownedBy(new Set([...SCAFFOLD, ...emittedPaths].map((p) => p.toLowerCase())));
+        const owned = emittedOwnership(set);
         for (const pack of set.packs) {
             for (const practice of pack.practices) {
                 const groups = pathGroups(practice.paths, set.config.packs.find((p) => p.id === pack.id)?.paths ?? []);
@@ -143,8 +149,56 @@ export async function runExamples(project) {
     });
     return findings;
 }
+export async function runMutations(project, selected) {
+    const set = exampleSet(project);
+    const selectedRules = set.packs.flatMap((pack) => pack.practices.flatMap((practice) => practice.guardrails.filter((g) => g.kind !== "instruction" && (selected === undefined || [practice.id, g.id].includes(selected)))
+        .map((g) => ({ pack, practice, g }))));
+    const subjects = selectedRules.filter(({ g }) => g.mutations !== undefined);
+    if (selected !== undefined && subjects.length === 0) {
+        throw new RecordError("", "/rule", `No selected Guardrail declares mutations for "${selected}". Next action: declare named must-fail variants in the owning pack and compile it.`);
+    }
+    if (subjects.length === 0)
+        return [];
+    const owned = emittedOwnership(set);
+    const measured = [];
+    for (const { pack, practice, g } of subjects) {
+        const groups = pathGroups(practice.paths, set.config.packs.find((p) => p.id === pack.id)?.paths ?? []);
+        const file = exampleFile(groups[0]);
+        const adapter = adapters.get(g.implementation.split(":", 1)[0]);
+        if (adapter === undefined)
+            throw new RecordError(pack.file, "/implementation", `Unknown adapter for Guardrail ${g.id}. Next action: run warden compile.`);
+        const samples = Object.entries(g.mutations ?? {});
+        const control = g.mustFail;
+        const identity = (source) => canonicalJson(exampleTree(source, file));
+        const seen = new Set([identity(control), identity(g.mustPass)]);
+        const row = { pack: pack.id, guardrail: g.id, caught: [], missed: [] };
+        const emitted = adapter.emit([g], set);
+        const pointer = `/guardrails/${g.id}/mutations`;
+        const run = (label, variant) => {
+            const reserved = typeof variant === "string" ? undefined : Object.keys(variant).find(owned);
+            if (reserved !== undefined)
+                throw new RecordError(pack.file, pointer, `Example ${label} writes Warden-owned ${reserved}. Next action: move the example to another path.`);
+            return withExampleProject((root, base) => runExample(set, g, emitted, variant, file, { root, generatedDir: join(root, ".warden/generated"), base }));
+        };
+        const status = await run("mustFail", control);
+        if (status !== "fail")
+            throw new RecordError(pack.file, pointer, `The mustFail control returned ${status}. Next action: repair the control before measuring mutations.`);
+        for (const [id, variant] of samples) {
+            const content = identity(variant);
+            if (seen.has(content))
+                throw new RecordError(pack.file, `${pointer}/${id}`, "The mutation duplicates an admission example or another variant. Next action: supply a distinct example of the same violation.");
+            seen.add(content);
+            const result = await run(id, variant);
+            if (result !== "pass" && result !== "fail")
+                throw new RecordError(pack.file, `${pointer}/${id}`, `The mutation returned ${result}. Next action: make the variant valid and within budget before measuring it.`);
+            (result === "fail" ? row.caught : row.missed).push(id);
+        }
+        measured.push(row);
+    }
+    return measured;
+}
 async function runExample(set, g, emitted, source, file, ctx) {
-    const tree = typeof source === "string" ? { [file]: source } : source;
+    const tree = exampleTree(source, file);
     const made = [];
     try {
         for (const [path, content] of Object.entries(emitted)) {

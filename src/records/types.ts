@@ -26,6 +26,7 @@ export interface Guardrail {
   unitExample?: { folder: string; kind: UnitKind; publicEntry?: string };
   sources?: string[];
   mustFail?: Example;
+  mutations?: Record<string, Example>;
   mustPass?: Example;
   packDir?: string;
 }

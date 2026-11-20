@@ -18,6 +18,7 @@ import { DEFAULT_PORT, installDaemon, runDaemon, uninstallDaemon } from "./daemo
 import { runDispute, runDisputeRuling } from "./dispute.js";
 import { runExplain } from "./explain.js";
 import { runDoctor, runInit } from "./init.js";
+import { runMutationReview } from "./mutations.js";
 import { runNewCapability } from "./new-capability.js";
 import { runNewUnit } from "./new-unit.js";
 import { runPacks } from "./packs.js";
@@ -256,6 +257,13 @@ review.command("proposals").description("list Add proposals for the repository o
   .option("--capability <id>", "the recording Capability for a series query")
   .action((o: { series?: string; target?: string; capability?: string }) => {
     process.exitCode = runReviewProposals(root(), o);
+  });
+review.command("mutations").description("measure the Guardrails against their declared must-fail variants")
+  .requiredOption("--base <ref>", "the trusted branch the policy is compared against")
+  .option("--rule <id>", "select one Practice or Guardrail")
+  .option("--format <format>", "text or json", "text")
+  .action(async (o: { base: string; rule?: string; format: string }) => {
+    process.exitCode = await runMutationReview(root(), findWardenRoot(), o.base, o.rule, oneOf("review mutations", "format", o.format, ["text", "json"] as const));
   });
 type AttributionOptions = { role: string; actor: string; reason: string; evidence: string };
 type ReviewAttributionOptions = AttributionOptions & { series: string; target: string; capability: string; round: string; finding: string };
