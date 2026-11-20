@@ -162,7 +162,22 @@
         "when": { "type": "string", "minLength": 1 },
         "upholds": { "type": "array", "items": { "type": "string" } },
         "commands": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
-        "replaces": { "type": "array", "items": { "type": "string" } },
+        "replaces": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              { "type": "string" },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["command"],
+                "properties": {
+                  "command": { "type": "string", "pattern": "^[ \\t]*[./]*[a-zA-Z0-9_][a-zA-Z0-9_./-]*(?:[ \\t]+[-a-zA-Z0-9_./:=@+,]+)*[ \\t]*(?![\\s\\S])" }
+                }
+              }
+            ]
+          }
+        },
         "review": {
           "type": "object",
           "additionalProperties": false,

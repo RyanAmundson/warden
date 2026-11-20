@@ -1,7 +1,7 @@
 {
   "name": "warden",
   "version": "0.1.14",
-  "description": "Runs Warden's edit check after each apply_patch, and refuses patches to .warden/ and git commits that skip the pre-commit hook. Requires the global warden command.",
+  "description": "Runs Warden's edit checks and applies its tool policies for records, Git commits, and registered command replacements. Requires the global warden command.",
   "author": {
     "name": "Ryan Amundson"
   },

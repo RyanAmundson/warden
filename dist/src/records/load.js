@@ -61,6 +61,7 @@ const SHAPES = {
     mustFail: "an example is a non-empty string or a map of relative paths to file contents",
     mustPass: "an example is a non-empty string or a map of relative paths to file contents",
     implementation: "an implementation is <adapter>:<target>, such as eslint:no-var",
+    command: "a command replacement uses a single line of unquoted command words and arguments",
 };
 function check(file, validate, value) {
     if (validate(value))

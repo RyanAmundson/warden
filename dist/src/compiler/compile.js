@@ -10,11 +10,11 @@ import { SIGNERS_FILE, readBaseLock } from "../runner/tamper.js";
 import { adapters, prefixOf, refuseUnknownAdapters } from "../runner/run.js";
 import { admit } from "./bench.js";
 import { checkConsistency } from "./consistency.js";
-import { COMMIT_HOOK, commitHook, stamp } from "./emit.js";
+import { COMMAND_REPLACEMENTS, COMMIT_HOOK, commitHook, stamp } from "./emit.js";
 import { runExamples } from "./examples.js";
 import { commandSources } from "./command-sources.js";
 import { LOCK_PATH, computeLock, packFiles, scriptsOf, sha256 } from "./lock.js";
-import { checkCommands, emitSkills, SKILLS_DIR } from "./skills.js";
+import { checkCommands, commandReplacements, emitSkills, SKILLS_DIR } from "./skills.js";
 const sourceFiles = async (set, projectRoot, wardenRoot) => {
     const out = {};
     const config = await readText(join(projectRoot, ".warden/config.yaml"));
@@ -113,6 +113,9 @@ function buildOutputs(set, version, sources) {
         .map(([path, content]) => `${path}\0${content}\0`)
         .join(""));
     const emitted = { ...emitAll(set), [COMMIT_HOOK]: commitHook(version, set.config.base) };
+    const replacements = commandReplacements(set);
+    if (replacements.length > 0)
+        emitted[COMMAND_REPLACEMENTS] = JSON.stringify({ replacements });
     for (const [path, content] of Object.entries(emitSkills(set))) {
         if (path in emitted)
             throw new Error(`more than one output is ${path}`);
@@ -131,10 +134,11 @@ const previousLock = (text) => {
         return undefined;
     }
 };
-const retireSkills = async (root, previous, outputs) => {
+const retireOutputs = async (root, previous, outputs) => {
     for (const file of Object.keys(previous?.generated ?? {})) {
         const [id, name, extra] = file.slice(SKILLS_DIR.length + 1).split("/");
-        if (!file.startsWith(`${SKILLS_DIR}/`) || !/^[a-z0-9][a-z0-9-]*$/.test(id ?? "") || name !== "SKILL.md" || extra !== undefined || file in outputs)
+        const skill = file.startsWith(`${SKILLS_DIR}/`) && /^[a-z0-9][a-z0-9-]*$/.test(id ?? "") && name === "SKILL.md" && extra === undefined;
+        if ((!skill && file !== COMMAND_REPLACEMENTS) || file in outputs)
             continue;
         let directory = root;
         for (const segment of dirname(file).split("/")) {
@@ -192,7 +196,7 @@ export async function compile(projectRoot, wardenRoot) {
     const prior = previousLock(await readText(join(projectRoot, LOCK_PATH)));
     const previous = prior?.guardrails;
     await writeAll(projectRoot, outputs);
-    await retireSkills(projectRoot, prior, outputs);
+    await retireOutputs(projectRoot, prior, outputs);
     await writeAll(projectRoot, { [LOCK_PATH]: `${JSON.stringify(lock, null, 2)}\n` });
     const written = [...Object.keys(outputs), LOCK_PATH];
     if (previous === undefined || !isRepository(projectRoot))

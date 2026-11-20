@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { stringify } from "yaml";
+import { literalCommand } from "./emit.js";
 export const SKILLS_DIR = ".warden/generated/skills";
 export const skillPath = (id) => `${SKILLS_DIR}/${id}/SKILL.md`;
 const run = promisify(execFile);
@@ -23,7 +24,7 @@ const skill = (c, statements) => [
     "",
     ...c.commands.map((command, i) => `${i + 1}. \`${command}\``),
     "",
-    ...(c.replaces.length === 0 ? [] : ["## Use this instead of", "", ...c.replaces.map((r) => `- ${r}`), ""]),
+    ...(c.replaces.length === 0 ? [] : ["## Use this instead of", "", ...c.replaces.map((r) => typeof r === "string" ? `- ${r}` : `- \`${literalCommand(r.command)}\``), ""]),
     "When a step fails, do its printed Next action, then run the step again. Fix the code, never the check.",
     "",
 ].join("\n");
@@ -31,6 +32,11 @@ const capabilities = (set) => set.packs.flatMap((p) => p.capabilities);
 export function emitSkills(set) {
     const statements = new Map(set.packs.flatMap((p) => p.practices.map((x) => [x.id, x.statement])));
     return Object.fromEntries(capabilities(set).filter((c) => c.kind === "skill").map((c) => [skillPath(c.id), skill(c, statements)]));
+}
+export function commandReplacements(set) {
+    return capabilities(set).flatMap((c) => c.replaces.flatMap((r) => typeof r === "string" ? [] : [{
+            command: literalCommand(r.command), capability: c.id, replacement: c.commands[0],
+        }]));
 }
 const helps = async (command, wardenRoot) => {
     if (!command.startsWith("warden "))

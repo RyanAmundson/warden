@@ -53,7 +53,7 @@ export interface Capability {
   when: string;
   upholds: string[];
   commands: string[];
-  replaces: string[];
+  replaces: (string | { command: string })[];
   review?: ReviewRule;
   pack: string;
 }

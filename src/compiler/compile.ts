@@ -12,11 +12,11 @@ import { SIGNERS_FILE, readBaseLock } from "../runner/tamper.js";
 import { adapters, prefixOf, refuseUnknownAdapters } from "../runner/run.js";
 import { admit } from "./bench.js";
 import { checkConsistency, type Finding } from "./consistency.js";
-import { COMMIT_HOOK, commitHook, stamp } from "./emit.js";
+import { COMMAND_REPLACEMENTS, COMMIT_HOOK, commitHook, stamp } from "./emit.js";
 import { runExamples } from "./examples.js";
 import { commandSources } from "./command-sources.js";
 import { LOCK_PATH, type Lock, computeLock, packFiles, scriptsOf, sha256 } from "./lock.js";
-import { checkCommands, emitSkills, SKILLS_DIR } from "./skills.js";
+import { checkCommands, commandReplacements, emitSkills, SKILLS_DIR } from "./skills.js";
 
 const sourceFiles = async (set: RecordSet, projectRoot: string, wardenRoot: string): Promise<Record<string, string>> => {
   const out: Record<string, string> = {};
@@ -120,6 +120,8 @@ function buildOutputs(set: RecordSet, version: string, sources: Record<string, s
   );
 
   const emitted: Record<string, string> = { ...emitAll(set), [COMMIT_HOOK]: commitHook(version, set.config.base) };
+  const replacements = commandReplacements(set);
+  if (replacements.length > 0) emitted[COMMAND_REPLACEMENTS] = JSON.stringify({ replacements });
   for (const [path, content] of Object.entries(emitSkills(set))) {
     if (path in emitted) throw new Error(`more than one output is ${path}`);
     emitted[path] = content;
@@ -137,10 +139,11 @@ const previousLock = (text: string | undefined): Lock | undefined => {
   }
 };
 
-const retireSkills = async (root: string, previous: Lock | undefined, outputs: Record<string, string>): Promise<void> => {
+const retireOutputs = async (root: string, previous: Lock | undefined, outputs: Record<string, string>): Promise<void> => {
   for (const file of Object.keys(previous?.generated ?? {})) {
     const [id, name, extra] = file.slice(SKILLS_DIR.length + 1).split("/");
-    if (!file.startsWith(`${SKILLS_DIR}/`) || !/^[a-z0-9][a-z0-9-]*$/.test(id ?? "") || name !== "SKILL.md" || extra !== undefined || file in outputs) continue;
+    const skill = file.startsWith(`${SKILLS_DIR}/`) && /^[a-z0-9][a-z0-9-]*$/.test(id ?? "") && name === "SKILL.md" && extra === undefined;
+    if ((!skill && file !== COMMAND_REPLACEMENTS) || file in outputs) continue;
     let directory = root;
     for (const segment of dirname(file).split("/")) {
       directory = join(directory, segment);
@@ -192,7 +195,7 @@ export async function compile(projectRoot: string, wardenRoot: string): Promise<
   const prior = previousLock(await readText(join(projectRoot, LOCK_PATH)));
   const previous = prior?.guardrails;
   await writeAll(projectRoot, outputs);
-  await retireSkills(projectRoot, prior, outputs);
+  await retireOutputs(projectRoot, prior, outputs);
   await writeAll(projectRoot, { [LOCK_PATH]: `${JSON.stringify(lock, null, 2)}\n` });
   const written = [...Object.keys(outputs), LOCK_PATH];
   if (previous === undefined || !isRepository(projectRoot)) return { findings: [], written };

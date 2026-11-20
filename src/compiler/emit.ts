@@ -19,6 +19,9 @@ export function stamp(path: string, content: string, version: string, sourceHash
 }
 
 export const COMMIT_HOOK = ".warden/generated/hooks/pre-commit";
+export const COMMAND_REPLACEMENTS = ".warden/generated/hooks/command-replacements.json";
+
+export const literalCommand = (source: string): string => source.replace(/^[ \t]+|[ \t]+$/g, "").replace(/[ \t]+/g, " ");
 
 export const RELEASES = "git+https://github.com/RyanAmundson/warden.git";
 

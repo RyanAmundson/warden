@@ -100,8 +100,12 @@ program
         trigger: oneOf("check", "trigger", o.trigger, ["git-commit", "manual"]),
     });
 });
-program.command("guard").description("refuse a Claude Code tool call that edits .warden or skips the pre-commit hook; reads the PreToolUse input on stdin").action(() => {
-    const reason = refusal(root(), readFileSync(0, "utf8"));
+program
+    .command("guard")
+    .description("check a harness PreToolUse request against Warden's editing, commit, and command policies; read input on stdin")
+    .option("--compiled-replacements", "require the compiled Capability command policy for shell requests")
+    .action((options) => {
+    const reason = refusal(root(), readFileSync(0, "utf8"), options.compiledReplacements === true);
     if (reason !== undefined)
         process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } })}\n`);
 });

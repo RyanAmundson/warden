@@ -20,6 +20,8 @@ export function stamp(path, content, version, sourceHash) {
     throw new Error(`cannot place a generated header in ${path}`);
 }
 export const COMMIT_HOOK = ".warden/generated/hooks/pre-commit";
+export const COMMAND_REPLACEMENTS = ".warden/generated/hooks/command-replacements.json";
+export const literalCommand = (source) => source.replace(/^[ \t]+|[ \t]+$/g, "").replace(/[ \t]+/g, " ");
 export const RELEASES = "git+https://github.com/RyanAmundson/warden.git";
 const quoted = (word) => `'${word.replaceAll("'", "'\\''")}'`;
 export const commitHook = (version, base) => [

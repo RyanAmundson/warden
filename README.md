@@ -307,6 +307,23 @@ already be declared by an enabled pack. Use `--upholds` for Practice IDs and
 `--replaces` for the actions the Capability replaces. Sign the changes to
 `.warden/` after compiling.
 
+In a pack record, use text for process steps and a `command` entry for a
+literal Bash tool request that the Capability replaces.
+
+```yaml
+replaces:
+  - preparing a report by hand
+  - command: ./scripts/old-report.sh --summary
+```
+
+The Claude Code and Codex Warden hooks deny that complete request, allowing
+extra spaces or tabs between words. Use unquoted command words and arguments.
+Compound commands, aliases, and commands run inside scripts are outside this
+matching contract. The compiler rejects replacements that would deny a
+registered Capability command, including commands that fill in
+`<argument>` or variadic `<arguments...>` placeholders. Each denied
+replacement records `tampered` Evidence for the Capability.
+
 For a pack with skill Capabilities, `warden compile` writes a single locked
 `SKILL.md` per skill under `.warden/generated/skills/`. Run `warden doctor`
 for Claude Code or `warden doctor --harness codex` for Codex to check the

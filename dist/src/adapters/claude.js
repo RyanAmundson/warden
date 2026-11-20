@@ -1,6 +1,9 @@
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { COMMAND_REPLACEMENTS, literalCommand } from "../compiler/emit.js";
+import { LOCK_PATH, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError } from "../records/load.js";
+import { appendEvidence } from "../runner/evidence.js";
 const NEXT = ". Next action: update Claude Code, then retry the tool call";
 const parseInput = (input) => {
     try {
@@ -142,7 +145,42 @@ export function skipsCommitHook(words) {
     return undefined;
 }
 const withoutFlag = (flag) => flag.startsWith("--") || flag === "-n" ? `without ${flag}` : `with ${flag.replace("n", "")} in place of ${flag}`;
-export function refusal(root, input) {
+const optionalText = (file) => {
+    try {
+        return readFileSync(file, "utf8");
+    }
+    catch (cause) {
+        if (cause.code === "ENOENT")
+            return undefined;
+        throw cause;
+    }
+};
+const replacementRefusal = (root, source, required) => {
+    const command = literalCommand(source);
+    if (command === "warden compile")
+        return undefined;
+    const file = join(root, COMMAND_REPLACEMENTS);
+    const text = optionalText(file);
+    const drift = () => new RecordError(file, "", "Command replacements differ from the compiled lock. Next action: ask the user to restore the generated policy or run warden compile.");
+    if (text === undefined) {
+        const lockText = optionalText(join(root, LOCK_PATH));
+        if (required || (lockText?.includes(JSON.stringify(COMMAND_REPLACEMENTS)) === true && readLock(root).generated?.[COMMAND_REPLACEMENTS] !== undefined))
+            throw drift();
+        return undefined;
+    }
+    const lock = readLock(root);
+    const project = lock.config?.project;
+    if (lock.generated?.[COMMAND_REPLACEMENTS] !== sha256(text) || typeof project !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(project))
+        throw drift();
+    const { replacements } = JSON.parse(text);
+    const rule = replacements.find((entry) => entry.command === command);
+    if (rule === undefined)
+        return undefined;
+    const next = `use the registered Capability, starting with ${rule.replacement}.`;
+    appendEvidence(project, { at: new Date().toISOString(), kind: "tampered", root, detail: `capability-replacement:${rule.capability}`, next });
+    return `${rule.command} is replaced by Capability ${rule.capability}. Next action: ${next}`;
+};
+export function refusal(root, input, requireReplacements = false) {
     const parsed = parseInput(input);
     if (parsed.tool_name === "Bash") {
         const command = parsed.tool_input?.command;
@@ -153,7 +191,7 @@ export function refusal(root, input) {
             if (flag !== undefined)
                 return `${flag} skips the pre-commit hook that runs Warden's commit check. Next action: run the git commit again ${withoutFlag(flag)}.`;
         }
-        return undefined;
+        return replacementRefusal(root, command, requireReplacements);
     }
     if (!["Edit", "Write", "MultiEdit", "apply_patch"].includes(parsed.tool_name))
         return undefined;

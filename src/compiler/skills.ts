@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import { stringify } from "yaml";
 import type { Capability, RecordSet } from "../records/types.js";
 import type { Finding } from "./consistency.js";
+import { literalCommand } from "./emit.js";
 
 export const SKILLS_DIR = ".warden/generated/skills";
 export const skillPath = (id: string): string => `${SKILLS_DIR}/${id}/SKILL.md`;
@@ -30,7 +31,7 @@ const skill = (c: Capability, statements: Map<string, string>): string =>
     "",
     ...c.commands.map((command, i) => `${i + 1}. \`${command}\``),
     "",
-    ...(c.replaces.length === 0 ? [] : ["## Use this instead of", "", ...c.replaces.map((r) => `- ${r}`), ""]),
+    ...(c.replaces.length === 0 ? [] : ["## Use this instead of", "", ...c.replaces.map((r) => typeof r === "string" ? `- ${r}` : `- \`${literalCommand(r.command)}\``), ""]),
     "When a step fails, do its printed Next action, then run the step again. Fix the code, never the check.",
     "",
   ].join("\n");
@@ -40,6 +41,18 @@ const capabilities = (set: RecordSet): Capability[] => set.packs.flatMap((p) => 
 export function emitSkills(set: RecordSet): Record<string, string> {
   const statements = new Map(set.packs.flatMap((p) => p.practices.map((x) => [x.id, x.statement] as const)));
   return Object.fromEntries(capabilities(set).filter((c) => c.kind === "skill").map((c) => [skillPath(c.id), skill(c, statements)]));
+}
+
+export interface CommandReplacement {
+  command: string;
+  capability: string;
+  replacement: string;
+}
+
+export function commandReplacements(set: RecordSet): CommandReplacement[] {
+  return capabilities(set).flatMap((c) => c.replaces.flatMap((r) => typeof r === "string" ? [] : [{
+    command: literalCommand(r.command), capability: c.id, replacement: c.commands[0] as string,
+  }]));
 }
 
 type Probe = "ok" | "unknown" | "unrunnable";
