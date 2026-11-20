@@ -76,9 +76,9 @@ const check = () => run("check", "--rule", "warden-unit-layout", "--tier", "boun
 it("checks the whole opted-in project, reports document and layout failures and accepts their corrections", async () => {
   const before = check();
   expect(before.status, before.stderr + before.stdout).toBe(0);
-  const invalid = ["docs/extra.md", "api/image.svg", "unowned/assets/data.json", "NOTES.md"];
+  const invalid = ["docs/extra.markdown", "api/image.svg", "unowned/assets/data.json", "NOTES.md"];
   try {
-    await write("docs/extra.md", "# Repeated documentation\n");
+    await write("docs/extra.markdown", "# Repeated documentation\n");
     await write("api/image.svg", "<svg/>\n");
     await write("unowned/assets/data.json", "{}\n");
     await write("NOTES.md", "# Root notes\n");
@@ -92,7 +92,7 @@ it("checks the whole opted-in project, reports document and layout failures and 
     expect(JSON.parse(failed.stdout).failures).toEqual(expect.arrayContaining([
       expect.objectContaining({ file: "docs/CONTRACT.md", message: expect.stringContaining("needs a regular Markdown document") }),
       expect.objectContaining({ file: "api/CONTRACT.md", message: expect.stringContaining("sections in order: Purpose, Interfaces") }),
-      expect.objectContaining({ file: "docs/extra.md", message: expect.stringContaining("already has a document") }),
+      expect.objectContaining({ file: "docs/extra.markdown", message: expect.stringContaining("already has a document") }),
       expect.objectContaining({ file: "api/image.svg", message: expect.stringContaining("outside the layout") }),
       expect.objectContaining({ file: "unowned/assets/data.json", message: expect.stringContaining("has no owning Unit") }),
       expect.objectContaining({ file: "NOTES.md", message: expect.stringContaining("has no owning Unit") }),
@@ -124,15 +124,24 @@ it("checks local rendered links from declared documents and the permitted root d
     "[Query and answer](src/q&amp;a.ts)",
     "[Contract](../docs/CONTRACT.md)",
     "[This section](#interfaces)",
+    "[Formatted heading](../docs/CONTRACT.md#run-the-%CE%B8-tool)",
+    "[Second heading](../docs/CONTRACT.md#run-the-%CE%B8-tool-1)",
+    "[Custom anchor](../docs/CONTRACT.md#custom%26anchor)",
+    "[Top](../docs/CONTRACT.md#)",
+    "[Alternate extension](../docs/reference.markdown#present)",
+    "[Rendered after filtered HTML](../docs/reference.markdown#later-heading)",
     "[External](https://example.org/a)",
     "`[Code](missing-in-code.md)`",
     "<!-- [Hidden](missing-in-comment.md) -->",
   ].join("\n\n");
   const ampersandFile = "api/src/q&a.ts";
   const dangling = "api/src/dangling.ts";
+  const reference = "docs/reference.markdown";
   try {
     await write(ampersandFile, "export const answer = 42;\n");
     await symlink("missing.ts", join(root, dangling));
+    await write("docs/CONTRACT.md", `${doc}\n### Run the *Θ* \`tool\`!\n\n### Run the *Θ* \`tool\`!\n\n<a name="custom&amp;anchor"></a>\n`);
+    await write(reference, "# Present\n\n<div id=\"id-only\"></div>\n\n<style id=\"filtered-anchor\"></style>\n\n<plaintext>\n\n## Later heading\n");
     await write("api/CONTRACT.md", `${doc}\n${valid}\n`);
     expect(links().status).toBe(0);
     const broken = [
@@ -140,6 +149,14 @@ it("checks local rendered links from declared documents and the permitted root d
       "[Outside](../../outside.md)",
       "[Directory required](src/port.ts/)",
       "[Dangling symlink](src/dangling.ts)",
+      "[Missing section](#missing-heading)",
+      "[Commented heading](#commented)",
+      "[Fenced heading](#ignored)",
+      "[Missing heading in another document](../docs/CONTRACT.md#run-the-%CE%B8-tool-2)",
+      "[Malformed fragment](../docs/CONTRACT.md#%ZZ)",
+      "[Missing alternate heading](../docs/reference.markdown#missing-alt)",
+      "[Stripped ID](../docs/reference.markdown#id-only)",
+      "[Filtered HTML](../docs/reference.markdown#filtered-anchor)",
     ].join("\n\n");
     await write("api/CONTRACT.md", `${doc}\n${valid}\n\n${broken}\n`);
     await write("README.md", "# Fixture\n\n[Incorrect root link](/modules/missing)\n");
@@ -151,11 +168,20 @@ it("checks local rendered links from declared documents and the permitted root d
       expect.objectContaining({ file: "README.md", message: expect.stringContaining("/modules/missing") }),
       expect.objectContaining({ file: "api/CONTRACT.md", message: expect.stringContaining("src/port.ts/") }),
       expect.objectContaining({ file: "api/CONTRACT.md", message: expect.stringContaining("src/dangling.ts") }),
+      expect.objectContaining({ file: "api/CONTRACT.md", message: expect.stringContaining("#missing-heading") }),
+      expect.objectContaining({ file: "api/CONTRACT.md", message: expect.stringContaining("#commented") }),
+      expect.objectContaining({ file: "api/CONTRACT.md", message: expect.stringContaining("#ignored") }),
+      expect.objectContaining({ file: "api/CONTRACT.md", message: expect.stringContaining("#run-the-%CE%B8-tool-2") }),
+      expect.objectContaining({ file: "api/CONTRACT.md", message: expect.stringContaining("#%ZZ") }),
+      expect.objectContaining({ file: "api/CONTRACT.md", message: expect.stringContaining("#missing-alt") }),
+      expect.objectContaining({ file: "api/CONTRACT.md", message: expect.stringContaining("#id-only") }),
+      expect.objectContaining({ file: "api/CONTRACT.md", message: expect.stringContaining("#filtered-anchor") }),
     ]));
   } finally {
     await write("api/CONTRACT.md", doc);
     await write("README.md", "# Fixture\n");
-    await Promise.all([ampersandFile, dangling].map((file) => rm(join(root, file), { force: true })));
+    await write("docs/CONTRACT.md", doc);
+    await Promise.all([ampersandFile, dangling, reference].map((file) => rm(join(root, file), { force: true })));
   }
   expect(links().status).toBe(0);
 });

@@ -242,6 +242,10 @@ full worktree:
 warden check --base main --tier boundary --rule warden-unit-layout
 ```
 
+The `warden-unit-document-links` check validates local Markdown links in the
+same documents. A fragment in a Markdown destination must match a heading
+or an explicit anchor. [GitHub's heading and anchor syntax](https://docs.github.com/en/get-started/writing-on-github/getting-started-with-writing-and-formatting-on-github/basic-writing-and-formatting-syntax#section-links)
+
 Local packs can use `scope: project` on `fs:` Guardrails that run at the
 boundary. Run these checks from a full checkout. They receive tracked and
 non-ignored untracked paths, including paths outside the pack's globs. The

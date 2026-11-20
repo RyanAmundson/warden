@@ -2,6 +2,7 @@ import { matchesGlob, posix } from "node:path";
 
 const ROOT_DOCS = new Set(["README.md", "AGENTS.md"]);
 const CONTROL = new Set([".git", ".warden", ".claude", ".agents"]);
+const MARKDOWN = /\.(?:md|markdown|mdown|mkdn)$/i;
 
 const unitLayout = ({ files, nonRegular = [], read, markdownSections, unitStructure }) => {
   if (unitStructure === undefined) return [];
@@ -38,7 +39,7 @@ const unitLayout = ({ files, nonRegular = [], read, markdownSections, unitStruct
       continue;
     }
     if (folder === "." && ROOT_DOCS.has(file) && !nonRegularEntries.has(file)) continue;
-    if (/\.md$/i.test(file)) {
+    if (MARKDOWN.test(file)) {
       found.push({
         file,
         message: unit === undefined ? `${file} has no owning Unit.` : `Unit ${unit.id} already has a document at ${unit.document}.`,
@@ -88,18 +89,29 @@ const localTarget = (file, href) => {
   return { path: target.replace(/\/$/, "") || ".", directory: decoded.endsWith("/") };
 };
 
-const documentLinks = ({ files, nonRegular = [], read, markdownLinks, unitStructure }) => {
+const documentLinks = ({ files, nonRegular = [], read, markdownLinks, markdownAnchors, unitStructure }) => {
   if (unitStructure === undefined) return [];
   const { units, ignoreCase } = unitStructure;
   const key = (path) => ignoreCase ? path.normalize("NFC").toLowerCase() : path;
   const documents = new Set([...ROOT_DOCS, ...units.map((unit) => unit.document)].map(key));
   const nonRegularEntries = new Set(nonRegular);
-  const regularFiles = new Set(files.filter((file) => !nonRegularEntries.has(file)).map(key));
+  const regularFiles = new Map(files.filter((file) => !nonRegularEntries.has(file)).map((file) => [key(file), file]));
   const folders = new Set(["."]);
   for (const file of files) {
     for (let folder = posix.dirname(key(file)); !folders.has(folder); folder = posix.dirname(folder)) folders.add(folder);
   }
   const found = [];
+  const anchors = new Map();
+  const hasAnchor = (file, fragment) => {
+    let decoded;
+    try {
+      decoded = decodeURIComponent(fragment);
+    } catch {
+      return false;
+    }
+    if (!anchors.has(file)) anchors.set(file, new Set(markdownAnchors(read(file))));
+    return anchors.get(file).has(decoded);
+  };
   for (const file of files) {
     if (!documents.has(key(file)) || nonRegularEntries.has(file)) continue;
     for (const href of new Set(markdownLinks(read(file)))) {
@@ -107,7 +119,19 @@ const documentLinks = ({ files, nonRegular = [], read, markdownLinks, unitStruct
       const target = localTarget(file, href);
       if (target !== undefined) {
         const path = key(target.path);
-        if (folders.has(path) || (!target.directory && regularFiles.has(path))) continue;
+        if (folders.has(path)) continue;
+        const destination = target.directory ? undefined : regularFiles.get(path);
+        if (destination !== undefined) {
+          const hash = href.indexOf("#");
+          const fragment = hash < 0 ? "" : href.slice(hash + 1);
+          if (fragment === "" || !MARKDOWN.test(destination) || hasAnchor(destination, fragment)) continue;
+          found.push({
+            file,
+            message: `The link ${href} in ${file} does not name a heading or anchor in ${destination}.`,
+            doThis: `In ${file}, update ${href} to point to the intended heading or anchor.`,
+          });
+          continue;
+        }
       }
       found.push({
         file,
