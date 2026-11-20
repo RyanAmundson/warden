@@ -70,7 +70,7 @@ export interface RunFailure {
   doThis?: string;
 }
 
-export type Verdict = "constant" | "sublinear" | "linear" | "superlinear";
+export type Verdict = "fixed-input" | "constant" | "sublinear" | "linear" | "superlinear";
 
 export interface Measurement {
   verdict: Verdict;

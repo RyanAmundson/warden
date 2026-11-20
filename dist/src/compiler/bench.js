@@ -9,7 +9,7 @@ import { readBenchCache, writeBenchCache } from "../runner/cache.js";
 import { adapters, runGuardrails } from "../runner/run.js";
 const RUNS = 3;
 const FIXED_RUNS = 9;
-export const RANK = ["constant", "sublinear", "linear", "superlinear"];
+export const RANK = ["fixed-input", "constant", "sublinear", "linear", "superlinear"];
 const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
 export const slope = (points, f) => {
     const xs = points.map(([n]) => Math.log(n));
@@ -43,7 +43,8 @@ const writeTree = async (root, tree) => {
 };
 const measure = (project, s, cfg, rerun, signal) => withExampleProject(async (root, commit) => {
     const set = exampleSet(project);
-    const ctx = { root, generatedDir: join(root, ".warden/generated"), base: commit, unbudgeted: true, signal };
+    const fixedInput = s.g.benchmark === "fixed-input";
+    const ctx = { root, generatedDir: join(root, ".warden/generated"), base: commit, unbudgeted: !fixedInput, signal };
     await writeTree(root, adapters.get(prefixOf(s.g)).emit([s.g], set));
     const files = [];
     const folders = [];
@@ -73,10 +74,17 @@ const measure = (project, s, cfg, rerun, signal) => withExampleProject(async (ro
             const own = results.find((r) => r.guardrail === s.g.id);
             if (own === undefined)
                 throw new Error(`no result for guardrail ${s.g.id}`);
+            if (own.overBudget === true) {
+                throw new RecordError(s.pack.file, `/guardrails/${s.g.id}/budgetMs`, `Guardrail ${s.g.id} exceeded its ${s.g.budgetMs} ms budget. Next action: make the mustPass example finish within budget, then run ${rerun}.`);
+            }
             times.push(s.time(own));
         }
         return times;
     };
+    if (fixedInput) {
+        const f = Math.min(...await timed(1, RUNS));
+        return { verdict: "fixed-input", points: [[1, f]], f };
+    }
     const seen = new Map();
     const at = async (n) => {
         if (!seen.has(n))
@@ -127,7 +135,8 @@ export async function benchKey(s, warden, cfg) {
     const dir = s.g.packDir;
     const files = dir === undefined ? [] : (await packFiles(dirname(dir), basename(dir))).sort();
     const code = await Promise.all(files.map(async (f) => [f, sha256(await readFile(join(dirname(dir), f)))]));
-    return sha256(canonicalJson(["bench", s.g.id, s.g.version, s.g.implementation, s.g.options ?? null, warden, cfg, s.groups, code]));
+    const mode = s.g.benchmark === undefined ? [] : [s.g.benchmark];
+    return sha256(canonicalJson(["bench", s.g.id, s.g.version, s.g.implementation, s.g.options ?? null, warden, cfg, s.groups, code, ...mode]));
 }
 export async function admit(set, warden) {
     const cfg = benchSettings(set.config);

@@ -29,6 +29,7 @@ export interface LockedGuardrail {
   paths: string[];
   settings?: unknown;
   scope?: "project";
+  benchmark?: "fixed-input";
 }
 
 export const TOOLS = ["eslint", "typescript-eslint", "typescript"] as const;
@@ -129,6 +130,7 @@ export function computeLock(
             runs: [...g.runs].sort(),
             paths: g.scope === "project" ? [] : [...paths].sort(),
             ...(g.scope === undefined ? {} : { scope: g.scope }),
+            ...(g.benchmark === undefined ? {} : { benchmark: g.benchmark }),
             ...(entry?.settings === undefined ? {} : { settings: entry.settings }),
           },
         ]);

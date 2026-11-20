@@ -127,6 +127,7 @@ const loosened = (set, wardenRoot, comparison, lock) => {
             now.budgetMs > g.budgetMs ||
             !covers(now.runs, g.runs) ||
             (g.scope === "project" && now.scope !== "project") ||
+            (g.benchmark === undefined && now.benchmark === "fixed-input") ||
             !pathsCover(now.paths, g.paths) ||
             (!stronger && (now.implementation !== g.implementation || canonicalJson(now.options) !== canonicalJson(g.options) || canonicalJson(now.settings ?? null) !== canonicalJson(previousSettings)));
         if (weaker)

@@ -59,7 +59,7 @@ export async function runBench(root: string, wardenRoot: string, opts: { rule?: 
     const width = Math.max(0, ...rows.map((r) => r.indent.length + r.label.length)) + 2;
     const lines = [`scaling (warden bench at ${warden}, ${at.slice(0, 10)})`];
     for (const { indent, label, m } of rows) {
-      const k = m.k === undefined ? "" : `k=${m.k.toFixed(2)}`;
+      const k = m.verdict === "fixed-input" ? `${Math.round(m.f)}ms on the declared example` : m.k === undefined ? "" : `k=${m.k.toFixed(2)}`;
       lines.push(`${`${indent}${label}`.padEnd(width)}${m.verdict.padEnd(13)}${k}${m.verdict === "superlinear" ? "  DEFECT" : ""}`.trimEnd());
     }
     const defects = rows.filter((r) => r.id !== undefined && r.m.verdict === "superlinear");

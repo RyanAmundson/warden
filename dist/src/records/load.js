@@ -161,6 +161,9 @@ export async function readPack(projectRoot, wardenRoot, id, configFile) {
     for (const [practiceIndex, practice] of pack.practices.entries()) {
         for (const [guardrailIndex, guardrail] of practice.guardrails.entries()) {
             const pointer = `/practices/${practiceIndex}/guardrails/${guardrailIndex}`;
+            if (guardrail.benchmark === "fixed-input" && (guardrail.kind !== "model" || !guardrail.implementation.startsWith("cmd:") || guardrail.runs.some((tier) => tier !== "boundary"))) {
+                throw new RecordError(file, `${pointer}/benchmark`, "Fixed-input benchmarking requires a model Guardrail that uses the cmd adapter and runs at the boundary.");
+            }
             if (guardrail.scope === "project" && (!guardrail.implementation.startsWith("fs:") || guardrail.runs.some((tier) => tier !== "boundary"))) {
                 throw new RecordError(file, `${pointer}/scope`, "Project scope requires the fs adapter and runs: [boundary].");
             }

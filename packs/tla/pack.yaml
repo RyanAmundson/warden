@@ -1,0 +1,57 @@
+id: tla
+layer: 12
+terms: []
+settings:
+  type: object
+  additionalProperties: false
+  properties:
+    model:
+      type: string
+      pattern: '^(?:[A-Za-z0-9_-]+/)*[A-Za-z][A-Za-z0-9_]*$'
+      default: Token
+practices:
+  - id: concurrency-protocol-model
+    statement: Verify the declared concurrency protocol with TLC at the boundary.
+    terms: []
+    paths: []
+    conflictsWith: []
+    guardrails:
+      - id: warden-tla-model
+        kind: model
+        runs: [boundary]
+        budgetMs: 25000
+        version: 1
+        benchmark: fixed-input
+        implementation: 'cmd:exec node "$WARDEN_PACK_DIR/check.js"'
+        mustPass:
+          Token.tla: |
+            ---- MODULE Token ----
+            VARIABLES a, b
+            Init == /\ a = FALSE /\ b = FALSE
+            TakeA == /\ ~a /\ ~b /\ a' = TRUE /\ UNCHANGED b
+            TakeB == /\ ~a /\ ~b /\ b' = TRUE /\ UNCHANGED a
+            DropA == /\ a /\ a' = FALSE /\ UNCHANGED b
+            DropB == /\ b /\ b' = FALSE /\ UNCHANGED a
+            Next == TakeA \/ TakeB \/ DropA \/ DropB
+            Exclusive == ~(a /\ b)
+            ====
+          Token.cfg: |
+            INIT Init
+            NEXT Next
+            INVARIANT Exclusive
+        mustFail:
+          Token.tla: |
+            ---- MODULE Token ----
+            VARIABLES a, b
+            Init == /\ a = FALSE /\ b = FALSE
+            TakeA == /\ ~a /\ ~b /\ a' = TRUE /\ UNCHANGED b
+            TakeB == /\ ~b /\ b' = TRUE /\ UNCHANGED a
+            DropA == /\ a /\ a' = FALSE /\ UNCHANGED b
+            DropB == /\ b /\ b' = FALSE /\ UNCHANGED a
+            Next == TakeA \/ TakeB \/ DropA \/ DropB
+            Exclusive == ~(a /\ b)
+            ====
+          Token.cfg: |
+            INIT Init
+            NEXT Next
+            INVARIANT Exclusive

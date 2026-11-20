@@ -22,6 +22,7 @@ export interface Guardrail {
   implementation: string;
   options?: unknown;
   scope?: "project";
+  benchmark?: "fixed-input";
   unitExample?: { folder: string; kind: UnitKind; publicEntry?: string };
   sources?: string[];
   mustFail?: Example;
