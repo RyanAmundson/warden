@@ -156,6 +156,33 @@ const tree = async ({ entry, input }: TreeJob): Promise<unknown> => {
     });
     return links;
   };
+  const markdownProse = (text: string, canonicalDefinition = false): string[] => {
+    const { marked } = require("marked") as typeof import("marked");
+    const { decodeHTML } = require("entities") as typeof import("entities");
+    type Token = import("marked").Token;
+    const inlineText = (tokens: Token[]): string => tokens.map((token) => {
+      if (token.type === "html") return canonicalDefinition ? token.raw : "";
+      if (token.type === "image") return "";
+      if (token.type === "br") return " ";
+      if ("tokens" in token && Array.isArray(token.tokens)) return inlineText(token.tokens);
+      if ("text" in token && typeof token.text === "string") {
+        return token.type === "codespan" ? token.text : decodeHTML(token.text);
+      }
+      return "";
+    }).join("");
+    if (canonicalDefinition) return [inlineText(marked.Lexer.lexInline(text))];
+    const blocks: string[] = [];
+    marked.walkTokens(marked.lexer(text), (token) => {
+      if (token.type === "paragraph") blocks.push(inlineText(token.tokens ?? []));
+      if (token.type === "text" && Array.isArray(token.tokens)) blocks.push(inlineText(token.tokens));
+      if (token.type === "table") {
+        for (const row of [token.header, ...token.rows]) {
+          for (const cell of row) blocks.push(inlineText(cell.tokens));
+        }
+      }
+    });
+    return blocks;
+  };
   const markdownAnchors = (text: string): string[] => {
     const { Marked } = require("marked") as typeof import("marked");
     const { default: GithubSlugger } = require("github-slugger") as typeof import("github-slugger");
@@ -186,7 +213,7 @@ const tree = async ({ entry, input }: TreeJob): Promise<unknown> => {
   const start = performance.now();
   let found: unknown;
   try {
-    const given = { ...input, read, markdownSections, markdownLinks, markdownAnchors, ...(input.imports === undefined ? {} : { imports: new Map(input.imports) }) };
+    const given = { ...input, read, markdownSections, markdownLinks, markdownAnchors, markdownProse, ...(input.imports === undefined ? {} : { imports: new Map(input.imports) }) };
     Object.defineProperty(given, "ts", { get: () => require("typescript") as unknown, enumerable: true });
     found = (check as (i: unknown) => unknown)(given);
   } catch (cause) {

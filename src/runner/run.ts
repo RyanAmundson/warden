@@ -42,7 +42,12 @@ export async function runGuardrails(set: RecordSet, gs: Guardrail[], files: stri
   const packOf = new Map(set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.map((g) => [g, p.id] as const))));
   const settingsOf = (g: Guardrail): Record<string, unknown> | undefined => set.config.packs.find((p) => p.id === packOf.get(g))?.settings;
   const units = gs.some((g) => g.scope === "project") ? declaredUnits(set) : undefined;
-  ctx = { ...ctx, settingsOf, ...(units === undefined ? {} : { unitStructure: { units, ignoreCase: set.unitIgnoreCase === true } }) };
+  const unitStructure = units === undefined ? undefined : {
+    units,
+    ignoreCase: set.unitIgnoreCase === true,
+    termDefinitions: set.packs.flatMap((pack) => pack.terms.map(({ id, definition }) => ({ id, definition }))),
+  };
+  ctx = { ...ctx, settingsOf, ...(unitStructure === undefined ? {} : { unitStructure }) };
   const groups = new Map<string, Guardrail[]>();
   for (const g of gs) groups.set(prefixOf(g), [...(groups.get(prefixOf(g)) ?? []), g]);
   const out: RunResult[] = [];

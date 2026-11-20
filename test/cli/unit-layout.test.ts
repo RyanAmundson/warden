@@ -1,10 +1,13 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
+import { parse } from "yaml";
 
 const cli = resolve(import.meta.dirname, "../../bin/warden.js");
+const typescriptPack = resolve(import.meta.dirname, "../../packs/typescript/pack.yaml");
+let escapeHatch: { id: string; definition: string; bans: string[] };
 let root: string;
 
 const write = async (file: string, content: string): Promise<void> => {
@@ -50,8 +53,15 @@ beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "warden-unit-layout-"));
   git("init", "-q", "-b", "main");
   await write(".warden/config.yaml", config);
+  const typeScriptTerms = parse(await readFile(typescriptPack, "utf8")).terms as (typeof escapeHatch)[];
+  escapeHatch = typeScriptTerms.find(({ id }) => id === "escape-hatch")!;
   await write(".warden/packs/project-terms/pack.yaml",
-    'id: project-terms\nlayer: 11\nterms: [{ id: "Data Source/Δ", definition: "An origin for records.", bans: [] }]\npractices: []\n');
+    'id: project-terms\nlayer: 11\nterms:\n'
+    + '  - { id: "Data Source/Δ", definition: "An origin for records.", bans: [] }\n'
+    + '  - { id: transport-policy, definition: "The endpoint sends records. The recipient acknowledges them.", bans: [] }\n'
+    + '  - { id: signal-start, definition: "`pkg.run` starts the service.", bans: [] }\n'
+    + `  - ${JSON.stringify(escapeHatch)}\n`
+    + 'practices: []\n');
   await write("api/CONTRACT.md", doc);
   await write("api/src/port.ts", "export const ready = true;\n");
   await write("api/monitor/UNIT.md", "# Monitor\n\n## Purpose\n");
@@ -211,6 +221,38 @@ it("resolves explicit Markdown Term links against configured pack records", asyn
     ]));
   } finally {
     await write("api/CONTRACT.md", doc);
+    await write("README.md", "# Fixture\n");
+  }
+});
+
+it("reports copied Term definitions in Unit and root Markdown prose", async () => {
+  const definitions = () => run("check", "--rule", "warden-unit-term-definitions", "--tier", "boundary", "--base", "main", "--format", "json");
+  try {
+    await write("api/CONTRACT.md", `${doc}\n[Data Source](term:Data%20Source%2F%CE%94) supplies records.\n\n`
+      + "\x60\x60\x60md\nAn origin for records.\n\x60\x60\x60\n\n<!-- An origin for records. -->\n"
+      + escapeHatch.definition.replace("<T>", "") + "\n");
+    const valid = definitions();
+    expect(valid.status, valid.stderr + valid.stdout).toBe(0);
+
+    await write("api/CONTRACT.md", `${doc}\n- **Data Source/Δ**: An *origin* for\n  records.\n`);
+    await write("docs/CONTRACT.md", `${doc}\n- An **origin** for\n  records.\n`);
+    await write("README.md", '# Fixture\n\n| Term | Explanation |\n| --- | --- |\n| Data | An origin for records |\n\n'
+      + 'A local note begins here. the endpoint sends records. the recipient acknowledges them. additional details follow.\n\n'
+      + '`pkg.run` starts the service.\n\n'
+      + escapeHatch.definition.replace("<T>x", "`<T>x`") + '\n');
+    const invalid = definitions();
+    expect(invalid.status, invalid.stderr + invalid.stdout).toBe(1);
+    expect(JSON.parse(invalid.stdout).failures).toEqual(expect.arrayContaining([
+      expect.objectContaining({ file: "api/CONTRACT.md", message: expect.stringContaining("duplicates the definition of Term Data Source/Δ") }),
+      expect.objectContaining({ file: "README.md", message: expect.stringContaining("duplicates the definition of Term Data Source/Δ") }),
+      expect.objectContaining({ file: "README.md", message: expect.stringContaining("duplicates the definition of Term transport-policy") }),
+      expect.objectContaining({ file: "README.md", message: expect.stringContaining("duplicates the definition of Term signal-start") }),
+      expect.objectContaining({ file: "README.md", message: expect.stringContaining("duplicates the definition of Term escape-hatch") }),
+      expect.objectContaining({ file: "docs/CONTRACT.md", message: expect.stringContaining("duplicates the definition of Term Data Source/Δ") }),
+    ]));
+  } finally {
+    await write("api/CONTRACT.md", doc);
+    await write("docs/CONTRACT.md", doc);
     await write("README.md", "# Fixture\n");
   }
 });

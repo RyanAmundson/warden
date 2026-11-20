@@ -121,8 +121,14 @@ per Unit kind (for example `CONTRACT.md`). Nothing else documents that Unit.
 - A Term is defined once, in its Term record. Use a Markdown destination such
   as `[Guardrail](term:guardrail)` to reference the configured Term. Warden
   resolves the exact, case-sensitive ID across configured packs. Percent-encode
-  spaces and special characters in the ID. A document that restates a
-  definition fails.
+  spaces and special characters in the ID. The `unit-layout` pack checks for
+  copied definitions in Markdown prose, including list items and table cells.
+  Warden reads inline Markdown in both the record and the document.
+  Literal angle brackets in a Term record stay part of its definition.
+  It compares blocks or runs of sentences separated by punctuation and a
+  space, normalizes case and whitespace, and allows a Term ID label before
+  the definition. Fenced examples and HTML comments are excluded.
+  Paraphrases require review.
 - Every symbol a Unit exports from its public entry is listed in the
   Interfaces section of its document. This replaces JSDoc.
 - Every link in a document resolves. The `unit-layout` pack checks local file and

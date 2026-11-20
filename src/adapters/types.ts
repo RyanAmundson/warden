@@ -1,4 +1,4 @@
-import type { Guardrail, RecordSet, UnitKind } from "../records/types.js";
+import type { Guardrail, RecordSet, Term, UnitKind } from "../records/types.js";
 import type { LockedTscConfig } from "./tsc-config.js";
 import type { Unit } from "../records/units.js";
 
@@ -40,7 +40,7 @@ export interface RunContext {
   signal?: AbortSignal;
   lockedTscConfig?: LockedTscConfig;
   projectInventory?: { nonRegular: string[]; discoveryMs: number };
-  unitStructure?: { units: (Unit & { kindRecord: UnitKind })[]; ignoreCase: boolean };
+  unitStructure?: { units: (Unit & { kindRecord: UnitKind })[]; ignoreCase: boolean; termDefinitions?: Pick<Term, "id" | "definition">[] };
   onGroup?: (adapter: string, guardrails: string[]) => void;
 }
 

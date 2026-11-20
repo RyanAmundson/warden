@@ -1,6 +1,9 @@
 id: unit-layout
 layer: 10
-terms: []
+terms:
+  - id: unit-layout/document
+    definition: The one Markdown document owned by a declared Unit.
+    bans: []
 practices:
   - id: unit-layout
     statement: Each declared Unit owns its folder layout and one document with fixed sections.
@@ -52,3 +55,26 @@ practices:
         mustFail:
           "service/CONTRACT.md": "# service\n\n## Purpose\n\nSee [the contract section](#missing).\n\n## Interfaces\n"
           "service/src/port.ts": "export const ready = true;\n"
+
+  - id: unit-term-definitions
+    statement: Unit and root documents link to Terms instead of copying their definitions.
+    terms: [unit-layout/document]
+    paths: []
+    conflictsWith: []
+    guardrails:
+      - id: warden-unit-term-definitions
+        kind: lint
+        runs: [boundary]
+        budgetMs: 5000
+        version: 1
+        implementation: "fs:unit-layout/term-definitions"
+        scope: project
+        unitExample:
+          folder: service
+          kind:
+            document: CONTRACT.md
+            sections: [Purpose]
+        mustPass:
+          "service/CONTRACT.md": "# service\n\n## Purpose\n\nSee the [Unit document](term:unit-layout%2Fdocument).\n"
+        mustFail:
+          "service/CONTRACT.md": "# service\n\n## Purpose\n\nThe one Markdown document owned by a declared Unit.\n"

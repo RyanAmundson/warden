@@ -4,6 +4,8 @@ const ROOT_DOCS = new Set(["README.md", "AGENTS.md"]);
 const CONTROL = new Set([".git", ".warden", ".claude", ".agents"]);
 const MARKDOWN = /\.(?:md|markdown|mdown|mkdn)$/i;
 
+const documentPaths = (units, key) => new Set([...ROOT_DOCS, ...units.map((unit) => unit.document)].map(key));
+
 const unitLayout = ({ files, nonRegular = [], read, markdownSections, unitStructure }) => {
   if (unitStructure === undefined) return [];
   const { units, ignoreCase, owners } = unitStructure;
@@ -101,7 +103,7 @@ const documentLinks = ({ files, nonRegular = [], read, markdownLinks, markdownAn
   if (unitStructure === undefined) return [];
   const { units, ignoreCase } = unitStructure;
   const key = (path) => ignoreCase ? path.normalize("NFC").toLowerCase() : path;
-  const documents = new Set([...ROOT_DOCS, ...units.map((unit) => unit.document)].map(key));
+  const documents = documentPaths(units, key);
   const termIds = new Set(terms.map(({ id }) => id));
   const nonRegularEntries = new Set(nonRegular);
   const regularFiles = new Map(files.filter((file) => !nonRegularEntries.has(file)).map((file) => [key(file), file]));
@@ -161,4 +163,57 @@ const documentLinks = ({ files, nonRegular = [], read, markdownLinks, markdownAn
   return found;
 };
 
-export default { "unit-layout": unitLayout, "document-links": documentLinks };
+const normalizeProse = (text) => text.normalize("NFC").replace(/\s+/gu, " ").trim().toLowerCase();
+const sentenceParts = (text) => normalizeProse(text).split(/(?<=[.!?]) /);
+const definitionKey = (text) => text.replace(/[.!?]+$/, "");
+
+const termDefinitions = ({ files, nonRegular = [], read, markdownProse, unitStructure }) => {
+  if (unitStructure === undefined) return [];
+  const { units, ignoreCase, termDefinitions } = unitStructure;
+  const key = (path) => ignoreCase ? path.normalize("NFC").toLowerCase() : path;
+  const documents = documentPaths(units, key);
+  const nonRegularEntries = new Set(nonRegular);
+  const definitions = new Map();
+  const labels = new Set();
+  let maxSentences = 0;
+  for (const { id, definition } of termDefinitions) {
+    const sentences = sentenceParts(markdownProse(definition, true).join(" "));
+    const normalized = definitionKey(sentences.join(" "));
+    if (normalized === "") continue;
+    labels.add(normalizeProse(id));
+    const ids = definitions.get(normalized) ?? [];
+    ids.push(id);
+    definitions.set(normalized, ids);
+    maxSentences = Math.max(maxSentences, sentences.length);
+  }
+  const found = [];
+  for (const file of files) {
+    if (!documents.has(key(file)) || nonRegularEntries.has(file)) continue;
+    const duplicates = new Set();
+    for (const block of markdownProse(read(file))) {
+      const parts = sentenceParts(block);
+      for (let start = 0; start < parts.length; start++) {
+        let text = "";
+        for (let end = start; end < Math.min(parts.length, start + maxSentences); end++) {
+          text = end === start ? parts[end] : `${text} ${parts[end]}`;
+          const normalized = definitionKey(text);
+          for (const id of definitions.get(normalized) ?? []) duplicates.add(id);
+          for (const { index } of normalized.matchAll(/: /g)) {
+            if (!labels.has(normalized.slice(0, index))) continue;
+            for (const id of definitions.get(normalized.slice(index + 2)) ?? []) duplicates.add(id);
+          }
+        }
+      }
+    }
+    for (const id of duplicates) {
+      found.push({
+        file,
+        message: `${file} duplicates the definition of Term ${id}.`,
+        doThis: `In ${file}, replace the repeated definition with a link to term:${encodeURIComponent(id)}.`,
+      });
+    }
+  }
+  return found;
+};
+
+export default { "unit-layout": unitLayout, "document-links": documentLinks, "term-definitions": termDefinitions };
