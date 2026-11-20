@@ -121,10 +121,40 @@ const tree = async ({ entry, input }) => {
         });
         return links;
     };
+    const markdownAnchors = (text) => {
+        const { Marked } = require("marked");
+        const { default: GithubSlugger } = require("github-slugger");
+        const { parseFragment, defaultTreeAdapter } = require("parse5");
+        const slugger = new GithubSlugger();
+        const anchors = [];
+        const renderer = new Marked({
+            renderer: {
+                html: ({ text }) => text.replace(/<(\/?(?:title|textarea|style|xmp|iframe|noembed|noframes|script|plaintext))(?=[\s/>])/gi, "&lt;$1"),
+            },
+        });
+        const headingText = (node) => {
+            if (defaultTreeAdapter.isTextNode(node))
+                return node.value;
+            return "childNodes" in node ? node.childNodes.map(headingText).join("") : "";
+        };
+        const visit = (node) => {
+            if (defaultTreeAdapter.isElementNode(node)) {
+                if (/^h[1-6]$/.test(node.tagName))
+                    anchors.push(slugger.slug(headingText(node).trim()));
+                const name = node.tagName === "a" ? node.attrs.find((attribute) => attribute.name === "name") : undefined;
+                if (name !== undefined)
+                    anchors.push(name.value);
+            }
+            if ("childNodes" in node)
+                node.childNodes.forEach(visit);
+        };
+        visit(parseFragment(renderer.parse(text, { async: false })));
+        return anchors;
+    };
     const start = performance.now();
     let found;
     try {
-        const given = { ...input, read, markdownSections, markdownLinks, ...(input.imports === undefined ? {} : { imports: new Map(input.imports) }) };
+        const given = { ...input, read, markdownSections, markdownLinks, markdownAnchors, ...(input.imports === undefined ? {} : { imports: new Map(input.imports) }) };
         Object.defineProperty(given, "ts", { get: () => require("typescript"), enumerable: true });
         found = check(given);
     }

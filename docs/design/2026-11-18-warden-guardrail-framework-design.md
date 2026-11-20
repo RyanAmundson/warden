@@ -126,7 +126,9 @@ per Unit kind (for example `CONTRACT.md`). Nothing else documents that Unit.
   folder destinations in Markdown links and images in declared Unit documents
   and the two root documents. Root-relative destinations resolve from the
   repository root. Use regular project files and folders as link targets.
-  Fragment IDs, external URLs, and raw HTML links are outside this check.
+  Fragments in Markdown destinations resolve to GitHub-style heading IDs
+  or explicit HTML anchors. External URLs and raw HTML links are outside
+  this check.
 
 `warden new unit` scaffolds the folder, the document with its required
 sections, and the Unit record together.

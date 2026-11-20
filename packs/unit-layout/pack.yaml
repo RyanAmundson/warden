@@ -28,7 +28,7 @@ practices:
           "service/CONTRACT.md": "# service\n\n## Interfaces\n\n## Purpose\n"
           "service/src/port.ts": "export const ready = true;\n"
   - id: unit-document-links
-    statement: Local links in Unit and root documents resolve to repository files or folders.
+    statement: Local links in Unit and root documents resolve to repository files or folders. Fragments in Markdown destinations resolve to headings or explicit anchors.
     terms: []
     paths: []
     conflictsWith: []
@@ -37,7 +37,7 @@ practices:
         kind: lint
         runs: [boundary]
         budgetMs: 5000
-        version: 1
+        version: 2
         implementation: "fs:unit-layout/document-links"
         scope: project
         unitExample:
@@ -47,8 +47,8 @@ practices:
             sections: [Purpose, Interfaces]
             layout: ["src/**/*.ts"]
         mustPass:
-          "service/CONTRACT.md": "# service\n\n## Purpose\n\nSee [the port][port].\n\n[port]: src/port.ts\n\n## Interfaces\n"
+          "service/CONTRACT.md": "# service\n\n## Purpose\n\nSee [the port][port] and [Interfaces](#interfaces).\n\n[port]: src/port.ts\n\n## Interfaces\n"
           "service/src/port.ts": "export const ready = true;\n"
         mustFail:
-          "service/CONTRACT.md": "# service\n\n## Purpose\n\nSee [the port](src/missing.ts).\n\n## Interfaces\n"
+          "service/CONTRACT.md": "# service\n\n## Purpose\n\nSee [the contract section](#missing).\n\n## Interfaces\n"
           "service/src/port.ts": "export const ready = true;\n"
