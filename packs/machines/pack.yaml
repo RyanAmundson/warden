@@ -1,0 +1,41 @@
+id: machines
+layer: 11
+terms: []
+practices:
+  - id: machine-tables
+    statement: Declare state machines as reachable, deterministic transition tables.
+    terms: []
+    paths: []
+    conflictsWith: []
+    guardrails:
+      - id: warden-machine-tables
+        kind: model
+        runs: [boundary]
+        budgetMs: 5000
+        version: 1
+        implementation: "fs:machines/tables"
+        scope: project
+        mustPass:
+          "workflow.machine.json": '{"initial":"draft","states":["draft","ready"],"transitions":[{"from":"draft","event":"finish","to":"ready"}]}'
+        mustFail:
+          "workflow.machine.json": '{"initial":"draft","states":["draft","ready"],"transitions":[]}'
+
+  - id: machine-traces
+    statement: Recorded runtime transitions must agree with their declared state machine.
+    terms: []
+    paths: []
+    conflictsWith: []
+    guardrails:
+      - id: warden-machine-traces
+        kind: runtime
+        runs: [boundary]
+        budgetMs: 5000
+        version: 1
+        implementation: "fs:machines/traces"
+        scope: project
+        mustPass:
+          "workflow.machine.json": '{"initial":"draft","states":["draft","ready"],"transitions":[{"from":"draft","event":"finish","to":"ready"}]}'
+          "workflow.trace.json": '{"initial":"draft","steps":[{"event":"finish","state":"ready"}]}'
+        mustFail:
+          "workflow.machine.json": '{"initial":"draft","states":["draft","ready"],"transitions":[{"from":"draft","event":"finish","to":"ready"}]}'
+          "workflow.trace.json": '{"initial":"draft","steps":[{"event":"finish","state":"draft"}]}'
