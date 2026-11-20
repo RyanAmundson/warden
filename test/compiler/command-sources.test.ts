@@ -173,6 +173,33 @@ it("locks root package scripts and their sources when run through pnpm or Yarn",
   }
 });
 
+it("accepts entry files from the current pack's source inventory", async () => {
+  const root = await mkdtemp(join(tmpdir(), "warden-pack-entry-"));
+  const packSources = new Map([
+    ["bin/verify.sh", ""], ["bin/verify.js", ""], ["bin/preload.js", ""],
+    ["index.js", ""], ["checks/index.js", ""], ["formatter/package.json", '{"main":"bin/format"}'], ["formatter/bin/format.js", ""],
+  ]);
+  const owner = { file: ".warden/packs/local/pack.yaml", id: "format-check", packSources };
+  try {
+    expect(commandSources(root, 'sh "$WARDEN_PACK_DIR/bin/verify.sh"', [], {}, owner)).toEqual({});
+    expect(commandSources(root, 'node -r "$WARDEN_PACK_DIR/bin/preload.js" "${WARDEN_PACK_DIR}/bin/verify"', [], {}, owner)).toEqual({});
+    expect(commandSources(root, 'node "$WARDEN_PACK_DIR/checks"', [], {}, owner)).toEqual({});
+    expect(commandSources(root, 'node "$WARDEN_PACK_DIR/."', [], {}, owner)).toEqual({});
+    expect(commandSources(root, 'node "$WARDEN_PACK_DIR/"', [], {}, owner)).toEqual({});
+    expect(commandSources(root, 'node "$WARDEN_PACK_DIR/formatter"', [], {}, owner)).toEqual({});
+    const worker = { ...owner, exactNodeEntry: true };
+    expect(commandSources(root, 'node "$WARDEN_PACK_DIR/bin/verify.js"', [], {}, worker)).toEqual({});
+    expect(() => commandSources(root, 'node "$WARDEN_PACK_DIR/."', [], {}, worker)).toThrow("does not resolve to a file");
+    expect(() => commandSources(root, 'sh "$WARDEN_PACK_DIR/bin/missing.sh"', [], {}, owner)).toThrow(expect.objectContaining({
+      file: owner.file,
+      pointer: "/guardrails/format-check/implementation",
+      message: expect.stringContaining("does not resolve to a file in its signed pack sources"),
+    }));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 it("validates the program before examples and compiles the suggested shell form", async () => {
   const root = await mkdtemp(join(tmpdir(), "warden-command-compile-"));
   const cli = resolve(import.meta.dirname, "../../bin/warden.js");
@@ -192,7 +219,7 @@ practices:
         runs: [boundary]
         budgetMs: 5000
         version: 1
-        implementation: "cmd:${program}"
+        implementation: 'cmd:${program}'
         mustPass: { "check-product.sh": "test -f product.txt\n", "product.txt": "Product\n" }
         mustFail: { "check-product.sh": "test -f product.txt\n" }
 `;
@@ -220,6 +247,17 @@ bench: { baseFiles: 1, maxFiles: 4, minMarginalMs: 1000 }
     expect(compiled.status, compiled.stderr + compiled.stdout).toBe(0);
     const lock = JSON.parse(await readFile(join(root, ".warden/lock.json"), "utf8"));
     expect(lock.sources["./check-product.sh"]).toMatch(/^[0-9a-f]{64}$/);
+    await writeFile(packFile, pack('sh "$WARDEN_PACK_DIR/bin/check-product.sh"'));
+    const unpackaged = compile();
+    expect(unpackaged.status, unpackaged.stderr).toBe(2);
+    expect(unpackaged.stderr).toContain("does not resolve to a file in its signed pack sources");
+
+    await mkdir(join(dirname(packFile), "bin"));
+    await writeFile(join(dirname(packFile), "bin/check-product.sh"), "test -f product.txt\n");
+    const packed = compile();
+    expect(packed.status, packed.stderr + packed.stdout).toBe(0);
+    const packedLock = JSON.parse(await readFile(join(root, ".warden/lock.json"), "utf8"));
+    expect(packedLock.sources[".warden/packs/local/bin/check-product.sh"]).toMatch(/^[0-9a-f]{64}$/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -2,6 +2,7 @@ import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/
 import { dirname, join } from "node:path";
 import { TscConfigError, tscConfigSources } from "../adapters/tsc-config.js";
 import { targetOf } from "../adapters/pack-code.js";
+import { bundledScript } from "../adapters/cmd.js";
 import { RecordError, loadRecords, readPack, readText } from "../records/load.js";
 import { BASELINE_PATH, measureBaseline, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { hasCommit, isRepository } from "../runner/changed.js";
@@ -23,10 +24,16 @@ const sourceFiles = async (set, projectRoot, wardenRoot) => {
     const signers = await readText(join(wardenRoot, SIGNERS_FILE));
     if (signers !== undefined)
         out[SIGNERS_FILE] = signers;
+    const packSources = new Map();
     for (const { id } of set.config.packs) {
         for (const [dir, base] of [[`packs/${id}`, wardenRoot], [`.warden/packs/${id}`, projectRoot]]) {
-            for (const key of await packFiles(base, dir))
-                out[key] = (await readText(join(base, key)));
+            const relativeSources = new Map();
+            packSources.set(join(base, dir), relativeSources);
+            for (const key of await packFiles(base, dir)) {
+                const source = (await readText(join(base, key)));
+                out[key] = source;
+                relativeSources.set(key.slice(dir.length + 1), source);
+            }
         }
     }
     const scripts = scriptsOf(projectRoot);
@@ -42,8 +49,17 @@ const sourceFiles = async (set, projectRoot, wardenRoot) => {
         }
     }
     for (const g of guardrails) {
-        if (g.implementation.startsWith("cmd:"))
-            Object.assign(out, commandSources(projectRoot, targetOf(g), g.sources ?? [], scripts, { file: g.packDir === undefined ? "" : join(g.packDir, "pack.yaml"), id: g.id }));
+        if (!g.implementation.startsWith("cmd:"))
+            continue;
+        const dir = g.packDir;
+        const sources = dir === undefined ? undefined : packSources.get(dir);
+        const command = targetOf(g);
+        const owner = {
+            file: dir === undefined ? "" : join(dir, "pack.yaml"), id: g.id,
+            ...(sources === undefined ? {} : { packSources: sources }),
+            exactNodeEntry: bundledScript(command, dir) !== undefined,
+        };
+        Object.assign(out, commandSources(projectRoot, command, g.sources ?? [], scripts, owner));
     }
     return out;
 };

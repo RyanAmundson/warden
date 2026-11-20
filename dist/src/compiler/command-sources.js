@@ -1,5 +1,5 @@
 import { readFileSync, realpathSync, statSync } from "node:fs";
-import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { delimiter, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { RecordError } from "../records/load.js";
 import { PROJECT_SOURCE, scriptsOf } from "./lock.js";
 const NPM_ALIASES = { test: "test", t: "test", tst: "test", start: "start", stop: "stop", restart: "restart" };
@@ -21,7 +21,7 @@ const SHELL_SHEBANG = /^#!.*\b(?:sh|bash|zsh|dash)\b/;
 const SHELL_SCRIPT = /\.(?:sh|bash|zsh)$/;
 const IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)["'](\.{1,2}\/[^"']*)["']/g;
 const EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
-const PACK_PROGRAM = /^\$(?:\{WARDEN_PACK_DIR\}|WARDEN_PACK_DIR)\/[^$]*$/;
+const PACK_PROGRAM = /^\$(?:\{WARDEN_PACK_DIR\}|WARDEN_PACK_DIR)\/([^$]*)$/;
 const ASSIGNMENT = /^[A-Za-z_]\w*=/;
 const NODE_FILE_FLAGS = new Set(["-r", "--require", "--import", "--loader", "--experimental-loader"]);
 const NODE_INLINE_FLAGS = new Set(["-e", "-p", "-pe", "--eval", "--print"]);
@@ -204,9 +204,46 @@ const addFile = (w, cwd, path, kind) => {
         walk({ ...w, strict: false }, text, cwd);
     }
 };
+const packRelativePath = (path) => path !== ".." && !path.startsWith("../") && !path.startsWith("/");
+const nodePackEntry = (path, sources) => {
+    const file = (name) => name !== "." && !name.endsWith("/") && NODE_ENTRY_EXTENSIONS.some((extension) => sources.has(name + extension));
+    const index = (name) => NODE_ENTRY_EXTENSIONS.slice(1).some((extension) => sources.has(posix.join(name, `index${extension}`)));
+    if (file(path))
+        return true;
+    const manifest = sources.get(posix.join(path, "package.json"));
+    if (manifest !== undefined) {
+        const main = JSON.parse(manifest.replace(/^\uFEFF/, ""))?.main;
+        if (typeof main === "string" && main !== "") {
+            const target = posix.normalize(posix.join(path, main));
+            if (posix.isAbsolute(main) || !packRelativePath(target))
+                return false;
+            if (file(target) || index(target))
+                return true;
+        }
+    }
+    return index(path);
+};
 const addProgram = (w, cwd, word, form, rest, kind) => {
-    if (PACK_PROGRAM.test(word))
-        return;
+    const packPath = PACK_PROGRAM.exec(word)?.[1];
+    if (packPath !== undefined) {
+        const path = posix.normalize(packPath);
+        const { file, id, packSources, exactNodeEntry } = w.owner;
+        let problem = "does not resolve to a file in its signed pack sources";
+        if (packSources !== undefined && packRelativePath(path)) {
+            try {
+                const found = kind === "node" && exactNodeEntry !== true
+                    ? nodePackEntry(path, packSources) : !packPath.endsWith("/") && packSources.has(path);
+                if (found)
+                    return;
+            }
+            catch (cause) {
+                if (!(cause instanceof SyntaxError))
+                    throw cause;
+                problem = `has an invalid package.json at ${posix.join(path, "package.json")}`;
+            }
+        }
+        throw new RecordError(file, `/guardrails/${id}/implementation`, `Guardrail ${id} names ${word}, which ${problem}. Next action: use a pack-relative file name under WARDEN_PACK_DIR in ${file}, then run warden compile.`);
+    }
     if (word.includes("$"))
         return refuse(w, `${form}, whose program is named through a variable`, projectFiles(w, cwd, rest));
     addFile(w, cwd, word, kind);
@@ -291,8 +328,14 @@ const nodeLike = (w, cmd, args, cwd, form) => {
         }
         if (NODE_FILE_FLAGS.has(flag)) {
             const spec = value ?? args[++i];
-            if (spec !== undefined && /^\.{0,2}\//.test(spec))
-                addProgram(w, cwd, spec, form, []);
+            if (spec !== undefined) {
+                if (PACK_PROGRAM.test(spec)) {
+                    const mode = flag === "-r" || flag === "--require" ? "node" : undefined;
+                    addProgram(w, cwd, spec, form, [], mode);
+                }
+                else if (/^\.{0,2}\//.test(spec))
+                    addProgram(w, cwd, spec, form, []);
+            }
             continue;
         }
         if (NODE_VALUE_FLAGS.has(flag)) {
