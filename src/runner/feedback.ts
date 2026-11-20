@@ -54,6 +54,13 @@ const byLocation = (a: Violation, b: Violation): number => (a.file < b.file ? -1
 
 const shellWords = (words: string[]): string => words.map((f) => `'${f.replaceAll("'", "'\\''")}'`).join(" ");
 
+const restorePreflight = (paths: string[]): string => {
+  const outside = shellWords([...new Set(paths)].map((path) => `:(top,literal,exclude)${path}`));
+  const diff = "git diff --quiet --no-ext-diff --ignore-submodules=none";
+  const message = "Move unrelated staged and unstaged changes aside before restoring Warden files.";
+  return `{ ${diff} --cached HEAD -- ${outside} && ${diff} -- ${outside} || { printf '%s\\n' '${message}' >&2; false; }; } && `;
+};
+
 const patternOf = (dir: string): string =>
   dir
     .replace(/[*?[\]\\]/g, "\\$&")
@@ -71,7 +78,8 @@ const nextAction = (failures: Violation[], set: RecordSet, notes: Notes): string
     const stray = restore.stray.length === 0 ? "" : `${unstage}git --literal-pathspecs clean -ff -x -- ${shellWords(restore.stray)} && `;
     const back = restore.known.length === 0 ? "" : `git --literal-pathspecs restore --source=${restore.base} --staged --worktree -- ${shellWords(restore.known)} && `;
     const commit = restore.aliased ? "git commit --allow-empty -m 'Restore .warden files changed without an allowed signature'" : `git --literal-pathspecs commit --only --allow-empty -m 'Restore .warden files changed without an allowed signature' -- ${shellWords(restore.paths)}`;
-    return `run ${stray}${back}${commit} to restore the .warden/ files changed without an allowed signature to the merge base, then run warden check again.`;
+    const preflight = restore.aliased ? restorePreflight([...restore.paths, ...restore.unstage, ...restore.stray]) : "";
+    return `run ${preflight}${stray}${back}${commit} to restore the .warden/ files changed without an allowed signature to the merge base, then run warden check again.`;
   }
   if (others.some((t) => t.detail === "base-moved")) {
     return "revert the base change in .warden/config.yaml and run warden compile.";

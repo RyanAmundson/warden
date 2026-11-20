@@ -110,8 +110,9 @@ itself is removed, after it is unstaged if it was staged. Other staged and unsta
 untracked file at a restored path is replaced by the merge-base content. When
 two restored paths, or a restored path and a file in the index, differ only
 in case, `git commit --only` cannot commit them
-correctly, so the action commits the whole index with a plain `git commit`
-instead, and other staged work joins that commit. The commit uses
+correctly. The recovery checks for unrelated staged and unstaged tracked changes
+before restoring the files and committing them with plain `git commit`.
+Move any unrelated changes aside before running the recovery again. The commit uses
 `--allow-empty` so it is still made when a replace ref or a commit-graph file
 makes git's own view of `HEAD` already match the merge base. The restore also
 drops any signed edit to those paths made since the merge base; sign that
