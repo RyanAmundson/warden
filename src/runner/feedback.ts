@@ -77,9 +77,11 @@ const nextAction = (failures: Violation[], set: RecordSet, notes: Notes): string
     const unstage = restore.unstage.length === 0 ? "" : `git --literal-pathspecs rm -q -f --cached --ignore-unmatch -- ${shellWords(restore.unstage)} && `;
     const stray = restore.stray.length === 0 ? "" : `${unstage}git --literal-pathspecs clean -ff -x -- ${shellWords(restore.stray)} && `;
     const back = restore.known.length === 0 ? "" : `git --literal-pathspecs restore --source=${restore.base} --staged --worktree -- ${shellWords(restore.known)} && `;
+    const aliasEntries = restore.aliasEntries ?? [];
+    const materialize = aliasEntries.length === 0 ? "" : `git --literal-pathspecs restore --worktree -- ${shellWords(aliasEntries)} && `;
     const commit = restore.aliased ? "git commit --allow-empty -m 'Restore .warden files changed without an allowed signature'" : `git --literal-pathspecs commit --only --allow-empty -m 'Restore .warden files changed without an allowed signature' -- ${shellWords(restore.paths)}`;
     const preflight = restore.aliased ? restorePreflight([...restore.paths, ...restore.unstage, ...restore.stray]) : "";
-    return `run ${preflight}${stray}${back}${commit} to restore the .warden/ files changed without an allowed signature to the merge base, then run warden check again.`;
+    return `run ${preflight}${stray}${back}${materialize}${commit} to restore the .warden/ files changed without an allowed signature to the merge base, then run warden check again.`;
   }
   if (others.some((t) => t.detail === "base-moved")) {
     return "revert the base change in .warden/config.yaml and run warden compile.";

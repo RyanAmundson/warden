@@ -471,6 +471,7 @@ export interface Restore {
   stray: string[];
   unstage: string[];
   aliased: boolean;
+  aliasEntries?: string[];
 }
 
 export interface Signatures {
@@ -505,7 +506,8 @@ export function changeSignatures(root: string, base: BaseRef, dir: string, allow
   for (const path of judged) if (bad.has(path)) files.set(path, bad.get(path) as string);
   const paths = [...new Set([...bad.keys(), ...scope.filter((p) => alongside.includes(p))])].sort();
   const listed = (args: string[]): string[] => (paths.length === 0 ? [] : names(must(root, ["--literal-pathspecs", ...args, "--", ...paths])));
-  const known = [...new Set([...listed(["ls-tree", "-r", "-z", "--name-only", "--full-tree", at]), ...listed(["ls-files", "-z", "--cached"])])].sort();
+  const baseEntries = listed(["ls-tree", "-r", "-z", "--name-only", "--full-tree", at]);
+  const known = [...new Set([...baseEntries, ...listed(["ls-files", "-z", "--cached"])])].sort();
   const onDisk = (p: string): string | undefined => {
     let path = dir;
     for (const part of p.slice(dir.length + 1).split("/")) {
@@ -523,5 +525,7 @@ export function changeSignatures(root: string, base: BaseRef, dir: string, allow
   const same = (a: string, b: string): boolean => a === b || (icase && a.toLowerCase() === b.toLowerCase());
   const unstage = stray.filter((p) => lstatSync(join(root, p)).isSymbolicLink()).flatMap((p) => indexed.filter((e) => same(e, p)));
   const aliased = new Set(paths.map((p) => p.toLowerCase())).size < paths.length || (icase && paths.some((p) => indexed.some((e) => e !== p && same(e, p))));
-  return { files, restore: { base: at, paths, known, stray, unstage, aliased } };
+  const candidates = [...paths, ...indexed];
+  const aliasEntries = aliased && icase ? baseEntries.filter((p) => candidates.some((e) => e !== p && same(e, p))) : [];
+  return { files, restore: { base: at, paths, known, stray, unstage, aliased, ...(aliasEntries.length === 0 ? {} : { aliasEntries }) } };
 }

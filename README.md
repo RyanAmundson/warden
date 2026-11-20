@@ -111,7 +111,8 @@ untracked file at a restored path is replaced by the merge-base content. When
 two restored paths, or a restored path and a file in the index, differ only
 in case, `git commit --only` cannot commit them
 correctly. The recovery checks for unrelated staged and unstaged tracked changes
-before restoring the files and committing them with plain `git commit`.
+before restoring the files, restores the merge base's spelling from the
+index, and commits with plain `git commit`.
 Move any unrelated changes aside before running the recovery again. The commit uses
 `--allow-empty` so it is still made when a replace ref or a commit-graph file
 makes git's own view of `HEAD` already match the merge base. The restore also
