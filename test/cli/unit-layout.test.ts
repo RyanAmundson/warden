@@ -114,3 +114,48 @@ it("checks the whole opted-in project, reports document and layout failures and 
   const after = check();
   expect(after.status, after.stderr + after.stdout).toBe(0);
 });
+
+it("checks local rendered links from declared documents and the permitted root docs", async () => {
+  const links = () => run("check", "--rule", "warden-unit-document-links", "--tier", "boundary", "--base", "main", "--format", "json");
+  const valid = [
+    "[Port][port]",
+    "[port]: src/port.ts?plain=1#L1",
+    "[Monitor](/api/monitor/)",
+    "[Query and answer](src/q&amp;a.ts)",
+    "[Contract](../docs/CONTRACT.md)",
+    "[This section](#interfaces)",
+    "[External](https://example.org/a)",
+    "`[Code](missing-in-code.md)`",
+    "<!-- [Hidden](missing-in-comment.md) -->",
+  ].join("\n\n");
+  const ampersandFile = "api/src/q&a.ts";
+  const dangling = "api/src/dangling.ts";
+  try {
+    await write(ampersandFile, "export const answer = 42;\n");
+    await symlink("missing.ts", join(root, dangling));
+    await write("api/CONTRACT.md", `${doc}\n${valid}\n`);
+    expect(links().status).toBe(0);
+    const broken = [
+      "[Bad](src/missing.ts)",
+      "[Outside](../../outside.md)",
+      "[Directory required](src/port.ts/)",
+      "[Dangling symlink](src/dangling.ts)",
+    ].join("\n\n");
+    await write("api/CONTRACT.md", `${doc}\n${valid}\n\n${broken}\n`);
+    await write("README.md", "# Fixture\n\n[Incorrect root link](/modules/missing)\n");
+    const failed = links();
+    expect(failed.status, failed.stderr + failed.stdout).toBe(1);
+    expect(JSON.parse(failed.stdout).failures).toEqual(expect.arrayContaining([
+      expect.objectContaining({ file: "api/CONTRACT.md", message: expect.stringContaining("src/missing.ts") }),
+      expect.objectContaining({ file: "api/CONTRACT.md", message: expect.stringContaining("../../outside.md") }),
+      expect.objectContaining({ file: "README.md", message: expect.stringContaining("/modules/missing") }),
+      expect.objectContaining({ file: "api/CONTRACT.md", message: expect.stringContaining("src/port.ts/") }),
+      expect.objectContaining({ file: "api/CONTRACT.md", message: expect.stringContaining("src/dangling.ts") }),
+    ]));
+  } finally {
+    await write("api/CONTRACT.md", doc);
+    await write("README.md", "# Fixture\n");
+    await Promise.all([ampersandFile, dangling].map((file) => rm(join(root, file), { force: true })));
+  }
+  expect(links().status).toBe(0);
+});

@@ -109,10 +109,22 @@ const tree = async ({ entry, input }) => {
             .filter((token) => token.type === "heading" && token.depth === 2)
             .map((token) => token.text);
     };
+    const markdownLinks = (text) => {
+        const { marked } = require("marked");
+        const { decodeHTMLAttribute } = require("entities");
+        const links = [];
+        marked.walkTokens(marked.lexer(text), (token) => {
+            if (token.type === "link" || token.type === "image") {
+                const { href } = token;
+                links.push(decodeHTMLAttribute(href));
+            }
+        });
+        return links;
+    };
     const start = performance.now();
     let found;
     try {
-        const given = { ...input, read, markdownSections, ...(input.imports === undefined ? {} : { imports: new Map(input.imports) }) };
+        const given = { ...input, read, markdownSections, markdownLinks, ...(input.imports === undefined ? {} : { imports: new Map(input.imports) }) };
         Object.defineProperty(given, "ts", { get: () => require("typescript"), enumerable: true });
         found = check(given);
     }
