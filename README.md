@@ -277,6 +277,21 @@ that Term. Warden prints its ID, kind, and purpose. Use
 like a path. An explicit path such as `./change` searches Units only. Exact
 Unit IDs and Terms take precedence over folder ownership.
 
+Register a skill or tool in an enabled project pack using its purpose Term:
+
+```bash
+warden new skill project-report --pack project --serves report \
+  --purpose "Show the project's Guardrails." --when "inspecting project rules" \
+  --command "warden report"
+warden compile
+```
+
+Use `warden new tool` with the same options to register a tool. Both commands
+append a Capability record to `.warden/packs/<pack>/pack.yaml`. The Term must
+already be declared by an enabled pack. Use `--upholds` for Practice IDs and
+`--replaces` for the actions the Capability replaces. Sign the changes to
+`.warden/` after compiling.
+
 For a pack with skill Capabilities, `warden compile` writes a single locked
 `SKILL.md` per skill under `.warden/generated/skills/`. Run `warden doctor`
 for Claude Code or `warden doctor --harness codex` for Codex to check the

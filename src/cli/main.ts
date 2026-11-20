@@ -18,6 +18,7 @@ import { DEFAULT_PORT, installDaemon, runDaemon, uninstallDaemon } from "./daemo
 import { runDispute } from "./dispute.js";
 import { runExplain } from "./explain.js";
 import { runDoctor, runInit } from "./init.js";
+import { runNewCapability } from "./new-capability.js";
 import { runNewUnit } from "./new-unit.js";
 import { runPacks } from "./packs.js";
 import { runReport } from "./report.js";
@@ -126,7 +127,8 @@ program.command("where <term-unit-or-path>")
     process.exitCode = await runWhere(root(), findWardenRoot(), query, options.capability === true);
   });
 
-program.command("new").description("scaffold Warden records")
+const newRecord = program.command("new").description("scaffold Warden records");
+newRecord
   .command("unit <id> <folder>")
   .description("create a Unit record and its required document")
   .requiredOption("--kind <kind>", "Unit kind declared in .warden/config.yaml")
@@ -134,6 +136,22 @@ program.command("new").description("scaffold Warden records")
   .action(async (id: string, folder: string, { kind, term }: { kind: string; term?: string }) => {
     process.exitCode = await runNewUnit(root(), findWardenRoot(), { id, folder, kind, ...(term === undefined ? {} : { term }) });
   });
+
+for (const kind of ["skill", "tool"] as const) {
+  newRecord.command(`${kind} <id>`)
+    .description(`add a ${kind} Capability to a local pack`)
+    .requiredOption("--pack <id>", "enabled local pack that will own the Capability")
+    .requiredOption("--serves <term>", "Term that identifies its purpose")
+    .requiredOption("--purpose <text>", "what the Capability does")
+    .requiredOption("--when <text>", "when to use the Capability")
+    .requiredOption("--command <commands...>", "quoted Warden command lines")
+    .option("--upholds <practices...>", "Practices this Capability enforces", [])
+    .option("--replaces <actions...>", "ad hoc actions this Capability replaces", [])
+    .action(async (id: string, options: { pack: string; serves: string; purpose: string; when: string; command: string[]; upholds: string[]; replaces: string[] }) => {
+      const { pack, command, ...fields } = options;
+      process.exitCode = await runNewCapability(root(), findWardenRoot(), pack, { ...fields, id, kind, commands: command });
+    });
+}
 
 program.command("explain <id>").description("explain a Practice or Guardrail").action(async (id: string) => {
   process.exitCode = await runExplain(root(), findWardenRoot(), id);
