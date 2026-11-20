@@ -1,13 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { wardenVersion } from "../compiler/compile.js";
 import { sha256 } from "../compiler/lock.js";
-import { loadRecords } from "../records/load.js";
+import { RecordError, loadRecords } from "../records/load.js";
 import { reviewAdapters } from "../review/adapter.js";
 import { codeReview, codeReviewBase, isPullRequestUrl } from "../review/code-review.js";
 import { exitCode, touchedLines, triage } from "../review/findings.js";
 import { getRound, listRepositoryEscapeRounds, listRounds, recordEscape, recordReviewerError, recordRound, reviewHistoryState, reviewRepository, reviewSignals, reviewState } from "../review/history.js";
+import { learningEditProposals } from "../review/learning.js";
 import { isAncestor } from "../runner/changed.js";
 const FLAGS = [["capability", "--capability <id>"], ["base", "--base <ref>"], ["head", "--head <ref>"]];
 export function reviewOptions(sub, raw) {
@@ -204,7 +205,7 @@ export function runReviewHistory(root, o) {
     }
     return 0;
 }
-export function runReviewProposals(root, { series, target, capability }) {
+export async function runReviewProposals(root, wardenRoot, { series, target, capability }) {
     const repositoryWide = series === undefined && target === undefined && capability === undefined;
     let rounds;
     if (repositoryWide) {
@@ -231,7 +232,22 @@ export function runReviewProposals(root, { series, target, capability }) {
         else
             group.push(escape);
     }
-    printRecord([...evidence].map(([practice, escapes]) => ({ action: "add", practice, evidence: escapes })));
+    const add = [...evidence].map(([practice, escapes]) => ({ action: "add", practice, evidence: escapes }));
+    if (repositoryWide && existsSync(join(root, ".warden/config.yaml"))) {
+        try {
+            const { edit, mutationPolicyIssue } = await learningEditProposals(await loadRecords(root, wardenRoot), wardenRoot);
+            if (mutationPolicyIssue !== undefined)
+                process.stderr.write(`Mutation-backed Edit proposals are unavailable. ${mutationPolicyIssue}\n`);
+            printRecord([...add, ...edit]);
+            return 0;
+        }
+        catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            const location = error instanceof RecordError ? `${error.file} ${error.pointer}`.trim() : "";
+            process.stderr.write(`Edit proposals are unavailable. ${location === "" ? detail : `${location}: ${detail}`}\nNext action: fix the reported Warden input and run warden review proposals again.\n`);
+        }
+    }
+    printRecord(add);
     return 0;
 }
 const reviewAttribution = (root, o) => {

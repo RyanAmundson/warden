@@ -6,14 +6,9 @@ import { RecordError, loadRecords } from "../records/load.js";
 import { listDisputeRulings } from "../runner/disputes.js";
 import { readEvidence } from "../runner/evidence.js";
 import { listRepositoryEscapeRounds, reviewHistoryState, reviewRepository } from "./history.js";
-export async function learningScorecard(root, wardenRoot) {
-    const set = await loadRecords(root, wardenRoot);
-    const { project } = set.config;
-    const resolved = new Map();
-    const stalls = new Map();
-    const upheld = new Map();
-    const escaped = new Map();
-    const recorded = readEvidence(project);
+const guardrailKey = (pack, guardrail) => JSON.stringify([pack, guardrail]);
+export async function retainedMutations(set, wardenRoot, recorded) {
+    const { root } = set;
     const measurements = recorded.filter((event) => (event.kind === "mutation" || event.kind === "hollow") && event.root === root && event.mutations !== undefined &&
         event.pack !== undefined && event.guardrail !== undefined);
     let currentPolicy;
@@ -34,15 +29,54 @@ export async function learningScorecard(root, wardenRoot) {
     const measuredGuardrails = new Set(measurements.map(({ pack, guardrail }) => JSON.stringify([pack, guardrail])));
     const strength = new Map();
     for (const event of measurements) {
-        if (currentPolicy !== undefined && event.policy === currentPolicy && event.mutations !== undefined) {
-            strength.set(JSON.stringify([event.pack, event.guardrail]), event.mutations);
+        const { at, policy, pack, guardrail, mutations } = event;
+        if (policy !== undefined && policy === currentPolicy && mutations !== undefined && pack !== undefined && guardrail !== undefined) {
+            strength.set(guardrailKey(pack, guardrail), { at, policy, mutations });
         }
     }
+    return { strength, measuredGuardrails, mutationPolicyIssue };
+}
+export async function learningEditProposals(set, wardenRoot) {
+    const { project } = set.config;
+    const disputes = new Map();
+    for (const ruling of listDisputeRulings(project, set.root)) {
+        if (ruling.status !== "upheld")
+            continue;
+        const key = guardrailKey(ruling.pack, ruling.guardrail);
+        const group = disputes.get(key) ?? [];
+        group.push(ruling);
+        disputes.set(key, group);
+    }
+    const { strength, mutationPolicyIssue } = await retainedMutations(set, wardenRoot, readEvidence(project));
+    const edit = set.packs.flatMap((pack) => pack.practices.flatMap((practice) => practice.guardrails.flatMap((guardrail) => {
+        const key = guardrailKey(pack.id, guardrail.id);
+        const evidence = (disputes.get(key) ?? [])
+            .map(({ dispute, role, actor, reason, evidence, file, at }) => ({ kind: "upheld-dispute", dispute, role, actor, reason, evidence, file, at }));
+        const measurement = strength.get(key);
+        const hollow = measurement !== undefined && measurement.mutations.missed.length > 0
+            ? [{ kind: "hollow-mutation", ...measurement }]
+            : [];
+        const signals = [...evidence, ...hollow];
+        if (signals.length === 0)
+            return [];
+        return [{ action: "edit", pack: pack.id, practice: practice.id, guardrail: guardrail.id, evidence: signals }];
+    })));
+    return { edit, mutationPolicyIssue };
+}
+export async function learningScorecard(root, wardenRoot) {
+    const set = await loadRecords(root, wardenRoot);
+    const { project } = set.config;
+    const resolved = new Map();
+    const stalls = new Map();
+    const upheld = new Map();
+    const escaped = new Map();
+    const recorded = readEvidence(project);
+    const { strength, measuredGuardrails, mutationPolicyIssue } = await retainedMutations(set, wardenRoot, recorded);
     for (const e of recorded) {
         if ((e.kind !== "resolved" && e.kind !== "stalled") || e.root !== root || e.guardrail === undefined || e.pack === undefined ||
             e.file === undefined || e.tier === undefined || e.sourceRun === undefined)
             continue;
-        const key = JSON.stringify([e.pack, e.guardrail]);
+        const key = guardrailKey(e.pack, e.guardrail);
         const evidence = e.kind === "resolved" ? resolved : stalls;
         const events = evidence.get(key) ?? new Set();
         events.add(JSON.stringify([e.tier, e.sourceRun, e.file]));
@@ -51,7 +85,7 @@ export async function learningScorecard(root, wardenRoot) {
     for (const ruling of listDisputeRulings(project, root)) {
         if (ruling.status !== "upheld")
             continue;
-        const key = JSON.stringify([ruling.pack, ruling.guardrail]);
+        const key = guardrailKey(ruling.pack, ruling.guardrail);
         upheld.set(key, (upheld.get(key) ?? 0) + 1);
     }
     for (const round of listRepositoryEscapeRounds(reviewRepository(root))) {
@@ -60,11 +94,11 @@ export async function learningScorecard(root, wardenRoot) {
         }
     }
     return set.packs.flatMap((pack) => pack.practices.flatMap((practice) => practice.guardrails.map((guardrail) => {
-        const key = JSON.stringify([pack.id, guardrail.id]);
+        const key = guardrailKey(pack.id, guardrail.id);
         const resolutions = resolved.get(key)?.size ?? 0;
         const disputes = upheld.get(key) ?? 0;
         const total = resolutions + disputes;
-        const measurement = strength.get(key);
+        const measurement = strength.get(key)?.mutations;
         const variants = measurement === undefined ? 0 : measurement.caught.length + measurement.missed.length;
         return {
             pack: pack.id,

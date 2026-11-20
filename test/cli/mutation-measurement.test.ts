@@ -86,6 +86,13 @@ practices:
     expect(current.status, current.stderr).toBe(0);
     const measureOf = (stdout: string) => JSON.parse(stdout).find((row: { guardrail: string }) => row.guardrail === "no-explicit-loop");
     expect(measureOf(current.stdout)).toMatchObject({ mutationStrength: 0.5, mutations: mutants });
+    const proposed = run("review", "proposals");
+    expect(proposed.status, proposed.stderr).toBe(0);
+    expect(JSON.parse(proposed.stdout)).toEqual([{
+      action: "edit", pack: "local", practice: "use-collection-operations", guardrail: "no-explicit-loop",
+      evidence: [{ kind: "hollow-mutation", at: expect.any(String), policy: expect.any(String), mutations: mutants }],
+    }]);
+    expect(run("review", "proposals").stdout).toBe(proposed.stdout);
 
     const manifest = join(root, "package.json");
     put(manifest, "{");
@@ -96,12 +103,16 @@ practices:
       mutationStrength: null,
       mutationPolicyIssue: expect.stringContaining("package.json"),
     });
+    const unverifiedProposals = run("review", "proposals");
+    expect(unverifiedProposals).toMatchObject({ status: 0, stdout: "[]\n" });
+    expect(unverifiedProposals.stderr).toContain("Mutation-backed Edit proposals are unavailable.");
     rmSync(manifest);
 
     put(pack, readFileSync(pack, "utf8").replace("a.n < 2", "a.n < 3"));
     const stale = run("report", "--learning", "--format", "json");
     expect(stale.status, stale.stderr).toBe(0);
     expect(measureOf(stale.stdout)).toMatchObject({ mutationStrength: null });
+    expect(run("review", "proposals")).toMatchObject({ status: 0, stdout: "[]\n" });
     const unsigned = run("review", "mutations", "--base", "main", "--rule", "no-explicit-loop");
     expect(unsigned.status).toBe(2);
     expect(unsigned.stderr).toContain("source-drift");

@@ -251,12 +251,12 @@ reviewSeriesFlags(review.command("history").description("list completed review r
   .action((o: { series: string; target: string; capability: string; round?: string }) => {
     process.exitCode = runReviewHistory(root(), o);
   });
-review.command("proposals").description("list Add proposals for the repository or a review series")
+review.command("proposals").description("list repository proposals or Add proposals for one review series")
   .option("--series <id>", "the change ID for a series query")
   .option("--target <name>", "the target for a series query")
   .option("--capability <id>", "the recording Capability for a series query")
-  .action((o: { series?: string; target?: string; capability?: string }) => {
-    process.exitCode = runReviewProposals(root(), o);
+  .action(async (o: { series?: string; target?: string; capability?: string }) => {
+    process.exitCode = await runReviewProposals(root(), findWardenRoot(), o);
   });
 review.command("mutations").description("measure the Guardrails against their declared must-fail variants")
   .requiredOption("--base <ref>", "the trusted branch the policy is compared against")

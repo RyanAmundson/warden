@@ -78,6 +78,16 @@ it("reports retained corrections, upheld disputes and confirmed escapes within t
     expect(text.status, text.stderr).toBe(0);
     expect(text.stdout).toContain("resolved=1  upheld=1  precision=50%  confirmed no-comments escapes=1");
 
+    const proposals = spawnSync(
+      process.execPath, [join(wardenRoot, "bin/warden.js"), "review", "proposals"], { cwd: root, encoding: "utf8" },
+    );
+    expect(proposals.status, proposals.stderr).toBe(0);
+    expect(JSON.parse(proposals.stdout).filter((entry: { action: string }) => entry.action === "edit")).toEqual([{
+      action: "edit", pack, practice, guardrail, evidence: [expect.objectContaining({
+        kind: "upheld-dispute", role: ruling.role, actor: ruling.actor, reason: ruling.reason, evidence: ruling.evidence, file,
+      })],
+    }]);
+
     await writeFile(foreignRuling, "{");
     const isolated = report(root, "--json");
     expect(isolated.status, isolated.stderr).toBe(0);

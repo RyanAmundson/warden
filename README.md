@@ -73,6 +73,11 @@ example settings. The learning report shows how many variants the adapter
 caught for the current policy. A surviving variant records hollow evidence
 for review.
 
+Run `warden review proposals` to see Add suggestions from confirmed escapes
+and Edit suggestions from upheld disputes or current hollow measurements.
+The output cites the underlying Evidence. An independent reviewer can accept
+a tighter rule. A trusted policy signer must approve any loosening.
+
 ## Resolve a conflict in .warden/baseline.json
 
 Every commit-tier check rewrites `.warden/baseline.json`, so parallel branches

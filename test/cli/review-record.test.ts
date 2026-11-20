@@ -264,6 +264,15 @@ describe("record a completed review", () => {
       { ...second.escape, series: "series-two", target: "Other target", capability: "gate" },
     ]) }]);
     expect(JSON.parse(aggregate.out)[0].evidence).toHaveLength(2);
+    const config = join(root, ".warden/config.yaml");
+    const original = await readFile(config);
+    await writeFile(config, "project: [");
+    const incompleteConfig = await proposals();
+    expect(incompleteConfig).toMatchObject({ code: 0, out: aggregate.out });
+    expect(incompleteConfig.err).toContain("Edit proposals are unavailable.");
+    expect(incompleteConfig.err).toContain(".warden/config.yaml");
+    expect(incompleteConfig.err).toContain("fix the reported Warden input");
+    await writeFile(config, original);
     expect(await readdir(legacyDirectory)).not.toContain("owner.json");
     expect(await second.confirm()).toEqual(second.first);
     expect(await readdir(legacyDirectory)).toContain("owner.json");
