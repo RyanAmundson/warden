@@ -28,7 +28,36 @@ const git = (root: string, args: string[]): { ok: boolean; out: string; err: str
 
 const names = (text: string): string[] => text.split("\0").filter((l) => l !== "");
 
-export const hasCommit = (root: string, ref: string): boolean => git(root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]).ok;
+const commitOf = (root: string, ref: string): string | undefined => {
+  const result = git(root, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`]);
+  return result.ok ? result.out.trim() : undefined;
+};
+
+export const hasCommit = (root: string, ref: string): boolean => commitOf(root, ref) !== undefined;
+
+interface BaseCommit {
+  name: string;
+  commit: string;
+}
+
+export type BaseRef = string | BaseCommit;
+
+const baseName = (base: BaseRef): string => typeof base === "string" ? base : base.name;
+
+export function resolveBaseCommit(root: string, name: string): BaseCommit | undefined {
+  const local = commitOf(root, name);
+  if (local === undefined) return undefined;
+  const head = "refs/heads/";
+  const ref = name === "HEAD" || name === "@" ? "" : git(root, ["rev-parse", "--symbolic-full-name", "--verify", "--end-of-options", name]).out.trim();
+  if (!ref.startsWith(head)) return { name, commit: local };
+  const fromOrigin = git(root, ["show-ref", "--hash", "--verify", `refs/remotes/origin/${ref.slice(head.length)}`]);
+  if (fromOrigin.ok) return { name, commit: fromOrigin.out.trim() };
+  const upstream = git(root, ["for-each-ref", "--count=1", "--format=%(upstream)", ref]).out.trim();
+  return { name, commit: upstream.startsWith("refs/remotes/") ? (commitOf(root, upstream) ?? local) : local };
+}
+
+const comparisonCommit = (root: string, base: BaseRef): string =>
+  typeof base === "string" ? (resolveBaseCommit(root, base)?.commit ?? base) : base.commit;
 
 const must = (root: string, args: string[]): string => {
   const r = git(root, args);
@@ -50,22 +79,23 @@ export const checkBaseAction = ({ base, tracking, remote }: MissingBase): string
   return "run warden check --base <an existing branch>";
 };
 
-export function verifyBase(root: string, base: string, action: (missing: MissingBase) => string): void {
+export function verifyBase(root: string, base: string, action: (missing: MissingBase) => string): BaseCommit {
   if (!isRepository(root)) {
     throw new RecordError(root, "", "not a git repository");
   }
-  if (hasCommit(root, base)) return;
+  const selected = resolveBaseCommit(root, base);
+  if (selected !== undefined) return selected;
   const lines = (args: string[]): string[] => must(root, args).split("\n").filter((l) => l !== "");
   const tracking = lines(["for-each-ref", "--format=%(refname:lstrip=2)", `refs/remotes/*/${base}`])[0];
   const remote = tracking === undefined ? lines(["remote"]).find((r) => git(root, ["ls-remote", "--exit-code", "--heads", r, base]).ok) : undefined;
   throw new RecordError("", "/base", `base ref "${base}" does not exist. Next action: ${action({ base, ...(tracking === undefined ? {} : { tracking }), ...(remote === undefined ? {} : { remote }) })}`);
 }
 
-export function changedFiles(root: string, base: string): string[] {
-  verifyBase(root, base, checkBaseAction);
+export function changedFiles(root: string, base: BaseRef): string[] {
+  const selected = typeof base === "string" ? verifyBase(root, base, checkBaseAction) : base;
   const diff = ["diff", "-z", "--name-only", "--relative", "--diff-filter=ACMR"];
   const files = [
-    ...names(must(root, [...diff, `${base}...HEAD`])),
+    ...names(must(root, [...diff, `${selected.commit}...HEAD`])),
     ...names(must(root, [...diff, "--cached"])),
     ...names(must(root, diff)),
     ...names(must(root, ["ls-files", "-z", "--others", "--exclude-standard"])),
@@ -80,7 +110,7 @@ export const headCommit = (root: string): string | undefined => {
 
 export const matchesHead = (root: string, path: string): boolean => must(root, ["status", "--porcelain", "-z", "--ignored", "--", path]) === "";
 
-export const containsHead = (root: string, ref: string): boolean => git(root, ["merge-base", "--is-ancestor", "HEAD", ref]).ok;
+export const containsHead = (root: string, base: BaseRef): boolean => git(root, ["merge-base", "--is-ancestor", "HEAD", comparisonCommit(root, base)]).ok;
 
 export function historyOf(root: string, path: string): string[] {
   const commits = names(must(root, ["log", "-z", "--full-history", "--format=%H", "HEAD", "--", path]));
@@ -119,8 +149,9 @@ export function lastCommittedText(root: string, path: string): string | undefine
   return before.ok ? before.out : undefined;
 }
 
-export const mergeBase = (root: string, base: string): string => {
-  const r = git(root, ["merge-base", base, "HEAD"]);
+export const mergeBase = (root: string, comparison: BaseRef): string => {
+  const r = git(root, ["merge-base", comparisonCommit(root, comparison), "HEAD"]);
+  const base = baseName(comparison);
   if (r.ok) return r.out.trim();
   if (git(root, ["rev-parse", "--is-shallow-repository"]).out.trim() === "true") {
     throw new RecordError("", "/base", `${base} and HEAD have no merge base in this shallow clone. Next action: run git fetch --unshallow, then run warden check --base ${base} again.`);
@@ -200,7 +231,7 @@ export async function skippedIndexPaths(root: string, paths: Set<string>): Promi
   return skipped;
 }
 
-export async function changesSinceMergeBase(root: string, base: string): Promise<Changes> {
+export async function changesSinceMergeBase(root: string, base: BaseRef): Promise<Changes> {
   const at = mergeBase(root, base);
   const lines: Changes["lines"] = new Map();
   let current: Set<number> | undefined;
@@ -220,7 +251,7 @@ export async function changesSinceMergeBase(root: string, base: string): Promise
   return { lines, renames: renamesAt(root, at) };
 }
 
-export const renamesSinceMergeBase = (root: string, base: string): Changes["renames"] => renamesAt(root, mergeBase(root, base));
+export const renamesSinceMergeBase = (root: string, base: BaseRef): Changes["renames"] => renamesAt(root, mergeBase(root, base));
 
 function renamesAt(root: string, at: string): Changes["renames"] {
   const renames = new Map<string, string>();
@@ -233,7 +264,7 @@ function renamesAt(root: string, at: string): Changes["renames"] {
   return renames;
 }
 
-export function showAtMergeBase(root: string, base: string, path: string): string | undefined {
+export function showAtMergeBase(root: string, base: BaseRef, path: string): string | undefined {
   const spec = `${mergeBase(root, base)}:./${path}`;
   if (!git(root, ["cat-file", "-e", spec]).ok) return undefined;
   return must(root, ["show", spec]);
@@ -356,7 +387,7 @@ export const sparseMode = (root: string): SparseMode => {
   return !on("core.sparseCheckout") ? "off" : on("core.sparseCheckoutCone") ? "cone" : "patterns";
 };
 
-export function stagedMismatch(root: string, base: string): StagedMismatch {
+export function stagedMismatch(root: string, base: BaseRef): StagedMismatch {
   const literal = (args: string[]): string[] => names(must(root, ["--literal-pathspecs", ...args]));
   const staged = literal(["diff", "-z", "--cached", "--name-only", "--relative", "--no-renames", "--diff-filter=AM", mergeBase(root, base)]);
   if (staged.length === 0) return { paths: [], hidden: [], absent: [] };
@@ -428,7 +459,7 @@ export interface Signatures {
   restore: Restore;
 }
 
-export function changeSignatures(root: string, base: string, dir: string, allowedSignersFile: string, staged: boolean, alongside: string[]): Signatures {
+export function changeSignatures(root: string, base: BaseRef, dir: string, allowedSignersFile: string, staged: boolean, alongside: string[]): Signatures {
   const at = mergeBase(root, base);
   const icase = git(root, ["config", "--bool", "core.ignorecase"]).out.trim() === "true";
   const spec = `:(literal${icase ? ",icase" : ""})${dir}`;

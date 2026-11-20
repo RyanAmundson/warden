@@ -25,7 +25,27 @@ const git = (root, args) => {
     }
 };
 const names = (text) => text.split("\0").filter((l) => l !== "");
-export const hasCommit = (root, ref) => git(root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]).ok;
+const commitOf = (root, ref) => {
+    const result = git(root, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`]);
+    return result.ok ? result.out.trim() : undefined;
+};
+export const hasCommit = (root, ref) => commitOf(root, ref) !== undefined;
+const baseName = (base) => typeof base === "string" ? base : base.name;
+export function resolveBaseCommit(root, name) {
+    const local = commitOf(root, name);
+    if (local === undefined)
+        return undefined;
+    const head = "refs/heads/";
+    const ref = name === "HEAD" || name === "@" ? "" : git(root, ["rev-parse", "--symbolic-full-name", "--verify", "--end-of-options", name]).out.trim();
+    if (!ref.startsWith(head))
+        return { name, commit: local };
+    const fromOrigin = git(root, ["show-ref", "--hash", "--verify", `refs/remotes/origin/${ref.slice(head.length)}`]);
+    if (fromOrigin.ok)
+        return { name, commit: fromOrigin.out.trim() };
+    const upstream = git(root, ["for-each-ref", "--count=1", "--format=%(upstream)", ref]).out.trim();
+    return { name, commit: upstream.startsWith("refs/remotes/") ? (commitOf(root, upstream) ?? local) : local };
+}
+const comparisonCommit = (root, base) => typeof base === "string" ? (resolveBaseCommit(root, base)?.commit ?? base) : base.commit;
 const must = (root, args) => {
     const r = git(root, args);
     if (!r.ok)
@@ -44,18 +64,19 @@ export function verifyBase(root, base, action) {
     if (!isRepository(root)) {
         throw new RecordError(root, "", "not a git repository");
     }
-    if (hasCommit(root, base))
-        return;
+    const selected = resolveBaseCommit(root, base);
+    if (selected !== undefined)
+        return selected;
     const lines = (args) => must(root, args).split("\n").filter((l) => l !== "");
     const tracking = lines(["for-each-ref", "--format=%(refname:lstrip=2)", `refs/remotes/*/${base}`])[0];
     const remote = tracking === undefined ? lines(["remote"]).find((r) => git(root, ["ls-remote", "--exit-code", "--heads", r, base]).ok) : undefined;
     throw new RecordError("", "/base", `base ref "${base}" does not exist. Next action: ${action({ base, ...(tracking === undefined ? {} : { tracking }), ...(remote === undefined ? {} : { remote }) })}`);
 }
 export function changedFiles(root, base) {
-    verifyBase(root, base, checkBaseAction);
+    const selected = typeof base === "string" ? verifyBase(root, base, checkBaseAction) : base;
     const diff = ["diff", "-z", "--name-only", "--relative", "--diff-filter=ACMR"];
     const files = [
-        ...names(must(root, [...diff, `${base}...HEAD`])),
+        ...names(must(root, [...diff, `${selected.commit}...HEAD`])),
         ...names(must(root, [...diff, "--cached"])),
         ...names(must(root, diff)),
         ...names(must(root, ["ls-files", "-z", "--others", "--exclude-standard"])),
@@ -67,7 +88,7 @@ export const headCommit = (root) => {
     return r.ok ? r.out.trim() : undefined;
 };
 export const matchesHead = (root, path) => must(root, ["status", "--porcelain", "-z", "--ignored", "--", path]) === "";
-export const containsHead = (root, ref) => git(root, ["merge-base", "--is-ancestor", "HEAD", ref]).ok;
+export const containsHead = (root, base) => git(root, ["merge-base", "--is-ancestor", "HEAD", comparisonCommit(root, base)]).ok;
 export function historyOf(root, path) {
     const commits = names(must(root, ["log", "-z", "--full-history", "--format=%H", "HEAD", "--", path]));
     if (commits.length === 0)
@@ -104,8 +125,9 @@ export function lastCommittedText(root, path) {
     const before = git(root, ["show", `${last.out.trim()}^:./${path}`]);
     return before.ok ? before.out : undefined;
 }
-export const mergeBase = (root, base) => {
-    const r = git(root, ["merge-base", base, "HEAD"]);
+export const mergeBase = (root, comparison) => {
+    const r = git(root, ["merge-base", comparisonCommit(root, comparison), "HEAD"]);
+    const base = baseName(comparison);
     if (r.ok)
         return r.out.trim();
     if (git(root, ["rev-parse", "--is-shallow-repository"]).out.trim() === "true") {

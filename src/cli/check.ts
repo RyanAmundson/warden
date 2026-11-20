@@ -11,7 +11,7 @@ import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import type { Guardrail, Kind, RecordSet, Tier } from "../records/types.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, projectFiles, projectInventory, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache, type CachedViolations } from "../runner/cache.js";
-import { commitsOf, covers, indexTree, stagedMismatch, checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, skippedIndexPaths, stageFile, sparseMode, stagedFiles, type StagedBlob, unstagedFiles, verifyBase, checkoutBlobs } from "../runner/changed.js";
+import { type BaseRef, commitsOf, covers, indexTree, stagedMismatch, checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, skippedIndexPaths, stageFile, sparseMode, stagedFiles, type StagedBlob, unstagedFiles, verifyBase, checkoutBlobs } from "../runner/changed.js";
 import { type Detection, heartbeatProblem, openAlerts } from "../runner/daemon.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { type Evidence, LOOP_TAIL_BYTES, type Outcome, RUN_TOTAL, type RunFailure, type Step, type Trigger, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
@@ -53,8 +53,9 @@ const hookBase = (root: string): string => {
   return readLock(root).config.base;
 };
 
-const refuseOwnBranch = (root: string, base: string): void => {
-  if (!containsHead(root, base)) return;
+const refuseOwnBranch = (root: string, comparison: ReturnType<typeof verifyBase>): void => {
+  if (!containsHead(root, comparison)) return;
+  const base = comparison.name;
   const recorded = recordedBases(root);
   if (recorded.every((b) => b === base)) return;
   const original = recorded.at(-1) as string;
@@ -73,14 +74,14 @@ const removedWarden = (root: string, given: string | undefined): { set: RecordSe
   if (text === undefined) return undefined;
   const config = parseConfig(".warden/config.yaml", text);
   const base = requireBase(given, config.base);
-  verifyBase(root, base, checkBaseAction);
-  refuseOwnBranch(root, base);
-  if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined) return undefined;
+  const comparison = verifyBase(root, base, checkBaseAction);
+  refuseOwnBranch(root, comparison);
+  if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, comparison, LOCK_PATH) === undefined) return undefined;
   const file = existsSync(join(root, ".warden")) ? ".warden/config.yaml" : ".warden";
   return { set: { config, packs: [], root }, tamper: { file, detail: "removed" } };
 };
 
-const scannedFiles = (root: string, base: string, paths: string[] | undefined): string[] => {
+const scannedFiles = (root: string, base: BaseRef, paths: string[] | undefined): string[] => {
   if (paths === undefined) return changedFiles(root, base).filter((f) => existsSync(join(root, f)) && statSync(join(root, f)).isFile());
   return paths.map((p) => {
     const file = relative(root, resolve(root, p));
@@ -340,12 +341,12 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
     }
   }
   const base = requireBase(opts.base ?? (opts.hook === "claude" ? hookBase(root) : undefined), set.config.base);
-  verifyBase(root, base, checkBaseAction);
-  refuseOwnBranch(root, base);
-  live.base = { base, mergeBase: mergeBase(root, base) };
+  const comparison = verifyBase(root, base, checkBaseAction);
+  refuseOwnBranch(root, comparison);
+  live.base = { base, mergeBase: mergeBase(root, comparison) };
   const alerts = openAlerts(root);
   openStep(live, "rules-intact");
-  if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined) {
+  if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, comparison, LOCK_PATH) === undefined) {
     throw new RecordError(LOCK_PATH, "", "not found; this project was never compiled. Next action: run warden compile.");
   }
   const running = await wardenVersion(opts.wardenRoot);
@@ -360,7 +361,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const unknown = unknownAdapters(set);
   if (unknown.length > 0) {
     const working = existsSync(join(root, LOCK_PATH)) ? readLock(root).sources : undefined;
-    const baseLock = readBaseLock(root, base);
+    const baseLock = readBaseLock(root, comparison);
     const based = baseLock === undefined ? {} : baseLock.sources;
     const sourceKey = (file: string): string => (file.startsWith(join(root, ".warden") + sep) ? relative(root, file) : relative(opts.wardenRoot, file));
     const tampered: Tamper[] = working === undefined && baseLock !== undefined ? [{ file: LOCK_PATH, detail: "missing-lock" }] : [];
@@ -381,7 +382,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
     throw new RecordError(first.file, `/guardrails/${first.record}/implementation`, first.message);
   }
 
-  const tampered = await findTampering(set, opts.wardenRoot, base, opts.trigger === "git-commit");
+  const tampered = await findTampering(set, opts.wardenRoot, comparison, opts.trigger === "git-commit");
   if (tampered.length > 0) {
     for (const t of tampered) appendEvidence(project, { at, kind: "tampered", file: t.file, detail: t.detail, guardrail: t.guardrail });
     closeStep(live, "fail");
@@ -414,7 +415,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   if (guardrailsOf(set, "eslint:warden/no-comments").some((g) => selected.has(g.id))) for (const g of directives) if (g.runs.includes(tier)) selected.add(g.id);
   const lintChosen = chosen.some((g) => g.kind === "lint");
   const guardrails = selectGuardrails(set, undefined).filter((g) => (lintChosen && g.kind === "lint" && !wholeTree(g)) || selected.has(g.id));
-  const listed = scannedFiles(root, base, opts.paths);
+  const listed = scannedFiles(root, comparison, opts.paths);
   const unstaged = new Set(tier === "commit" ? unstagedFiles(root) : []);
   const index = process.env.GIT_INDEX_FILE;
   const onlyCommit = opts.trigger === "git-commit" && index !== undefined && !["index", "index.lock"].includes(basename(index));
@@ -427,7 +428,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
       const notes = { unstaged: differing, base, sparse: sparseMode(root) };
       return finish(project, "unstaged", scanned, report([], set, opts, notes), { set, notes });
     }
-    const mismatch = stagedMismatch(root, base);
+    const mismatch = stagedMismatch(root, comparison);
     if (mismatch.paths.length > 0) {
       const notes = { unstaged: mismatch.paths, hidden: mismatch.hidden, base, sparse: sparseMode(root) };
       return finish(project, "unstaged", scanned, report([], set, opts, notes), { set, notes });
@@ -468,7 +469,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
     .filter((r) => r.status === "killed")
     .map((r) => ({ guardrail: r.guardrail, ms: r.ms, command: r.command as string }));
 
-  const changes = await changesSinceMergeBase(root, base);
+  const changes = await changesSinceMergeBase(root, comparison);
   const touched = (v: Violation): boolean => {
     const lines = changes.lines.get(v.file);
     if (lines === "all") return true;

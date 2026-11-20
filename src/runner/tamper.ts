@@ -7,7 +7,7 @@ import { LOCK_FORMAT, LOCK_PATH, PROJECT_SOURCE, type Lock, canonicalJson, readL
 import { RecordError, readText } from "../records/load.js";
 import { type BenchSettings, type Kind, type RecordSet, kindRank } from "../records/types.js";
 import { BASELINE_PATH, type Baseline, carryRenames, projectWideEntries, readBaseline } from "./baseline.js";
-import { type Restore, changeSignatures, trackedFiles, renamesSinceMergeBase, containsHead, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
+import { type BaseRef, type Restore, changeSignatures, trackedFiles, renamesSinceMergeBase, containsHead, resolveBaseCommit, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
 
 export interface Tamper {
   file: string;
@@ -68,8 +68,9 @@ export function recordedBases(root: string): string[] {
   );
 }
 
-export function readBaseLock(root: string, base: string): Lock | undefined {
-  const text = showAtMergeBase(root, base, LOCK_PATH);
+export function readBaseLock(root: string, comparison: BaseRef): Lock | undefined {
+  const text = showAtMergeBase(root, comparison, LOCK_PATH);
+  const base = typeof comparison === "string" ? comparison : comparison.name;
   if (text === undefined) return undefined;
   let before: Lock;
   try {
@@ -112,16 +113,17 @@ export const widens = (now: string, was: string): boolean => {
   return a.length === b.length && a.every((glob, i) => globWidens(glob, b[i] as string));
 };
 
-const loosened = (set: RecordSet, wardenRoot: string, base: string, lock: Lock): Tamper[] => {
+const loosened = (set: RecordSet, wardenRoot: string, comparison: BaseRef, lock: Lock): Tamper[] => {
   const { root } = set;
-  const before = readBaseLock(root, base);
+  const base = typeof comparison === "string" ? comparison : comparison.name;
+  const before = readBaseLock(root, comparison);
   if (before === undefined) return [];
   const changed = (was: unknown, now: unknown): boolean => was !== undefined && was !== now;
   const found: Tamper[] = [];
   const tiers = Object.keys(lock.config.tierBudgetMs) as (keyof Lock["config"]["tierBudgetMs"])[];
   const committed = lastCommittedText(root, LOCK_PATH);
   const heads = [lock, ...((committed === undefined ? [] : parsedOrSkipped(committed)) as Lock[])];
-  const restoring = base === recordedBases(root).at(-1) && containsHead(root, base);
+  const restoring = base === recordedBases(root).at(-1) && containsHead(root, comparison);
   if (heads.some((l) => changed(before.config.base, l.config?.base) && !(restoring && l.config?.base === base))) found.push({ file: LOCK_PATH, detail: "base-moved" });
   if (
     changed(before.config.project, lock.config.project) ||
@@ -156,8 +158,8 @@ const loosened = (set: RecordSet, wardenRoot: string, base: string, lock: Lock):
   }
   const editedCode = Object.keys(before.sources ?? {}).filter((k) => ((/^\.warden\/packs\/[^/]+\/./.test(k) && !k.endsWith("/pack.yaml")) || k.startsWith(PROJECT_SOURCE)) && before.sources[k] !== lock.sources[k]);
   if (editedCode.length > 0) found.push({ file: LOCK_PATH, detail: "loosened" });
-  const renames = renamesSinceMergeBase(root, base);
-  const baseBaseline = carryRenames(JSON.parse(showAtMergeBase(root, base, BASELINE_PATH) ?? "{}") as Baseline, renames);
+  const renames = renamesSinceMergeBase(root, comparison);
+  const baseBaseline = carryRenames(JSON.parse(showAtMergeBase(root, comparison, BASELINE_PATH) ?? "{}") as Baseline, renames);
   for (const [id, entries] of Object.entries(carryRenames(readBaseline(root), renames))) {
     if (id in lock.guardrails && !(id in before.guardrails)) continue;
     for (const [file, n] of Object.entries(entries)) {
@@ -169,7 +171,7 @@ const loosened = (set: RecordSet, wardenRoot: string, base: string, lock: Lock):
   return sources.length === 0 ? found : found.map((t) => (t.file === LOCK_PATH && t.detail === "loosened" ? { ...t, sources } : t));
 };
 
-const unsignedChanges = (root: string, base: string, wardenRoot: string, staged: boolean): Tamper[] => {
+const unsignedChanges = (root: string, base: BaseRef, wardenRoot: string, staged: boolean): Tamper[] => {
   const signers = join(wardenRoot, SIGNERS_FILE);
   const listed = existsSync(signers) && readFileSync(signers, "utf8").trim() !== "";
   const { files, restore } = changeSignatures(root, base, ".warden", signers, staged, [BASELINE_PATH]);
@@ -181,7 +183,7 @@ const unsignedChanges = (root: string, base: string, wardenRoot: string, staged:
   return failed.map(([file, status]): Tamper => ({ file, detail: status === "N" ? "unsigned" : "untrusted-signature", restore }));
 };
 
-export async function findTampering(set: RecordSet, wardenRoot: string, base: string, staged: boolean): Promise<Tamper[]> {
+export async function findTampering(set: RecordSet, wardenRoot: string, base: BaseRef, staged: boolean): Promise<Tamper[]> {
   const root = set.root;
   const lock = existsSync(join(root, LOCK_PATH)) ? readLock(root) : undefined;
   const found: Tamper[] = leftoverTemps(root, lock).map((file) => ({ file, detail: "leftover-temp" }));
@@ -209,5 +211,6 @@ export async function findTampering(set: RecordSet, wardenRoot: string, base: st
   }
 
   found.push(...projectWideEntries(readBaseline(root)).map((guardrail): Tamper => ({ file: BASELINE_PATH, detail: "loosened", guardrail })));
-  return [...found, ...loosened(set, wardenRoot, base, lock), ...unsignedChanges(root, base, wardenRoot, staged)];
+  const comparison = typeof base === "string" ? (resolveBaseCommit(root, base) ?? base) : base;
+  return [...found, ...loosened(set, wardenRoot, comparison, lock), ...unsignedChanges(root, comparison, wardenRoot, staged)];
 }

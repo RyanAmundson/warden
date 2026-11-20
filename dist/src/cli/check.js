@@ -35,9 +35,10 @@ const hookBase = (root) => {
         throw new RecordError(LOCK_PATH, "", "is missing, so the edit hook has no base branch. Next action: run warden compile");
     return readLock(root).config.base;
 };
-const refuseOwnBranch = (root, base) => {
-    if (!containsHead(root, base))
+const refuseOwnBranch = (root, comparison) => {
+    if (!containsHead(root, comparison))
         return;
+    const base = comparison.name;
     const recorded = recordedBases(root);
     if (recorded.every((b) => b === base))
         return;
@@ -58,9 +59,9 @@ const removedWarden = (root, given) => {
         return undefined;
     const config = parseConfig(".warden/config.yaml", text);
     const base = requireBase(given, config.base);
-    verifyBase(root, base, checkBaseAction);
-    refuseOwnBranch(root, base);
-    if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined)
+    const comparison = verifyBase(root, base, checkBaseAction);
+    refuseOwnBranch(root, comparison);
+    if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, comparison, LOCK_PATH) === undefined)
         return undefined;
     const file = existsSync(join(root, ".warden")) ? ".warden/config.yaml" : ".warden";
     return { set: { config, packs: [], root }, tamper: { file, detail: "removed" } };
@@ -303,12 +304,12 @@ const check = async (opts, live) => {
         }
     }
     const base = requireBase(opts.base ?? (opts.hook === "claude" ? hookBase(root) : undefined), set.config.base);
-    verifyBase(root, base, checkBaseAction);
-    refuseOwnBranch(root, base);
-    live.base = { base, mergeBase: mergeBase(root, base) };
+    const comparison = verifyBase(root, base, checkBaseAction);
+    refuseOwnBranch(root, comparison);
+    live.base = { base, mergeBase: mergeBase(root, comparison) };
     const alerts = openAlerts(root);
     openStep(live, "rules-intact");
-    if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, base, LOCK_PATH) === undefined) {
+    if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, comparison, LOCK_PATH) === undefined) {
         throw new RecordError(LOCK_PATH, "", "not found; this project was never compiled. Next action: run warden compile.");
     }
     const running = await wardenVersion(opts.wardenRoot);
@@ -323,7 +324,7 @@ const check = async (opts, live) => {
     const unknown = unknownAdapters(set);
     if (unknown.length > 0) {
         const working = existsSync(join(root, LOCK_PATH)) ? readLock(root).sources : undefined;
-        const baseLock = readBaseLock(root, base);
+        const baseLock = readBaseLock(root, comparison);
         const based = baseLock === undefined ? {} : baseLock.sources;
         const sourceKey = (file) => (file.startsWith(join(root, ".warden") + sep) ? relative(root, file) : relative(opts.wardenRoot, file));
         const tampered = working === undefined && baseLock !== undefined ? [{ file: LOCK_PATH, detail: "missing-lock" }] : [];
@@ -346,7 +347,7 @@ const check = async (opts, live) => {
         const [first] = unknown;
         throw new RecordError(first.file, `/guardrails/${first.record}/implementation`, first.message);
     }
-    const tampered = await findTampering(set, opts.wardenRoot, base, opts.trigger === "git-commit");
+    const tampered = await findTampering(set, opts.wardenRoot, comparison, opts.trigger === "git-commit");
     if (tampered.length > 0) {
         for (const t of tampered)
             appendEvidence(project, { at, kind: "tampered", file: t.file, detail: t.detail, guardrail: t.guardrail });
@@ -382,7 +383,7 @@ const check = async (opts, live) => {
                 selected.add(g.id);
     const lintChosen = chosen.some((g) => g.kind === "lint");
     const guardrails = selectGuardrails(set, undefined).filter((g) => (lintChosen && g.kind === "lint" && !wholeTree(g)) || selected.has(g.id));
-    const listed = scannedFiles(root, base, opts.paths);
+    const listed = scannedFiles(root, comparison, opts.paths);
     const unstaged = new Set(tier === "commit" ? unstagedFiles(root) : []);
     const index = process.env.GIT_INDEX_FILE;
     const onlyCommit = opts.trigger === "git-commit" && index !== undefined && !["index", "index.lock"].includes(basename(index));
@@ -395,7 +396,7 @@ const check = async (opts, live) => {
             const notes = { unstaged: differing, base, sparse: sparseMode(root) };
             return finish(project, "unstaged", scanned, report([], set, opts, notes), { set, notes });
         }
-        const mismatch = stagedMismatch(root, base);
+        const mismatch = stagedMismatch(root, comparison);
         if (mismatch.paths.length > 0) {
             const notes = { unstaged: mismatch.paths, hidden: mismatch.hidden, base, sparse: sparseMode(root) };
             return finish(project, "unstaged", scanned, report([], set, opts, notes), { set, notes });
@@ -437,7 +438,7 @@ const check = async (opts, live) => {
     const killed = [...perFile, ...wholeProject]
         .filter((r) => r.status === "killed")
         .map((r) => ({ guardrail: r.guardrail, ms: r.ms, command: r.command }));
-    const changes = await changesSinceMergeBase(root, base);
+    const changes = await changesSinceMergeBase(root, comparison);
     const touched = (v) => {
         const lines = changes.lines.get(v.file);
         if (lines === "all")
