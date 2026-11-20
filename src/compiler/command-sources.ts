@@ -67,7 +67,11 @@ const ASSIGNMENT = /^[A-Za-z_]\w*=/;
 
 const NODE_FILE_FLAGS = new Set(["-r", "--require", "--import", "--loader", "--experimental-loader"]);
 
-const NODE_VALUE_FLAGS = new Set(["-C", "--conditions", "--input-type", "--env-file", "--tsconfig", "-P", "--project"]);
+const NODE_INLINE_FLAGS = new Set(["-e", "-p", "-pe", "--eval", "--print"]);
+
+const NODE_INLINE_BOOL = new Set(["--no-warnings", "--trace-warnings", "--enable-source-maps", "--inspect", "--inspect-brk"]);
+
+const NODE_VALUE_FLAGS = new Set(["--title", "-C", "--conditions", "--input-type", "--env-file", "--tsconfig", "-P", "--project"]);
 
 const TSX_WATCH_VALUE_FLAGS = new Set(["--include", "--exclude", "--ignore"]);
 
@@ -217,6 +221,10 @@ const addModule = (w: Walk, dir: string, spec: string): void => {
   if (found !== undefined) addFile(w, dir, found);
 };
 
+const addNodeImports = (w: Walk, dir: string, text: string): void => {
+  for (const match of text.matchAll(IMPORT)) addModule(w, dir, match[1] as string);
+};
+
 const addFile = (w: Walk, cwd: string, path: string, kind?: ProgramKind): void => {
   const full = resolve(cwd, path);
   const key = projectKey(w, full);
@@ -228,7 +236,7 @@ const addFile = (w: Walk, cwd: string, path: string, kind?: ProgramKind): void =
   const text = bytes.toString("utf8");
   if (kind === "node" || MODULE.test(full) || NODE_SHEBANG.test(text)) {
     w.nodeModules.add(key);
-    for (const m of text.matchAll(IMPORT)) addModule(w, dirname(full), m[1] as string);
+    addNodeImports(w, dirname(full), text);
   } else if (kind === "shell" || SHELL_SCRIPT.test(full) || SHELL_SHEBANG.test(text)) {
     walk({ ...w, strict: false }, text, cwd);
   }
@@ -288,6 +296,8 @@ const nodeEntry = (cwd: string, path: string): string => {
 
 const nodeLike = (w: Walk, cmd: string, args: string[], cwd: string, form: string): void => {
   const watch = cmd === "tsx" && args[0] === "watch";
+  let inline: string | undefined;
+  let printOnly = false;
   for (let i = watch ? 1 : 0; i < args.length; i++) {
     const a = args[i] as string;
     const [flag, value] = a.startsWith("--") && a.includes("=") ? [a.slice(0, a.indexOf("=")), a.slice(a.indexOf("=") + 1)] : [a, undefined];
@@ -296,7 +306,18 @@ const nodeLike = (w: Walk, cmd: string, args: string[], cwd: string, form: strin
       continue;
     }
     if (watch && flag === "--clear-screen") continue;
-    if (flag === "-e" || flag === "-p" || flag === "-pe" || flag === "--eval" || flag === "--print") return;
+    if (NODE_INLINE_FLAGS.has(flag)) {
+      if (cmd !== "node") return;
+      const print = flag === "-p" || flag === "--print";
+      const next = args[i + 1];
+      if (print && (next === undefined || next.startsWith("-"))) {
+        printOnly = true;
+        continue;
+      }
+      inline = flag === "--eval" && value !== undefined ? value : args[++i];
+      if (inline === undefined) return;
+      continue;
+    }
     if (NODE_FILE_FLAGS.has(flag)) {
       const spec = value ?? args[++i];
       if (spec !== undefined && /^\.{0,2}\//.test(spec)) addProgram(w, cwd, spec, form, []);
@@ -306,11 +327,18 @@ const nodeLike = (w: Walk, cmd: string, args: string[], cwd: string, form: strin
       if (value === undefined) i++;
       continue;
     }
+    if (inline !== undefined) {
+      if (a === "--" || a === "-" || !a.startsWith("-")) break;
+      if (NODE_INLINE_BOOL.has(flag)) continue;
+      return refuse(w, `${form}, with the ${cmd} option ${a}`, []);
+    }
     if ((a.startsWith("--") && value !== undefined) || NODE_BOOL.test(a)) continue;
     if (a.startsWith("-")) return refuse(w, `${form}, with the ${cmd} option ${a}`, projectFiles(w, cwd, args));
     const program = cmd === "node" ? nodeEntry(cwd, a) : a;
     return addProgram(w, cwd, program, form, args.slice(i + 1), cmd === "node" && !/\.(?:json|node)$/.test(program) ? "node" : undefined);
   }
+  if (inline !== undefined) return addNodeImports(w, cwd, inline);
+  if (printOnly) return;
   refuse(w, watch ? `${form}, which names no script to watch` : `${form}, which reads its program from standard input`, []);
 };
 

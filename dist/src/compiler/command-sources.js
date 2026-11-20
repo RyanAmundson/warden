@@ -24,7 +24,9 @@ const EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"
 const PACK_PROGRAM = /^\$(?:\{WARDEN_PACK_DIR\}|WARDEN_PACK_DIR)\/[^$]*$/;
 const ASSIGNMENT = /^[A-Za-z_]\w*=/;
 const NODE_FILE_FLAGS = new Set(["-r", "--require", "--import", "--loader", "--experimental-loader"]);
-const NODE_VALUE_FLAGS = new Set(["-C", "--conditions", "--input-type", "--env-file", "--tsconfig", "-P", "--project"]);
+const NODE_INLINE_FLAGS = new Set(["-e", "-p", "-pe", "--eval", "--print"]);
+const NODE_INLINE_BOOL = new Set(["--no-warnings", "--trace-warnings", "--enable-source-maps", "--inspect", "--inspect-brk"]);
+const NODE_VALUE_FLAGS = new Set(["--title", "-C", "--conditions", "--input-type", "--env-file", "--tsconfig", "-P", "--project"]);
 const TSX_WATCH_VALUE_FLAGS = new Set(["--include", "--exclude", "--ignore"]);
 const NODE_BOOL = /^--(?:no-[\w-]+|experimental-[\w-]+|enable-source-maps|trace-[\w-]+|expose-gc|preserve-symlinks(?:-main)?|inspect(?:-brk)?|throw-deprecation|pending-deprecation|frozen-intrinsics|transpile-only|swc|esm)$/;
 const SHELL_LETTERS = /^[-+][aefhklmnuvxBCEHPTc]+$/;
@@ -179,6 +181,10 @@ const addModule = (w, dir, spec) => {
     if (found !== undefined)
         addFile(w, dir, found);
 };
+const addNodeImports = (w, dir, text) => {
+    for (const match of text.matchAll(IMPORT))
+        addModule(w, dir, match[1]);
+};
 const addFile = (w, cwd, path, kind) => {
     const full = resolve(cwd, path);
     const key = projectKey(w, full);
@@ -192,8 +198,7 @@ const addFile = (w, cwd, path, kind) => {
     const text = bytes.toString("utf8");
     if (kind === "node" || MODULE.test(full) || NODE_SHEBANG.test(text)) {
         w.nodeModules.add(key);
-        for (const m of text.matchAll(IMPORT))
-            addModule(w, dirname(full), m[1]);
+        addNodeImports(w, dirname(full), text);
     }
     else if (kind === "shell" || SHELL_SCRIPT.test(full) || SHELL_SHEBANG.test(text)) {
         walk({ ...w, strict: false }, text, cwd);
@@ -258,6 +263,8 @@ const nodeEntry = (cwd, path) => {
 };
 const nodeLike = (w, cmd, args, cwd, form) => {
     const watch = cmd === "tsx" && args[0] === "watch";
+    let inline;
+    let printOnly = false;
     for (let i = watch ? 1 : 0; i < args.length; i++) {
         const a = args[i];
         const [flag, value] = a.startsWith("--") && a.includes("=") ? [a.slice(0, a.indexOf("=")), a.slice(a.indexOf("=") + 1)] : [a, undefined];
@@ -268,8 +275,20 @@ const nodeLike = (w, cmd, args, cwd, form) => {
         }
         if (watch && flag === "--clear-screen")
             continue;
-        if (flag === "-e" || flag === "-p" || flag === "-pe" || flag === "--eval" || flag === "--print")
-            return;
+        if (NODE_INLINE_FLAGS.has(flag)) {
+            if (cmd !== "node")
+                return;
+            const print = flag === "-p" || flag === "--print";
+            const next = args[i + 1];
+            if (print && (next === undefined || next.startsWith("-"))) {
+                printOnly = true;
+                continue;
+            }
+            inline = flag === "--eval" && value !== undefined ? value : args[++i];
+            if (inline === undefined)
+                return;
+            continue;
+        }
         if (NODE_FILE_FLAGS.has(flag)) {
             const spec = value ?? args[++i];
             if (spec !== undefined && /^\.{0,2}\//.test(spec))
@@ -281,6 +300,13 @@ const nodeLike = (w, cmd, args, cwd, form) => {
                 i++;
             continue;
         }
+        if (inline !== undefined) {
+            if (a === "--" || a === "-" || !a.startsWith("-"))
+                break;
+            if (NODE_INLINE_BOOL.has(flag))
+                continue;
+            return refuse(w, `${form}, with the ${cmd} option ${a}`, []);
+        }
         if ((a.startsWith("--") && value !== undefined) || NODE_BOOL.test(a))
             continue;
         if (a.startsWith("-"))
@@ -288,6 +314,10 @@ const nodeLike = (w, cmd, args, cwd, form) => {
         const program = cmd === "node" ? nodeEntry(cwd, a) : a;
         return addProgram(w, cwd, program, form, args.slice(i + 1), cmd === "node" && !/\.(?:json|node)$/.test(program) ? "node" : undefined);
     }
+    if (inline !== undefined)
+        return addNodeImports(w, cwd, inline);
+    if (printOnly)
+        return;
     refuse(w, watch ? `${form}, which names no script to watch` : `${form}, which reads its program from standard input`, []);
 };
 const scripted = (w, cmd, args, cwd, form, inline, bool, valued) => {

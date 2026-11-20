@@ -312,7 +312,10 @@ versions and settings differ in when they run those scripts. If a lifecycle
 script is outside the tracer's supported forms, call the Guardrail's check
 file directly. For a JS or TS script, or one whose
 shebang runs node, it hashes each module the script reaches through static
-relative `import`, `export … from`, and `require`. Inside a hashed shell
+relative `import`, `export … from`, and `require`. For inline Node `--eval`
+or `--print` programs, the same references resolve from the command's working
+directory. If Warden cannot identify the selected program because of an
+unsupported option, it directs the author to call a script file. Inside a hashed shell
 script, compile follows the invocations it resolves, best effort, and hashes
 their callees by the same rules; a form it cannot resolve in a script body
 never stops compile, so a callee reached through such a form must be listed

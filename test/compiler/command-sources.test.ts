@@ -73,6 +73,57 @@ it("locks the entry and imports of a tsx watch command", async () => {
   }
 });
 
+it("locks modules used by inline Node eval and print commands from their working directory", async () => {
+  const root = await mkdtemp(join(tmpdir(), "warden-node-eval-"));
+  try {
+    const cwd = join(root, "scripts");
+    await mkdir(cwd);
+    const entry = 'module.exports = require("./message.cjs");\n';
+    const message = 'module.exports = "checked";\n';
+    await writeFile(join(cwd, "verify.cjs"), entry);
+    await writeFile(join(cwd, "message.cjs"), message);
+    const sources = { "./scripts/verify.cjs": entry, "./scripts/message.cjs": message };
+    const program = 'require("./verify.cjs")';
+    for (const [invocation, args] of [
+      [`node -e 'console.log(${program})'`, ["-e", `console.log(${program})`]],
+      [`node --eval='console.log(${program})'`, [`--eval=console.log(${program})`]],
+      [`node --print '${program}'`, ["--print", program]],
+      [`node -pe '${program}'`, ["-pe", program]],
+      [`node -p --eval='${program}'`, ["-p", `--eval=${program}`]],
+    ] as const) {
+      expect(execFileSync(process.execPath, args, { cwd, encoding: "utf8" })).toBe("checked\n");
+      expect(commandSources(root, `cd scripts && ${invocation}`, []), invocation).toEqual(sources);
+    }
+    const esm = 'import result from "./verify.cjs"; console.log(result)';
+    expect(execFileSync(process.execPath, ["--input-type=module", "-e", esm], { cwd, encoding: "utf8" })).toBe("checked\n");
+    expect(commandSources(root, `cd scripts && node --input-type=module -e '${esm}'`, [])).toEqual(sources);
+    const preload = 'process.stdout.write("preloaded\\n");\n';
+    await writeFile(join(cwd, "preload.cjs"), preload);
+    expect(execFileSync(process.execPath, ["-pe", program, "-r", "./preload.cjs"], { cwd, encoding: "utf8" })).toBe("preloaded\nchecked\n");
+    expect(commandSources(root, `cd scripts && node -pe '${program}' -r ./preload.cjs`, [])).toEqual({
+      ...sources,
+      "./scripts/preload.cjs": preload,
+    });
+    const finalProgram = 'console.log(require("./message.cjs"))';
+    for (const [options, args, expected] of [
+      ["", [], { "./scripts/message.cjs": message }],
+      ["--title fixture", ["--title", "fixture"], { "./scripts/message.cjs": message }],
+      ["--no-warnings", ["--no-warnings"], { "./scripts/message.cjs": message }],
+      ["--", ["--"], sources],
+      ["positional-arg", ["positional-arg"], sources],
+    ] as const) {
+      const firstProgram = `console.log("first", ${program})`;
+      expect(execFileSync(process.execPath, ["-e", firstProgram, ...args, "-e", finalProgram], { cwd, encoding: "utf8" })).toBe(expected === sources ? "first checked\n" : "checked\n");
+      expect(commandSources(root, `cd scripts && node -e '${firstProgram}' ${options} -e '${finalProgram}'`, []), options).toEqual(expected);
+    }
+    expect(() => commandSources(root, `cd scripts && node -e '${program}' --debug-port 9229 -e '${finalProgram}'`, []))
+      .toThrow("with the node option --debug-port");
+    expect(commandSources(root, "node --print", [])).toEqual({});
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 it("locks root package scripts and their sources when run through pnpm or Yarn", async () => {
   const root = await mkdtemp(join(tmpdir(), "warden-package-command-"));
   try {
