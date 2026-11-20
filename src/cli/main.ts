@@ -15,7 +15,7 @@ import type { Format } from "../runner/feedback.js";
 import { runBench } from "./bench.js";
 import { runCheck } from "./check.js";
 import { DEFAULT_PORT, installDaemon, runDaemon, uninstallDaemon } from "./daemon.js";
-import { runDispute } from "./dispute.js";
+import { runDispute, runDisputeRuling } from "./dispute.js";
 import { runExplain } from "./explain.js";
 import { runDoctor, runInit } from "./init.js";
 import { runNewCapability } from "./new-capability.js";
@@ -245,16 +245,27 @@ review.command("proposals").description("list Add proposals for the repository o
   .action((o: { series?: string; target?: string; capability?: string }) => {
     process.exitCode = runReviewProposals(root(), o);
   });
-type ReviewAttributionOptions = { series: string; target: string; capability: string; round: string; finding: string; role: string; actor: string; reason: string; evidence: string };
-const reviewAttributionFlags = (c: Command): Command =>
-  reviewSeriesFlags(c)
-    .requiredOption("--capability <id>", "the recording Capability")
-    .requiredOption("--round <id>", "the completed round ID")
-    .requiredOption("--finding <n>", "the original finding number")
-    .requiredOption("--role <role>", "independent-reviewer or repository-owner")
+type AttributionOptions = { role: string; actor: string; reason: string; evidence: string };
+type ReviewAttributionOptions = AttributionOptions & { series: string; target: string; capability: string; round: string; finding: string };
+const attributionFlags = (c: Command): Command =>
+  c.requiredOption("--role <role>", "independent-reviewer or repository-owner")
     .requiredOption("--actor <name>", "the identity of the person or reviewer who made the ruling")
     .requiredOption("--reason <text>", "the reason for the ruling")
     .requiredOption("--evidence <reference>", "evidence supporting the ruling");
+
+const reviewAttributionFlags = (c: Command): Command =>
+  attributionFlags(reviewSeriesFlags(c)
+    .requiredOption("--capability <id>", "the recording Capability")
+    .requiredOption("--round <id>", "the completed round ID")
+    .requiredOption("--finding <n>", "the original finding number"));
+
+attributionFlags(review.command("dispute <id>").description("record an attributed Guardrail dispute ruling"))
+  .requiredOption("--status <status>", "upheld or rejected")
+  .action(async (id: string, o: AttributionOptions & { status: string }) => {
+    const status = oneOf("review dispute", "status", o.status, ["upheld", "rejected"] as const);
+    const role = oneOf("review dispute", "role", o.role, ["independent-reviewer", "repository-owner"] as const);
+    process.exitCode = await runDisputeRuling(root(), findWardenRoot(), id, { ...o, status, role });
+  });
 
 reviewAttributionFlags(review.command("rule").description("record a reviewer error on one finding"))
   .action((o: ReviewAttributionOptions) => {

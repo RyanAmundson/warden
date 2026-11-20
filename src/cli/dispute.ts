@@ -1,7 +1,6 @@
-import { randomUUID } from "node:crypto";
 import { isAbsolute, relative, sep } from "node:path";
 import { RecordError, loadRecords } from "../records/load.js";
-import { appendEvidence } from "../runner/evidence.js";
+import { type DisputeDecision, fileDispute, ruleDispute } from "../runner/disputes.js";
 
 interface DisputeOptions {
   reason?: string;
@@ -23,20 +22,14 @@ export async function runDispute(root: string, wardenRoot: string, guardrail: st
   if (pack === undefined) {
     throw new RecordError("", "", `No enabled Guardrail has id "${guardrail}". Next action: run warden report to find the Guardrail id, then run warden dispute again.`);
   }
-  const dispute = randomUUID();
-  appendEvidence(set.config.project, {
-    at: new Date().toISOString(),
-    kind: "disputed",
-    status: "open",
-    trigger: "manual",
-    dispute,
-    guardrail,
-    pack: pack.id,
-    root,
-    file,
-    detail: reason,
-    attempts,
-  });
+  const dispute = fileDispute({ project: set.config.project, root, guardrail, pack: pack.id, file }, reason, attempts);
   process.stdout.write(`Recorded dispute ${dispute} for ${guardrail} in ${file || "this project"}.\n`);
+  return 0;
+}
+
+export async function runDisputeRuling(root: string, wardenRoot: string, dispute: string, decision: DisputeDecision): Promise<number> {
+  const set = await loadRecords(root, wardenRoot);
+  const ruling = ruleDispute(set.config.project, root, dispute, decision);
+  process.stdout.write(`${JSON.stringify(ruling)}\n`);
   return 0;
 }

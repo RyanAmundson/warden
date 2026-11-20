@@ -1,7 +1,7 @@
-import { linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { canonicalJson, sha256 } from "../compiler/lock.js";
-import { wardenHome } from "../runner/evidence.js";
+import { linkRecord, wardenHome } from "../runner/evidence.js";
 const roundId = (number, entry) => `${number}:${sha256(canonicalJson(JSON.parse(JSON.stringify(entry))))}`;
 const seriesPath = (key) => join(wardenHome(), "review", sha256(canonicalJson([key.repository, key.series, key.target, key.capability])));
 const roundPath = (directory, number) => join(directory, `round-${number}.json`);
@@ -115,18 +115,6 @@ export function listRepositoryEscapeRounds(repository) {
     }
     return rounds;
 }
-const linkRecord = (directory, path, value) => {
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
-    const temp = mkdtempSync(join(directory, ".pending-"));
-    try {
-        const candidate = join(temp, "record.json");
-        writeFileSync(candidate, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600, flush: true });
-        linkSync(candidate, path);
-    }
-    finally {
-        rmSync(temp, { recursive: true, force: true });
-    }
-};
 function recordSeriesOwner(directory, { repository, series, target, capability }) {
     const owner = readSeriesOwner(directory);
     if (owner instanceof Error)
@@ -134,7 +122,7 @@ function recordSeriesOwner(directory, { repository, series, target, capability }
     if (owner !== undefined)
         return;
     try {
-        linkRecord(directory, ownerPath(directory), { repository, series, target, capability });
+        linkRecord(ownerPath(directory), { repository, series, target, capability });
     }
     catch (cause) {
         if (cause.code !== "EEXIST")
@@ -159,7 +147,7 @@ export function recordRound(entry, previous) {
     }
     const round = { schema: 1, id, number, recordedAt: new Date().toISOString(), ...entry };
     try {
-        linkRecord(directory, roundPath(directory, number), round);
+        linkRecord(roundPath(directory, number), round);
         return { round, rulings: [], active: round.result.findings };
     }
     catch (cause) {
@@ -199,7 +187,7 @@ export function recordReviewerError(round, input) {
     const directory = seriesPath(round.input);
     const ruling = { ...input, round: round.id, ruledAt: new Date().toISOString() };
     try {
-        linkRecord(directory, rulingPath(directory, round, input.finding), ruling);
+        linkRecord(rulingPath(directory, round, input.finding), ruling);
         return ruling;
     }
     catch (cause) {
@@ -252,7 +240,7 @@ export function recordEscape(round, input) {
     const name = escapeKey(input.finding, input.practice);
     const escape = { ...input, kind: "escaped", round: round.id, head: round.input.head, confirmedAt: new Date().toISOString() };
     try {
-        linkRecord(directory, join(directory, name), escape);
+        linkRecord(join(directory, name), escape);
         return escape;
     }
     catch (cause) {

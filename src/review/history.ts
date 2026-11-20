@@ -1,8 +1,8 @@
-import { linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { canonicalJson, sha256 } from "../compiler/lock.js";
 import type { ReviewRule } from "../records/types.js";
-import { wardenHome } from "../runner/evidence.js";
+import { linkRecord, wardenHome } from "../runner/evidence.js";
 import type { Kind, ReviewFinding } from "./findings.js";
 
 export interface ReviewSeries {
@@ -149,24 +149,12 @@ export function listRepositoryEscapeRounds(repository: string): ReviewRound[] {
   return rounds;
 }
 
-const linkRecord = (directory: string, path: string, value: object): void => {
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const temp = mkdtempSync(join(directory, ".pending-"));
-  try {
-    const candidate = join(temp, "record.json");
-    writeFileSync(candidate, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600, flush: true });
-    linkSync(candidate, path);
-  } finally {
-    rmSync(temp, { recursive: true, force: true });
-  }
-};
-
 function recordSeriesOwner(directory: string, { repository, series, target, capability }: ReviewSeries): void {
   const owner = readSeriesOwner(directory);
   if (owner instanceof Error) throw owner;
   if (owner !== undefined) return;
   try {
-    linkRecord(directory, ownerPath(directory), { repository, series, target, capability });
+    linkRecord(ownerPath(directory), { repository, series, target, capability });
   } catch (cause) {
     if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
     const recorded = readSeriesOwner(directory);
@@ -188,7 +176,7 @@ export function recordRound(entry: ReviewEntry, previous: ReviewRound | undefine
   }
   const round: ReviewRound = { schema: 1, id, number, recordedAt: new Date().toISOString(), ...entry };
   try {
-    linkRecord(directory, roundPath(directory, number), round);
+    linkRecord(roundPath(directory, number), round);
     return { round, rulings: [], active: round.result.findings };
   } catch (cause) {
     if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
@@ -238,7 +226,7 @@ export function recordReviewerError(round: ReviewRound, input: ReviewRulingInput
   const directory = seriesPath(round.input);
   const ruling = { ...input, round: round.id, ruledAt: new Date().toISOString() };
   try {
-    linkRecord(directory, rulingPath(directory, round, input.finding), ruling);
+    linkRecord(rulingPath(directory, round, input.finding), ruling);
     return ruling;
   } catch (cause) {
     if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
@@ -299,7 +287,7 @@ export function recordEscape(round: ReviewRound, input: ReviewRulingInput & { pr
   const name = escapeKey(input.finding, input.practice);
   const escape: ReviewEscape = { ...input, kind: "escaped", round: round.id, head: round.input.head, confirmedAt: new Date().toISOString() };
   try {
-    linkRecord(directory, join(directory, name), escape);
+    linkRecord(join(directory, name), escape);
     return escape;
   } catch (cause) {
     if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;

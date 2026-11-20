@@ -1,6 +1,6 @@
-import { appendFileSync, closeSync, fstatSync, mkdirSync, openSync, readSync, readdirSync, renameSync, statSync } from "node:fs";
+import { appendFileSync, closeSync, fstatSync, linkSync, mkdirSync, mkdtempSync, openSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 export const RUN_TOTAL = "run";
 export const ESLINT_PASS = "eslint-pass";
 export const wardenHome = () => process.env.WARDEN_HOME ?? join(homedir(), ".warden");
@@ -27,6 +27,19 @@ const rotate = (project) => {
             throw cause;
     }
 };
+export function linkRecord(path, value) {
+    const directory = dirname(path);
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const temp = mkdtempSync(join(directory, ".pending-"));
+    try {
+        const candidate = join(temp, "record.json");
+        writeFileSync(candidate, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600, flush: true });
+        linkSync(candidate, path);
+    }
+    finally {
+        rmSync(temp, { recursive: true, force: true });
+    }
+}
 export function appendEvidence(project, e) {
     mkdirSync(join(wardenHome(), "evidence"), { recursive: true });
     if (sizeOf(evidenceFile(project)) >= ROTATE_BYTES)
