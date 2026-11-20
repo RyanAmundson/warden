@@ -7,6 +7,7 @@ settings:
   properties:
     contractExports: { type: array, items: { type: string, minLength: 1 }, default: [] }
     entryPoints: { type: array, items: { type: string, minLength: 1 }, uniqueItems: true }
+    generatedPaths: { description: Repository-relative glob patterns for generated code, type: array, items: { type: string, minLength: 1 }, uniqueItems: true }
 practices:
   - id: small-functions
     statement: Functions stay small. Complexity at most 10, so at most 9 decisions such as if, loop, case, ?:, &&, ||, and ??; at most 3 levels of nesting, 50 lines, and 4 parameters.
@@ -114,7 +115,7 @@ practices:
         mustFail: "export const f = (unused: number): number => 1;\n"
         mustPass: "export const f = (used: number): number => used;\n"
   - id: no-repeated-code
-    statement: No block of 8 or more significant lines appears twice. A significant line has a letter or digit outside comments, import and export lists, and TypeScript type alias and interface declarations. Test, spec, story, and declaration files are excluded.
+    statement: No block of 8 or more significant lines appears twice. A significant line has a letter or digit outside comments, import and export lists, and TypeScript type alias and interface declarations. Test, spec, story, declaration, and generated files listed in the generatedPaths setting are excluded.
     terms: []
     paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"]
     conflictsWith: []

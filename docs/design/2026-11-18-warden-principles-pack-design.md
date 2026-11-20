@@ -184,6 +184,12 @@ Cross-file checks as tree checks shipped in the pack, each an `fs` or
   of every export of the file they name.
 - Import lists and export lists are not significant lines for the
   duplicate-block check.
+- List generated source under `settings.generatedPaths` on the Principles
+  pack entry in `.warden/config.yaml`. Use repository-relative glob patterns
+  such as `src/generated/**` or `src/client.ts`. Write a literal opening
+  bracket as `[[]`, as in `src/[[]components]/generated/**`.
+  The duplicate-block check skips matching files. Run `warden compile` and
+  include the config and updated lock in a signed commit.
 - Both name checks skip export names that a framework requires by name:
   Next.js page, layout, and route exports (`metadata`, `generateMetadata`,
   `viewport`, `generateViewport`, `generateStaticParams`,

@@ -364,6 +364,38 @@ export class Factory {
     expect((await scan("principles-unused-exports", tree))?.status).toBe("pass");
   });
 
+  it("duplicate blocks: configured generated paths do not supply or receive findings", async () => {
+    const tree = {
+      "generated/nested/client.ts": block("generatedClient"),
+      "src/a.ts": block("written"),
+      "src/one.generated.ts": block("written"),
+      "src/z.ts": block("copy"),
+    };
+    const rule = "principles-duplicate-blocks";
+    const locations = async () => (await scan(rule, tree))?.violations.map(({ file, message }) => [file, message]);
+    const fromGenerated = "Lines 2-9 repeat the block that starts at generated/nested/client.ts:2.";
+    expect(await locations()).toEqual([
+      ["src/a.ts", fromGenerated],
+      ["src/one.generated.ts", "Lines 1-9 repeat the block that starts at src/a.ts:1."],
+      ["src/z.ts", fromGenerated],
+    ]);
+    await reconfigure(`  - id: principles\n    paths: ${paths}\n    settings: { generatedPaths: ["generated/**", "src/one.generated.ts"] }\n`);
+    expect(await locations()).toEqual([["src/z.ts", "Lines 2-9 repeat the block that starts at src/a.ts:2."]]);
+    expect((await scan("principles-duplicate-exports", tree))?.violations.map(({ file }) => file)).toEqual(["src/one.generated.ts"]);
+  });
+
+  it("duplicate blocks: a glob with escaped brackets matches the generated collection", async () => {
+    await reconfigure(`  - id: principles\n    paths: ${paths}\n    settings: { generatedPaths: ["src/[[]components]/generated/**"] }\n`);
+    const result = await scan("principles-duplicate-blocks", {
+      "src/[components]/generated/client.ts": block("generatedClient"),
+      "src/a.ts": block("first"),
+      "src/c/generated/client.ts": block("second"),
+    });
+    expect(result?.violations.map(({ file, message }) => [file, message])).toEqual([
+      ["src/c/generated/client.ts", "Lines 2-9 repeat the block that starts at src/a.ts:2."],
+    ]);
+  });
+
   it("duplicate blocks: import and export lists are not significant", async () => {
     const list = (name: string): string =>
       `import {\n${lines(8, (i) => `  hook${i},`)}\n} from "react";\nimport type { A } from "./a";\nexport {\n${lines(8, (i) => `  hook${i},`)}\n};\nexport const ${name} = 1;\n`;

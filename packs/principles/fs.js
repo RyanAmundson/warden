@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import { append, declaredExports, isTest, lineOf, parsed, sourceFiles } from "./code.js";
 
 const WINDOW = 8;
@@ -41,6 +42,8 @@ const withoutTypeDeclarations = (ts, file, text) => {
 };
 
 const duplicateBlocks = (input) => {
+  const generatedPaths = input.settings.generatedPaths ?? [];
+  const files = input.files.filter((file) => !generatedPaths.some((pattern) => posix.matchesGlob(file, pattern)));
   const ids = new Map();
   const seen = new Map();
   const found = [];
@@ -54,7 +57,7 @@ const duplicateBlocks = (input) => {
         if (!ids.has(text)) ids.set(text, ids.size);
         return { id: ids.get(text), n };
       });
-  for (const { file, text } of sourceFiles(input).filter((f) => f.reported)) {
+  for (const { file, text } of sourceFiles(input, files).filter((f) => f.reported)) {
     const lines = significant(withoutTypeDeclarations(input.ts, file, text));
     let block;
     const flush = () => {
