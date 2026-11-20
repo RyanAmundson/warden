@@ -186,6 +186,29 @@ describe("principles pack", () => {
     expect((await scan("principles-unused-exports", { "src/main.ts": "export const run = 1;\n", "src/lib.ts": "export const used = 1;\nexport const spare = 2;\n", "src/use.ts": 'import { used } from "./lib";\nconsole.log(used);\n' }))?.violations.map((v) => `${v.file}:${v.line}`)).toEqual(["src/lib.ts:2"]);
   });
 
+  it("unused exports: a declared public entry keeps its interface after the first internal import", async () => {
+    const tree = {
+      "src/api.ts": "export const run = 1;\nexport const external = 2;\n",
+      "src/internal/api.ts": "export const start = 1;\nexport const spare = 2;\n",
+      "src/use.ts": 'import { start } from "./internal/api";\nconsole.log(start);\n',
+    };
+    expect(await found("principles-unused-exports", tree)).toEqual([
+      "src/internal/api.ts:2: spare is exported, but no other file imports it.",
+    ]);
+    const imported = {
+      ...tree,
+      "src/use.ts": `${tree["src/use.ts"]}import { run } from "./api";\nconsole.log(run);\n`,
+    };
+    expect(await found("principles-unused-exports", imported)).toEqual([
+      "src/api.ts:2: external is exported, but no other file imports it.",
+      "src/internal/api.ts:2: spare is exported, but no other file imports it.",
+    ]);
+    await reconfigure(`  - id: principles\n    paths: ${paths}\n    settings: { entryPoints: [src/api.ts] }\n`);
+    expect(await found("principles-unused-exports", imported)).toEqual([
+      "src/internal/api.ts:2: spare is exported, but no other file imports it.",
+    ]);
+  });
+
   it("unused exports: a name behind an export-star barrel is used", async () => {
     const tree = {
       "src/parse.ts": "export const parse = 1;\n",

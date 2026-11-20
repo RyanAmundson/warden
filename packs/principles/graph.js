@@ -7,6 +7,7 @@ const unusedExports = (input) => {
   const { ts } = input;
   const files = parsed(input, input.all);
   const checked = new Set(input.files);
+  const entryPoints = new Set(input.settings.entryPoints ?? []);
   const importers = new Map();
   const namespaceMembers = new Map();
   const stems = new Map(files.map(({ file }) => [stemOf(file), file]));
@@ -125,7 +126,7 @@ const unusedExports = (input) => {
     return by === undefined || (by.size === 1 && by.has(file));
   };
   return files
-    .filter((f) => f.reported && checked.has(f.file))
+    .filter((f) => f.reported && checked.has(f.file) && !entryPoints.has(f.file))
     .flatMap(({ file, ast }) =>
       declaredExports(ts, ast, input.settings.contractExports ?? [])
         .filter(({ name }) => unused(name, file))

@@ -6,6 +6,7 @@ settings:
   additionalProperties: false
   properties:
     contractExports: { type: array, items: { type: string, minLength: 1 }, default: [] }
+    entryPoints: { type: array, items: { type: string, minLength: 1 }, uniqueItems: true }
 practices:
   - id: small-functions
     statement: Functions stay small. Complexity at most 10, so at most 9 decisions such as if, loop, case, ?:, &&, ||, and ??; at most 3 levels of nesting, 50 lines, and 4 parameters.
@@ -131,7 +132,7 @@ practices:
           src/a.ts: "export default (n: number): number => n + 1;\n"
           src/b.ts: "import step from \"./a\";\nconsole.log(step(1));\n"
   - id: no-speculative-code
-    statement: Code builds nothing ahead of need. Every export of a file that another file imports is imported by another file, since a file nothing imports is an entry point whose exports are its interface, and an interface has more than one implementing class unless it sits in a port, the file named after its group folder inside a bracketed collection. Test, spec, and story files count as users but are not checked. Export-star barrels count as uses. Framework names such as metadata, GET, and loader, and names listed in the contractExports setting, are exempt.
+    statement: Code builds nothing ahead of need. Every export of a file that another file imports is imported by another file, unless the file is listed in the entryPoints setting. Files no other file imports and declared entry points expose their exports as their public interface. An interface has more than one implementing class unless it sits in a port, the file named after its group folder inside a bracketed collection. Test, spec, and story files count as users but are not checked. Export-star barrels count as uses. Framework names such as metadata, GET, and loader, and names listed in the contractExports setting, are exempt.
     terms: []
     paths: ["**/*.{ts,tsx,mts,cts,js,mjs,cjs}"]
     conflictsWith: []

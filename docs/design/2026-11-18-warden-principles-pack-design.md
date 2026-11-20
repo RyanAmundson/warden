@@ -149,6 +149,11 @@ Cross-file checks as tree checks shipped in the pack, each an `fs` or
   as a script, a package's main file, or a page a framework loads, and its
   exports are its interface. This also keeps a one-file example of another
   Guardrail from failing the check.
+- List public entry files under `settings.entryPoints` on the Principles
+  pack entry in `.warden/config.yaml`. Use exact repository-relative paths
+  such as `src/api.ts`. This preserves their public exports after an internal
+  file starts importing the entry. Run `warden compile` and include the
+  config and updated lock in a signed commit.
 - The checks share `packs/principles/code.js`. They read the files Warden
   gives them through `read`, never the disk, and parse them with the `ts`
   compiler API Warden passes in. Each finding names one file and line, and
