@@ -367,7 +367,7 @@ const scripted = (w, cmd, args, cwd, form, inline, bool, valued) => {
     for (let i = 0; i < args.length; i++) {
         const a = args[i];
         if (inline.has(a))
-            return;
+            return refuse(w, `${cmd} ${a} with inline code`, []);
         if (valued.has(a)) {
             i++;
             continue;

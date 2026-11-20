@@ -390,7 +390,7 @@ const nodeLike = (w: Walk, cmd: string, args: string[], cwd: string, form: strin
 const scripted = (w: Walk, cmd: string, args: string[], cwd: string, form: string, inline: Set<string>, bool: RegExp, valued: Set<string>): void => {
   for (let i = 0; i < args.length; i++) {
     const a = args[i] as string;
-    if (inline.has(a)) return;
+    if (inline.has(a)) return refuse(w, `${cmd} ${a} with inline code`, []);
     if (valued.has(a)) {
       i++;
       continue;
