@@ -1,6 +1,6 @@
 {
   "format": 3,
-  "warden": "0.1.13",
+  "warden": "0.1.14",
   "sources": {
     ".warden/config.yaml": "2280033b1777f6de504790f367247cbd9d99df3dc4f7605b396435ce60a48b77",
     "allowed_signers": "44f0e698f518b31dbccfd1c7763a60827646fcb7e7ff2c3add820f240d9650e3",
@@ -17,8 +17,8 @@
     "typescript": "5.9.3"
   },
   "generated": {
-    ".warden/generated/eslint.rules.json": "106d2f9871a6bd562f602f1516fc49c04b79e11ebb6e150a2dec961a4eed8ecc",
-    ".warden/generated/hooks/pre-commit": "dd0884a00a2e5b649484ad75d90d9c81e8c9695c4180a5f3823afb1960dac475"
+    ".warden/generated/eslint.rules.json": "5c6842801dc4c5eb3b73005f597dad375539f1a958a745fbab20683a13ff4d83",
+    ".warden/generated/hooks/pre-commit": "05e077de3ffcc81a358b893133face9fd257addfa9f22dc114e6d279f1ffcabd"
   },
   "guardrails": {
     "warden-no-comments": {
