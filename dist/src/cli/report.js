@@ -83,8 +83,13 @@ export async function buildReport(root, wardenRoot) {
             const rows = inTier.filter((e) => passRows.has(e) && e.rules !== undefined && keyOf(e.members) === key);
             if (rows.length === 0)
                 return [];
-            const overhead = rows.map((e) => e.ms - Object.values(e.rules).reduce((a, b) => a + b, 0));
-            return [{ shared: rows[0]?.shared, members: rows[0]?.members, ...spread(overhead) }];
+            const overhead = new Map();
+            for (const e of rows) {
+                const run = e.run;
+                const rulesMs = Object.values(e.rules).reduce((a, b) => a + b, 0);
+                overhead.set(run, (overhead.get(run) ?? 0) + e.ms - rulesMs);
+            }
+            return [{ shared: rows[0]?.shared, members: rows[0]?.members, ...spread([...overhead.values()]) }];
         });
         const budgetMs = set.config.tierBudgetMs[tier];
         const combined = spread(ran);

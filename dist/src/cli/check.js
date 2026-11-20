@@ -10,7 +10,7 @@ import { LOCK_FORMAT, LOCK_PATH, bundledTools, canonicalJson, olderThan, readLoc
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, projectFiles, projectInventory, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { commitsOf, covers, indexTree, stagedMismatch, checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, skippedIndexPaths, stageFile, sparseMode, stagedFiles, unstagedFiles, verifyBase, checkoutBlobs } from "../runner/changed.js";
+import { commitsOf, covers, indexTree, stagedMismatch, checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, skippedIndexPaths, stageFile, sparseMode, stagedFiles, trackedFiles, unstagedFiles, verifyBase, checkoutBlobs } from "../runner/changed.js";
 import { heartbeatProblem, openAlerts } from "../runner/daemon.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
@@ -145,7 +145,7 @@ const runCached = async (set, gs, scanned, shas, ctx, project, run) => {
 };
 const judgeBlobs = async (root, set, gs, blobs, ctx) => {
     if (blobs.length === 0)
-        return { results: [], shas: new Map() };
+        return { results: [], shas: new Map(), bytes: 0 };
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "warden-blobs-")));
     const remove = () => rmSync(dir, { recursive: true, force: true });
     const signals = ["SIGINT", "SIGTERM", "SIGHUP"];
@@ -163,8 +163,15 @@ const judgeBlobs = async (root, set, gs, blobs, ctx) => {
     try {
         const paths = blobs.map((b) => b.path);
         const at = checkoutBlobs(root, paths, dir);
-        const shas = new Map(paths.map((p) => [p, sha256(readFileSync(join(at, p)))]));
-        return { results: gs.length === 0 ? [] : await runGuardrails(set, gs, paths, { ...ctx, root: at, captureLintSource: true }), shas };
+        const shas = new Map();
+        let bytes = 0;
+        for (const path of paths) {
+            const content = readFileSync(join(at, path));
+            shas.set(path, sha256(content));
+            bytes += content.length;
+        }
+        const results = gs.length === 0 ? [] : await runGuardrails(set, gs, paths, { ...ctx, root: at, captureLintSource: true });
+        return { results: results.map((result) => ({ files: paths.length, bytes, ...result })), shas, bytes };
     }
     finally {
         release();
@@ -243,8 +250,9 @@ const check = async (opts, live) => {
         throw new RecordError(".warden", "", "is a symbolic link. Next action: move the link aside, restore the tracked .warden directory, then run warden check again.");
     }
     const { at, run, tier } = live;
-    const finish = (project, outcome, files, code, judged) => {
-        const bytes = files.reduce((n, f) => n + statSync(join(root, f)).size, 0);
+    const finish = (project, outcome, files, code, judged, blobs = { paths: [], bytes: 0 }) => {
+        const bytes = files.reduce((n, f) => n + statSync(join(root, f)).size, blobs.bytes);
+        const inputs = [...files, ...blobs.paths];
         const commit = headCommit(root);
         const failures = judged?.failures ?? [];
         const feedback = judged === undefined ? undefined : JSON.parse(formatFeedback(failures, judged.set, "json", judged.notes));
@@ -263,8 +271,8 @@ const check = async (opts, live) => {
             exit: code,
             ms: performance.now() - live.started,
             steps: live.steps,
-            files: files.length,
-            ...(files.length === 1 ? { file: files[0] } : {}),
+            files: inputs.length,
+            ...(inputs.length === 1 ? { file: inputs[0] } : {}),
             bytes,
             ...(commit === undefined ? {} : { commit }),
             ...live.base,
@@ -386,33 +394,42 @@ const check = async (opts, live) => {
     const listed = scannedFiles(root, comparison, opts.paths);
     const unstaged = new Set(tier === "commit" ? unstagedFiles(root) : []);
     const index = process.env.GIT_INDEX_FILE;
-    const onlyCommit = opts.trigger === "git-commit" && index !== undefined && !["index", "index.lock"].includes(basename(index));
-    const committing = onlyCommit ? new Set(stagedFiles(root)) : undefined;
-    const scanned = committing === undefined ? listed : listed.filter((f) => committing.has(f) || !unstaged.has(f));
+    const onlyCommit = tier === "commit" && opts.trigger === "git-commit" && index !== undefined && !["index", "index.lock"].includes(basename(index));
+    const blobRules = guardrails.filter((g) => g.kind === "lint" && g.implementation.startsWith("eslint:"));
+    const indexedLint = onlyCommit && opts.paths === undefined && blobRules.length > 0 && guardrails.every((g) => g.scope !== "project" && blobRules.includes(g));
+    const committing = indexedLint ? new Set(stagedFiles(root)) : undefined;
+    const tracked = committing === undefined ? undefined : trackedFiles(root, listed);
+    let scanned = committing === undefined ? listed : listed.filter((f) => tracked?.has(f) === true && (committing.has(f) || !unstaged.has(f)));
     let absent = [];
+    let inherited = [];
     if (tier === "commit") {
         const differing = scanned.filter((f) => unstaged.has(f));
         if (differing.length > 0) {
             const notes = { unstaged: differing, base, sparse: sparseMode(root) };
             return finish(project, "unstaged", scanned, report([], set, opts, notes), { set, notes });
         }
-        const mismatch = stagedMismatch(root, comparison);
+        const mismatch = stagedMismatch(root, comparison, indexedLint);
         if (mismatch.paths.length > 0) {
             const notes = { unstaged: mismatch.paths, hidden: mismatch.hidden, base, sparse: sparseMode(root) };
             return finish(project, "unstaged", scanned, report([], set, opts, notes), { set, notes });
         }
         if (opts.paths === undefined)
             absent = mismatch.absent;
+        inherited = mismatch.inherited ?? [];
+        if (inherited.length > 0) {
+            const projected = new Set(inherited.map(({ path }) => path));
+            scanned = scanned.filter((file) => !projected.has(file));
+        }
     }
     const shas = new Map(scanned.map((f) => [f, sha256(readFileSync(join(root, f)))]));
-    const where = { files: scanned.length, ...(scanned.length === 1 ? { file: scanned[0] } : {}) };
+    const scopeOf = (files) => ({ files: files.length, ...(files.length === 1 ? { file: files[0] } : {}) });
     let groups = 0;
-    const onGroup = (adapter, ids) => {
+    const onGroup = (files) => (adapter, ids) => {
         groups += 1;
-        openStep(live, "rules", { detail: adapter, members: ids, ...where });
+        openStep(live, "rules", { detail: adapter, members: ids, ...scopeOf(files) });
     };
     const ctx = {
-        root, generatedDir: join(root, ".warden/generated"), base, onGroup,
+        root, generatedDir: join(root, ".warden/generated"), base, onGroup: onGroup(scanned),
         ...(working === undefined ? {} : {
             lockedTscConfig: {
                 generated: working.generated[GENERATED_TSCONFIG],
@@ -422,13 +439,14 @@ const check = async (opts, live) => {
     };
     const lockSha = sha256(readFileSync(join(root, LOCK_PATH)));
     const ran = await runCached(set, guardrails, scanned, shas, ctx, project, { lockSha, warden: running, tier });
-    const blobRules = guardrails.filter((g) => g.kind === "lint" && g.implementation.startsWith("eslint:"));
-    const { results: blobRun, shas: blobShas } = await judgeBlobs(root, set, blobRules, absent, ctx);
+    const blobs = [...absent, ...inherited];
+    const blobPaths = blobs.map((b) => b.path);
+    const { results: blobRun, shas: blobShas, bytes: blobBytes } = await judgeBlobs(root, set, blobRules, blobs, { ...ctx, onGroup: onGroup(blobPaths) });
     for (const [path, sha] of blobShas)
         shas.set(path, sha);
-    const blobPaths = absent.map((b) => b.path);
+    const sparsePaths = absent.map((b) => b.path);
     if (groups === 0) {
-        openStep(live, "rules", { members: chosen.map((g) => g.id), ...where });
+        openStep(live, "rules", { members: chosen.map((g) => g.id), ...scopeOf(scanned) });
         closeStep(live, "done", { status: scanned.length === 0 ? "empty" : "cached" });
     }
     openStep(live, "verdict");
@@ -439,7 +457,7 @@ const check = async (opts, live) => {
     const killed = [...perFile, ...wholeProject]
         .filter((r) => r.status === "killed")
         .map((r) => ({ guardrail: r.guardrail, ms: r.ms, command: r.command }));
-    const changes = await changesSinceMergeBase(root, comparison);
+    const changes = await changesSinceMergeBase(root, comparison, indexedLint);
     const touched = (v) => {
         const lines = changes.lines.get(v.file);
         if (lines === "all")
@@ -456,13 +474,13 @@ const check = async (opts, live) => {
     const needsProject = tier === "commit" && chosen.some((g) => wholeTree(g) || /^(?:tsc|cmd):/.test(g.implementation)) && sparseMode(root) !== "off";
     const skipped = await skippedIndexPaths(root, needsProject ? undefined : missing);
     const sparseProjectFiles = needsProject ? [...skipped].filter((file) => !existsSync(join(root, file))).length : 0;
-    const incompleteSparse = blobPaths.length > 0 || sparseProjectFiles > 0;
+    const incompleteSparse = sparsePaths.length > 0 || sparseProjectFiles > 0;
     const judgedBlobs = new Set(blobPaths);
     const exists = (file) => !missing.has(file) || skipped.has(file) || judgedBlobs.has(file);
     const ratchetFrom = matchesHead(root, BASELINE_PATH) ? "head" : "uncommitted";
     const blobJudgments = new Map(blobRun.filter((r) => r.status !== "killed" && r.overBudget !== true).map((r) => [r.guardrail, r.judgedFiles]));
     const judgedBlob = (rule, file) => blobJudgments.get(rule)?.get(file) === blobShas.get(file) && blobShas.has(file);
-    const sparseCoverage = Object.fromEntries(blobPaths.map((file) => [
+    const sparseCoverage = Object.fromEntries(sparsePaths.map((file) => [
         file,
         [...new Set(blobRules.filter((g) => selected.has(g.id) && judgedBlob(g.id, file)).map((g) => g.kind))],
     ]));
@@ -490,21 +508,23 @@ const check = async (opts, live) => {
     const sharedPasses = new Set();
     const ruleTimes = {};
     const passTimes = {};
-    for (const r of ran.ran) {
+    const measured = [...ran.ran, ...blobRun];
+    for (const r of measured) {
         const size = { run, tier, files: r.files, bytes: r.bytes };
         if (r.shared === undefined || r.shared.guardrails === 1) {
             const pack = packOf.get(r.guardrail);
             if (r.guardrail !== PARSE_ERROR)
-                ruleTimes[r.guardrail] = r.ms;
+                ruleTimes[r.guardrail] = (ruleTimes[r.guardrail] ?? 0) + r.ms;
             appendEvidence(project, { at, kind: "cost", guardrail: r.guardrail, status: r.overBudget === true ? "over-budget" : r.status, ms: r.ms, ...size, ...(pack === undefined ? {} : { pack }) });
         }
         else if (!sharedPasses.has(r.shared)) {
             sharedPasses.add(r.shared);
-            const members = ran.ran.filter((x) => x.shared === r.shared && x.guardrail !== PARSE_ERROR);
+            const members = measured.filter((x) => x.shared === r.shared && x.guardrail !== PARSE_ERROR);
             const over = members.some((x) => x.overBudget === true);
             const rules = Object.fromEntries(members.map((x) => [x.guardrail, x.ruleMs ?? 0]));
-            Object.assign(ruleTimes, rules);
-            passTimes[r.shared.id] = r.ms - Object.values(rules).reduce((a, b) => a + b, 0);
+            for (const [rule, ms] of Object.entries(rules))
+                ruleTimes[rule] = (ruleTimes[rule] ?? 0) + ms;
+            passTimes[r.shared.id] = (passTimes[r.shared.id] ?? 0) + r.ms - Object.values(rules).reduce((a, b) => a + b, 0);
             appendEvidence(project, { at, kind: "cost", shared: r.shared.id, guardrails: r.shared.guardrails, members: r.shared.members, status: over ? "over-budget" : "pass", ms: r.ms, ...size, rules });
         }
     }
@@ -529,14 +549,14 @@ const check = async (opts, live) => {
         if (n >= loopBreakerRepeats && (repeated === undefined || n > repeated.n))
             repeated = { guardrail, file, n };
     }
-    const notes = { repeated, overBudget, killed, ...(blobPaths.length === 0 ? {} : { outside: blobPaths, sparse: sparseMode(root) }) };
+    const notes = { repeated, overBudget, killed, ...(sparsePaths.length === 0 ? {} : { outside: sparsePaths, sparse: sparseMode(root) }) };
     closeStep(live, failedOf(failures, notes) ? "fail" : "done");
     const scope = opts.paths === undefined && opts.rule === undefined && !incompleteSparse ? "full" : "partial";
     const tree = tier === "commit" && scope === "full" && !failedOf(failures, notes) ? indexTree(root) : undefined;
     const coveredHere = (d) => d.detail === "unchecked-commit" && tree !== undefined && commitsOf(root, [d.file]).some((c) => covers(root, { tree, mergeBase: live.base?.mergeBase }, c));
     const alert = failedOf(failures, notes) ? undefined : alerts.find((d) => !coveredHere(d));
     const code = alert === undefined ? report(failures, set, opts, notes) : refuseForAlert(alert, opts);
-    finish(project, scanned.length === 0 && ran.ran.length === 0 && blobRun.length === 0 ? "empty" : "ran", scanned, code, { set, failures, notes, extra: { scope, ...(incompleteSparse ? { sparseCoverage, sparseProjectFiles } : {}), ...(alert === undefined ? {} : { alert: alert.detail, next: alert.next }), guardrails: chosen.length, cached: ran.cached, rules: ruleTimes, passes: passTimes, cachedRules: chosen.filter((g) => ruleTimes[g.id] === undefined).map((g) => g.id), ratchet: [baselineTotal(baseline), baselineTotal(wide.next)], ratchetFrom } });
+    finish(project, scanned.length === 0 && ran.ran.length === 0 && blobRun.length === 0 ? "empty" : "ran", scanned, code, { set, failures, notes, extra: { scope, ...(incompleteSparse ? { sparseCoverage, sparseProjectFiles } : {}), ...(alert === undefined ? {} : { alert: alert.detail, next: alert.next }), guardrails: chosen.length, cached: ran.cached, rules: ruleTimes, passes: passTimes, cachedRules: chosen.filter((g) => ruleTimes[g.id] === undefined).map((g) => g.id), ratchet: [baselineTotal(baseline), baselineTotal(wide.next)], ratchetFrom } }, { paths: blobPaths, bytes: blobBytes });
     if (alert === undefined && !failedOf(failures, notes))
         recordResolutions(project, prior, perFile, { at, root, tier, run, policy });
     return code;

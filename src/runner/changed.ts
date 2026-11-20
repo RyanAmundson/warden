@@ -192,8 +192,8 @@ async function gitRecords(root: string, args: string[], delimiter: string, recei
   return completed;
 }
 
-async function patchLines(root: string, at: string, receive: (line: string) => void): Promise<void> {
-  const args = ["-c", "core.quotePath=false", "diff", "-U0", "-M", "--no-color", "--no-ext-diff", "--relative", "--src-prefix=a/", "--dst-prefix=b/", at, "--"];
+async function patchLines(root: string, at: string, stagedOnly: boolean, receive: (line: string) => void): Promise<void> {
+  const args = ["-c", "core.quotePath=false", "diff", "-U0", "-M", "--no-color", "--no-ext-diff", "--relative", "--src-prefix=a/", "--dst-prefix=b/", ...(stagedOnly ? ["--cached"] : []), at, "--"];
   const failure = await gitRecords(root, args, "\n", receive);
   if (failure !== undefined) {
     throw new RecordError(root, "", `Git could not read the changed lines: ${failure}. Next action: run git diff from the project root to diagnose the Git error.`);
@@ -231,11 +231,11 @@ export async function skippedIndexPaths(root: string, paths?: Set<string>): Prom
   return skipped;
 }
 
-export async function changesSinceMergeBase(root: string, base: BaseRef): Promise<Changes> {
+export async function changesSinceMergeBase(root: string, base: BaseRef, stagedOnly = false): Promise<Changes> {
   const at = mergeBase(root, base);
   const lines: Changes["lines"] = new Map();
   let current: Set<number> | undefined;
-  await patchLines(root, at, (line) => {
+  await patchLines(root, at, stagedOnly, (line) => {
     if (line.startsWith("+++ ")) {
       current = line.startsWith("+++ b/") ? new Set() : undefined;
       if (current !== undefined) lines.set(line.slice("+++ b/".length).replace(/\t$/, ""), current);
@@ -247,15 +247,15 @@ export async function changesSinceMergeBase(root: string, base: BaseRef): Promis
     const count = hunk[2] === undefined ? 1 : Number(hunk[2]);
     for (let n = start; n < start + count; n++) current.add(n);
   });
-  for (const file of names(must(root, ["ls-files", "-z", "--others", "--exclude-standard"]))) lines.set(file, "all");
-  return { lines, renames: renamesAt(root, at) };
+  if (!stagedOnly) for (const file of names(must(root, ["ls-files", "-z", "--others", "--exclude-standard"]))) lines.set(file, "all");
+  return { lines, renames: renamesAt(root, at, stagedOnly) };
 }
 
 export const renamesSinceMergeBase = (root: string, base: BaseRef): Changes["renames"] => renamesAt(root, mergeBase(root, base));
 
-function renamesAt(root: string, at: string): Changes["renames"] {
+function renamesAt(root: string, at: string, stagedOnly = false): Changes["renames"] {
   const renames = new Map<string, string>();
-  const status = names(must(root, ["diff", "-z", "-M", "--name-status", "--relative", at]));
+  const status = names(must(root, ["diff", "-z", "-M", "--name-status", "--relative", ...(stagedOnly ? ["--cached"] : []), at]));
   for (let i = 0; i < status.length; i++) {
     const kind = status[i] as string;
     if (kind.startsWith("R")) renames.set(status[i + 1] as string, status[i + 2] as string);
@@ -373,6 +373,7 @@ export interface StagedMismatch {
   paths: string[];
   hidden: string[];
   absent: StagedBlob[];
+  inherited?: StagedBlob[];
 }
 
 export function checkoutBlobs(root: string, paths: string[], dir: string): string {
@@ -387,11 +388,12 @@ export const sparseMode = (root: string): SparseMode => {
   return !on("core.sparseCheckout") ? "off" : on("core.sparseCheckoutCone") ? "cone" : "patterns";
 };
 
-export function stagedMismatch(root: string, base: BaseRef): StagedMismatch {
+export function stagedMismatch(root: string, base: BaseRef, readInherited = false): StagedMismatch {
   const literal = (args: string[]): string[] => names(must(root, ["--literal-pathspecs", ...args]));
   const at = mergeBase(root, base);
   const changed = (against: string): string[] => literal(["diff", "-z", "--cached", "--name-only", "--relative", "--no-renames", "--diff-filter=AMT", against]);
-  const staged = [...new Set([...changed(at), ...changed("HEAD")])];
+  const selected = new Set(changed("HEAD"));
+  const staged = [...new Set([...changed(at), ...selected])];
   if (staged.length === 0) return { paths: [], hidden: [], absent: [] };
   const index = new Map(
     literal(["ls-files", "-s", "-z", "--", ...staged]).map((line) => {
@@ -407,7 +409,13 @@ export function stagedMismatch(root: string, base: BaseRef): StagedMismatch {
   const work = new Map(present.map((p, i) => [p, hashes[i]]));
   const absent = new Set(regular.filter((p) => tags.get(p)?.toUpperCase() === "S" && !existsSync(join(root, p))));
   const paths = regular.filter((p) => !absent.has(p) && work.get(p) !== index.get(p)?.sha);
-  return { paths, hidden: paths.filter((p) => tags.get(p) === "S" || /^[a-z]$/.test(tags.get(p) ?? "")), absent: [...absent].map((path) => ({ path, sha: index.get(path)?.sha as string })) };
+  const hidden = paths.filter((p) => tags.get(p) === "S" || /^[a-z]$/.test(tags.get(p) ?? ""));
+  const inherited = new Set(readInherited ? paths.filter((p) => !selected.has(p) && !hidden.includes(p)) : []);
+  const blobs = (files: Iterable<string>): StagedBlob[] => [...files].map((path) => ({ path, sha: index.get(path)?.sha as string }));
+  return {
+    paths: paths.filter((p) => !inherited.has(p)), hidden, absent: blobs(absent),
+    ...(inherited.size === 0 ? {} : { inherited: blobs(inherited) }),
+  };
 }
 
 export function commitsOf(root: string, shas: string[]): Committed[] {

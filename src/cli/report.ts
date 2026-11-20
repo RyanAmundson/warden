@@ -151,8 +151,13 @@ export async function buildReport(root: string, wardenRoot: string): Promise<Rep
     const passes = [...current].flatMap((key): PassTotalRow[] => {
       const rows = inTier.filter((e) => passRows.has(e) && e.rules !== undefined && keyOf(e.members as string[]) === key);
       if (rows.length === 0) return [];
-      const overhead = rows.map((e) => (e.ms as number) - Object.values(e.rules as Record<string, number>).reduce((a, b) => a + b, 0));
-      return [{ shared: rows[0]?.shared as string, members: rows[0]?.members as string[], ...spread(overhead) }];
+      const overhead = new Map<string, number>();
+      for (const e of rows) {
+        const run = e.run as string;
+        const rulesMs = Object.values(e.rules as Record<string, number>).reduce((a, b) => a + b, 0);
+        overhead.set(run, (overhead.get(run) ?? 0) + (e.ms as number) - rulesMs);
+      }
+      return [{ shared: rows[0]?.shared as string, members: rows[0]?.members as string[], ...spread([...overhead.values()]) }];
     });
     const budgetMs = set.config.tierBudgetMs[tier];
     const combined = spread(ran);
