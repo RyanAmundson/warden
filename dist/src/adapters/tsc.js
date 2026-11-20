@@ -4,10 +4,10 @@ import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { RecordError } from "../records/load.js";
 import { targetOf } from "./pack-code.js";
+import { GENERATED_TSCONFIG } from "./tsc-config.js";
 import { PARSE_ERROR } from "./types.js";
 const BASELINE = "baseline-errors";
 const BASELINE_ID = `tsc:${BASELINE}`;
-const CONFIG_PATH = ".warden/generated/tsconfig.json";
 const DIAGNOSTIC = /^((.+)\((\d+),\d+\)): error TS(\d+): (.*)$/;
 const OPTIONS_DIAGNOSTIC = /^error TS(\d+): (.*)$/;
 const FLAG_CODES = {
@@ -44,7 +44,7 @@ const emit = (gs, _set) => {
                 compilerOptions[prerequisite] ??= true;
     }
     const config = { extends: "../../tsconfig.json", compilerOptions };
-    return { [CONFIG_PATH]: `${JSON.stringify(config, null, 2)}\n` };
+    return { [GENERATED_TSCONFIG]: `${JSON.stringify(config, null, 2)}\n` };
 };
 const WORKER = new URL(`./tsc-worker${extname(fileURLToPath(import.meta.url))}`, import.meta.url);
 let worker;
@@ -96,7 +96,9 @@ const ask = (request, budgetMs, signal) => new Promise((resolve, reject) => {
 const run = async (gs, _files, ctx) => {
     const budgetMs = ctx.unbudgeted === true ? undefined : Math.min(...gs.map((g) => g.budgetMs));
     const project = join(relative(ctx.root, ctx.generatedDir), "tsconfig.json");
-    const { reply, ms } = await ask({ cwd: ctx.root, project, parameterCodes: FLAG_CODES.noUnusedParameters }, budgetMs, ctx.signal);
+    const { reply, ms } = await ask({ cwd: ctx.root, project, parameterCodes: FLAG_CODES.noUnusedParameters, lockedConfig: ctx.lockedTscConfig }, budgetMs, ctx.signal);
+    if (reply?.configError !== undefined)
+        throw new RecordError(reply.configError.file, "", reply.configError.message);
     const killed = reply === undefined;
     const stdout = reply?.stdout ?? "";
     const owners = new Map();

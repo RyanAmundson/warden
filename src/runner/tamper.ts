@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { TSC_CONFIG_SOURCE } from "../adapters/tsc-config.js";
 import { expectedOutputs } from "../compiler/compile.js";
 import { LOCK_FORMAT, LOCK_PATH, PROJECT_SOURCE, type Lock, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError, readText } from "../records/load.js";
@@ -10,7 +11,7 @@ import { type Restore, changeSignatures, trackedFiles, renamesSinceMergeBase, co
 
 export interface Tamper {
   file: string;
-  detail: "missing-lock" | "leftover-temp" | "hooks-disabled" | "generated-drift" | "source-drift" | "lock-drift" | "loosened" | "removed" | "base-moved" | "weakened-kind" | "unsigned" | "untrusted-signature" | "no-allowed-signers";
+  detail: "missing-lock" | "leftover-temp" | "hooks-disabled" | "generated-drift" | "source-drift" | "typescript-config-drift" | "lock-drift" | "loosened" | "removed" | "base-moved" | "weakened-kind" | "unsigned" | "untrusted-signature" | "no-allowed-signers";
   guardrail?: string;
   was?: string;
   sources?: string[];
@@ -195,7 +196,9 @@ export async function findTampering(set: RecordSet, wardenRoot: string, base: st
   const unchanged = (file: string): boolean => file.startsWith(PROJECT_SOURCE) && expected.lock.sources[file] === undefined && existsSync(join(root, file)) && sha256(readFileSync(join(root, file)).toString("latin1")) === lock.sources[file];
   const sourceDrift = sources.filter((file) => lock.sources[file] !== expected.lock.sources[file] && !unchanged(file));
   const tracked = trackedFiles(root, sourceDrift.filter((file) => file.startsWith(".warden/") && existsSync(join(root, file))));
-  found.push(...sourceDrift.map((file): Tamper => ({ file, detail: "source-drift", ...(file.startsWith(".warden/") && existsSync(join(root, file)) && !tracked.has(file) ? { untracked: true } : {}) })));
+  found.push(...sourceDrift.map((file): Tamper => file.startsWith(TSC_CONFIG_SOURCE)
+    ? { file: file.slice(TSC_CONFIG_SOURCE.length), detail: "typescript-config-drift" }
+    : { file, detail: "source-drift", ...(file.startsWith(".warden/") && existsSync(join(root, file)) && !tracked.has(file) ? { untracked: true } : {}) }));
   if (sourceDrift.length === 0 && canonicalJson({ ...lock, tools: null }) !== canonicalJson({ ...expected.lock, tools: null })) {
     found.push({ file: LOCK_PATH, detail: "lock-drift" });
   }

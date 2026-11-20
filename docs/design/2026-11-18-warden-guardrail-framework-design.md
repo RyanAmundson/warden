@@ -479,7 +479,7 @@ Next action: change the code at the lines above to match "Do this".
 | Bypass | Cover |
 |---|---|
 | `eslint-disable`, `@ts-ignore`, `@ts-expect-error`, `.skip`, `.only` | Core Practice `no-comments` makes all comments a lint error, and ESLint runs with `noInlineConfig`. `no-skipped-tests` covers `.skip` and `.only`. |
-| Editing `eslint.config.js`, `tsconfig`, ignore files, hooks | They are generated. Drift fails `warden check`. Known limit: the generated `.warden/generated/tsconfig.json` extends the project's own `tsconfig.json`, which is not generated or hashed, so narrowing its `include` or `exclude` changes what every `tsc` Guardrail checks without any drift. Decide how to guard it before the first `tsc` Guardrail is adopted. |
+| Editing `eslint.config.js`, `tsconfig`, ignore files, hooks | Generated files and their inputs are locked. When a `tsc` Guardrail is enabled, Warden locks the project's `tsconfig.json`, every config TypeScript resolves through `extends`, and package manifests TypeScript reads to resolve them. A trusted signer approves changes by committing the recompiled Warden lock, which contains the input digests. Link the package directory or name the target config directly in `extends` when a package config entry uses a file symlink. Existing projects enabling this check must compile and sign the updated lock. |
 | Editing a rule record to loosen it | Records live in the framework source. A change to the source needs a commit signed by Ryan's key, which agents cannot use. |
 | `--no-verify`, skipping hooks | Local hooks are early warnings only. The boundary check is authoritative. |
 | Claiming work is done | "Done" is a predicate the runner executes. Reports are generated from Evidence, never written by the agent. |

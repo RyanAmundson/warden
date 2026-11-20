@@ -10,7 +10,7 @@ import { compile, expectedOutputs } from "../../src/compiler/compile.js";
 import { runExamples } from "../../src/compiler/examples.js";
 import { loadRecords } from "../../src/records/load.js";
 import { commandSources } from "../../src/compiler/command-sources.js";
-import { readLock } from "../../src/compiler/lock.js";
+import { readLock, sha256 } from "../../src/compiler/lock.js";
 import { adapters } from "../../src/runner/run.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
@@ -276,6 +276,18 @@ describe("compile", () => {
   });
 
   it("checks tsc examples and emits their config with a header", async () => {
+    const project = '{ "extends": ["./config/first", "fixture-config"], "include": ["src/**/*.ts"] }\n';
+    const first = '{ "extends": "./second.json" }\n';
+    const second = '{ "compilerOptions": { "strict": true } }\n';
+    const manifest = '{ "tsconfig": "./base.json" }\n';
+    const dependency = '{ "compilerOptions": { "skipLibCheck": true } }\n';
+    await mkdir(join(root, "config"));
+    await mkdir(join(root, "node_modules/fixture-config"), { recursive: true });
+    await writeFile(join(root, "tsconfig.json"), project);
+    await writeFile(join(root, "config/first.json"), first);
+    await writeFile(join(root, "config/second.json"), second);
+    await writeFile(join(root, "node_modules/fixture-config/package.json"), manifest);
+    await writeFile(join(root, "node_modules/fixture-config/base.json"), dependency);
     await usePack(
       localPack(
         [
@@ -295,9 +307,18 @@ describe("compile", () => {
     expect(findings).toEqual([]);
     expect(written).toContain(".warden/generated/tsconfig.json");
     expect(JSON.parse(await read(".warden/generated/tsconfig.json"))["@generated"]).toMatch(HEADER);
+    const sources = readLock(root).sources;
+    expect(sources).toMatchObject({
+      "tsconfig:tsconfig.json": sha256(project),
+      "tsconfig:config/first.json": sha256(first),
+      "tsconfig:config/second.json": sha256(second),
+      "tsconfig:node_modules/fixture-config/package.json": sha256(manifest),
+      "tsconfig:node_modules/fixture-config/base.json": sha256(dependency),
+    });
   });
 
   it("proves tsc examples with Warden's bundled typescript when no node_modules sits beside Warden's packs", async () => {
+    await writeFile(join(root, "tsconfig.json"), "{}\n");
     const installed = await mkdtemp(join(tmpdir(), "warden-installed-"));
     try {
       await cp(join(wardenRoot, "packs"), join(installed, "packs"), { recursive: true });

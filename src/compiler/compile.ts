@@ -1,5 +1,6 @@
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { TscConfigError, tscConfigSources } from "../adapters/tsc-config.js";
 import { targetOf } from "../adapters/pack-code.js";
 import type { Adapter } from "../adapters/types.js";
 import { RecordError, loadRecords, readPack, readText } from "../records/load.js";
@@ -29,7 +30,16 @@ const sourceFiles = async (set: RecordSet, projectRoot: string, wardenRoot: stri
     }
   }
   const scripts = scriptsOf(projectRoot);
-  for (const g of set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails))) {
+  const guardrails = set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails));
+  if (guardrails.some((g) => g.kind !== "instruction" && prefixOf(g) === "tsc")) {
+    try {
+      Object.assign(out, await tscConfigSources(projectRoot));
+    } catch (cause) {
+      if (!(cause instanceof TscConfigError)) throw cause;
+      throw new RecordError(cause.file, "", cause.message);
+    }
+  }
+  for (const g of guardrails) {
     if (g.implementation.startsWith("cmd:")) Object.assign(out, commandSources(projectRoot, targetOf(g), g.sources ?? [], scripts, { file: g.packDir === undefined ? "" : join(g.packDir, "pack.yaml"), id: g.id }));
   }
   return out;

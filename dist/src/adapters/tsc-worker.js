@@ -1,6 +1,8 @@
-import { resolve } from "node:path";
+import { extname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parentPort } from "node:worker_threads";
 import ts from "typescript";
+const { readTscConfig, TscConfigError } = await import(new URL(`./tsc-config${extname(fileURLToPath(import.meta.url))}`, import.meta.url).href);
 const parameterNames = (file) => {
     const out = [];
     const visit = (node) => {
@@ -21,16 +23,18 @@ const registry = ts.createDocumentRegistry();
 export const parseKey = (options) => registry.getKeyForCompilationSettings(options);
 let reusedFor = "";
 const parsed = new Map();
-const check = ({ cwd, project, parameterCodes }) => {
+const check = ({ cwd, project, parameterCodes, lockedConfig }) => {
     const format = (ds) => ts.formatDiagnostics(ds, { getCanonicalFileName: (f) => f, getCurrentDirectory: () => cwd, getNewLine: () => "\n" });
-    let fatal;
-    const config = ts.getParsedCommandLineOfConfigFile(resolve(cwd, project), undefined, {
-        ...ts.sys,
-        getCurrentDirectory: () => cwd,
-        onUnRecoverableConfigFileDiagnostic: (d) => {
-            fatal = d;
-        },
-    });
+    let parsedConfig;
+    try {
+        parsedConfig = readTscConfig(ts, cwd, project, lockedConfig);
+    }
+    catch (cause) {
+        if (!(cause instanceof TscConfigError))
+            throw cause;
+        return { stdout: "", code: 2, parameters: [], configError: { file: cause.file, message: cause.message } };
+    }
+    const { config, fatal } = parsedConfig;
     if (config === undefined)
         return { stdout: format(fatal === undefined ? [] : [fatal]), code: 1, parameters: [] };
     const key = parseKey(config.options);

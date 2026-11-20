@@ -1,17 +1,23 @@
-import { resolve } from "node:path";
+import { extname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parentPort } from "node:worker_threads";
 import ts from "typescript";
+import type { LockedTscConfig } from "./tsc-config.js";
+
+const { readTscConfig, TscConfigError } = await import(new URL(`./tsc-config${extname(fileURLToPath(import.meta.url))}`, import.meta.url).href) as typeof import("./tsc-config.js");
 
 export interface TscRequest {
   cwd: string;
   project: string;
   parameterCodes: number[];
+  lockedConfig?: LockedTscConfig | undefined;
 }
 
 export interface TscReply {
   stdout: string;
   code: number;
   parameters: string[];
+  configError?: { file: string; message: string };
 }
 
 const parameterNames = (file: ts.SourceFile): [number, number][] => {
@@ -37,17 +43,17 @@ export const parseKey = (options: ts.CompilerOptions): string => registry.getKey
 let reusedFor = "";
 const parsed = new Map<string, { text: string; file: ts.SourceFile }>();
 
-const check = ({ cwd, project, parameterCodes }: TscRequest): TscReply => {
+const check = ({ cwd, project, parameterCodes, lockedConfig }: TscRequest): TscReply => {
   const format = (ds: readonly ts.Diagnostic[]): string =>
     ts.formatDiagnostics(ds, { getCanonicalFileName: (f) => f, getCurrentDirectory: () => cwd, getNewLine: () => "\n" });
-  let fatal: ts.Diagnostic | undefined;
-  const config = ts.getParsedCommandLineOfConfigFile(resolve(cwd, project), undefined, {
-    ...ts.sys,
-    getCurrentDirectory: () => cwd,
-    onUnRecoverableConfigFileDiagnostic: (d) => {
-      fatal = d;
-    },
-  });
+  let parsedConfig: ReturnType<typeof readTscConfig>;
+  try {
+    parsedConfig = readTscConfig(ts, cwd, project, lockedConfig);
+  } catch (cause) {
+    if (!(cause instanceof TscConfigError)) throw cause;
+    return { stdout: "", code: 2, parameters: [], configError: { file: cause.file, message: cause.message } };
+  }
+  const { config, fatal } = parsedConfig;
   if (config === undefined) return { stdout: format(fatal === undefined ? [] : [fatal]), code: 1, parameters: [] };
   const key = parseKey(config.options);
   if (key !== reusedFor) {

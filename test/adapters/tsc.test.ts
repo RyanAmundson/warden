@@ -1,8 +1,10 @@
-import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import ts from "typescript";
+import { GENERATED_TSCONFIG, tscConfigSources } from "../../src/adapters/tsc-config.js";
+import { sha256 } from "../../src/compiler/lock.js";
 import { tscAdapter } from "../../src/adapters/tsc.js";
 import { parseKey } from "../../src/adapters/tsc-worker.js";
 import { PARSE_ERROR } from "../../src/adapters/types.js";
@@ -98,6 +100,61 @@ describe("tsc adapter", () => {
       const results = await tscAdapter.run([g], [], ctxFor(root));
       expect(results.flatMap((r) => r.violations.map((v) => v.message)).filter((m) => m.startsWith("TS2307"))).toEqual([]);
       expect(results.find((r) => r.guardrail === "tsc:baseline-errors")?.violations).toEqual([]);
+    });
+  });
+
+  it("checks the config bytes TypeScript reads against the approved lock", async () => {
+    await withProject(async (root) => {
+      const project = join(root, "tsconfig.json");
+      const original = await readFile(project, "utf8");
+      const inherited = JSON.stringify({ compilerOptions: { strict: true } });
+      await writeFile(join(root, "shared.json"), inherited);
+      const install = async (directory: string) => {
+        const dependency = join(root, directory);
+        await mkdir(join(dependency, "config"), { recursive: true });
+        await writeFile(join(dependency, "package.json"), JSON.stringify({ tsconfig: "./config/base.json" }));
+        await writeFile(join(dependency, "config/base.json"), JSON.stringify({ extends: "../common.json" }));
+        await writeFile(join(dependency, "common.json"), JSON.stringify({ compilerOptions: { skipLibCheck: true } }));
+        await symlink(dependency, join(root, "node_modules/fixture-config"), "dir");
+      };
+      await unlink(join(root, "node_modules"));
+      await mkdir(join(root, "node_modules"));
+      await install("workspace/packages/config");
+      await writeFile(project, JSON.stringify({ ...JSON.parse(original), extends: ["./shared.json", "fixture-config"] }));
+      const g = guardrail("strict-null", "tsc:strictNullChecks");
+      await emitInto(root, [g]);
+      const sources = Object.fromEntries(Object.entries(await tscConfigSources(root)).map(([key, text]) => [key, sha256(text)]));
+      expect(Object.keys(sources)).toContain("tsconfig:node_modules/fixture-config/common.json");
+      await unlink(join(root, "node_modules/fixture-config"));
+      await install("another/workspace/config");
+      const lockedTscConfig = { sources, generated: sha256(await readFile(join(root, GENERATED_TSCONFIG))) };
+      const check = () => tscAdapter.run([g], [], { ...ctxFor(root), lockedTscConfig });
+      expect((await check()).find((r) => r.guardrail === "strict-null")?.status).toBe("fail");
+      await writeFile(join(root, "shared.json"), inherited + "\n");
+      await expect(check()).rejects.toMatchObject({
+        file: join(root, "shared.json"),
+        message: expect.stringContaining("differs from the signed Warden lock"),
+      });
+      await writeFile(join(root, "shared.json"), inherited);
+      expect((await check()).find((r) => r.guardrail === "strict-null")?.status).toBe("fail");
+    });
+  });
+
+  it("reports how to lock a package config whose entry is linked as a file", async () => {
+    await withProject(async (root) => {
+      const modules = join(root, "node_modules");
+      const dependency = join(modules, "fixture-config");
+      await unlink(modules);
+      await mkdir(dependency, { recursive: true });
+      await writeFile(join(root, "tsconfig.json"), JSON.stringify({ extends: "fixture-config" }));
+      await writeFile(join(dependency, "package.json"), JSON.stringify({ tsconfig: "./base.json" }));
+      await writeFile(join(root, "linked-config.json"), "{}");
+      await symlink(join(root, "linked-config.json"), join(dependency, "base.json"), "file");
+
+      await expect(tscConfigSources(root)).rejects.toMatchObject({
+        file: join(dependency, "base.json"),
+        message: expect.stringContaining("link the package directory or use the actual config path"),
+      });
     });
   });
 

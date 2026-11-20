@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative, resolve, sep } from "node:path";
+import { GENERATED_TSCONFIG, TSC_CONFIG_SOURCE } from "../adapters/tsc-config.js";
 import { hookTriggers } from "../adapters/claude.js";
 import { PARSE_ERROR, type RunContext, type RunResult, type Violation } from "../adapters/types.js";
 import { wardenVersion } from "../compiler/compile.js";
@@ -427,7 +428,15 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
     groups += 1;
     openStep(live, "rules", { detail: adapter, members: ids, ...where });
   };
-  const ctx = { root, generatedDir: join(root, ".warden/generated"), base, onGroup };
+  const ctx = {
+    root, generatedDir: join(root, ".warden/generated"), base, onGroup,
+    ...(working === undefined ? {} : {
+      lockedTscConfig: {
+        generated: working.generated[GENERATED_TSCONFIG],
+        sources: Object.fromEntries(Object.entries(working.sources).filter(([name]) => name.startsWith(TSC_CONFIG_SOURCE))),
+      },
+    }),
+  };
   const lockSha = sha256(readFileSync(join(root, LOCK_PATH)));
   const ran = await runCached(set, guardrails, scanned, shas, ctx, project, { lockSha, warden: running, tier });
   const { results: blobRun, shas: blobShas } = await judgeBlobs(root, set, guardrails.filter((g) => g.kind === "lint" && g.implementation.startsWith("eslint:")), absent, ctx);

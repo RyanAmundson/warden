@@ -5,12 +5,12 @@ import { Worker } from "node:worker_threads";
 import { RecordError } from "../records/load.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
 import { targetOf } from "./pack-code.js";
+import { GENERATED_TSCONFIG } from "./tsc-config.js";
 import type { TscReply, TscRequest } from "./tsc-worker.js";
 import { type Adapter, PARSE_ERROR, type RunContext, type RunResult, type Violation } from "./types.js";
 
 const BASELINE = "baseline-errors";
 const BASELINE_ID = `tsc:${BASELINE}`;
-const CONFIG_PATH = ".warden/generated/tsconfig.json";
 const DIAGNOSTIC = /^((.+)\((\d+),\d+\)): error TS(\d+): (.*)$/;
 const OPTIONS_DIAGNOSTIC = /^error TS(\d+): (.*)$/;
 
@@ -47,7 +47,7 @@ const emit = (gs: Guardrail[], _set: RecordSet): Record<string, string> => {
     if (compilerOptions[flag]) for (const prerequisite of PREREQUISITES[flag] ?? []) compilerOptions[prerequisite] ??= true;
   }
   const config = { extends: "../../tsconfig.json", compilerOptions };
-  return { [CONFIG_PATH]: `${JSON.stringify(config, null, 2)}\n` };
+  return { [GENERATED_TSCONFIG]: `${JSON.stringify(config, null, 2)}\n` };
 };
 
 const WORKER = new URL(`./tsc-worker${extname(fileURLToPath(import.meta.url))}`, import.meta.url);
@@ -102,7 +102,8 @@ const ask = (request: TscRequest, budgetMs: number | undefined, signal?: AbortSi
 const run = async (gs: Guardrail[], _files: string[], ctx: RunContext): Promise<RunResult[]> => {
   const budgetMs = ctx.unbudgeted === true ? undefined : Math.min(...gs.map((g) => g.budgetMs));
   const project = join(relative(ctx.root, ctx.generatedDir), "tsconfig.json");
-  const { reply, ms } = await ask({ cwd: ctx.root, project, parameterCodes: FLAG_CODES.noUnusedParameters as number[] }, budgetMs, ctx.signal);
+  const { reply, ms } = await ask({ cwd: ctx.root, project, parameterCodes: FLAG_CODES.noUnusedParameters as number[], lockedConfig: ctx.lockedTscConfig }, budgetMs, ctx.signal);
+  if (reply?.configError !== undefined) throw new RecordError(reply.configError.file, "", reply.configError.message);
   const killed = reply === undefined;
   const stdout = reply?.stdout ?? "";
   const owners = new Map<string, string>();

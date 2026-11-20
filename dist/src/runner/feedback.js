@@ -39,6 +39,9 @@ const nextAction = (failures, set, notes) => {
     const weakened = others.find((t) => t.detail === "weakened-kind");
     if (weakened !== undefined)
         return `restore kind ${weakened.was} on ${weakened.guardrail} and run warden compile.`;
+    if (others.some((t) => t.detail === "typescript-config-drift")) {
+        return "restore the locked TypeScript configuration, or have a trusted signer run warden compile and commit the updated configuration and lock.";
+    }
     if (others.length > 0) {
         const sources = others.flatMap((t) => t.sources ?? []);
         if (sources.length === 0) {

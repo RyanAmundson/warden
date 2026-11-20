@@ -1,4 +1,5 @@
 import type { Guardrail, RecordSet, UnitKind } from "../records/types.js";
+import type { LockedTscConfig } from "./tsc-config.js";
 import type { Unit } from "../records/units.js";
 
 export interface Violation {
@@ -37,6 +38,7 @@ export interface RunContext {
   base?: string;
   settingsOf?: (g: Guardrail) => Record<string, unknown> | undefined;
   signal?: AbortSignal;
+  lockedTscConfig?: LockedTscConfig;
   projectInventory?: { nonRegular: string[]; discoveryMs: number };
   unitStructure?: { units: (Unit & { kindRecord: UnitKind })[]; ignoreCase: boolean };
   onGroup?: (adapter: string, guardrails: string[]) => void;

@@ -705,6 +705,28 @@ describe("review fixes", () => {
     const { code, out } = await check({ format: "json" });
     expect(code).toBe(1);
     expect(failedFiles(out)).toEqual(["d.ts"]);
+
+    await write("c.ts", "export type T = { n: number };\n");
+    const project = await read("tsconfig.json");
+    const approved = "{}\n";
+    await write("base.json", approved);
+    await write("tsconfig.json", JSON.stringify({ ...JSON.parse(project), extends: "./base.json" }));
+    const outsideLock = await check();
+    expect(outsideLock.code).toBe(1);
+    expect(outsideLock.out).toContain("TAMPERED tsconfig.json  typescript-config-drift");
+    expect(outsideLock.out).toContain("TAMPERED base.json  typescript-config-drift");
+    await recompile();
+    git("add", "-A");
+    commitSigned("ryan", "Approve TypeScript configuration lock");
+    expect((await check()).code).toBe(0);
+
+    await write("base.json", approved + "\n");
+    const changed = await check();
+    expect(changed.code).toBe(1);
+    expect(changed.out).toContain("TAMPERED base.json  typescript-config-drift");
+    expect(changed.out).toContain("have a trusted signer run warden compile");
+    await write("base.json", approved);
+    expect((await check()).code).toBe(0);
   });
 });
 
