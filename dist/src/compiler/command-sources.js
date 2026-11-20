@@ -14,6 +14,7 @@ const BUILTINS = new Set([":", "true", "false", "exit", "return", "export", "uns
 const DATA_TOOLS = new Set(["cat", "grep", "egrep", "fgrep", "rg", "ls", "find", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "diff", "cmp", "comm", "git", "eslint", "tsc", "prettier", "jq", "mkdir", "rm", "rmdir", "cp", "mv", "touch", "chmod", "ln", "stat", "file", "du", "date", "sleep", "seq", "basename", "dirname", "realpath", "readlink", "tee", "od", "xxd", "shasum", "sha256sum", "md5", "md5sum", "tar", "gzip", "gunzip", "zip", "unzip", "ruff", "mypy", "black"]);
 const RUN_FLAGS = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
 const MODULE = /\.(?:[cm]?[jt]s|[jt]sx)$/;
+const NODE_ENTRY_EXTENSIONS = ["", ".js", ".json", ".node"];
 const NODE_SHEBANG = /^#!.*\b(?:node|tsx|ts-node|bun|deno)\b/;
 const SHELL_SHEBANG = /^#!.*\b(?:sh|bash|zsh|dash)\b/;
 const SHELL_SCRIPT = /\.(?:sh|bash|zsh)$/;
@@ -176,7 +177,7 @@ const addModule = (w, dir, spec) => {
     if (found !== undefined)
         addFile(w, dir, found);
 };
-const addFile = (w, cwd, path, shellBody = false) => {
+const addFile = (w, cwd, path, kind) => {
     const full = resolve(cwd, path);
     const key = projectKey(w, full);
     if (key === undefined || key in w.out)
@@ -184,18 +185,18 @@ const addFile = (w, cwd, path, shellBody = false) => {
     const bytes = readFileSync(full);
     w.out[key] = bytes.toString("latin1");
     const text = bytes.toString("utf8");
-    if (MODULE.test(full) || NODE_SHEBANG.test(text))
+    if (kind === "node" || MODULE.test(full) || NODE_SHEBANG.test(text))
         for (const m of text.matchAll(IMPORT))
             addModule(w, dirname(full), m[1]);
-    else if (shellBody || SHELL_SCRIPT.test(full) || SHELL_SHEBANG.test(text))
+    else if (kind === "shell" || SHELL_SCRIPT.test(full) || SHELL_SHEBANG.test(text))
         walk({ ...w, strict: false }, text, cwd);
 };
-const addProgram = (w, cwd, word, form, rest, shellBody = false) => {
+const addProgram = (w, cwd, word, form, rest, kind) => {
     if (PACK_PROGRAM.test(word))
         return;
     if (word.includes("$"))
         return refuse(w, `${form}, whose program is named through a variable`, projectFiles(w, cwd, rest));
-    addFile(w, cwd, word, shellBody);
+    addFile(w, cwd, word, kind);
 };
 const resolveBare = (w, word) => [...(process.env.PATH ?? "").split(delimiter).filter((d) => d !== ""), join(w.root, "node_modules", ".bin")].flatMap((dir) => {
     const candidate = join(resolve(w.root, dir), word);
@@ -228,9 +229,16 @@ const shell = (w, cmd, args, cwd, form) => {
             return refuse(w, `${form}, with the ${cmd} option ${a}`, projectFiles(w, cwd, args));
         if (inline)
             return walk(w, a, cwd);
-        return addProgram(w, cwd, a, form, args.slice(i + 1), true);
+        return addProgram(w, cwd, a, form, args.slice(i + 1), "shell");
     }
     refuse(w, `${form}, which reads its commands from standard input`, []);
+};
+const nodeEntry = (cwd, path) => {
+    if (path.includes("$"))
+        return path;
+    const full = resolve(cwd, path);
+    return NODE_ENTRY_EXTENSIONS.map((extension) => full + extension)
+        .find((candidate) => statSync(candidate, { throwIfNoEntry: false })?.isFile() === true) ?? path;
 };
 const nodeLike = (w, cmd, args, cwd, form) => {
     for (let i = 0; i < args.length; i++) {
@@ -253,7 +261,8 @@ const nodeLike = (w, cmd, args, cwd, form) => {
             continue;
         if (a.startsWith("-"))
             return refuse(w, `${form}, with the ${cmd} option ${a}`, projectFiles(w, cwd, args));
-        return addProgram(w, cwd, a, form, args.slice(i + 1));
+        const program = cmd === "node" ? nodeEntry(cwd, a) : a;
+        return addProgram(w, cwd, program, form, args.slice(i + 1), cmd === "node" && !/\.(?:json|node)$/.test(program) ? "node" : undefined);
     }
     refuse(w, `${form}, which reads its program from standard input`, []);
 };
@@ -420,7 +429,7 @@ const simple = (w, all, cwd) => {
         if (args[0] === undefined)
             refuse(w, `${form}, which names no script`, []);
         else
-            addProgram(w, cwd, args[0], form, args.slice(1), true);
+            addProgram(w, cwd, args[0], form, args.slice(1), "shell");
     }
     else if (SHELLS.has(cmd))
         shell(w, cmd, args, cwd, form);

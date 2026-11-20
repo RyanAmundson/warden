@@ -20,6 +20,7 @@ interface Walk {
 }
 
 type Token = { word: string } | { op: string } | { sub: string } | { unresolved: string };
+type ProgramKind = "shell" | "node";
 
 const NPM_ALIASES: Record<string, string> = { test: "test", t: "test", tst: "test", start: "start", stop: "stop", restart: "restart" };
 
@@ -44,6 +45,8 @@ const DATA_TOOLS = new Set(["cat", "grep", "egrep", "fgrep", "rg", "ls", "find",
 const RUN_FLAGS = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
 
 const MODULE = /\.(?:[cm]?[jt]s|[jt]sx)$/;
+
+const NODE_ENTRY_EXTENSIONS = ["", ".js", ".json", ".node"];
 
 const NODE_SHEBANG = /^#!.*\b(?:node|tsx|ts-node|bun|deno)\b/;
 
@@ -209,21 +212,21 @@ const addModule = (w: Walk, dir: string, spec: string): void => {
   if (found !== undefined) addFile(w, dir, found);
 };
 
-const addFile = (w: Walk, cwd: string, path: string, shellBody = false): void => {
+const addFile = (w: Walk, cwd: string, path: string, kind?: ProgramKind): void => {
   const full = resolve(cwd, path);
   const key = projectKey(w, full);
   if (key === undefined || key in w.out) return;
   const bytes = readFileSync(full);
   w.out[key] = bytes.toString("latin1");
   const text = bytes.toString("utf8");
-  if (MODULE.test(full) || NODE_SHEBANG.test(text)) for (const m of text.matchAll(IMPORT)) addModule(w, dirname(full), m[1] as string);
-  else if (shellBody || SHELL_SCRIPT.test(full) || SHELL_SHEBANG.test(text)) walk({ ...w, strict: false }, text, cwd);
+  if (kind === "node" || MODULE.test(full) || NODE_SHEBANG.test(text)) for (const m of text.matchAll(IMPORT)) addModule(w, dirname(full), m[1] as string);
+  else if (kind === "shell" || SHELL_SCRIPT.test(full) || SHELL_SHEBANG.test(text)) walk({ ...w, strict: false }, text, cwd);
 };
 
-const addProgram = (w: Walk, cwd: string, word: string, form: string, rest: string[], shellBody = false): void => {
+const addProgram = (w: Walk, cwd: string, word: string, form: string, rest: string[], kind?: ProgramKind): void => {
   if (PACK_PROGRAM.test(word)) return;
   if (word.includes("$")) return refuse(w, `${form}, whose program is named through a variable`, projectFiles(w, cwd, rest));
-  addFile(w, cwd, word, shellBody);
+  addFile(w, cwd, word, kind);
 };
 
 const resolveBare = (w: Walk, word: string): string[] =>
@@ -254,9 +257,16 @@ const shell = (w: Walk, cmd: string, args: string[], cwd: string, form: string):
     }
     if (a.startsWith("-") || a.startsWith("+")) return refuse(w, `${form}, with the ${cmd} option ${a}`, projectFiles(w, cwd, args));
     if (inline) return walk(w, a, cwd);
-    return addProgram(w, cwd, a, form, args.slice(i + 1), true);
+    return addProgram(w, cwd, a, form, args.slice(i + 1), "shell");
   }
   refuse(w, `${form}, which reads its commands from standard input`, []);
+};
+
+const nodeEntry = (cwd: string, path: string): string => {
+  if (path.includes("$")) return path;
+  const full = resolve(cwd, path);
+  return NODE_ENTRY_EXTENSIONS.map((extension) => full + extension)
+    .find((candidate) => statSync(candidate, { throwIfNoEntry: false })?.isFile() === true) ?? path;
 };
 
 const nodeLike = (w: Walk, cmd: string, args: string[], cwd: string, form: string): void => {
@@ -275,7 +285,8 @@ const nodeLike = (w: Walk, cmd: string, args: string[], cwd: string, form: strin
     }
     if ((a.startsWith("--") && value !== undefined) || NODE_BOOL.test(a)) continue;
     if (a.startsWith("-")) return refuse(w, `${form}, with the ${cmd} option ${a}`, projectFiles(w, cwd, args));
-    return addProgram(w, cwd, a, form, args.slice(i + 1));
+    const program = cmd === "node" ? nodeEntry(cwd, a) : a;
+    return addProgram(w, cwd, program, form, args.slice(i + 1), cmd === "node" && !/\.(?:json|node)$/.test(program) ? "node" : undefined);
   }
   refuse(w, `${form}, which reads its program from standard input`, []);
 };
@@ -415,7 +426,7 @@ const simple = (w: Walk, all: string[], cwd: string): string => {
   if (UNMODELED.has(cmd)) refuse(w, `${form}, a ${cmd} construct Warden does not resolve`, projectFiles(w, cwd, args));
   else if (cmd === "source" || cmd === ".") {
     if (args[0] === undefined) refuse(w, `${form}, which names no script`, []);
-    else addProgram(w, cwd, args[0], form, args.slice(1), true);
+    else addProgram(w, cwd, args[0], form, args.slice(1), "shell");
   } else if (SHELLS.has(cmd)) shell(w, cmd, args, cwd, form);
   else if (cmd === "node" || cmd === "tsx" || cmd === "ts-node") nodeLike(w, cmd, args, cwd, form);
   else if (cmd === "npx" && (args[0] === "tsx" || args[0] === "ts-node")) nodeLike(w, args[0], args.slice(1), cwd, form);

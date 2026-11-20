@@ -22,6 +22,34 @@ it("requires a resolvable program even when the command names no files", async (
   }
 });
 
+it("locks the script Node actually executes with an extensionless entry path", async () => {
+  const root = await mkdtemp(join(tmpdir(), "warden-node-entry-"));
+  try {
+    await mkdir(join(root, "scripts"));
+    const entry = 'process.stdout.write(require("./message.cjs"));\n';
+    const dependency = 'module.exports = "checked\\n";\n';
+    await writeFile(join(root, "scripts/verify.js"), entry);
+    await writeFile(join(root, "scripts/message.cjs"), dependency);
+    expect(execFileSync(process.execPath, ["scripts/verify"], { cwd: root, encoding: "utf8" })).toBe("checked\n");
+    expect(commandSources(root, "node scripts/verify", [])).toEqual({
+      "./scripts/verify.js": entry,
+      "./scripts/message.cjs": dependency,
+    });
+
+    const exact = 'process.stdout.write(require("./exact-message.cjs"));\n';
+    const exactDependency = 'module.exports = "exact\\n";\n';
+    await writeFile(join(root, "scripts/verify"), exact);
+    await writeFile(join(root, "scripts/exact-message.cjs"), exactDependency);
+    expect(execFileSync(process.execPath, ["scripts/verify"], { cwd: root, encoding: "utf8" })).toBe("exact\n");
+    expect(commandSources(root, "node scripts/verify", [])).toEqual({
+      "./scripts/verify": exact,
+      "./scripts/exact-message.cjs": exactDependency,
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 it("validates the program before examples and compiles the suggested shell form", async () => {
   const root = await mkdtemp(join(tmpdir(), "warden-command-compile-"));
   const cli = resolve(import.meta.dirname, "../../bin/warden.js");
