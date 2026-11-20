@@ -33,3 +33,28 @@ practices:
         implementation: "eslint:warden/no-suppressions"
         mustFail: "it.skip(\"adds two prices\", () => {\n  expect(sumOfPrices([1, 2])).toBe(3);\n});\n"
         mustPass: "it(\"adds two prices\", () => {\n  expect(sumOfPrices([1, 2])).toBe(3);\n});\n"
+  - id: unit-layout
+    statement: Each declared Unit owns its folder layout and one document with fixed sections.
+    terms: [guardrail]
+    paths: []
+    conflictsWith: []
+    guardrails:
+      - id: warden-unit-layout
+        kind: lint
+        runs: [boundary]
+        budgetMs: 5000
+        version: 1
+        implementation: "fs:core/unit-layout"
+        scope: project
+        unitExample:
+          folder: service
+          kind:
+            document: CONTRACT.md
+            sections: [Purpose, Interfaces]
+            layout: ["src/**/*.ts"]
+        mustPass:
+          "service/CONTRACT.md": "# service\n\n## Purpose\n\n## Interfaces\n"
+          "service/src/port.ts": "export const ready = true;\n"
+        mustFail:
+          "service/CONTRACT.md": "# service\n\n## Interfaces\n\n## Purpose\n"
+          "service/src/port.ts": "export const ready = true;\n"

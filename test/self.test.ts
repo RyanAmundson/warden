@@ -39,7 +39,7 @@ it("Warden source passes its own core pack", async () => {
     await mkdir(join(project, ".warden/generated"), { recursive: true });
     await writeFile(join(project, ".warden/config.yaml"), config);
     const set = await loadRecords(project, repo);
-    const guardrails = set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails));
+    const guardrails = set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.filter((g) => g.implementation.startsWith("eslint:"))));
     for (const [file, content] of Object.entries(eslintAdapter.emit(guardrails, set))) {
       await writeFile(join(project, file), content);
     }

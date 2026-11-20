@@ -194,13 +194,16 @@ Codex asks you to review the plugin's hooks before they run. Once trusted:
 Declare Unit kinds and Unit ownership in `.warden/config.yaml`. A kind fixes the
 document name and section order. A Unit names the kind and owns a project-relative
 folder. Use `.` for the project root and nest Units to give a subfolder a more
-specific owner. A Unit can also name a Term from an enabled pack.
+specific owner. A Unit can also name a Term from an enabled pack. Set a kind's
+`layout` to the allowed file globs relative to each Unit folder. Omit it to
+adopt the documentation rules before restricting the layout.
 
 ```yaml
 unitKinds:
   contract:
     document: CONTRACT.md
     sections: [Purpose, Owns, Interfaces, Invariants]
+    layout: ["src/**/*.ts"]
 units:
   - id: core
     kind: contract
@@ -218,6 +221,18 @@ the record to `units` and creates `src/metrics/CONTRACT.md` with sections in
 the declared order. It refuses to overwrite a document. Add `units: []` for
 a project starting without any declared Units. Run `warden compile` after
 adding a Unit record, then sign the commit that changes `.warden/`.
+
+In projects with `units`, the core pack's boundary check verifies each Unit's
+document, heading order, path ownership, and layout. It examines tracked and
+non-ignored untracked paths. Unit documents must be regular Markdown files.
+The root can hold repository files such as `package.json` without a root
+Unit. `README.md` and `AGENTS.md` are the root Markdown exceptions. The check
+skips control folders unless a Unit is declared inside them. Run it from a
+full worktree:
+
+```bash
+warden check --base main --tier boundary --rule warden-unit-layout
+```
 
 Local packs can use `scope: project` on `fs:` Guardrails that run at the
 boundary. Run these checks from a full checkout. They receive tracked and

@@ -1,10 +1,10 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runExamples } from "../src/compiler/examples.js";
 import { eslintAdapter } from "../src/adapters/eslint.js";
-import { loadRecords } from "../src/records/load.js";
+import { loadRecords, readPack } from "../src/records/load.js";
 import type { Guardrail, RecordSet } from "../src/records/types.js";
 import { runGuardrails } from "../src/runner/run.js";
 
@@ -47,8 +47,14 @@ afterEach(() => rm(root, { recursive: true, force: true }));
 
 describe("core pack", () => {
   it("core pack examples hold", async () => {
-    expect(guardrails.map((g) => g.id)).toEqual(["warden-no-comments", "warden-no-suppressions"]);
+    expect(guardrails.map((g) => g.id)).toEqual(["warden-no-comments", "warden-no-suppressions", "warden-unit-layout"]);
     expect(await runExamples(set)).toEqual([]);
+  });
+
+  it("admits project scope only in the boundary tier", async () => {
+    const bundled = await readFile(join(wardenRoot, "packs/core/pack.yaml"), "utf8");
+    await write(".warden/packs/layout/pack.yaml", bundled.replace("id: core", "id: layout").replace("runs: [boundary]", "runs: [edit, boundary]"));
+    await expect(readPack(root, wardenRoot, "layout", ".warden/config.yaml")).rejects.toThrow("Project scope requires the fs adapter and runs: [boundary].");
   });
 
   it.each(["src/a.tsx", "src/a.mts", "src/a.cts", "src/a.js", "src/a.mjs", "src/a.cjs"])("covers %s files", async (file) => {
@@ -58,7 +64,7 @@ describe("core pack", () => {
   });
 
   it("reports an inline suppression comment as a no-suppressions violation", async () => {
-    const [result] = await check(guardrails.slice(1), "// eslint-disable-line\nconst a = 1;\n");
+    const [result] = await check(guardrails.slice(1, 2), "// eslint-disable-line\nconst a = 1;\n");
     expect(result?.status).toBe("fail");
     expect(result?.violations.map((v) => v.message)).toEqual([
       "no-suppressions: Source files carry no inline suppressions and no skipped tests.",
