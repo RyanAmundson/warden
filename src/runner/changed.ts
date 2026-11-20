@@ -137,6 +137,15 @@ export const unstagedFiles = (root: string): string[] => names(must(root, ["diff
 
 export const trackedFiles = (root: string, paths: string[]): Set<string> => new Set(paths.length === 0 ? [] : names(must(root, ["--literal-pathspecs", "ls-files", "-z", "--cached", "--", ...paths])));
 
+export function hasPathCommitIndex(root: string): boolean {
+  const index = process.env.GIT_INDEX_FILE;
+  if (index === undefined) return false;
+  const file = resolve(root, index);
+  const gitDir = must(root, ["rev-parse", "--absolute-git-dir"]).trim();
+  const selected = join(gitDir, `next-index-${process.ppid}.lock`);
+  return file === selected && lstatSync(selected, { throwIfNoEntry: false })?.isFile() === true;
+}
+
 export const stagedFiles = (root: string): string[] => names(must(root, ["diff", "-z", "--name-only", "--relative", "--cached", "HEAD"]));
 
 export function lastCommittedText(root: string, path: string): string | undefined {

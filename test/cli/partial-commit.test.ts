@@ -26,6 +26,7 @@ beforeAll(async () => {
   vi.stubEnv("WARDEN_HOME", join(temp, "warden-home"));
   vi.stubEnv("CLAUDE_CONFIG_DIR", join(temp, "claude"));
   vi.stubEnv("WARDEN_DAEMON", undefined);
+  vi.stubEnv("GIT_INDEX_FILE", undefined);
   daemon = await serve(warden, 0);
   mkdirSync(join(root, "src"), { recursive: true });
   mkdirSync(bin);
@@ -87,4 +88,37 @@ it("commits the selected path while leaving an earlier branch file's new edits u
   expect(report.tiers.find(({ tier }) => tier === "commit")?.passes[0]).toMatchObject({
     shared: "eslint", runs: runs.size, slowestMs: Math.round(Math.max(...overhead)),
   });
+});
+
+it("keeps full-file lint scope for an ordinary commit using a saved staging area", () => {
+  source("b.ts", "export const b = 2;\n");
+  source("a.ts", "export const a = 3;\n");
+  source("staged.ts", "export const staged = true;\n");
+  source("draft.ts", "export const draft = true;\n");
+  vi.stubEnv("GIT_INDEX_FILE", join(temp, "saved-staging-area"));
+  try {
+    git("read-tree", "HEAD");
+    git("add", "--", "src/a.ts", "src/staged.ts");
+    git("commit", "-qm", "Commit the saved staging area");
+  } finally {
+    vi.stubEnv("GIT_INDEX_FILE", undefined);
+  }
+  const receipt = readEvidence("project").filter((event) => event.kind === "cost" && event.guardrail === RUN_TOTAL).at(-1);
+  expect(receipt).toMatchObject({ scope: "full", exit: 0, tree: git("rev-parse", "HEAD^{tree}").trim(), files: 4 });
+  expect(git("ls-files", "--others", "--exclude-standard", "--", "src/draft.ts")).toBe("src/draft.ts\n");
+});
+
+it("checks a path-selected commit from a saved staging area", () => {
+  source("b.ts", "export const b = 4;\n");
+  source("a.ts", "export const a = 4;\n");
+  vi.stubEnv("GIT_INDEX_FILE", join(temp, "path-staging-area"));
+  try {
+    git("read-tree", "HEAD");
+    git("commit", "-qm", "Commit just a from the saved staging area", "--", "src/a.ts");
+  } finally {
+    vi.stubEnv("GIT_INDEX_FILE", undefined);
+  }
+  expect(git("show", "HEAD:src/a.ts")).toBe("export const a = 4;\n");
+  expect(git("show", "HEAD:src/b.ts")).toBe("export const b = 2;\n");
+  expect(readFileSync(join(root, "src/b.ts"), "utf8")).toBe("export const b = 4;\n");
 });

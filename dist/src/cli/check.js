@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, relative, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { GENERATED_TSCONFIG, TSC_CONFIG_SOURCE } from "../adapters/tsc-config.js";
 import { claudeSession, hookTriggers } from "../adapters/claude.js";
 import { PARSE_ERROR } from "../adapters/types.js";
@@ -10,7 +10,7 @@ import { LOCK_FORMAT, LOCK_PATH, bundledTools, canonicalJson, olderThan, readLoc
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, projectFiles, projectInventory, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { commitsOf, covers, indexTree, stagedMismatch, checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, skippedIndexPaths, stageFile, sparseMode, stagedFiles, trackedFiles, unstagedFiles, verifyBase, checkoutBlobs } from "../runner/changed.js";
+import { commitsOf, covers, indexTree, stagedMismatch, checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, hasPathCommitIndex, headCommit, matchesHead, lastCommittedText, showAtMergeBase, skippedIndexPaths, stageFile, sparseMode, stagedFiles, trackedFiles, unstagedFiles, verifyBase, checkoutBlobs } from "../runner/changed.js";
 import { heartbeatProblem, openAlerts } from "../runner/daemon.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
@@ -393,8 +393,7 @@ const check = async (opts, live) => {
     const guardrails = selectGuardrails(set, undefined).filter((g) => (lintChosen && g.kind === "lint" && !wholeTree(g)) || selected.has(g.id));
     const listed = scannedFiles(root, comparison, opts.paths);
     const unstaged = new Set(tier === "commit" ? unstagedFiles(root) : []);
-    const index = process.env.GIT_INDEX_FILE;
-    const onlyCommit = tier === "commit" && opts.trigger === "git-commit" && index !== undefined && !["index", "index.lock"].includes(basename(index));
+    const onlyCommit = tier === "commit" && opts.trigger === "git-commit" && hasPathCommitIndex(root);
     const blobRules = guardrails.filter((g) => g.kind === "lint" && g.implementation.startsWith("eslint:"));
     const indexedLint = onlyCommit && opts.paths === undefined && blobRules.length > 0 && guardrails.every((g) => g.scope !== "project" && blobRules.includes(g));
     const committing = indexedLint ? new Set(stagedFiles(root)) : undefined;
