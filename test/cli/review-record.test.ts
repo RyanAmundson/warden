@@ -1,7 +1,7 @@
 import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { chmod, readFile, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join, resolve } from "node:path";
+import { delimiter, join, resolve, sep } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const cli = resolve(import.meta.dirname, "../../dist/src/cli/main.js");
@@ -46,7 +46,10 @@ beforeAll(async () => {
   await mkdir(home);
   await writeFile(join(root, ".warden/config.yaml"), 'warden: "0.1.14"\nproject: counter\nbase: main\npacks: [{ id: local, paths: ["**/*.ts"] }]\ntierBudgetMs: { edit: 1000, commit: 2000, boundary: 5000 }\nloopBreakerRepeats: 3\n');
   await writeFile(join(root, ".warden/packs/local/pack.yaml"), [
-    "id: local", "layer: 1", "terms: []", "practices: []", "capabilities:",
+    "id: local", "layer: 1", "terms: []", "practices:",
+    "  - id: counter-behavior", "    statement: Counter behavior matches its contract.", "    terms: []", "    paths: []", "    conflictsWith: []", "    guardrails: []",
+    '  - id: " "', "    statement: An existing Practice ID is preserved.", "    terms: []", "    paths: []", "    conflictsWith: []", "    guardrails: []",
+    "capabilities:",
     "  - id: gate", "    kind: skill", "    serves: review", "    purpose: Review the change.", "    when: Before landing.",
     "    upholds: []", "    commands: [warden review]", "    replaces: []",
     "    review: { adapter: superpowers-review, model: opus, roundLimit: 4 }", "",
@@ -216,6 +219,61 @@ describe("record a completed review", () => {
     const recovered = await record(series, nextReport, "--previous-round", id);
     expect(recovered.code, recovered.err).toBe(0);
     expect(JSON.parse(recovered.out)).toMatchObject({ number: 2, previous: id });
+  });
+
+  it("records one escape for concurrent confirmations and excludes a later reviewer error", async () => {
+    const series = "confirmed-escape";
+    const report = await writeReport("escape.txt", finding(1) + finding(2));
+    const saved = await record(series, report);
+    const { id } = JSON.parse(saved.out);
+    const roundBefore = await history(series, "--round", id);
+    const flags = [...seriesFlags(series), "--round", id, "--finding", "1", "--role", "independent-reviewer",
+      "--reason", "The published interface accepts the wrong value.", "--evidence", "counter.ts:1"];
+    const confirm = (actor: string, ...options: string[]) =>
+      run(root, "confirm", ...flags, "--actor", actor, "--practice", "counter-behavior", ...options);
+
+    const unknown = await confirm("Reviewer A", "--practice", "missing-practice");
+    expect(unknown.code).toBe(2);
+    expect(unknown.err).toContain("missing-practice");
+    expect((await confirm("Reviewer A", "--finding", "99")).code).toBe(2);
+
+    const [first, second] = await Promise.all([confirm("Reviewer A"), confirm("Reviewer B")]);
+    expect(first.code, first.err).toBe(0);
+    expect(second).toEqual(first);
+    expect(await confirm("Reviewer B")).toEqual(first);
+    const escape = JSON.parse(first.out);
+    expect(escape).toMatchObject({ kind: "escaped", round: id, head, finding: 1, practice: "counter-behavior",
+      actor: expect.stringMatching(/^Reviewer [AB]$/), role: "independent-reviewer", evidence: "counter.ts:1",
+    });
+    expect((await confirm("Reviewer A", "--finding", "2")).code).toBe(0);
+    const existingId = await confirm("Reviewer A", "--finding", "2", "--practice", " ");
+    expect(existingId.code, existingId.err).toBe(0);
+    expect(await confirm("Reviewer A", "--finding", "2", "--practice", " ")).toEqual(existingId);
+    expect(JSON.parse((await history(series)).out)[0].signals.escapes).toEqual(expect.arrayContaining([
+      escape, expect.objectContaining({ finding: 2, practice: "counter-behavior" }), JSON.parse(existingId.out),
+    ]));
+
+    const ruled = await run(root, "rule", ...flags, "--actor", "Independent reviewer", "--reason", "The finding was erroneous.");
+    expect(ruled.code, ruled.err).toBe(0);
+    expect(JSON.parse((await history(series)).out)[0].signals.escapes.map((item: { finding: number }) => item.finding)).toEqual([2, 2]);
+    expect((await confirm("Reviewer B")).code).toBe(2);
+    expect(await history(series, "--round", id)).toEqual(roundBefore);
+
+    const reviewHome = join(home, "review");
+    const records = await readdir(reviewHome, { recursive: true });
+    const confirmations = records.filter((path) => path.split(sep).includes("escape-1") && path.endsWith(".json"));
+    expect(confirmations).toHaveLength(3);
+    const corrupt = join(reviewHome, confirmations[0]!);
+    await writeFile(corrupt, "{");
+    const unreadable = await history(series);
+    expect(unreadable.code).toBe(2);
+    expect(unreadable.err).toContain("restore the confirmation from backup");
+    const replay = await record(series, report);
+    expect(replay.code, replay.err).toBe(saved.code);
+    expect(JSON.parse(replay.out)).toMatchObject({ id, verdict: "fail", signals: { reviewerErrors: [expect.objectContaining({ finding: 1 })] } });
+    const successor = await record(series, await writeReport("escape-next.txt"), "--previous-round", id);
+    expect(successor.code, successor.err).toBe(0);
+    expect(JSON.parse(successor.out)).toMatchObject({ number: 2, previous: id });
   });
 
   it("names the Git prerequisite when recording on an older Git", async () => {

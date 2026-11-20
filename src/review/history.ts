@@ -1,4 +1,4 @@
-import { linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { canonicalJson, sha256 } from "../compiler/lock.js";
 import type { ReviewRule } from "../records/types.js";
@@ -174,11 +174,76 @@ export function recordReviewerError(round: ReviewRound, input: ReviewRulingInput
   }
 }
 
+interface ReviewEscape extends ReviewRulingInput {
+  kind: "escaped";
+  round: string;
+  head: string;
+  practice: string;
+  confirmedAt: string;
+}
+
+const escapeKey = (finding: number, practice: string): string =>
+  `${sha256(canonicalJson([finding, practice]))}.json`;
+
+const escapeDirectory = (directory: string, round: ReviewRound): string => join(directory, `escape-${round.number}`);
+
+const readEscape = (directory: string, name: string, round: ReviewRound): ReviewEscape => {
+  const path = join(directory, name);
+  const source = readFileSync(path, "utf8");
+  try {
+    const escape = JSON.parse(source) as ReviewEscape;
+    if (escape.kind === "escaped" && escape.round === round.id && escape.head === round.input.head &&
+        typeof escape.practice === "string" && escape.practice.length > 0 &&
+        round.result.findings.some(({ n }) => n === escape.finding) && escapeKey(escape.finding, escape.practice) === name &&
+        (escape.role === "independent-reviewer" || escape.role === "repository-owner") &&
+        [escape.actor, escape.reason, escape.evidence, escape.confirmedAt].every((value) =>
+          typeof value === "string" && value.trim() !== "")) return escape;
+    throw new Error("invalid confirmation");
+  } catch {
+    throw new Error(`Invalid review confirmation at ${path}. Next action: restore the confirmation from backup.`);
+  }
+};
+
+const listEscapes = (directory: string, round: ReviewRound): ReviewEscape[] => {
+  let names: string[];
+  try {
+    names = readdirSync(directory);
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw cause;
+  }
+  return names.filter((name) => /^[a-f0-9]{64}\.json$/.test(name)).sort().map((name) => readEscape(directory, name, round));
+};
+
+export function recordEscape(round: ReviewRound, input: ReviewRulingInput & { practice: string }): ReviewEscape {
+  const series = seriesPath(round.input);
+  if (readRuling(series, round, input.finding) !== undefined) {
+    throw new Error(`Finding ${input.finding} has a reviewer-error ruling. Next action: run warden review history for this series to inspect it.`);
+  }
+  const directory = escapeDirectory(series, round);
+  const name = escapeKey(input.finding, input.practice);
+  const escape: ReviewEscape = { ...input, kind: "escaped", round: round.id, head: round.input.head, confirmedAt: new Date().toISOString() };
+  try {
+    linkRecord(directory, join(directory, name), escape);
+    return escape;
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
+    return readEscape(directory, name, round);
+  }
+}
+
 export function reviewState(round: ReviewRound) {
   const directory = seriesPath(round.input);
   const rulings = round.result.findings.flatMap(({ n }) => readRuling(directory, round, n) ?? []);
   const errors = new Set(rulings.map(({ finding }) => finding));
   return { round, rulings, active: round.result.findings.filter(({ n }) => !errors.has(n)) };
+}
+
+export function reviewHistoryState(round: ReviewRound) {
+  const escapes = listEscapes(escapeDirectory(seriesPath(round.input), round), round);
+  const state = reviewState(round);
+  const numbers = new Set(state.active.map(({ n }) => n));
+  return { ...state, escapes: escapes.filter(({ finding }) => numbers.has(finding)) };
 }
 
 interface RepeatedKind {
