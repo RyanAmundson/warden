@@ -125,8 +125,13 @@ newRecord
     .description("create a Unit record and its required document")
     .requiredOption("--kind <kind>", "Unit kind declared in .warden/config.yaml")
     .option("--term <term>", "Term that also identifies the Unit")
-    .action(async (id, folder, { kind, term }) => {
-    process.exitCode = await runNewUnit(root(), findWardenRoot(), { id, folder, kind, ...(term === undefined ? {} : { term }) });
+    .option("--public-entry <file>", "public JavaScript or TypeScript entry relative to the Unit folder")
+    .action(async (id, folder, { kind, term, publicEntry }) => {
+    process.exitCode = await runNewUnit(root(), findWardenRoot(), {
+        id, folder, kind,
+        ...(term === undefined ? {} : { term }),
+        ...(publicEntry === undefined ? {} : { publicEntry }),
+    });
 });
 for (const kind of ["skill", "tool"]) {
     newRecord.command(`${kind} <id>`)

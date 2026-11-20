@@ -78,3 +78,29 @@ practices:
           "service/CONTRACT.md": "# service\n\n## Purpose\n\nSee the [Unit document](term:unit-layout%2Fdocument).\n"
         mustFail:
           "service/CONTRACT.md": "# service\n\n## Purpose\n\nThe one Markdown document owned by a declared Unit.\n"
+
+  - id: unit-public-interfaces
+    statement: List every named and default export from a Unit's declared public entry in its Interfaces section.
+    terms: [unit-layout/document]
+    paths: []
+    conflictsWith: []
+    guardrails:
+      - id: warden-unit-public-interfaces
+        kind: lint
+        runs: [boundary]
+        budgetMs: 5000
+        version: 1
+        implementation: "fs:unit-layout/public-interfaces"
+        scope: project
+        unitExample:
+          folder: service
+          publicEntry: src/index.ts
+          kind:
+            document: CONTRACT.md
+            sections: [Interfaces]
+        mustPass:
+          "service/CONTRACT.md": "# Service\n\n## Interfaces\n\n- `ready` reports service readiness.\n"
+          "service/src/index.ts": "export const ready = true;\n"
+        mustFail:
+          "service/CONTRACT.md": "# Service\n\n## Interfaces\n\n- `start` starts the service.\n"
+          "service/src/index.ts": "export const ready = true;\n"

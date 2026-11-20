@@ -37,7 +37,7 @@ unitKinds:
     sections: [Purpose]
     layout: ["handler.ts"]
 units:
-  - { id: api, kind: service, folder: api }
+  - { id: api, kind: service, folder: api, publicEntry: src/port.ts }
   - { id: monitor, kind: nested, folder: api/monitor }
   - { id: docs, kind: service, folder: docs }
   - { id: templates, kind: nested, folder: .claude/templates }
@@ -254,5 +254,94 @@ it("reports copied Term definitions in Unit and root Markdown prose", async () =
     await write("api/CONTRACT.md", doc);
     await write("docs/CONTRACT.md", doc);
     await write("README.md", "# Fixture\n");
+  }
+});
+
+const interfaces = () => run("check", "--rule", "warden-unit-public-interfaces", "--tier", "boundary", "--base", "main", "--format", "json");
+const listing = (exports: string[]) => exports.map((name) => '- `' + name + '`').join("\n");
+const interfaceSources = ["api/src/a.ts", "api/src/b.ts", "api/src/missing.ts"] as const;
+const restorePublicFixture = async () => {
+  await rm(join(root, "api/src/port.ts"), { force: true });
+  await write("api/src/port.ts", "export const ready = true;\n");
+  await write("api/CONTRACT.md", doc);
+  await Promise.all(interfaceSources.map((file) => rm(join(root, file), { force: true })));
+};
+
+it("checks public names through aliases, type exports, and local wildcard cycles", async () => {
+  const names = ["alias", "default", "RecordPort", "star", "nested", "GET", "remote", "namespace"];
+  const [a, b] = interfaceSources;
+  try {
+    await write("api/src/port.ts", [
+      'const local = 1;',
+      'export { local as alias };',
+      'export default function () {}',
+      'export type { RecordPort } from "./a.js";',
+      'export * from "./a.js";',
+      'export * as namespace from "./b.js";',
+      'export { remote } from "external";',
+    ].join("\n"));
+    await write(a, 'export default 7; export const star = 2; export type RecordPort = string; export * from "./b";');
+    await write(b, 'export const nested = 3, GET = 4; export * from "./a";');
+    await write("api/CONTRACT.md", `${doc}\n${listing(names)}\n`);
+    const valid = interfaces();
+    expect(valid.status, valid.stderr + valid.stdout).toBe(0);
+
+    await write("api/CONTRACT.md", `${doc}\n${listing(names.slice(0, -3))}\n\nA mention of \`GET\`.\n\n- See \`remote\`.\n\n# Other\n\n- \`namespace\`\n`);
+    const invalid = interfaces();
+    expect(invalid.status, invalid.stderr + invalid.stdout).toBe(1);
+    expect(JSON.parse(invalid.stdout).failures).toEqual(names.slice(-3).sort().map((name) =>
+      expect.objectContaining({ file: "api/CONTRACT.md", message: expect.stringContaining(`exports "${name}"`) }),
+    ));
+  } finally {
+    await restorePublicFixture();
+  }
+});
+
+it("requires disambiguation only for wildcard exports from distinct bindings", async () => {
+  const [a, b] = interfaceSources;
+  try {
+    await write("api/src/port.ts", 'export * from "./a"; export * from "./b";');
+    await write(a, 'export const ready = 1;');
+    await write(b, 'export const ready = 2;');
+    await write("api/CONTRACT.md", `${doc}\n${listing(["ready"])}\n`);
+    const conflict = interfaces();
+    expect(conflict.status, conflict.stderr + conflict.stdout).toBe(1);
+    expect(JSON.parse(conflict.stdout).failures).toEqual([
+      expect.objectContaining({ file: "api/src/port.ts", message: expect.stringContaining("ambiguous wildcard exports") }),
+    ]);
+    await write("api/src/port.ts", 'export * from "./a"; export * from "./b"; export { ready } from "./a";');
+    const disambiguated = interfaces();
+    expect(disambiguated.status, disambiguated.stderr + disambiguated.stdout).toBe(0);
+    await write("api/src/port.ts", 'export * from "./a"; export * from "./b";');
+    await write(b, 'export { ready } from "./a";');
+    const shared = interfaces();
+    expect(shared.status, shared.stderr + shared.stdout).toBe(0);
+  } finally {
+    await restorePublicFixture();
+  }
+});
+
+it("reports unresolved wildcard and non-regular entry files", async () => {
+  const [a, b, missing] = interfaceSources;
+  try {
+    await write("api/src/port.ts", 'export * from "./b";');
+    await write(a, 'export const nested = 3;');
+    await symlink("a.ts", join(root, missing));
+    await write(b, 'export * from "./missing";');
+    const unresolved = interfaces();
+    expect(unresolved.status, unresolved.stderr + unresolved.stdout).toBe(1);
+    expect(JSON.parse(unresolved.stdout).failures).toEqual([
+      expect.objectContaining({ file: "api/src/port.ts", message: expect.stringContaining('cannot resolve wildcard export "./missing"') }),
+    ]);
+
+    await rm(join(root, "api/src/port.ts"));
+    await symlink("../monitor/handler.ts", join(root, "api/src/port.ts"));
+    const nonRegular = interfaces();
+    expect(nonRegular.status, nonRegular.stderr + nonRegular.stdout).toBe(1);
+    expect(JSON.parse(nonRegular.stdout).failures).toEqual([
+      expect.objectContaining({ message: expect.stringContaining("needs a regular public entry it owns") }),
+    ]);
+  } finally {
+    await restorePublicFixture();
   }
 });

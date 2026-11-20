@@ -124,6 +124,7 @@ it.each([
   ['[{ id: x, kind: contract, folder: src/../outside }]', "Use a project-relative folder"],
   ['[{ id: x, kind: missing, folder: src }]', "Define Unit kind missing"],
   ['[{ id: x, kind: contract, folder: src, term: Unknown }]', "names undeclared Term Unknown"],
+  ['[{ id: x, kind: contract, folder: src, publicEntry: ../api.ts }]', "Use a JavaScript or TypeScript file path relative to the Unit folder"],
 ])("rejects an invalid Unit declaration %s", async (units, message) => {
   await withUnits(units);
   const result = where("x");
@@ -152,12 +153,14 @@ it("describes how to recover an interrupted scaffold lock without taking it from
 it("scaffolds the ordered document and retains the existing record comments", async () => {
   await withUnits("[] # Explicit Unit ownership");
   const folder = "src/parent/new-unit";
-  const result = warden("new", "unit", "vcs", folder, "--kind", "contract", "--term", "Git");
+  const result = warden("new", "unit", "vcs", folder, "--kind", "contract", "--term", "Git", "--public-entry", "src/index.ts");
   expect(result.status, result.stderr).toBe(0);
   const expected = `vcs\t${folder}/CONTRACT.md\n`;
   expect(result.stdout).toBe(expected);
   expect(where("Git").stdout).toBe(expected);
-  expect(await readFile(join(root, configPath), "utf8")).toContain("# Explicit Unit ownership");
+  const config = await readFile(join(root, configPath), "utf8");
+  expect(config).toContain("# Explicit Unit ownership");
+  expect(config).toContain("publicEntry: src/index.ts");
   expect(await readFile(join(root, folder, "CONTRACT.md"), "utf8")).toBe(
     "# vcs\n\n## Purpose\n\n## Owns\n\n## Interfaces\n\n## Invariants\n\n",
   );

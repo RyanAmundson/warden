@@ -144,6 +144,24 @@ const tree = async ({ entry, input }: TreeJob): Promise<unknown> => {
       .filter((token): token is import("marked").Tokens.Heading => token.type === "heading" && token.depth === 2)
       .map((token) => token.text);
   };
+  const markdownListLabels = (text: string, section: string): string[] => {
+    const { marked } = require("marked") as typeof import("marked");
+    const labels: string[] = [];
+    let inside = false;
+    for (const token of marked.lexer(text)) {
+      if (token.type === "heading" && token.depth <= 2) {
+        inside = token.depth === 2 && token.text === section;
+      }
+      if (!inside || token.type !== "list") continue;
+      for (const item of token.items) {
+        const firstBlock = item.tokens[0];
+        if (firstBlock?.type !== "text" && firstBlock?.type !== "paragraph") continue;
+        const firstLabel = firstBlock.tokens?.[0];
+        if (firstLabel?.type === "codespan") labels.push(firstLabel.text);
+      }
+    }
+    return labels;
+  };
   const markdownLinks = (text: string): string[] => {
     const { marked } = require("marked") as typeof import("marked");
     const { decodeHTMLAttribute } = require("entities") as typeof import("entities");
@@ -213,7 +231,7 @@ const tree = async ({ entry, input }: TreeJob): Promise<unknown> => {
   const start = performance.now();
   let found: unknown;
   try {
-    const given = { ...input, read, markdownSections, markdownLinks, markdownAnchors, markdownProse, ...(input.imports === undefined ? {} : { imports: new Map(input.imports) }) };
+    const given = { ...input, read, markdownSections, markdownListLabels, markdownLinks, markdownAnchors, markdownProse, ...(input.imports === undefined ? {} : { imports: new Map(input.imports) }) };
     Object.defineProperty(given, "ts", { get: () => require("typescript") as unknown, enumerable: true });
     found = (check as (i: unknown) => unknown)(given);
   } catch (cause) {

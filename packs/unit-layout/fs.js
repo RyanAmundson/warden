@@ -1,4 +1,5 @@
 import { matchesGlob, posix } from "node:path";
+import { publicInterfaces } from "./public-interfaces.js";
 
 const ROOT_DOCS = new Set(["README.md", "AGENTS.md"]);
 const CONTROL = new Set([".git", ".warden", ".claude", ".agents"]);
@@ -216,4 +217,4 @@ const termDefinitions = ({ files, nonRegular = [], read, markdownProse, unitStru
   return found;
 };
 
-export default { "unit-layout": unitLayout, "document-links": documentLinks, "term-definitions": termDefinitions };
+export default { "unit-layout": unitLayout, "document-links": documentLinks, "term-definitions": termDefinitions, "public-interfaces": publicInterfaces };

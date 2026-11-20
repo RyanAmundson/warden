@@ -6,7 +6,7 @@ import { Ajv, type ErrorObject } from "ajv";
 import { parse } from "yaml";
 import schema from "../../schema/records.schema.json" with { type: "json" };
 import { backslashFix, ignoresPathCase, pathCaseKey } from "./paths.js";
-import type { Capability, Pack, ProjectConfig, RecordSet } from "./types.js";
+import type { Capability, Pack, ProjectConfig, RecordSet, UnitKind } from "./types.js";
 
 export const findWardenRoot = (): string => {
   let dir = dirname(fileURLToPath(import.meta.url));
@@ -98,6 +98,16 @@ const validateUnitLayout = (file: string, pointer: string, layout: string[] | un
   if (invalid !== -1) throw new RecordError(file, `${pointer}/${invalid}`, "Use a positive glob relative to the Unit folder.");
 };
 
+const validatePublicEntry = (file: string, pointer: string, entry: string | undefined, kind: UnitKind): void => {
+  if (entry === undefined) return;
+  if (!validUnitFolder(entry) || !/\.(?:[cm]?[jt]s|[jt]sx)$/.test(entry)) {
+    throw new RecordError(file, pointer, "Use a JavaScript or TypeScript file path relative to the Unit folder.");
+  }
+  if (!kind.sections.includes("Interfaces")) {
+    throw new RecordError(file, pointer, "Add Interfaces to the Unit kind's required sections to declare a public entry.");
+  }
+};
+
 export function validateUnits(file: string, config: ProjectConfig, packs: Pack[], ignoreCase: boolean): void {
   const terms = new Set(packs.flatMap((pack) => pack.terms.map((term) => term.id)));
   for (const [kind, definition] of Object.entries(config.unitKinds ?? {})) validateUnitLayout(file, `/unitKinds/${kind}/layout`, definition.layout);
@@ -117,6 +127,7 @@ export function validateUnits(file: string, config: ProjectConfig, packs: Pack[]
     if (!Object.hasOwn(config.unitKinds ?? {}, unit.kind)) {
       throw new RecordError(file, `${pointer}/kind`, `Define Unit kind ${unit.kind} under unitKinds in ${file}.`);
     }
+    validatePublicEntry(file, `${pointer}/publicEntry`, unit.publicEntry, config.unitKinds![unit.kind]!);
     if (unit.term !== undefined && !terms.has(unit.term)) {
       throw new RecordError(file, `${pointer}/term`, `Unit ${unit.id} names undeclared Term ${unit.term}.`);
     }
@@ -156,11 +167,12 @@ export async function readPack(projectRoot: string, wardenRoot: string, id: stri
         throw new RecordError(file, `${pointer}/scope`, "Project scope requires the fs adapter and runs: [boundary].");
       }
       if (guardrail.unitExample === undefined) continue;
-      const { kind, folder } = guardrail.unitExample;
+      const { kind, folder, publicEntry } = guardrail.unitExample;
       if (guardrail.scope !== "project" || folder === "." || !validUnitFolder(folder)) {
         throw new RecordError(file, `${pointer}/unitExample`, "Use a project-scoped fs Guardrail and a non-root example Unit folder.");
       }
       validateUnitLayout(file, `${pointer}/unitExample/kind/layout`, kind.layout);
+      validatePublicEntry(file, `${pointer}/unitExample/publicEntry`, publicEntry, kind);
     }
   }
   if (pack.id !== id) {

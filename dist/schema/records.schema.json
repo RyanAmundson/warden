@@ -78,7 +78,8 @@
                 "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
                 "kind": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
                 "folder": { "type": "string", "minLength": 1 },
-                "term": { "type": "string", "minLength": 1 }
+                "term": { "type": "string", "minLength": 1 },
+                "publicEntry": { "type": "string", "minLength": 1 }
             }
         },
         "term": {
@@ -123,6 +124,7 @@
                     "type": "object", "additionalProperties": false, "required": ["folder", "kind"],
                     "properties": {
                         "folder": { "type": "string", "minLength": 1 },
+                        "publicEntry": { "type": "string", "minLength": 1 },
                         "kind": { "$ref": "#/$defs/unitKind" }
                     }
                 },

@@ -208,6 +208,7 @@ units:
   - id: core
     kind: contract
     folder: src/core
+    publicEntry: src/index.ts
 ```
 
 `warden where <term-or-unit-or-path>` prints the Unit ID and document path.
@@ -245,6 +246,16 @@ warden check --base main --tier boundary --rule warden-unit-layout
 The `warden-unit-document-links` check validates local Markdown links in the
 same documents. A fragment in a Markdown destination must match a heading
 or an explicit anchor. [GitHub's heading and anchor syntax](https://docs.github.com/en/get-started/writing-on-github/getting-started-with-writing-and-formatting-on-github/basic-writing-and-formatting-syntax#section-links)
+
+Set a Unit's optional `publicEntry` to a JavaScript or TypeScript file relative
+to its folder. The kind must require an `Interfaces` section. In that section,
+start a Markdown list item for each ES module export with its exported name in
+inline code. Use the public alias for a renamed export and `default` for the
+default export. The check includes type exports. It follows relative wildcard
+re-exports through regular repository files using standard TypeScript bundler
+resolution. Give exports from external packages or project-specific module
+aliases explicit names. Use `warden new unit --public-entry <file>` to declare
+the entry while scaffolding a Unit.
 
 Local packs can use `scope: project` on `fs:` Guardrails that run at the
 boundary. Run these checks from a full checkout. They receive tracked and

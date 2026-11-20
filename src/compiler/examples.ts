@@ -17,7 +17,10 @@ export function withExampleUnits(set: RecordSet, guardrail: Guardrail, folders: 
   return { ...set, config: {
     ...set.config,
     unitKinds: { fixture: fixture.kind },
-    units: folders.map((folder, i) => ({ id: `fixture-${i}`, kind: "fixture", folder: posix.join(folder, fixture.folder) })),
+    units: folders.map((folder, i) => ({
+      id: `fixture-${i}`, kind: "fixture", folder: posix.join(folder, fixture.folder),
+      ...(fixture.publicEntry === undefined ? {} : { publicEntry: fixture.publicEntry }),
+    })),
   } };
 }
 

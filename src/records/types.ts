@@ -22,7 +22,7 @@ export interface Guardrail {
   implementation: string;
   options?: unknown;
   scope?: "project";
-  unitExample?: { folder: string; kind: UnitKind };
+  unitExample?: { folder: string; kind: UnitKind; publicEntry?: string };
   sources?: string[];
   mustFail?: Example;
   mustPass?: Example;
@@ -73,6 +73,7 @@ export interface UnitDeclaration {
   kind: string;
   folder: string;
   term?: string;
+  publicEntry?: string;
 }
 
 export interface UnitKind {
