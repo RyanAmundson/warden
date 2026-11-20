@@ -122,7 +122,11 @@ per Unit kind (for example `CONTRACT.md`). Nothing else documents that Unit.
   document that restates a definition fails.
 - Every symbol a Unit exports from its public entry is listed in the
   Interfaces section of its document. This replaces JSDoc.
-- Every link in a document resolves.
+- Every link in a document resolves. The `unit-layout` pack checks local file and
+  folder destinations in Markdown links and images in declared Unit documents
+  and the two root documents. Root-relative destinations resolve from the
+  repository root. Use regular project files and folders as link targets.
+  Fragment IDs, external URLs, and raw HTML links are outside this check.
 
 `warden new unit` scaffolds the folder, the document with its required
 sections, and the Unit record together.

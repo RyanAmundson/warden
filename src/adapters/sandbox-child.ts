@@ -144,10 +144,22 @@ const tree = async ({ entry, input }: TreeJob): Promise<unknown> => {
       .filter((token): token is import("marked").Tokens.Heading => token.type === "heading" && token.depth === 2)
       .map((token) => token.text);
   };
+  const markdownLinks = (text: string): string[] => {
+    const { marked } = require("marked") as typeof import("marked");
+    const { decodeHTMLAttribute } = require("entities") as typeof import("entities");
+    const links: string[] = [];
+    marked.walkTokens(marked.lexer(text), (token) => {
+      if (token.type === "link" || token.type === "image") {
+        const { href } = token as import("marked").Tokens.Link | import("marked").Tokens.Image;
+        links.push(decodeHTMLAttribute(href));
+      }
+    });
+    return links;
+  };
   const start = performance.now();
   let found: unknown;
   try {
-    const given = { ...input, read, markdownSections, ...(input.imports === undefined ? {} : { imports: new Map(input.imports) }) };
+    const given = { ...input, read, markdownSections, markdownLinks, ...(input.imports === undefined ? {} : { imports: new Map(input.imports) }) };
     Object.defineProperty(given, "ts", { get: () => require("typescript") as unknown, enumerable: true });
     found = (check as (i: unknown) => unknown)(given);
   } catch (cause) {

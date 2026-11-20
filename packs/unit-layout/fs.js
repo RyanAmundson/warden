@@ -73,4 +73,50 @@ const unitLayout = ({ files, nonRegular = [], read, markdownSections, unitStruct
   return found;
 };
 
-export default { "unit-layout": unitLayout };
+const isExternal = (href) => /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(href);
+
+const localTarget = (file, href) => {
+  const pathname = href.split(/[?#]/, 1)[0];
+  if (pathname === "") return { path: file, directory: false };
+  let decoded;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    return undefined;
+  }
+  const target = decoded.startsWith("/") ? posix.normalize(decoded.slice(1)) : posix.join(posix.dirname(file), decoded);
+  return { path: target.replace(/\/$/, "") || ".", directory: decoded.endsWith("/") };
+};
+
+const documentLinks = ({ files, nonRegular = [], read, markdownLinks, unitStructure }) => {
+  if (unitStructure === undefined) return [];
+  const { units, ignoreCase } = unitStructure;
+  const key = (path) => ignoreCase ? path.normalize("NFC").toLowerCase() : path;
+  const documents = new Set([...ROOT_DOCS, ...units.map((unit) => unit.document)].map(key));
+  const nonRegularEntries = new Set(nonRegular);
+  const regularFiles = new Set(files.filter((file) => !nonRegularEntries.has(file)).map(key));
+  const folders = new Set(["."]);
+  for (const file of files) {
+    for (let folder = posix.dirname(key(file)); !folders.has(folder); folder = posix.dirname(folder)) folders.add(folder);
+  }
+  const found = [];
+  for (const file of files) {
+    if (!documents.has(key(file)) || nonRegularEntries.has(file)) continue;
+    for (const href of new Set(markdownLinks(read(file)))) {
+      if (isExternal(href)) continue;
+      const target = localTarget(file, href);
+      if (target !== undefined) {
+        const path = key(target.path);
+        if (folders.has(path) || (!target.directory && regularFiles.has(path))) continue;
+      }
+      found.push({
+        file,
+        message: `The link ${href} in ${file} does not name a regular file or folder in the repository.`,
+        doThis: `In ${file}, update ${href} to point to the intended file or folder.`,
+      });
+    }
+  }
+  return found;
+};
+
+export default { "unit-layout": unitLayout, "document-links": documentLinks };
