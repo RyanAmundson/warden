@@ -15,6 +15,7 @@ import { heartbeatProblem, openAlerts } from "../runner/daemon.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
 import { formatFeedback } from "../runner/feedback.js";
+import { recordResolutions } from "../runner/resolutions.js";
 import { runGuardrails, unknownAdapters, wholeTree } from "../runner/run.js";
 import { findTampering, readBaseLock, recordedBases } from "../runner/tamper.js";
 const selectGuardrails = (set, rule) => {
@@ -100,22 +101,31 @@ const runCached = async (set, gs, scanned, shas, ctx, project, run) => {
                 hits.set(keyOf(f, g), cached);
         }
     }
-    const fresh = misses.size > 0 ? await sized(set, lint, [...misses], ctx) : [];
+    const fresh = misses.size > 0 ? await sized(set, lint, [...misses], { ...ctx, captureLintSource: true }) : [];
     const parse = fresh.filter((r) => r.guardrail === PARSE_ERROR);
     const unparsed = new Set(parse.flatMap((r) => r.violations.map((v) => v.file)));
     const results = lint.map((g) => {
         const r = fresh.find((x) => x.guardrail === g.id);
         if (r?.status === "killed")
             return r;
+        const judgedFiles = new Map(r?.judgedFiles);
         const violations = scanned.flatMap((f) => {
-            if (!misses.has(f))
-                return hits.get(keyOf(f, g));
+            const key = keyOf(f, g);
+            const expected = shas.get(f);
+            if (!misses.has(f)) {
+                const cached = hits.get(key);
+                if (cached.judgedSha !== undefined && cached.judgedSha === expected)
+                    judgedFiles.set(f, cached.judgedSha);
+                return cached.violations;
+            }
             const own = r.violations.filter((v) => v.file === f);
-            if (!unparsed.has(f))
-                writeCache(project, keyOf(f, g), own);
+            const actual = r?.inputShas?.get(f);
+            const sameSource = actual === undefined ? r?.inputShas === undefined || own.length === 0 : actual === expected;
+            if (!unparsed.has(f) && sameSource)
+                writeCache(project, key, own, r?.overBudget === true ? undefined : judgedFiles.get(f));
             return own;
         });
-        return { guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms: r?.ms ?? 0, overBudget: r?.overBudget === true, ...(r?.shared === undefined ? {} : { shared: r.shared }) };
+        return { guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms: r?.ms ?? 0, overBudget: r?.overBudget === true, ...(r?.shared === undefined ? {} : { shared: r.shared }), ...(judgedFiles.size === 0 ? {} : { judgedFiles }) };
     });
     const others = [
         ...(rest.length > 0 ? await sized(set, rest, scanned, ctx) : []),
@@ -153,7 +163,7 @@ const judgeBlobs = async (root, set, gs, blobs, ctx) => {
         const paths = blobs.map((b) => b.path);
         const at = checkoutBlobs(root, paths, dir);
         const shas = new Map(paths.map((p) => [p, sha256(readFileSync(join(at, p)))]));
-        return { results: gs.length === 0 ? [] : await runGuardrails(set, gs, paths, { ...ctx, root: at }), shas };
+        return { results: gs.length === 0 ? [] : await runGuardrails(set, gs, paths, { ...ctx, root: at, captureLintSource: true }), shas };
     }
     finally {
         release();
@@ -164,7 +174,11 @@ const mergeResults = (results) => [...new Set(results.map((r) => r.guardrail))].
     const all = results.filter((r) => r.guardrail === id);
     const violations = all.flatMap((r) => r.violations);
     const status = all.some((r) => r.status === "killed") ? "killed" : violations.length > 0 ? "fail" : "pass";
-    return { ...all[0], status, violations, ms: all.reduce((n, r) => n + r.ms, 0) };
+    const first = all[0];
+    if (all.length === 1)
+        return first;
+    const judgedFiles = new Map(all.flatMap((r) => r.overBudget === true ? [] : [...(r.judgedFiles ?? [])]));
+    return { ...first, status, violations, judgedFiles, ms: all.reduce((n, r) => n + r.ms, 0) };
 });
 const failedOf = (failures, notes) => failures.length > 0 || [notes.tampered, notes.killed, notes.unstaged].some((list) => (list ?? []).length > 0);
 const report = (failures, set, opts, notes) => {
@@ -484,14 +498,18 @@ const check = async (opts, live) => {
         }
     }
     const prior = readEvidenceTail(project, LOOP_TAIL_BYTES);
+    const policy = sha256(canonicalJson([lockSha, running, live.base]));
+    const judgedByRule = new Map(perFile.map((r) => [r.guardrail, r.judgedFiles]));
     const trigger = new Set(opts.hook === "claude" ? (opts.hookInput === undefined ? [] : hookTriggers(root, opts.hookInput)) : opts.paths === undefined ? [] : scanned);
     let repeated;
     for (const key of new Set(failures.map((v) => `${v.guardrail}\0${v.file}`))) {
         const [guardrail, file] = key.split("\0");
         const path = join(root, file);
-        const detail = shas.get(file) ?? (file !== "" && lstatSync(path, { throwIfNoEntry: false })?.isFile() ? sha256(readFileSync(path)) : "");
+        const judgedSha = judgedByRule.get(guardrail)?.get(file);
+        const detail = judgedSha ?? shas.get(file) ?? (file !== "" && lstatSync(path, { throwIfNoEntry: false })?.isFile() ? sha256(readFileSync(path)) : "");
         const triggered = trigger.has(file);
-        appendEvidence(project, { at, kind: "fired", guardrail, file, status: "fail", detail, triggered });
+        const pack = packOf.get(guardrail);
+        appendEvidence(project, { at, kind: "fired", guardrail, file, status: "fail", detail, triggered, root, tier, run, ...(judgedSha === undefined ? {} : { policy }), ...(pack === undefined ? {} : { pack }) });
         if (!triggered)
             continue;
         const same = (e) => e.kind === "fired" && e.status === "fail" && e.triggered === true && e.guardrail === guardrail && e.file === file && e.detail === detail;
@@ -506,7 +524,10 @@ const check = async (opts, live) => {
     const coveredHere = (d) => d.detail === "unchecked-commit" && tree !== undefined && commitsOf(root, [d.file]).some((c) => covers(root, { tree, mergeBase: live.base?.mergeBase }, c));
     const alert = failedOf(failures, notes) ? undefined : alerts.find((d) => !coveredHere(d));
     const code = alert === undefined ? report(failures, set, opts, notes) : refuseForAlert(alert, opts);
-    return finish(project, scanned.length === 0 && ran.ran.length === 0 ? "empty" : "ran", scanned, code, { set, failures, notes, extra: { scope, ...(alert === undefined ? {} : { alert: alert.detail, next: alert.next }), guardrails: chosen.length, cached: ran.cached, rules: ruleTimes, passes: passTimes, cachedRules: chosen.filter((g) => ruleTimes[g.id] === undefined).map((g) => g.id), ratchet: [baselineTotal(baseline), baselineTotal(wide.next)], ratchetFrom } });
+    finish(project, scanned.length === 0 && ran.ran.length === 0 && blobRun.length === 0 ? "empty" : "ran", scanned, code, { set, failures, notes, extra: { scope, ...(alert === undefined ? {} : { alert: alert.detail, next: alert.next }), guardrails: chosen.length, cached: ran.cached, rules: ruleTimes, passes: passTimes, cachedRules: chosen.filter((g) => ruleTimes[g.id] === undefined).map((g) => g.id), ratchet: [baselineTotal(baseline), baselineTotal(wide.next)], ratchetFrom } });
+    if (alert === undefined && !failedOf(failures, notes))
+        recordResolutions(project, prior, perFile, { at, root, tier, run, policy });
+    return code;
 };
 export async function runCheck(opts) {
     const live = {

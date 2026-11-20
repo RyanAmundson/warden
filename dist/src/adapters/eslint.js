@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
+import { sha256 } from "../compiler/lock.js";
 import { RecordError } from "../records/load.js";
 import { pathGroups } from "../records/paths.js";
 import { packEntry, targetOf } from "./pack-code.js";
@@ -133,6 +134,18 @@ const lintInProcess = async (gs, entries, files, ctx) => {
         }
         plugins[g.id] = { rules: { [target]: core } };
     }
+    const inputShas = new Map();
+    const processor = {
+        meta: { name: "warden-input-evidence" },
+        supportsAutofix: true,
+        preprocess(source, filename) {
+            inputShas.set(relative(ctx.root, filename), sha256(source));
+            return [source];
+        },
+        postprocess(messages) {
+            return messages.flat();
+        },
+    };
     const eslint = new Linting({
         cwd: ctx.root,
         overrideConfigFile: true,
@@ -142,6 +155,7 @@ const lintInProcess = async (gs, entries, files, ctx) => {
             { linterOptions: { noInlineConfig: true } },
             { ignores: ["!**/node_modules/"] },
             ...entries,
+            ...(ctx.captureLintSource === true ? [{ processor }] : []),
         ],
         allowInlineConfig: false,
         warnIgnored: false,
@@ -154,11 +168,11 @@ const lintInProcess = async (gs, entries, files, ctx) => {
         results.push(...(await eslint.lintFiles(files.slice(i, i + BATCH_FILES))));
         ms += performance.now() - start;
     }
-    return { results, ms };
+    return { results, ms, ...(ctx.captureLintSource === true ? { inputShas } : {}) };
 };
 const lintInSandbox = async (gs, entries, files, ctx) => {
     const codes = await Promise.all(gs.map((g) => packEntry(g, "eslint")));
-    const texts = Object.fromEntries(files.map((f) => [f, readFileSync(join(ctx.root, f), "utf8")]));
+    const texts = Object.fromEntries(files.map((file) => [file, readFileSync(join(ctx.root, file), "utf8")]));
     const unread = (file) => {
         throw new Error(`pack ESLint rules read no files, but one asked for ${file}`);
     };
@@ -172,7 +186,9 @@ const lintInSandbox = async (gs, entries, files, ctx) => {
         const config = entries.filter((e) => Object.keys(e.rules ?? {}).every((r) => ids.has(r)));
         results.push(...(await inSandbox(pack[0], { kind: "eslint", root: ctx.root, entries: pack, config, texts }, unread, ctx.signal)).results);
     }
-    return { results, ms: performance.now() - start };
+    const ms = performance.now() - start;
+    const inputShas = ctx.captureLintSource === true ? new Map(Object.entries(texts).map(([file, source]) => [file, sha256(source)])) : undefined;
+    return { results, ms, ...(inputShas === undefined ? {} : { inputShas }) };
 };
 const run = async (gs, files, ctx) => {
     const all = JSON.parse(await readFile(join(ctx.generatedDir, "eslint.rules.json"), "utf8")).entries;
@@ -183,8 +199,10 @@ const run = async (gs, files, ctx) => {
     const local = gs.filter((g) => !shippedRule(g));
     const shipped = gs.filter(shippedRule);
     const shippedNamespaces = new Set(shipped.map((g) => targetOf(g).split("/", 1)[0]));
-    const runs = [...(local.length === 0 ? [] : [await lintInProcess(local, entriesFor(local), files, ctx)]), ...(shipped.length === 0 ? [] : [await lintInSandbox(shipped, entriesFor(shipped), files, ctx)])];
-    const results = runs.flatMap((r) => r.results);
+    const localRun = local.length === 0 ? undefined : await lintInProcess(local, entriesFor(local), files, ctx);
+    const shippedRun = shipped.length === 0 ? undefined : await lintInSandbox(shipped, entriesFor(shipped), files, ctx);
+    const runs = [localRun, shippedRun].filter((r) => r !== undefined);
+    const results = runs.flatMap(({ results, inputShas }) => results.map((result) => ({ result, inputShas })));
     const ms = runs.reduce((sum, r) => sum + r.ms, 0);
     const byRule = new Map();
     for (const g of gs)
@@ -192,10 +210,19 @@ const run = async (gs, files, ctx) => {
     const owner = new Map(gs.map((g) => [ruleId(g), g.id]));
     const parseErrors = [];
     const ruleMs = new Map();
-    for (const result of results) {
+    const judgedFiles = new Map();
+    for (const { result, inputShas } of results) {
+        const file = relative(ctx.root, result.filePath);
+        const sha = result.messages.some((m) => m.fatal === true) ? undefined : inputShas?.get(file);
         for (const pass of result.stats?.times.passes ?? []) {
-            for (const [id, t] of Object.entries(pass.rules ?? {}))
+            for (const [id, t] of Object.entries(pass.rules ?? {})) {
                 ruleMs.set(id, (ruleMs.get(id) ?? 0) + t.total);
+                if (sha === undefined)
+                    continue;
+                const judged = judgedFiles.get(id) ?? new Map();
+                judged.set(file, sha);
+                judgedFiles.set(id, judged);
+            }
         }
         if (result.messages.length > 0 && result.source === undefined)
             throw new Error(`eslint returned messages for ${result.filePath} without its source`);
@@ -205,7 +232,7 @@ const run = async (gs, files, ctx) => {
             if (m.ruleId === NO_COMMENTS && suppressed.has(`${m.line}:${m.column}`))
                 continue;
             if (m.ruleId === null && m.fatal === true) {
-                const parsed = { guardrail: PARSE_ERROR, file: relative(ctx.root, result.filePath), line: m.line, message: m.message };
+                const parsed = { guardrail: PARSE_ERROR, file, line: m.line, message: m.message };
                 if (!parseErrors.some((p) => p.file === parsed.file && p.line === parsed.line))
                     parseErrors.push(parsed);
                 continue;
@@ -217,7 +244,7 @@ const run = async (gs, files, ctx) => {
             }
             bucket.push({
                 guardrail: owner.get(id),
-                file: relative(ctx.root, result.filePath),
+                file,
                 line: m.line,
                 endLine: m.endLine ?? m.line,
                 message: m.message,
@@ -227,8 +254,11 @@ const run = async (gs, files, ctx) => {
     }
     const shared = { id: "eslint", guardrails: gs.length, members: gs.map((g) => g.id) };
     const out = gs.map((g) => {
-        const violations = byRule.get(ruleId(g));
-        return { guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms, shared, ruleMs: ruleMs.get(ruleId(g)) ?? 0 };
+        const id = ruleId(g);
+        const violations = byRule.get(id);
+        const judged = judgedFiles.get(id);
+        const inputShas = (shippedRule(g) ? shippedRun : localRun)?.inputShas;
+        return { guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms, shared, ruleMs: ruleMs.get(id) ?? 0, ...(inputShas === undefined ? {} : { inputShas }), ...(judged === undefined ? {} : { judgedFiles: judged }) };
     });
     return parseErrors.length > 0 ? [...out, { guardrail: PARSE_ERROR, status: "fail", violations: parseErrors, ms, shared }] : out;
 };

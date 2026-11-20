@@ -10,23 +10,30 @@ import { wardenHome } from "./evidence.js";
 const VIOLATION_CACHE = "violation-range";
 
 export const cacheKey = (file: string, contentSha: string, g: Guardrail, lockSha: string, warden: string): string =>
-  sha256(canonicalJson([VIOLATION_CACHE, g.id, g.version, g.implementation, g.options ?? null, file, contentSha, lockSha, warden]));
+  sha256(canonicalJson([g.implementation.startsWith("eslint:") ? "eslint-source-proof" : VIOLATION_CACHE, g.id, g.version, g.implementation, g.options ?? null, file, contentSha, lockSha, warden]));
 
 const cacheDir = (project: string): string => join(wardenHome(), "cache", project);
 
-export function readCache(project: string, key: string): Violation[] | undefined {
+export interface CachedViolations {
+  violations: Violation[];
+  judgedSha?: string;
+}
+
+export function readCache(project: string, key: string): CachedViolations | undefined {
   try {
-    return JSON.parse(readFileSync(join(cacheDir(project), `${key}.json`), "utf8")) as Violation[];
+    const cached = JSON.parse(readFileSync(join(cacheDir(project), `${key}.json`), "utf8")) as Violation[] | CachedViolations | null;
+    if (Array.isArray(cached)) return { violations: cached };
+    return Array.isArray(cached?.violations) ? cached : undefined;
   } catch {
     return undefined;
   }
 }
 
-export function writeCache(project: string, key: string, violations: Violation[]): void {
+export function writeCache(project: string, key: string, violations: Violation[], judgedSha?: string): void {
   mkdirSync(cacheDir(project), { recursive: true });
   const target = join(cacheDir(project), `${key}.json`);
   const temp = `${target}.${randomUUID()}.tmp`;
-  writeFileSync(temp, JSON.stringify(violations));
+  writeFileSync(temp, JSON.stringify(judgedSha === undefined ? violations : { violations, judgedSha }));
   renameSync(temp, target);
 }
 

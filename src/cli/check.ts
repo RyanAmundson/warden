@@ -10,12 +10,13 @@ import { LOCK_FORMAT, LOCK_PATH, bundledTools, canonicalJson, olderThan, readLoc
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import type { Guardrail, Kind, RecordSet, Tier } from "../records/types.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, projectFiles, projectInventory, readBaseline, writeBaseline } from "../runner/baseline.js";
-import { cacheKey, readCache, writeCache } from "../runner/cache.js";
+import { cacheKey, readCache, writeCache, type CachedViolations } from "../runner/cache.js";
 import { commitsOf, covers, indexTree, stagedMismatch, checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, skippedIndexPaths, stageFile, sparseMode, stagedFiles, type StagedBlob, unstagedFiles, verifyBase, checkoutBlobs } from "../runner/changed.js";
 import { type Detection, heartbeatProblem, openAlerts } from "../runner/daemon.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { type Evidence, LOOP_TAIL_BYTES, type Outcome, RUN_TOTAL, type RunFailure, type Step, type Trigger, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
 import { type Format, type Notes, type Repeated, formatFeedback } from "../runner/feedback.js";
+import { recordResolutions } from "../runner/resolutions.js";
 import { runGuardrails, unknownAdapters, wholeTree } from "../runner/run.js";
 import { type Tamper, findTampering, readBaseLock, recordedBases } from "../runner/tamper.js";
 
@@ -113,7 +114,7 @@ const runCached = async (
     throw new RecordError("", "/rule", "Project-scoped rules need the complete checkout. Next action: run the same Warden check from a full worktree.");
   }
   const keyOf = (f: string, g: Guardrail): string => cacheKey(f, shas.get(f) as string, g, run.lockSha, run.warden);
-  const hits = new Map<string, Violation[]>();
+  const hits = new Map<string, CachedViolations>();
   const misses = new Set<string>();
   for (const g of lint) {
     for (const f of scanned) {
@@ -122,19 +123,28 @@ const runCached = async (
       else hits.set(keyOf(f, g), cached);
     }
   }
-  const fresh = misses.size > 0 ? await sized(set, lint, [...misses], ctx) : [];
+  const fresh = misses.size > 0 ? await sized(set, lint, [...misses], { ...ctx, captureLintSource: true }) : [];
   const parse = fresh.filter((r) => r.guardrail === PARSE_ERROR);
   const unparsed = new Set(parse.flatMap((r) => r.violations.map((v) => v.file)));
   const results = lint.map((g): RunResult => {
     const r = fresh.find((x) => x.guardrail === g.id);
     if (r?.status === "killed") return r;
+    const judgedFiles = new Map(r?.judgedFiles);
     const violations = scanned.flatMap((f) => {
-      if (!misses.has(f)) return hits.get(keyOf(f, g)) as Violation[];
+      const key = keyOf(f, g);
+      const expected = shas.get(f);
+      if (!misses.has(f)) {
+        const cached = hits.get(key) as CachedViolations;
+        if (cached.judgedSha !== undefined && cached.judgedSha === expected) judgedFiles.set(f, cached.judgedSha);
+        return cached.violations;
+      }
       const own = (r as RunResult).violations.filter((v) => v.file === f);
-      if (!unparsed.has(f)) writeCache(project, keyOf(f, g), own);
+      const actual = r?.inputShas?.get(f);
+      const sameSource = actual === undefined ? r?.inputShas === undefined || own.length === 0 : actual === expected;
+      if (!unparsed.has(f) && sameSource) writeCache(project, key, own, r?.overBudget === true ? undefined : judgedFiles.get(f));
       return own;
     });
-    return { guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms: r?.ms ?? 0, overBudget: r?.overBudget === true, ...(r?.shared === undefined ? {} : { shared: r.shared }) };
+    return { guardrail: g.id, status: violations.length > 0 ? "fail" : "pass", violations, ms: r?.ms ?? 0, overBudget: r?.overBudget === true, ...(r?.shared === undefined ? {} : { shared: r.shared }), ...(judgedFiles.size === 0 ? {} : { judgedFiles }) };
   });
   const others = [
     ...(rest.length > 0 ? await sized(set, rest, scanned, ctx) : []),
@@ -170,7 +180,7 @@ const judgeBlobs = async (root: string, set: RecordSet, gs: Guardrail[], blobs: 
     const paths = blobs.map((b) => b.path);
     const at = checkoutBlobs(root, paths, dir);
     const shas = new Map(paths.map((p) => [p, sha256(readFileSync(join(at, p)))]));
-    return { results: gs.length === 0 ? [] : await runGuardrails(set, gs, paths, { ...ctx, root: at }), shas };
+    return { results: gs.length === 0 ? [] : await runGuardrails(set, gs, paths, { ...ctx, root: at, captureLintSource: true }), shas };
   } finally {
     release();
     remove();
@@ -182,7 +192,10 @@ const mergeResults = (results: RunResult[]): RunResult[] =>
     const all = results.filter((r) => r.guardrail === id);
     const violations = all.flatMap((r) => r.violations);
     const status = all.some((r) => r.status === "killed") ? "killed" : violations.length > 0 ? "fail" : "pass";
-    return { ...(all[0] as RunResult), status, violations, ms: all.reduce((n, r) => n + r.ms, 0) };
+    const first = all[0] as RunResult;
+    if (all.length === 1) return first;
+    const judgedFiles = new Map(all.flatMap((r) => r.overBudget === true ? [] : [...(r.judgedFiles ?? [])]));
+    return { ...first, status, violations, judgedFiles, ms: all.reduce((n, r) => n + r.ms, 0) };
   });
 
 const failedOf = (failures: Violation[], notes: Notes): boolean =>
@@ -512,6 +525,8 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
     }
   }
   const prior = readEvidenceTail(project, LOOP_TAIL_BYTES);
+  const policy = sha256(canonicalJson([lockSha, running, live.base]));
+  const judgedByRule = new Map(perFile.map((r) => [r.guardrail, r.judgedFiles]));
   const trigger = new Set(
     opts.hook === "claude" ? (opts.hookInput === undefined ? [] : hookTriggers(root, opts.hookInput)) : opts.paths === undefined ? [] : scanned,
   );
@@ -519,9 +534,11 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   for (const key of new Set(failures.map((v) => `${v.guardrail}\0${v.file}`))) {
     const [guardrail, file] = key.split("\0") as [string, string];
     const path = join(root, file);
-    const detail = shas.get(file) ?? (file !== "" && lstatSync(path, { throwIfNoEntry: false })?.isFile() ? sha256(readFileSync(path)) : "");
+    const judgedSha = judgedByRule.get(guardrail)?.get(file);
+    const detail = judgedSha ?? shas.get(file) ?? (file !== "" && lstatSync(path, { throwIfNoEntry: false })?.isFile() ? sha256(readFileSync(path)) : "");
     const triggered = trigger.has(file);
-    appendEvidence(project, { at, kind: "fired", guardrail, file, status: "fail", detail, triggered });
+    const pack = packOf.get(guardrail);
+    appendEvidence(project, { at, kind: "fired", guardrail, file, status: "fail", detail, triggered, root, tier, run, ...(judgedSha === undefined ? {} : { policy }), ...(pack === undefined ? {} : { pack }) });
     if (!triggered) continue;
     const same = (e: Evidence): boolean =>
       e.kind === "fired" && e.status === "fail" && e.triggered === true && e.guardrail === guardrail && e.file === file && e.detail === detail;
@@ -535,7 +552,9 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const coveredHere = (d: Detection): boolean => d.detail === "unchecked-commit" && tree !== undefined && commitsOf(root, [d.file]).some((c) => covers(root, { tree, mergeBase: live.base?.mergeBase }, c));
   const alert = failedOf(failures, notes) ? undefined : alerts.find((d) => !coveredHere(d));
   const code = alert === undefined ? report(failures, set, opts, notes) : refuseForAlert(alert, opts);
-  return finish(project, scanned.length === 0 && ran.ran.length === 0 ? "empty" : "ran", scanned, code, { set, failures, notes, extra: { scope, ...(alert === undefined ? {} : { alert: alert.detail, next: alert.next }), guardrails: chosen.length, cached: ran.cached, rules: ruleTimes, passes: passTimes, cachedRules: chosen.filter((g) => ruleTimes[g.id] === undefined).map((g) => g.id), ratchet: [baselineTotal(baseline), baselineTotal(wide.next)], ratchetFrom } });
+  finish(project, scanned.length === 0 && ran.ran.length === 0 && blobRun.length === 0 ? "empty" : "ran", scanned, code, { set, failures, notes, extra: { scope, ...(alert === undefined ? {} : { alert: alert.detail, next: alert.next }), guardrails: chosen.length, cached: ran.cached, rules: ruleTimes, passes: passTimes, cachedRules: chosen.filter((g) => ruleTimes[g.id] === undefined).map((g) => g.id), ratchet: [baselineTotal(baseline), baselineTotal(wide.next)], ratchetFrom } });
+  if (alert === undefined && !failedOf(failures, notes)) recordResolutions(project, prior, perFile, { at, root, tier, run, policy });
+  return code;
 };
 
 export async function runCheck(opts: CheckOptions): Promise<number> {

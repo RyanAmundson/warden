@@ -29,6 +29,8 @@ export interface RunResult {
   files?: number;
   bytes?: number;
   ruleMs?: number;
+  inputShas?: ReadonlyMap<string, string>;
+  judgedFiles?: ReadonlyMap<string, string>;
 }
 
 export interface RunContext {
@@ -38,6 +40,7 @@ export interface RunContext {
   base?: string;
   settingsOf?: (g: Guardrail) => Record<string, unknown> | undefined;
   signal?: AbortSignal;
+  captureLintSource?: boolean;
   lockedTscConfig?: LockedTscConfig;
   projectInventory?: { nonRegular: string[]; discoveryMs: number };
   unitStructure?: { units: (Unit & { kindRecord: UnitKind })[]; ignoreCase: boolean; termDefinitions?: Pick<Term, "id" | "definition">[] };
