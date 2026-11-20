@@ -67,6 +67,8 @@ const NODE_FILE_FLAGS = new Set(["-r", "--require", "--import", "--loader", "--e
 
 const NODE_VALUE_FLAGS = new Set(["-C", "--conditions", "--input-type", "--env-file", "--tsconfig", "-P", "--project"]);
 
+const TSX_WATCH_VALUE_FLAGS = new Set(["--include", "--exclude", "--ignore"]);
+
 const NODE_BOOL = /^--(?:no-[\w-]+|experimental-[\w-]+|enable-source-maps|trace-[\w-]+|expose-gc|preserve-symlinks(?:-main)?|inspect(?:-brk)?|throw-deprecation|pending-deprecation|frozen-intrinsics|transpile-only|swc|esm)$/;
 
 const SHELL_LETTERS = /^[-+][aefhklmnuvxBCEHPTc]+$/;
@@ -277,9 +279,15 @@ const nodeEntry = (cwd: string, path: string): string => {
 };
 
 const nodeLike = (w: Walk, cmd: string, args: string[], cwd: string, form: string): void => {
-  for (let i = 0; i < args.length; i++) {
+  const watch = cmd === "tsx" && args[0] === "watch";
+  for (let i = watch ? 1 : 0; i < args.length; i++) {
     const a = args[i] as string;
     const [flag, value] = a.startsWith("--") && a.includes("=") ? [a.slice(0, a.indexOf("=")), a.slice(a.indexOf("=") + 1)] : [a, undefined];
+    if (watch && TSX_WATCH_VALUE_FLAGS.has(flag)) {
+      if (value === undefined) i++;
+      continue;
+    }
+    if (watch && flag === "--clear-screen") continue;
     if (flag === "-e" || flag === "-p" || flag === "-pe" || flag === "--eval" || flag === "--print") return;
     if (NODE_FILE_FLAGS.has(flag)) {
       const spec = value ?? args[++i];
@@ -295,7 +303,7 @@ const nodeLike = (w: Walk, cmd: string, args: string[], cwd: string, form: strin
     const program = cmd === "node" ? nodeEntry(cwd, a) : a;
     return addProgram(w, cwd, program, form, args.slice(i + 1), cmd === "node" && !/\.(?:json|node)$/.test(program) ? "node" : undefined);
   }
-  refuse(w, `${form}, which reads its program from standard input`, []);
+  refuse(w, watch ? `${form}, which names no script to watch` : `${form}, which reads its program from standard input`, []);
 };
 
 const scripted = (w: Walk, cmd: string, args: string[], cwd: string, form: string, inline: Set<string>, bool: RegExp, valued: Set<string>): void => {

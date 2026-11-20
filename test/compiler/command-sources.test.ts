@@ -57,6 +57,22 @@ it("locks the script Node actually executes with an extensionless entry path", a
   }
 });
 
+it("locks the entry and imports of a tsx watch command", async () => {
+  const root = await mkdtemp(join(tmpdir(), "warden-tsx-watch-"));
+  try {
+    const entry = 'import "./message.js";\n';
+    const dependency = 'export const message = "checked";\n';
+    await writeFile(join(root, "verify.ts"), entry);
+    await writeFile(join(root, "message.ts"), dependency);
+    const sources = { "./verify.ts": entry, "./message.ts": dependency };
+    expect(commandSources(root, "tsx watch ./verify.ts", [])).toEqual(sources);
+    expect(commandSources(root, 'npx tsx watch --clear-screen=false --include "data/**/*.json" --exclude=./output.ts ./verify.ts --verbose', [])).toEqual(sources);
+    expect(() => commandSources(root, "tsx watch --exclude ./output.ts", [])).toThrow("which names no script to watch");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 it("validates the program before examples and compiles the suggested shell form", async () => {
   const root = await mkdtemp(join(tmpdir(), "warden-command-compile-"));
   const cli = resolve(import.meta.dirname, "../../bin/warden.js");
