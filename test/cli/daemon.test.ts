@@ -190,13 +190,41 @@ it("records each commit, flags one that no full check stamped, and closes the al
   await until("the unchecked commit is flagged", () => unchecked(s).includes(skipped));
   expect(readEvidence(PROJECT).find((e) => e.kind === "commit" && e.commit === skipped)).toMatchObject({ status: "unchecked", root });
   const alert = tampered().find((e) => e.file === skipped);
-  expect(alert?.next).toBe(`in a checkout of commit ${skipped.slice(0, 12)} with nothing staged, run warden check --base ${skipped.slice(0, 12)}^`);
+  const short = skipped.slice(0, 12);
+  expect(alert?.next).toContain(`in a checkout of commit ${short} with nothing staged, run warden check --base ${short}^`);
+  expect(alert?.next).toContain(`If the check finds a Guardrail violation, ask the repository owner to save the intended changes separately and remove ${short} from every ref and worktree that reaches it. After the daemon clears the alert, restore the intended changes, fix the findings, and commit through the hook`);
   const empty = warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", "main");
   expect(empty).toMatchObject({ code: 1, err: expect.stringContaining(`unchecked-commit ${skipped}`) });
   await s.daemon.rescan();
   expect(unchecked(s)).toEqual([skipped]);
   expect(warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", `${skipped.slice(0, 12)}^`).code).toBe(0);
   await until("the commit's own check closes the alert", () => unchecked(s).length === 0);
+});
+
+it("clears the old alert before the owner commits a corrected change", async () => {
+  delete process.env.WARDEN_DAEMON;
+  const s = await start();
+  const file = "src/counter.ts";
+  await writeFile(join(root, file), "// Counter used by the example.\nexport const counter = 1;\n");
+  git(root, "add", file);
+  commitUnhooked("counter before review");
+  const original = git(root, "rev-parse", "HEAD").trim();
+  await until("the original commit is flagged", () => unchecked(s).includes(original));
+  const check = warden(root, {}, "check", "--base", `${original}^`);
+  expect(check.code).toBe(1);
+  expect(check.out + check.err).toContain("no-comments");
+
+  git(root, "reset", "--mixed", "HEAD^");
+  await s.daemon.rescan();
+  expect(unchecked(s)).toEqual([]);
+
+  await writeFile(join(root, file), "export const counter = 1;\n");
+  git(root, "add", file);
+  const result = await hooked("commit", "-m", "correct the counter");
+  expect(result.status, result.out).toBe(0);
+  const corrected = git(root, "rev-parse", "HEAD").trim();
+  await until("the corrected commit is checked", () => readEvidence(PROJECT).some((e) => e.kind === "commit" && e.commit === corrected && e.status === "checked"));
+  expect(unchecked(s)).toEqual([]);
 });
 
 it("a commit after a passing full check is recorded as checked", async () => {
@@ -549,7 +577,9 @@ it("judges a root commit, its next action closes the alert, and a deleted branch
   git(root, "branch", "orphan", orphan);
   await until("the root commit is flagged", () => unchecked(s).includes(orphan));
   const short = orphan.slice(0, 12);
-  expect(tampered().find((e) => e.file === orphan)?.next).toBe(`run git switch -c warden-check-${short} main, then git read-tree -u --reset ${short}, then warden check --base main`);
+  const next = tampered().find((e) => e.file === orphan)?.next;
+  expect(next).toContain(`run git switch -c warden-check-${short} main, then git read-tree -u --reset ${short}, then warden check --base main`);
+  expect(next).toContain(`If the check finds a Guardrail violation, ask the repository owner to save the intended changes separately and remove ${short}`);
   git(root, "switch", "-q", "-c", `warden-check-${short}`, "main");
   git(root, "read-tree", "-u", "--reset", short);
   expect(warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", "main").code).toBe(0);

@@ -155,10 +155,11 @@ const uncheckedAlert = (root, repo, c, base, running, port) => {
     if (version === undefined)
         return { file: c.commit, detail: "unchecked-commit", next: unstampable(root, repo, c, running, port) };
     const warden = version === running ? "warden" : `npx --yes --package=${RELEASES}#v${version} warden`;
-    const next = c.parents[0] === undefined
+    const verify = c.parents[0] === undefined
         ? `run git switch -c warden-check-${short} ${base}, then git read-tree -u --reset ${short}, then ${warden} check --base ${base}`
         : `in a checkout of commit ${short} with nothing staged, run ${warden} check --base ${short}^`;
-    return { file: c.commit, detail: "unchecked-commit", next };
+    const recover = `If the check finds a Guardrail violation, ask the repository owner to save the intended changes separately and remove ${short} from every ref and worktree that reaches it. After the daemon clears the alert, restore the intended changes, fix the findings, and commit through the hook`;
+    return { file: c.commit, detail: "unchecked-commit", next: `${verify}. ${recover}` };
 };
 const projectOf = (root) => {
     try {
