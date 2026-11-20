@@ -5,6 +5,7 @@ import { PROJECT_SOURCE, scriptsOf } from "./lock.js";
 const NPM_ALIASES = { test: "test", t: "test", tst: "test", start: "start", stop: "stop", restart: "restart" };
 const NPM_RUN = new Set(["run", "run-script", "rum", "urn"]);
 const NPM_VALUE_FLAGS = new Set(["--prefix", "-C", "-w", "--workspace"]);
+const SCRIPT_NAME = /^[A-Za-z0-9_][A-Za-z0-9_.:-]*$/;
 const SHELLS = new Set(["sh", "bash", "zsh", "dash"]);
 const PYTHON = /^python(?:\d+(?:\.\d+)?)?$/;
 const LEADS = new Set(["if", "then", "else", "elif", "while", "until", "do", "!", "{"]);
@@ -209,16 +210,24 @@ const resolveBare = (w, word) => [...(process.env.PATH ?? "").split(delimiter).f
     const candidate = join(resolve(w.root, dir), word);
     return statSync(candidate, { throwIfNoEntry: false })?.isFile() === true ? [realpathSync(candidate)] : [];
 });
-const runNpm = (w, name) => {
+const runPackageScript = (w, name, manager) => {
     for (const n of [`pre${name}`, name, `post${name}`]) {
         const key = `${PROJECT_SOURCE}package.json#scripts/${n}`;
         const body = w.scripts[n];
-        if (typeof body !== "string" || (key in w.out && (!w.strict || w.strictNpm.has(key))))
+        if (typeof body !== "string" || (key in w.out && (!w.strict || w.strictScripts.has(key))))
             continue;
         w.out[key] = body;
         if (w.strict)
-            w.strictNpm.add(key);
-        walk(w, body, w.root);
+            w.strictScripts.add(key);
+        try {
+            walk(w, body, w.root);
+        }
+        catch (cause) {
+            if (!(cause instanceof RecordError) || n === name || manager === undefined)
+                throw cause;
+            const id = w.owner.id;
+            throw new RecordError(w.owner.file, `/guardrails/${id}/implementation`, `Warden cannot trace package.json script ${n}, which ${manager} may run alongside ${name}. Next action: call the Guardrail's check file directly, then run warden compile.`);
+        }
     }
 };
 const shell = (w, cmd, args, cwd, form) => {
@@ -334,7 +343,7 @@ const bun = (w, args, cwd, form) => {
     if (target === undefined || (first !== "run" && ["test", "t", "x", "install", "add", "build", "exec"].includes(target)))
         return refuse(w, `${form}, a bun subcommand Warden does not resolve`, projectFiles(w, cwd, args));
     if (first === "run" && typeof w.scripts[target] === "string")
-        return runNpm(w, target);
+        return runPackageScript(w, target);
     addProgram(w, cwd, target, form, []);
 };
 const npm = (w, args, cwd, form) => {
@@ -346,12 +355,20 @@ const npm = (w, args, cwd, form) => {
         return;
     if (NPM_RUN.has(sub)) {
         if (name !== undefined)
-            runNpm(w, name);
+            runPackageScript(w, name);
         return;
     }
     if (sub in NPM_ALIASES)
-        return runNpm(w, NPM_ALIASES[sub]);
+        return runPackageScript(w, NPM_ALIASES[sub]);
     refuse(w, `${form}, an npm subcommand Warden does not resolve`, projectFiles(w, cwd, args));
+};
+const localPackageRunner = (w, cmd, args, cwd, form) => {
+    const [sub, name] = args;
+    const run = sub === "run" || (cmd === "pnpm" && sub === "run-script");
+    if (!run || name === undefined || !SCRIPT_NAME.test(name) || typeof w.scripts[name] !== "string" || args.length !== 2 || resolve(cwd) !== resolve(w.root)) {
+        return refuse(w, `${form}, which must run a literal ${cmd} script name declared in the root package.json without extra arguments`, projectFiles(w, cwd, args));
+    }
+    runPackageScript(w, name, cmd);
 };
 const bare = (w, cmd, args, cwd, form) => {
     const own = resolveBare(w, cmd).filter((real) => inside(w.realRoot, real)?.split(sep).includes("node_modules") === false);
@@ -473,6 +490,8 @@ const simple = (w, all, cwd) => {
         bun(w, args, cwd, form);
     else if (cmd === "npm")
         npm(w, args, cwd, form);
+    else if (cmd === "pnpm" || cmd === "yarn")
+        localPackageRunner(w, cmd, args, cwd, form);
     else if (cmd.includes("$"))
         addProgram(w, cwd, cmd, form, args);
     else if (cmd.includes("/"))
@@ -508,7 +527,7 @@ function walk(w, text, cwd) {
     flush();
 }
 export const commandSources = (root, command, sources, scripts = scriptsOf(root), owner = { file: "", id: "" }) => {
-    const w = { root, realRoot: realpathSync(root), scripts, out: {}, strict: true, listed: new Set(), strictNpm: new Set(), nodeModules: new Set(), owner };
+    const w = { root, realRoot: realpathSync(root), scripts, out: {}, strict: true, listed: new Set(), strictScripts: new Set(), nodeModules: new Set(), owner };
     const keys = sources.map((path) => {
         const key = projectKey(w, resolve(root, path));
         if (key === undefined)

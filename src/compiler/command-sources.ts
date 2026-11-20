@@ -15,7 +15,7 @@ interface Walk {
   out: Record<string, string>;
   strict: boolean;
   listed: Set<string>;
-  strictNpm: Set<string>;
+  strictScripts: Set<string>;
   nodeModules: Set<string>;
   owner: SourceOwner;
 }
@@ -28,6 +28,8 @@ const NPM_ALIASES: Record<string, string> = { test: "test", t: "test", tst: "tes
 const NPM_RUN = new Set(["run", "run-script", "rum", "urn"]);
 
 const NPM_VALUE_FLAGS = new Set(["--prefix", "-C", "-w", "--workspace"]);
+
+const SCRIPT_NAME = /^[A-Za-z0-9_][A-Za-z0-9_.:-]*$/;
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash"]);
 
@@ -244,14 +246,20 @@ const resolveBare = (w: Walk, word: string): string[] =>
     return statSync(candidate, { throwIfNoEntry: false })?.isFile() === true ? [realpathSync(candidate)] : [];
   });
 
-const runNpm = (w: Walk, name: string): void => {
+const runPackageScript = (w: Walk, name: string, manager?: string): void => {
   for (const n of [`pre${name}`, name, `post${name}`]) {
     const key = `${PROJECT_SOURCE}package.json#scripts/${n}`;
     const body = w.scripts[n];
-    if (typeof body !== "string" || (key in w.out && (!w.strict || w.strictNpm.has(key)))) continue;
+    if (typeof body !== "string" || (key in w.out && (!w.strict || w.strictScripts.has(key)))) continue;
     w.out[key] = body;
-    if (w.strict) w.strictNpm.add(key);
-    walk(w, body, w.root);
+    if (w.strict) w.strictScripts.add(key);
+    try {
+      walk(w, body, w.root);
+    } catch (cause) {
+      if (!(cause instanceof RecordError) || n === name || manager === undefined) throw cause;
+      const id = w.owner.id;
+      throw new RecordError(w.owner.file, `/guardrails/${id}/implementation`, `Warden cannot trace package.json script ${n}, which ${manager} may run alongside ${name}. Next action: call the Guardrail's check file directly, then run warden compile.`);
+    }
   }
 };
 
@@ -351,7 +359,7 @@ const bun = (w: Walk, args: string[], cwd: string, form: string): void => {
   const [first, second] = rest;
   const target = first === "run" ? second : first;
   if (target === undefined || (first !== "run" && ["test", "t", "x", "install", "add", "build", "exec"].includes(target))) return refuse(w, `${form}, a bun subcommand Warden does not resolve`, projectFiles(w, cwd, args));
-  if (first === "run" && typeof w.scripts[target] === "string") return runNpm(w, target);
+  if (first === "run" && typeof w.scripts[target] === "string") return runPackageScript(w, target);
   addProgram(w, cwd, target, form, []);
 };
 
@@ -361,11 +369,20 @@ const npm = (w: Walk, args: string[], cwd: string, form: string): void => {
   const [sub, name] = args.filter((a) => !a.startsWith("-"));
   if (sub === undefined) return;
   if (NPM_RUN.has(sub)) {
-    if (name !== undefined) runNpm(w, name);
+    if (name !== undefined) runPackageScript(w, name);
     return;
   }
-  if (sub in NPM_ALIASES) return runNpm(w, NPM_ALIASES[sub] as string);
+  if (sub in NPM_ALIASES) return runPackageScript(w, NPM_ALIASES[sub] as string);
   refuse(w, `${form}, an npm subcommand Warden does not resolve`, projectFiles(w, cwd, args));
+};
+
+const localPackageRunner = (w: Walk, cmd: string, args: string[], cwd: string, form: string): void => {
+  const [sub, name] = args;
+  const run = sub === "run" || (cmd === "pnpm" && sub === "run-script");
+  if (!run || name === undefined || !SCRIPT_NAME.test(name) || typeof w.scripts[name] !== "string" || args.length !== 2 || resolve(cwd) !== resolve(w.root)) {
+    return refuse(w, `${form}, which must run a literal ${cmd} script name declared in the root package.json without extra arguments`, projectFiles(w, cwd, args));
+  }
+  runPackageScript(w, name, cmd);
 };
 
 const bare = (w: Walk, cmd: string, args: string[], cwd: string, form: string): void => {
@@ -456,6 +473,7 @@ const simple = (w: Walk, all: string[], cwd: string): string => {
   else if (cmd === "deno") args[0] === "run" ? deno(w, args.slice(1), cwd, form) : refuse(w, `${form}, a deno subcommand Warden does not resolve`, projectFiles(w, cwd, args));
   else if (cmd === "bun") bun(w, args, cwd, form);
   else if (cmd === "npm") npm(w, args, cwd, form);
+  else if (cmd === "pnpm" || cmd === "yarn") localPackageRunner(w, cmd, args, cwd, form);
   else if (cmd.includes("$")) addProgram(w, cwd, cmd, form, args);
   else if (cmd.includes("/")) addFile(w, cwd, cmd);
   else bare(w, cmd, args, cwd, form);
@@ -484,7 +502,7 @@ function walk(w: Walk, text: string, cwd: string): void {
 }
 
 export const commandSources = (root: string, command: string, sources: string[], scripts = scriptsOf(root), owner: SourceOwner = { file: "", id: "" }): Record<string, string> => {
-  const w: Walk = { root, realRoot: realpathSync(root), scripts, out: {}, strict: true, listed: new Set(), strictNpm: new Set(), nodeModules: new Set(), owner };
+  const w: Walk = { root, realRoot: realpathSync(root), scripts, out: {}, strict: true, listed: new Set(), strictScripts: new Set(), nodeModules: new Set(), owner };
   const keys = sources.map((path) => {
     const key = projectKey(w, resolve(root, path));
     if (key === undefined) throw new RecordError(owner.file, `/guardrails/${owner.id}/sources`, `${path} is not a file inside the project, so the lock cannot hash it. Next action: create ${path} in the project or remove it from sources, then run warden compile.`);

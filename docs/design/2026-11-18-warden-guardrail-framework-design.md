@@ -303,7 +303,14 @@ are hashed too. A path resolves against any `cd <dir>` before it, in the same
 command, subshell, or command substitution. The lock hashes the text of each
 npm script the command calls (`npm run`, `npm run-script`, `npm test`,
 `npm t`, `npm start`, flags allowed, with the `pre` and `post` scripts) and
-follows those scripts to a fixed point. For a JS or TS script, or one whose
+follows those scripts to a fixed point. From the project root, it also traces
+`pnpm run <script>`, `pnpm run-script <script>`, and `yarn run <script>` for
+literal script names defined in the root `package.json`, such as `test:unit`.
+Put any arguments the script needs in its definition. Warden requires
+existing `pre` and `post` definitions to be traceable because package manager
+versions and settings differ in when they run those scripts. If a lifecycle
+script is outside the tracer's supported forms, call the Guardrail's check
+file directly. For a JS or TS script, or one whose
 shebang runs node, it hashes each module the script reaches through static
 relative `import`, `export … from`, and `require`. Inside a hashed shell
 script, compile follows the invocations it resolves, best effort, and hashes

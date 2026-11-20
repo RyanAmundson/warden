@@ -73,6 +73,55 @@ it("locks the entry and imports of a tsx watch command", async () => {
   }
 });
 
+it("locks root package scripts and their sources when run through pnpm or Yarn", async () => {
+  const root = await mkdtemp(join(tmpdir(), "warden-package-command-"));
+  try {
+    const scripts = {
+      preverify: "sh prepare.sh",
+      verify: "node verify.js",
+      postverify: "sh clean.sh",
+      "test:unit.v2": "node verify.js",
+    };
+    const prepare = "printf 'pre\\n'\n";
+    const clean = "printf 'post\\n'\n";
+    const verify = 'require("./message.cjs");\n';
+    const message = 'process.stdout.write("checked\\n");\n';
+    await writeFile(join(root, "package.json"), JSON.stringify({ scripts }));
+    await writeFile(join(root, "prepare.sh"), prepare);
+    await writeFile(join(root, "clean.sh"), clean);
+    await writeFile(join(root, "verify.js"), verify);
+    await writeFile(join(root, "message.cjs"), message);
+    const expected = {
+      "./package.json#scripts/preverify": scripts.preverify,
+      "./prepare.sh": prepare,
+      "./package.json#scripts/verify": scripts.verify,
+      "./verify.js": verify,
+      "./message.cjs": message,
+      "./package.json#scripts/postverify": scripts.postverify,
+      "./clean.sh": clean,
+    };
+    for (const command of ["pnpm run verify", "pnpm run-script verify", "yarn run verify"]) {
+      expect(commandSources(root, command, []), command).toEqual(expected);
+    }
+    expect(commandSources(root, "yarn run test:unit.v2", [])).toEqual({
+      "./package.json#scripts/test:unit.v2": scripts["test:unit.v2"],
+      "./verify.js": verify,
+      "./message.cjs": message,
+    });
+    await mkdir(join(root, "packages"));
+    for (const command of ["pnpm run missing", "yarn run --top-level verify", "yarn run verify --cwd packages", "cd packages && pnpm run verify"]) {
+      expect(() => commandSources(root, command, []), command).toThrow("Warden cannot resolve");
+    }
+    await writeFile(join(root, "package.json"), JSON.stringify({
+      scripts: { ...scripts, preverify: "case ready in ready) printf 'ready\\n';; esac" },
+    }));
+    expect(() => commandSources(root, "yarn run verify", [])).toThrow("Warden cannot trace package.json script preverify");
+    expect(() => commandSources(root, 'pnpm run "$SCRIPT_NAME"', [])).toThrow("must run a literal pnpm script name");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 it("validates the program before examples and compiles the suggested shell form", async () => {
   const root = await mkdtemp(join(tmpdir(), "warden-command-compile-"));
   const cli = resolve(import.meta.dirname, "../../bin/warden.js");
