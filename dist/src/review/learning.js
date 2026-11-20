@@ -6,16 +6,18 @@ export async function learningScorecard(root, wardenRoot) {
     const set = await loadRecords(root, wardenRoot);
     const { project } = set.config;
     const resolved = new Map();
+    const stalls = new Map();
     const upheld = new Map();
     const escaped = new Map();
     for (const e of readEvidence(project)) {
-        if (e.kind !== "resolved" || e.root !== root || e.guardrail === undefined || e.pack === undefined ||
+        if ((e.kind !== "resolved" && e.kind !== "stalled") || e.root !== root || e.guardrail === undefined || e.pack === undefined ||
             e.file === undefined || e.tier === undefined || e.sourceRun === undefined)
             continue;
         const key = JSON.stringify([e.pack, e.guardrail]);
-        const events = resolved.get(key) ?? new Set();
+        const evidence = e.kind === "resolved" ? resolved : stalls;
+        const events = evidence.get(key) ?? new Set();
         events.add(JSON.stringify([e.tier, e.sourceRun, e.file]));
-        resolved.set(key, events);
+        evidence.set(key, events);
     }
     for (const ruling of listDisputeRulings(project, root)) {
         if (ruling.status !== "upheld")
@@ -38,6 +40,7 @@ export async function learningScorecard(root, wardenRoot) {
             practice: practice.id,
             guardrail: guardrail.id,
             resolved: resolutions,
+            stalls: stalls.get(key)?.size ?? 0,
             upheldDisputes: disputes,
             precision: total === 0 ? null : resolutions / total,
             confirmedPracticeEscapes: escaped.get(practice.id) ?? 0,

@@ -3,7 +3,7 @@ import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { basename, join, relative, resolve, sep } from "node:path";
 import { GENERATED_TSCONFIG, TSC_CONFIG_SOURCE } from "../adapters/tsc-config.js";
-import { hookTriggers } from "../adapters/claude.js";
+import { claudeSession, hookTriggers } from "../adapters/claude.js";
 import { PARSE_ERROR, type RunContext, type RunResult, type Violation } from "../adapters/types.js";
 import { wardenVersion } from "../compiler/compile.js";
 import { LOCK_FORMAT, LOCK_PATH, bundledTools, canonicalJson, olderThan, readLock, sha256 } from "../compiler/lock.js";
@@ -541,6 +541,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const trigger = new Set(
     opts.hook === "claude" ? (opts.hookInput === undefined ? [] : hookTriggers(root, opts.hookInput)) : opts.paths === undefined ? [] : scanned,
   );
+  const session = opts.hook === "claude" && opts.hookInput !== undefined ? claudeSession(opts.hookInput, "PostToolUse") : undefined;
   let repeated: Repeated | undefined;
   for (const key of new Set(failures.map((v) => `${v.guardrail}\0${v.file}`))) {
     const [guardrail, file] = key.split("\0") as [string, string];
@@ -549,7 +550,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
     const detail = judgedSha ?? shas.get(file) ?? (file !== "" && lstatSync(path, { throwIfNoEntry: false })?.isFile() ? sha256(readFileSync(path)) : "");
     const triggered = trigger.has(file);
     const pack = packOf.get(guardrail);
-    appendEvidence(project, { at, kind: "fired", guardrail, file, status: "fail", detail, triggered, root, tier, run, ...(judgedSha === undefined ? {} : { policy }), ...(pack === undefined ? {} : { pack }) });
+    appendEvidence(project, { at, kind: "fired", guardrail, file, status: "fail", detail, triggered, root, tier, run, ...(session === undefined ? {} : { session }), ...(judgedSha === undefined ? {} : { policy }), ...(pack === undefined ? {} : { pack }) });
     if (!triggered) continue;
     const same = (e: Evidence): boolean =>
       e.kind === "fired" && e.status === "fail" && e.triggered === true && e.guardrail === guardrail && e.file === file && e.detail === detail;

@@ -79,21 +79,21 @@ const tailOf = (file, bytes) => {
         closeSync(fd);
     }
 };
-const parse = (text) => text.split("\n").flatMap((l) => {
+const parse = (text, include) => text.split("\n").flatMap((l) => {
     try {
-        return l === "" ? [] : [JSON.parse(l)];
+        return l === "" || include?.(l) === false ? [] : [JSON.parse(l)];
     }
     catch {
         return [];
     }
 });
-export function readEvidenceTail(project, bytes) {
+export function readEvidenceTail(project, bytes, include) {
     const current = tailOf(evidenceFile(project), bytes + 1);
     const tail = Buffer.concat([tailOf(previousEvidenceFile(project), bytes + 1 - current.length), current]);
-    return parse((tail.length <= bytes ? tail : tail.subarray(tail.indexOf("\n") + 1)).toString("utf8"));
+    return parse((tail.length <= bytes ? tail : tail.subarray(tail.indexOf("\n") + 1)).toString("utf8"), include);
 }
-export function readEvidence(project) {
-    return readEvidenceTail(project, Number.POSITIVE_INFINITY);
+export function readEvidence(project, include) {
+    return readEvidenceTail(project, Number.POSITIVE_INFINITY, include);
 }
 export function readEvidenceFrom(project, offset) {
     const size = sizeOf(evidenceFile(project));

@@ -9,6 +9,8 @@ import { appendEvidence } from "../runner/evidence.js";
 const NEXT = ". Next action: update Claude Code, then retry the tool call";
 
 interface HookInput {
+  hook_event_name?: unknown;
+  session_id?: unknown;
   tool_name?: unknown;
   tool_input?: { file_path?: unknown; command?: unknown };
 }
@@ -20,6 +22,13 @@ const parseInput = (input: string): HookInput => {
     throw new RecordError("hook input", "", `is not JSON${NEXT}`);
   }
 };
+
+export function claudeSession(input: string, event: "PostToolUse" | "SessionEnd"): string | undefined {
+  const payload = parseInput(input);
+  if (payload.hook_event_name !== event || payload.tool_name === "apply_patch") return undefined;
+  const { session_id: session } = payload;
+  return typeof session === "string" && session.trim() !== "" && session.length <= 200 ? session : undefined;
+}
 
 const real = (path: string): string => (existsSync(path) ? realpathSync(path) : join(real(dirname(path)), basename(path)));
 

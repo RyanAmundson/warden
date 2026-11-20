@@ -7,15 +7,17 @@ export async function learningScorecard(root: string, wardenRoot: string) {
   const set = await loadRecords(root, wardenRoot);
   const { project } = set.config;
   const resolved = new Map<string, Set<string>>();
+  const stalls = new Map<string, Set<string>>();
   const upheld = new Map<string, number>();
   const escaped = new Map<string, number>();
   for (const e of readEvidence(project)) {
-    if (e.kind !== "resolved" || e.root !== root || e.guardrail === undefined || e.pack === undefined ||
+    if ((e.kind !== "resolved" && e.kind !== "stalled") || e.root !== root || e.guardrail === undefined || e.pack === undefined ||
         e.file === undefined || e.tier === undefined || e.sourceRun === undefined) continue;
     const key = JSON.stringify([e.pack, e.guardrail]);
-    const events = resolved.get(key) ?? new Set<string>();
+    const evidence = e.kind === "resolved" ? resolved : stalls;
+    const events = evidence.get(key) ?? new Set<string>();
     events.add(JSON.stringify([e.tier, e.sourceRun, e.file]));
-    resolved.set(key, events);
+    evidence.set(key, events);
   }
   for (const ruling of listDisputeRulings(project, root)) {
     if (ruling.status !== "upheld") continue;
@@ -37,6 +39,7 @@ export async function learningScorecard(root: string, wardenRoot: string) {
       practice: practice.id,
       guardrail: guardrail.id,
       resolved: resolutions,
+      stalls: stalls.get(key)?.size ?? 0,
       upheldDisputes: disputes,
       precision: total === 0 ? null : resolutions / total,
       confirmedPracticeEscapes: escaped.get(practice.id) ?? 0,

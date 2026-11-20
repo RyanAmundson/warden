@@ -38,7 +38,8 @@ case $1 in
     fi
     ;;
   check) printf '%s' "$input" | warden check --format agent --hook claude ;;
-  *) echo "usage: warden.sh guard|check" >&2; exit 2 ;;
+  session-end) printf '%s' "$input" | warden session-end ;;
+  *) echo "usage: warden.sh guard|check|session-end" >&2; exit 2 ;;
 esac
 code=$?
 [ "$code" -eq 0 ] || [ "$code" -eq 2 ] && exit "$code"

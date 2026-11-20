@@ -159,7 +159,7 @@ export async function runLearningReport(root, wardenRoot, json) {
     process.stdout.write("Learning scorecard from retained checkout Evidence, dispute rulings, and repository review confirmations\n");
     for (const row of scorecard) {
         const precision = row.precision === null ? "unmeasured" : `${Math.round(row.precision * 100)}%`;
-        process.stdout.write(`${row.pack}/${row.guardrail}  resolved=${row.resolved}  upheld=${row.upheldDisputes}  precision=${precision}  confirmed ${row.practice} escapes=${row.confirmedPracticeEscapes}\n`);
+        process.stdout.write(`${row.pack}/${row.guardrail}  resolved=${row.resolved}  upheld=${row.upheldDisputes}  precision=${precision}  confirmed ${row.practice} escapes=${row.confirmedPracticeEscapes}  stalls=${row.stalls}\n`);
     }
     return 0;
 }

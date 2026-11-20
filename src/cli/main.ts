@@ -23,6 +23,7 @@ import { runNewUnit } from "./new-unit.js";
 import { runPacks } from "./packs.js";
 import { runLearningReport, runReport } from "./report.js";
 import { type ReviewOptions, reviewOptions, runBrief, runReviewConfirm, runReviewHistory, runReviewProposals, runReviewRecord, runReviewRule, runTriage } from "./review.js";
+import { recordClaudeStalls } from "./session-end.js";
 import { runRuns } from "./runs.js";
 import { runWhere } from "./where.js";
 import { type Screen, liveView, loadView, plainDeterminism, plainLayers, plainView, plainViolations } from "./view.js";
@@ -114,6 +115,10 @@ program
     const reason = refusal(root(), readFileSync(0, "utf8"), options.compiledReplacements === true);
     if (reason !== undefined) process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } })}\n`);
   });
+
+program
+  .command("session-end", { hidden: true })
+  .action(() => recordClaudeStalls(root(), readFileSync(0, "utf8")));
 
 program
   .command("bench")

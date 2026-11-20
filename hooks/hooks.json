@@ -6,6 +6,11 @@
         "hooks": [{ "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/warden.sh", "guard"], "onFailure": "block" }]
       }
     ],
+    "SessionEnd": [
+      {
+        "hooks": [{ "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/warden.sh", "session-end"] }]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit",

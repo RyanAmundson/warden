@@ -13,6 +13,13 @@ const parseInput = (input) => {
         throw new RecordError("hook input", "", `is not JSON${NEXT}`);
     }
 };
+export function claudeSession(input, event) {
+    const payload = parseInput(input);
+    if (payload.hook_event_name !== event || payload.tool_name === "apply_patch")
+        return undefined;
+    const { session_id: session } = payload;
+    return typeof session === "string" && session.trim() !== "" && session.length <= 200 ? session : undefined;
+}
 const real = (path) => (existsSync(path) ? realpathSync(path) : join(real(dirname(path)), basename(path)));
 const PATCH_FILE = /^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm;
 const CODEX_NEXT = ". Next action: update Codex, then retry the tool call";

@@ -53,13 +53,16 @@ the PR is rebased, use its new merge base and head. For a follow-up, pass
 ## Inspect learning evidence
 
 Run `warden report --learning` to see resolved findings, upheld disputes,
-and confirmed escapes. Add `--format json` for structured output. Precision
+session stalls, and confirmed escapes. Add `--format json` for structured output. Precision
 is the share of measured outcomes that Warden recorded as resolved. With no
 resolutions or upheld disputes, Warden shows precision as unmeasured.
 
 The scorecard uses the checkout's retained resolution Evidence and durable
 dispute rulings. Confirmed escapes come from the repository's review history
-and count toward the Practice shared by its Guardrails.
+and count toward the Practice shared by its Guardrails. On Claude Code
+session end, Warden records a stall if a completed edit check proved a
+Guardrail failure, the judged file still has the same contents, and the
+retained evidence shows no fix or dispute covering that failure.
 
 ## Resolve a conflict in .warden/baseline.json
 

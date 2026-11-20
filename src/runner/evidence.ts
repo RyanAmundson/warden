@@ -19,6 +19,7 @@ export interface Evidence {
   triggered?: boolean;
   run?: string;
   sourceRun?: string;
+  session?: string;
   policy?: string;
   tier?: Tier;
   pack?: string;
@@ -160,23 +161,23 @@ const tailOf = (file: string, bytes: number): Buffer => {
   }
 };
 
-const parse = (text: string): Evidence[] =>
+const parse = (text: string, include?: (line: string) => boolean): Evidence[] =>
   text.split("\n").flatMap((l) => {
     try {
-      return l === "" ? [] : [JSON.parse(l) as Evidence];
+      return l === "" || include?.(l) === false ? [] : [JSON.parse(l) as Evidence];
     } catch {
       return [];
     }
   });
 
-export function readEvidenceTail(project: string, bytes: number): Evidence[] {
+export function readEvidenceTail(project: string, bytes: number, include?: (line: string) => boolean): Evidence[] {
   const current = tailOf(evidenceFile(project), bytes + 1);
   const tail = Buffer.concat([tailOf(previousEvidenceFile(project), bytes + 1 - current.length), current]);
-  return parse((tail.length <= bytes ? tail : tail.subarray(tail.indexOf("\n") + 1)).toString("utf8"));
+  return parse((tail.length <= bytes ? tail : tail.subarray(tail.indexOf("\n") + 1)).toString("utf8"), include);
 }
 
-export function readEvidence(project: string): Evidence[] {
-  return readEvidenceTail(project, Number.POSITIVE_INFINITY);
+export function readEvidence(project: string, include?: (line: string) => boolean): Evidence[] {
+  return readEvidenceTail(project, Number.POSITIVE_INFINITY, include);
 }
 
 export function readEvidenceFrom(project: string, offset: number): { events: Evidence[]; offset: number } {
