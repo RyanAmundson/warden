@@ -154,9 +154,10 @@ const duplicateExports = (input) => {
   }
   return [...homes]
     .filter(([, hs]) => hs.length > 1)
-    .flatMap(([name, [first, ...rest]]) =>
-      rest.map(({ file, line }) => ({ file, line, message: `${name} is also exported from ${first.file}:${first.line}.`, doThis: `Import ${name} from ${first.file} instead of declaring it here, or rename it here if it means something different. If a contract requires each of these files to export ${name}, ask the project owner to add ${name} to contractExports in the settings of pack principles in .warden/config.yaml, then run warden compile.` })),
-    );
+    .flatMap(([name, [first, ...rest]]) => {
+      const doThis = `Find which declaration owns ${name}, then import it from that file. Rename declarations that mean something different. If a contract requires each file to export ${name}, ask the project owner to add ${name} to contractExports in the settings of pack principles in .warden/config.yaml, then run warden compile.`;
+      return rest.map(({ file, line }) => ({ file, line, message: `${name} is also exported from ${first.file}:${first.line}.`, doThis }));
+    });
 };
 
 export default {

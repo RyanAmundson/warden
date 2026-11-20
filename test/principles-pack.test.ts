@@ -261,12 +261,12 @@ export class Factory {
     }
   });
 
-  it("duplicate exports: a name the project declares as a contract export may repeat, and the Do this names that declaration", async () => {
+  it("duplicate exports: the Do this asks for the owner and explains the contract exception", async () => {
     const plugin = "export const start = (): number => 1;\n";
     const tree = { "src/a/main.ts": plugin, "src/b/main.ts": plugin };
     const failed = await scan("principles-duplicate-exports", tree);
     expect(failed?.violations.map((v) => v.doThis)).toEqual([
-      "Import start from src/a/main.ts instead of declaring it here, or rename it here if it means something different. If a contract requires each of these files to export start, ask the project owner to add start to contractExports in the settings of pack principles in .warden/config.yaml, then run warden compile.",
+      "Find which declaration owns start, then import it from that file. Rename declarations that mean something different. If a contract requires each file to export start, ask the project owner to add start to contractExports in the settings of pack principles in .warden/config.yaml, then run warden compile.",
     ]);
     await reconfigure(`  - id: principles\n    paths: ${paths}\n    settings:\n      contractExports: [start]\n`);
     expect((await scan("principles-duplicate-exports", {}))?.status).toBe("pass");
@@ -365,9 +365,9 @@ export class Factory {
     await emitTree([g]);
     const files = projectFiles(root, set.config.packs.flatMap((p) => p.paths));
     const results = await runGuardrails(set, [g], files, { root, generatedDir: join(root, ".warden/generated") });
-    expect(results[0]?.violations.map((v) => [v.file, v.line, v.doThis])).toEqual([
-      ["src/b.ts", 1, "Import step from src/a.ts instead of declaring it here, or rename it here if it means something different. If a contract requires each of these files to export step, ask the project owner to add step to contractExports in the settings of pack principles in .warden/config.yaml, then run warden compile."],
-      ["src/c.ts", 1, "Import step from src/a.ts instead of declaring it here, or rename it here if it means something different. If a contract requires each of these files to export step, ask the project owner to add step to contractExports in the settings of pack principles in .warden/config.yaml, then run warden compile."],
+    expect(results[0]?.violations).toMatchObject([
+      { file: "src/b.ts", line: 1, doThis: expect.stringContaining("Find which declaration owns step") },
+      { file: "src/c.ts", line: 1, doThis: expect.stringContaining("Find which declaration owns step") },
     ]);
     const { baseline } = await measureBaseline(set, [g]);
     expect(baseline).toEqual({ "principles-duplicate-exports": { "src/b.ts": 1, "src/c.ts": 1 } });
