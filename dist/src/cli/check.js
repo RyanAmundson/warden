@@ -223,6 +223,9 @@ const treeOf = (root) => {
 const baselineTotal = (b) => Object.values(b).reduce((n, e) => n + Object.values(e).reduce((a, x) => a + x, 0), 0);
 const check = async (opts, live) => {
     const root = resolve(opts.root);
+    if (lstatSync(join(root, ".warden"), { throwIfNoEntry: false })?.isSymbolicLink() === true) {
+        throw new RecordError(".warden", "", "is a symbolic link. Next action: move the link aside, restore the tracked .warden directory, then run warden check again.");
+    }
     const { at, run, tier } = live;
     const finish = (project, outcome, files, code, judged) => {
         const bytes = files.reduce((n, f) => n + statSync(join(root, f)).size, 0);

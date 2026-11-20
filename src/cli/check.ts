@@ -262,6 +262,9 @@ const baselineTotal = (b: Record<string, Record<string, number>>): number => Obj
 
 const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const root = resolve(opts.root);
+  if (lstatSync(join(root, ".warden"), { throwIfNoEntry: false })?.isSymbolicLink() === true) {
+    throw new RecordError(".warden", "", "is a symbolic link. Next action: move the link aside, restore the tracked .warden directory, then run warden check again.");
+  }
   const { at, run, tier } = live;
   const finish = (project: string, outcome: Outcome, files: string[], code: number, judged?: { set: RecordSet; failures?: Violation[]; notes: Notes; extra?: Partial<Evidence> }): number => {
     const bytes = files.reduce((n, f) => n + statSync(join(root, f)).size, 0);
