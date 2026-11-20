@@ -1,7 +1,12 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { readFileSync, readdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { canonicalJson, sha256 } from "../compiler/lock.js";
 import { linkRecord, wardenHome } from "../runner/evidence.js";
+export function reviewRepository(root) {
+    const common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: root, encoding: "utf8" }).trimEnd();
+    return realpathSync(common);
+}
 const roundId = (number, entry) => `${number}:${sha256(canonicalJson(JSON.parse(JSON.stringify(entry))))}`;
 const seriesPath = (key) => join(wardenHome(), "review", sha256(canonicalJson([key.repository, key.series, key.target, key.capability])));
 const roundPath = (directory, number) => join(directory, `round-${number}.json`);

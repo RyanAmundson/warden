@@ -1,5 +1,6 @@
 import { loadRecords } from "../records/load.js";
 import { type Kind, type Tier, kindRank } from "../records/types.js";
+import { learningScorecard } from "../review/learning.js";
 import { readBaseline } from "../runner/baseline.js";
 import { ESLINT_PASS, type Evidence, RUN_TOTAL, type Verdict, readEvidence } from "../runner/evidence.js";
 
@@ -214,5 +215,19 @@ export async function runReport(root: string, wardenRoot: string, json: boolean)
     lines.push(`${label}  ${r.verdict}${k}${defect}${flip}  (warden ${r.warden}, ${r.at.slice(0, 10)})`);
   }
   process.stdout.write(`${lines.join("\n")}\n`);
+  return 0;
+}
+
+export async function runLearningReport(root: string, wardenRoot: string, json: boolean): Promise<number> {
+  const scorecard = await learningScorecard(root, wardenRoot);
+  if (json) {
+    process.stdout.write(`${JSON.stringify(scorecard, null, 2)}\n`);
+    return 0;
+  }
+  process.stdout.write("Learning scorecard from retained checkout Evidence, dispute rulings, and repository review confirmations\n");
+  for (const row of scorecard) {
+    const precision = row.precision === null ? "unmeasured" : `${Math.round(row.precision * 100)}%`;
+    process.stdout.write(`${row.pack}/${row.guardrail}  resolved=${row.resolved}  upheld=${row.upheldDisputes}  precision=${precision}  confirmed ${row.practice} escapes=${row.confirmedPracticeEscapes}\n`);
+  }
   return 0;
 }

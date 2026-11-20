@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { appendEvidence, linkRecord, readEvidence, wardenHome } from "./evidence.js";
 const DISPUTE_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-const pathOf = (dispute, suffix) => join(wardenHome(), "disputes", dispute + suffix);
+const directory = () => join(wardenHome(), "disputes");
+const pathOf = (dispute, suffix) => join(directory(), dispute + suffix);
 const nonempty = (part) => typeof part === "string" && part.trim() !== "";
 const hasLocation = (entry) => typeof entry.file === "string" && [entry.project, entry.root, entry.guardrail, entry.pack].every(nonempty);
 const readRecord = (path, valid) => {
@@ -29,10 +30,43 @@ const readRecord = (path, valid) => {
         throw invalid();
     return record;
 };
-const findRuling = (path) => readRecord(path, (entry) => hasLocation(entry) &&
+const findRuling = (dispute) => readRecord(pathOf(dispute, ".json"), (entry) => hasLocation(entry) &&
+    entry.dispute === dispute &&
     (entry.status === "upheld" || entry.status === "rejected") &&
     (entry.role === "independent-reviewer" || entry.role === "repository-owner") &&
-    [entry.dispute, entry.actor, entry.reason, entry.evidence, entry.at].every(nonempty));
+    [entry.actor, entry.reason, entry.evidence, entry.at].every(nonempty));
+const readIntake = (dispute) => readRecord(pathOf(dispute, ".open.json"), (entry) => hasLocation(entry) && entry.dispute === dispute && [entry.at, entry.reason].every(nonempty) &&
+    Array.isArray(entry.attempts) && entry.attempts.length > 0 && entry.attempts.every(nonempty));
+export function listDisputeRulings(project, root) {
+    let names;
+    try {
+        names = readdirSync(directory());
+    }
+    catch (cause) {
+        if (cause.code === "ENOENT")
+            return [];
+        throw cause;
+    }
+    const rulings = [];
+    for (const name of names) {
+        if (!name.endsWith(".json"))
+            continue;
+        const id = name.slice(0, -".json".length);
+        if (!DISPUTE_ID.test(id))
+            continue;
+        try {
+            const ruling = findRuling(id);
+            if (ruling?.project === project && ruling.root === root)
+                rulings.push(ruling);
+        }
+        catch (cause) {
+            const intake = readIntake(id);
+            if (intake === undefined || (intake.project === project && intake.root === root))
+                throw cause;
+        }
+    }
+    return rulings;
+}
 export function fileDispute(location, reason, attempts) {
     const dispute = randomUUID();
     const { project, ...subject } = location;
@@ -48,10 +82,9 @@ export function fileDispute(location, reason, attempts) {
     return dispute;
 }
 function findIntake(project, root, dispute) {
-    const intake = readRecord(pathOf(dispute, ".open.json"), (entry) => hasLocation(entry) && [entry.dispute, entry.at, entry.reason].every(nonempty) &&
-        Array.isArray(entry.attempts) && entry.attempts.length > 0 && entry.attempts.every(nonempty));
+    const intake = readIntake(dispute);
     if (intake !== undefined) {
-        return intake.dispute === dispute && intake.project === project && intake.root === root ? intake : undefined;
+        return intake.project === project && intake.root === root ? intake : undefined;
     }
     const legacy = readEvidence(project).find((e) => e.kind === "disputed" && e.status === "open" && e.root === root && e.dispute === dispute);
     if (legacy?.guardrail === undefined || legacy.pack === undefined || legacy.file === undefined)
@@ -76,7 +109,7 @@ export function ruleDispute(project, root, dispute, decision) {
             return recorded;
         throw new Error(`Dispute ${dispute} already has a different ruling. Next action: read the existing decision in ${path}.`);
     };
-    const existing = findRuling(path);
+    const existing = findRuling(dispute);
     if (existing !== undefined)
         return replay(existing);
     const open = findIntake(project, root, dispute);
@@ -90,7 +123,7 @@ export function ruleDispute(project, root, dispute, decision) {
     catch (cause) {
         if (cause.code !== "EEXIST")
             throw cause;
-        const recorded = findRuling(path);
+        const recorded = findRuling(dispute);
         if (recorded === undefined)
             throw new Error(`Dispute ${dispute} changed while it was recorded. Next action: rerun warden review dispute.`);
         return replay(recorded);

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { wardenVersion } from "../compiler/compile.js";
 import { sha256 } from "../compiler/lock.js";
@@ -8,7 +8,7 @@ import type { Capability } from "../records/types.js";
 import { type ReviewAdapter, type ReviewScope, reviewAdapters } from "../review/adapter.js";
 import { codeReview, codeReviewBase, isPullRequestUrl } from "../review/code-review.js";
 import { type Touched, type Triage, exitCode, touchedLines, triage } from "../review/findings.js";
-import { type ReviewRound, type ReviewRulingInput, type ReviewSeries, getRound, listRepositoryEscapeRounds, listRounds, recordEscape, recordReviewerError, recordRound, reviewHistoryState, reviewSignals, reviewState } from "../review/history.js";
+import { type ReviewRound, type ReviewRulingInput, type ReviewSeries, getRound, listRepositoryEscapeRounds, listRounds, recordEscape, recordReviewerError, recordRound, reviewHistoryState, reviewRepository, reviewSignals, reviewState } from "../review/history.js";
 import { isAncestor } from "../runner/changed.js";
 
 export interface ReviewOptions {
@@ -190,11 +190,6 @@ export async function runTriage(root: string, wardenRoot: string, o: ReviewOptio
 }
 
 type SeriesOptions = Omit<ReviewSeries, "repository">;
-
-function reviewRepository(root: string): string {
-  const common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: root, encoding: "utf8" }).trimEnd();
-  return realpathSync(common);
-}
 
 function seriesKey(root: string, o: SeriesOptions): ReviewSeries {
   if (o.series.trim() === "" || o.target.trim() === "") {

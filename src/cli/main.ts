@@ -21,7 +21,7 @@ import { runDoctor, runInit } from "./init.js";
 import { runNewCapability } from "./new-capability.js";
 import { runNewUnit } from "./new-unit.js";
 import { runPacks } from "./packs.js";
-import { runReport } from "./report.js";
+import { runLearningReport, runReport } from "./report.js";
 import { type ReviewOptions, reviewOptions, runBrief, runReviewConfirm, runReviewHistory, runReviewProposals, runReviewRecord, runReviewRule, runTriage } from "./review.js";
 import { runRuns } from "./runs.js";
 import { runWhere } from "./where.js";
@@ -175,9 +175,16 @@ program
     process.exitCode = await runDispute(root(), findWardenRoot(), guardrail, resolve(path), options);
   });
 
-program.command("report").description("Guardrails grouped by Practice, strongest kind first").option("--json", "print JSON").option("--format <format>", "text or json", "text").action(async (o: { json?: boolean; format: string }) => {
-  process.exitCode = await runReport(root(), findWardenRoot(), o.json === true || oneOf("report", "format", o.format, ["text", "json"] as const) === "json");
-});
+program
+  .command("report")
+  .description("Guardrails grouped by Practice, strongest kind first")
+  .option("--learning", "show precision and confirmed Practice escapes")
+  .option("--json", "print JSON")
+  .option("--format <format>", "text or json", "text")
+  .action(async (o: { learning?: boolean; json?: boolean; format: string }) => {
+    const report = o.learning === true ? runLearningReport : runReport;
+    process.exitCode = await report(root(), findWardenRoot(), o.json === true || oneOf("report", "format", o.format, ["text", "json"] as const) === "json");
+  });
 
 program
   .command("runs")

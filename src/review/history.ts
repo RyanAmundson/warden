@@ -1,4 +1,5 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { readFileSync, readdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { canonicalJson, sha256 } from "../compiler/lock.js";
 import type { ReviewRule } from "../records/types.js";
@@ -10,6 +11,11 @@ export interface ReviewSeries {
   series: string;
   target: string;
   capability: string;
+}
+
+export function reviewRepository(root: string): string {
+  const common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: root, encoding: "utf8" }).trimEnd();
+  return realpathSync(common);
 }
 
 interface ReviewInputs extends ReviewSeries {

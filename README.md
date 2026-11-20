@@ -50,6 +50,17 @@ and adds `--report report.json`. Missing or stale evidence returns exit 2. If
 the PR is rebased, use its new merge base and head. For a follow-up, pass
 `--previous-head` and `--previous-report` for the previous round.
 
+## Inspect learning evidence
+
+Run `warden report --learning` to see resolved findings, upheld disputes,
+and confirmed escapes. Add `--format json` for structured output. Precision
+is the share of measured outcomes that Warden recorded as resolved. With no
+resolutions or upheld disputes, Warden shows precision as unmeasured.
+
+The scorecard uses the checkout's retained resolution Evidence and durable
+dispute rulings. Confirmed escapes come from the repository's review history
+and count toward the Practice shared by its Guardrails.
+
 ## Resolve a conflict in .warden/baseline.json
 
 Every commit-tier check rewrites `.warden/baseline.json`, so parallel branches
