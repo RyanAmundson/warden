@@ -14,6 +14,32 @@ const outsideLists = () => {
   };
 };
 
+const withoutTypeDeclarations = (ts, file, text) => {
+  if (!/\.[cm]?tsx?$/.test(file) || !/\b(?:interface|type)\b/.test(text)) return text;
+  const ast = ts.createSourceFile(file, text, ts.ScriptTarget.Latest);
+  const parts = [];
+  let cursor = 0;
+  const visit = (node) => {
+    if (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node)) {
+      const start = node.getStart(ast);
+      const endsAtEof = node.end === ast.endOfFileToken.getFullStart();
+      if (ast.parseDiagnostics.some((d) => d.length === 0
+        ? d.start >= start && (d.start <= node.end || endsAtEof)
+        : d.start < node.end && d.start + d.length > start)) return;
+      const before = text.slice(cursor, start).replace(/[^\S\r\n\u2028\u2029]+$/, "");
+      const breaks = text.slice(start, node.end).replace(/[^\r\n\u2028\u2029]/g, "");
+      if (before === "" && parts.at(-1) === " ") parts.pop();
+      parts.push(before, breaks || " ");
+      cursor = node.end;
+      while (/[^\S\r\n\u2028\u2029]/.test(text.charAt(cursor))) cursor++;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(ast);
+  return parts.length === 0 ? text : parts.join("") + text.slice(cursor);
+};
+
 const duplicateBlocks = (input) => {
   const ids = new Map();
   const seen = new Map();
@@ -29,7 +55,7 @@ const duplicateBlocks = (input) => {
         return { id: ids.get(text), n };
       });
   for (const { file, text } of sourceFiles(input).filter((f) => f.reported)) {
-    const lines = significant(text);
+    const lines = significant(withoutTypeDeclarations(input.ts, file, text));
     let block;
     const flush = () => {
       if (block === undefined) return;

@@ -347,6 +347,47 @@ export class Factory {
     expect((await scan("principles-duplicate-blocks", { "src/a.ts": list("a"), "src/b.ts": list("b") }))?.status).toBe("pass");
   });
 
+  it.each(["type", "interface"])("duplicate blocks: ignores the body of the %s declaration", async (kind) => {
+    const shape = (name: string): string =>
+      `export ${kind} ${name}${kind === "type" ? " =" : ""} {\n${lines(8, (i) => `  field${i}: number;`)}\n}\n`;
+    expect((await scan("principles-duplicate-blocks", { "src/a.ts": shape("A"), "src/b.ts": shape("B") }))?.status).toBe("pass");
+  });
+
+  it("duplicate blocks: preserves runtime code beside type declarations", async () => {
+    const mixed = (prefix: string, gap: string): string =>
+      lines(8, (i) => i % 2 === 0
+        ? `type ${prefix}${i} = number; console.log(${i});${gap}`
+        : `console.log(${i}); type ${prefix}${i} = number;${gap}`);
+    expect(await found("principles-duplicate-blocks", {
+      "src/a.ts": mixed("A", ""),
+      "src/b.ts": mixed("B", "\r"),
+    })).toEqual(["src/b.ts:1-8: Lines 1-8 repeat the block that starts at src/a.ts:1."]);
+  });
+
+  it("duplicate blocks: retains both runtime statements around a type declaration", async () => {
+    const mixed = (prefix: string, extra: string): string =>
+      lines(8, (i) => `console.log(${i}); type ${prefix}${i} = number; ${extra}console.info(${i});`);
+    expect(await found("principles-duplicate-blocks", {
+      "src/a.ts": mixed("A", "type Extra = string; "),
+      "src/b.ts": mixed("LongerTypeName", ""),
+    })).toEqual(["src/b.ts:1-8: Lines 1-8 repeat the block that starts at src/a.ts:1."]);
+  });
+
+  it("duplicate blocks: an unrelated syntax error does not count valid type declarations", async () => {
+    const shape = (name: string): string =>
+      `type ${name} = {\n${lines(8, (i) => `  field${i}: number;`)}\n};#\nconst partial = ;\n`;
+    expect((await scan("principles-duplicate-blocks", { "src/a.ts": shape("A"), "src/b.ts": shape("B") }))?.status).toBe("pass");
+  });
+
+  it.each(["", "\n", "\n// trailing\n"])("duplicate blocks: retains an incomplete type ending at EOF (%j)", async (trivia) => {
+    const incomplete = (name: string): string =>
+      `type ${name} = {\n${lines(8, (i) => `  field${i}: number;`)}${trivia}`;
+    expect(await found("principles-duplicate-blocks", {
+      "src/a.ts": incomplete("A"),
+      "src/b.ts": incomplete("B"),
+    })).toEqual(["src/b.ts:2-9: Lines 2-9 repeat the block that starts at src/a.ts:2."]);
+  });
+
   it("framework-required export names pass both name checks", async () => {
     const page = "export const metadata = { title: 1 };\nexport const GET = (): number => 1;\nexport default 1;\n";
     const tree = { "app/a/page.tsx": page, "app/b/page.tsx": page };
