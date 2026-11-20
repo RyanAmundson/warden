@@ -168,6 +168,20 @@ export async function listWorktreeEntries(root) {
     }
     return entries;
 }
+export async function skippedIndexPaths(root, paths) {
+    const skipped = new Set();
+    if (paths.size === 0)
+        return skipped;
+    const failure = await gitRecords(root, ["ls-files", "-t", "-z"], "\0", (row) => {
+        const path = row.slice(2);
+        if (row.startsWith("S ") && paths.has(path))
+            skipped.add(path);
+    });
+    if (failure !== undefined) {
+        throw new RecordError(root, "", `Git could not read sparse checkout paths: ${failure}. Next action: run git ls-files -t from the project root to diagnose the Git error.`);
+    }
+    return skipped;
+}
 export async function changesSinceMergeBase(root, base) {
     const at = mergeBase(root, base);
     const lines = new Map();

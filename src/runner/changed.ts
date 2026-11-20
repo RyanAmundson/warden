@@ -187,6 +187,19 @@ export async function listWorktreeEntries(root: string): Promise<Map<string, boo
   return entries;
 }
 
+export async function skippedIndexPaths(root: string, paths: Set<string>): Promise<Set<string>> {
+  const skipped = new Set<string>();
+  if (paths.size === 0) return skipped;
+  const failure = await gitRecords(root, ["ls-files", "-t", "-z"], "\0", (row) => {
+    const path = row.slice(2);
+    if (row.startsWith("S ") && paths.has(path)) skipped.add(path);
+  });
+  if (failure !== undefined) {
+    throw new RecordError(root, "", `Git could not read sparse checkout paths: ${failure}. Next action: run git ls-files -t from the project root to diagnose the Git error.`);
+  }
+  return skipped;
+}
+
 export async function changesSinceMergeBase(root: string, base: string): Promise<Changes> {
   const at = mergeBase(root, base);
   const lines: Changes["lines"] = new Map();

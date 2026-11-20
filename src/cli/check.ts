@@ -10,7 +10,7 @@ import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import type { Guardrail, Kind, RecordSet, Tier } from "../records/types.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, projectFiles, projectInventory, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { commitsOf, covers, indexTree, stagedMismatch, checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, stageFile, sparseMode, stagedFiles, type StagedBlob, unstagedFiles, verifyBase, checkoutBlobs } from "../runner/changed.js";
+import { commitsOf, covers, indexTree, stagedMismatch, checkBaseAction, changedFiles, mergeBase, changesSinceMergeBase, containsHead, headCommit, matchesHead, lastCommittedText, showAtMergeBase, skippedIndexPaths, stageFile, sparseMode, stagedFiles, type StagedBlob, unstagedFiles, verifyBase, checkoutBlobs } from "../runner/changed.js";
 import { type Detection, heartbeatProblem, openAlerts } from "../runner/daemon.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { type Evidence, LOOP_TAIL_BYTES, type Outcome, RUN_TOTAL, type RunFailure, type Step, type Trigger, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
@@ -446,7 +446,6 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
     .filter((r) => r.status === "killed")
     .map((r) => ({ guardrail: r.guardrail, ms: r.ms, command: r.command as string }));
 
-  const exists = (f: string): boolean => existsSync(join(root, f)) || blobPaths.includes(f);
   const changes = await changesSinceMergeBase(root, base);
   const touched = (v: Violation): boolean => {
     const lines = changes.lines.get(v.file);
@@ -455,8 +454,14 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
     return false;
   };
   const baseline = readBaseline(root);
+  const carried = carryRenames(baseline, changes.renames);
+  const baselinePaths = new Set(Object.values(carried).flatMap((entries) => Object.keys(entries)));
+  const missing = new Set([...baselinePaths].filter((file) => !existsSync(join(root, file))));
+  const skipped = await skippedIndexPaths(root, missing);
+  const judgedBlobs = new Set(blobPaths);
+  const exists = (file: string): boolean => !missing.has(file) || skipped.has(file) || judgedBlobs.has(file);
   const ratchetFrom = matchesHead(root, BASELINE_PATH) ? "head" : "uncommitted";
-  const narrow = applyBaseline(perFile, carryRenames(baseline, changes.renames), [...scanned, ...blobPaths], exists, touched);
+  const narrow = applyBaseline(perFile, carried, [...scanned, ...blobPaths], exists, touched);
   const judged =
     tier === "edit"
       ? scanned
@@ -464,7 +469,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
           ...new Set([
             ...scanned,
             ...wholeProject.flatMap((r) => r.violations.map((v) => v.file)),
-            ...wholeProject.flatMap((r) => Object.keys(narrow.next[r.guardrail] ?? {})),
+            ...wholeProject.flatMap((r) => Object.keys(narrow.next[r.guardrail] ?? {}).filter((file) => !skipped.has(file))),
           ]),
         ].filter((f) => f !== "");
   const wide = applyBaseline(wholeProject, narrow.next, judged, exists, touched);

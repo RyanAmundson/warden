@@ -238,6 +238,18 @@ describe("runCheck", () => {
     expect(JSON.parse(await read(".warden/baseline.json"))).toEqual({});
   });
 
+  it("keeps baseline entries for tracked files excluded by sparse checkout", async () => {
+    git("sparse-checkout", "set", "--no-cone", "/*", "!/a.ts");
+    expect(existsSync(join(root, "a.ts"))).toBe(false);
+    await write("b.ts", "export const b = 1;\n");
+    git("add", "b.ts");
+
+    const result = await check({}, false);
+    expect(result.code, result.err || result.out).toBe(0);
+    expect(JSON.parse(await read(".warden/baseline.json"))).toEqual({ "warden-no-comments": { "a.ts": 1 } });
+    expect(git("diff", "--cached", "--name-only").trim()).toBe("b.ts");
+  });
+
   it("hand-edited generated config is tampering", async () => {
     await writeFile(join(root, ".warden/generated/eslint.rules.json"), `${await read(".warden/generated/eslint.rules.json")}\n`);
     const { code, out } = await check();
@@ -1247,6 +1259,26 @@ describe("a whole-tree Guardrail", () => {
     await addTree();
     expect(JSON.parse(await read(".warden/baseline.json"))).toEqual({ "warden-no-comments": { "a.ts": 1 }, "tree-flagged": { "a.ts": 1 } });
     expect((await check()).code).toBe(0);
+  });
+
+  it("keeps whole-tree entries for files excluded by sparse checkout", async () => {
+    await write("flag.ts", "export const flag = 1;\n");
+    await addTree();
+    git("add", "-A");
+    commitSigned("ryan", "Whole-tree baseline");
+    git("branch", "-f", "main", "HEAD");
+    git("sparse-checkout", "set", "--no-cone", "/*", "!/a.ts");
+    expect(existsSync(join(root, "a.ts"))).toBe(false);
+    await rm(join(root, "flag.ts"));
+    git("add", "-u");
+
+    const result = await check({}, false);
+    expect(result.code, result.err || result.out).toBe(0);
+    expect(JSON.parse(await read(".warden/baseline.json"))["tree-flagged"]).toEqual({ "a.ts": 1 });
+
+    git("sparse-checkout", "disable");
+    expect((await check({}, false)).code).toBe(0);
+    expect(JSON.parse(await read(".warden/baseline.json"))["tree-flagged"]).toBeUndefined();
   });
 });
 
