@@ -205,6 +205,19 @@ export function runReviewHistory(root, o) {
     }
     return 0;
 }
+export function runReviewProposals(root, o) {
+    const escapes = listRounds(seriesKey(root, o)).flatMap((round) => reviewHistoryState(round).escapes);
+    const evidence = new Map();
+    for (const escape of escapes) {
+        const group = evidence.get(escape.practice);
+        if (group === undefined)
+            evidence.set(escape.practice, [escape]);
+        else
+            group.push(escape);
+    }
+    printRecord([...evidence].map(([practice, escapes]) => ({ action: "add", practice, evidence: escapes })));
+    return 0;
+}
 const reviewAttribution = (root, o) => {
     const round = getRound(seriesKey(root, o), o.round);
     const finding = /^[1-9]\d*$/.test(o.finding) ? Number(o.finding) : NaN;

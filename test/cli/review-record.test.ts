@@ -223,10 +223,13 @@ describe("record a completed review", () => {
 
   it("records one escape for concurrent confirmations and excludes a later reviewer error", async () => {
     const series = "confirmed-escape";
+    const proposals = (id = series) => run(root, "proposals", ...seriesFlags(id));
+    expect(JSON.parse((await proposals()).out)).toEqual([]);
     const report = await writeReport("escape.txt", finding(1) + finding(2));
     const saved = await record(series, report);
     const { id } = JSON.parse(saved.out);
     const roundBefore = await history(series, "--round", id);
+    expect(JSON.parse((await proposals()).out)).toEqual([]);
     const flags = [...seriesFlags(series), "--round", id, "--finding", "1", "--role", "independent-reviewer",
       "--reason", "The published interface accepts the wrong value.", "--evidence", "counter.ts:1"];
     const confirm = (actor: string, ...options: string[]) =>
@@ -253,11 +256,27 @@ describe("record a completed review", () => {
       escape, expect.objectContaining({ finding: 2, practice: "counter-behavior" }), JSON.parse(existingId.out),
     ]));
 
+    const supported = await proposals();
+    expect(supported.code, supported.err).toBe(0);
+    const recordsBeforeRuling = JSON.parse(supported.out);
+    expect(recordsBeforeRuling).toHaveLength(2);
+    expect(recordsBeforeRuling).toEqual(expect.arrayContaining([
+      { action: "add", practice: "counter-behavior", evidence: expect.arrayContaining([escape, expect.objectContaining({ finding: 2, round: id, head })]) },
+      { action: "add", practice: " ", evidence: [JSON.parse(existingId.out)] },
+    ]));
+    expect(recordsBeforeRuling.find((record: { practice: string }) => record.practice === "counter-behavior").evidence).toHaveLength(2);
+    expect(await proposals()).toEqual(supported);
+    expect(JSON.parse((await proposals("other-change")).out)).toEqual([]);
+
     const ruled = await run(root, "rule", ...flags, "--actor", "Independent reviewer", "--reason", "The finding was erroneous.");
     expect(ruled.code, ruled.err).toBe(0);
     expect(JSON.parse((await history(series)).out)[0].signals.escapes.map((item: { finding: number }) => item.finding)).toEqual([2, 2]);
     expect((await confirm("Reviewer B")).code).toBe(2);
     expect(await history(series, "--round", id)).toEqual(roundBefore);
+    expect(JSON.parse((await proposals()).out)).toEqual(expect.arrayContaining([
+      { action: "add", practice: "counter-behavior", evidence: [expect.objectContaining({ finding: 2, round: id, head })] },
+      { action: "add", practice: " ", evidence: [JSON.parse(existingId.out)] },
+    ]));
 
     const reviewHome = join(home, "review");
     const records = await readdir(reviewHome, { recursive: true });

@@ -20,7 +20,7 @@ import { runNewCapability } from "./new-capability.js";
 import { runNewUnit } from "./new-unit.js";
 import { runPacks } from "./packs.js";
 import { runReport } from "./report.js";
-import { reviewOptions, runBrief, runReviewConfirm, runReviewHistory, runReviewRecord, runReviewRule, runTriage } from "./review.js";
+import { reviewOptions, runBrief, runReviewConfirm, runReviewHistory, runReviewProposals, runReviewRecord, runReviewRule, runTriage } from "./review.js";
 import { runRuns } from "./runs.js";
 import { runWhere } from "./where.js";
 import { liveView, loadView, plainDeterminism, plainLayers, plainView, plainViolations } from "./view.js";
@@ -211,6 +211,11 @@ reviewSeriesFlags(review.command("history").description("list completed review r
     .option("--round <id>", "show the full record and native report for this round")
     .action((o) => {
     process.exitCode = runReviewHistory(root(), o);
+});
+reviewSeriesFlags(review.command("proposals").description("list Add proposals supported by confirmed review escapes"))
+    .requiredOption("--capability <id>", "the recording Capability")
+    .action((o) => {
+    process.exitCode = runReviewProposals(root(), o);
 });
 const reviewAttributionFlags = (c) => reviewSeriesFlags(c)
     .requiredOption("--capability <id>", "the recording Capability")

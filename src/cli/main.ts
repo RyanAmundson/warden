@@ -22,7 +22,7 @@ import { runNewCapability } from "./new-capability.js";
 import { runNewUnit } from "./new-unit.js";
 import { runPacks } from "./packs.js";
 import { runReport } from "./report.js";
-import { type ReviewOptions, reviewOptions, runBrief, runReviewConfirm, runReviewHistory, runReviewRecord, runReviewRule, runTriage } from "./review.js";
+import { type ReviewOptions, reviewOptions, runBrief, runReviewConfirm, runReviewHistory, runReviewProposals, runReviewRecord, runReviewRule, runTriage } from "./review.js";
 import { runRuns } from "./runs.js";
 import { runWhere } from "./where.js";
 import { type Screen, liveView, loadView, plainDeterminism, plainLayers, plainView, plainViolations } from "./view.js";
@@ -228,6 +228,11 @@ reviewSeriesFlags(review.command("history").description("list completed review r
   .option("--round <id>", "show the full record and native report for this round")
   .action((o: { series: string; target: string; capability: string; round?: string }) => {
     process.exitCode = runReviewHistory(root(), o);
+  });
+reviewSeriesFlags(review.command("proposals").description("list Add proposals supported by confirmed review escapes"))
+  .requiredOption("--capability <id>", "the recording Capability")
+  .action((o: { series: string; target: string; capability: string }) => {
+    process.exitCode = runReviewProposals(root(), o);
   });
 type ReviewAttributionOptions = { series: string; target: string; capability: string; round: string; finding: string; role: string; actor: string; reason: string; evidence: string };
 const reviewAttributionFlags = (c: Command): Command =>

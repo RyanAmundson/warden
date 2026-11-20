@@ -112,11 +112,18 @@ retain their own confirmations.
 finding's confirmations from that list and preserves the stored records.
 Malformed and operational reports cannot supply a completed round.
 
-The [learning layer](2026-11-18-warden-guardrail-framework-design.md#the-learning-layer)
-can consume these active escapes as evidence.
-When a recurring finding supports an Add proposal, link the source findings
-and Practices. The existing approval rules govern any proposed Guardrail
-change.
+Run the following command to get one Add proposal per Practice with active
+confirmations in this series.
+
+```bash
+warden review proposals --series "$change_id" --target "$unit" --capability "$capability"
+```
+
+The command prints JSON records with the supporting confirmations, including
+their round, reviewed head, finding number and evidence reference. A
+reviewer-error ruling removes the affected evidence from future output. The
+command reads the existing records and leaves policy changes to the approval
+process described in the [learning layer](2026-11-18-warden-guardrail-framework-design.md#the-learning-layer).
 
 ## Acceptance
 

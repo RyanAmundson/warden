@@ -226,6 +226,18 @@ export function runReviewHistory(root: string, o: SeriesOptions & { round?: stri
   return 0;
 }
 
+export function runReviewProposals(root: string, o: SeriesOptions): number {
+  const escapes = listRounds(seriesKey(root, o)).flatMap((round) => reviewHistoryState(round).escapes);
+  const evidence = new Map<string, typeof escapes>();
+  for (const escape of escapes) {
+    const group = evidence.get(escape.practice);
+    if (group === undefined) evidence.set(escape.practice, [escape]);
+    else group.push(escape);
+  }
+  printRecord([...evidence].map(([practice, escapes]) => ({ action: "add", practice, evidence: escapes })));
+  return 0;
+}
+
 type FindingOptions = SeriesOptions & Omit<ReviewRulingInput, "finding"> & { round: string; finding: string };
 
 const reviewAttribution = (root: string, o: FindingOptions) => {
