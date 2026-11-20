@@ -77,6 +77,9 @@ export const wardenVersion = async (wardenRoot) => JSON.parse(await readFile(joi
 export async function expectedOutputs(set, projectRoot, wardenRoot) {
     const version = await wardenVersion(wardenRoot);
     const sources = await sourceFiles(set, projectRoot, wardenRoot);
+    return buildOutputs(set, version, sources);
+}
+function buildOutputs(set, version, sources) {
     const sourceHash = sha256(Object.entries(sources)
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
         .map(([path, content]) => `${path}\0${content}\0`)
@@ -149,13 +152,15 @@ export async function practicesElsewhere(set, wardenRoot) {
 }
 export async function compile(projectRoot, wardenRoot) {
     const set = await loadRecords(projectRoot, wardenRoot);
+    const sources = await sourceFiles(set, projectRoot, wardenRoot);
     const findings = [...checkConsistency(set, await practicesElsewhere(set, wardenRoot)), ...(await runExamples(set)), ...(await checkCommands(set, wardenRoot))];
     if (findings.length > 0)
         return { findings, written: [] };
-    const slow = await admit(set, await wardenVersion(wardenRoot));
+    const version = await wardenVersion(wardenRoot);
+    const slow = await admit(set, version);
     if (slow.length > 0)
         return { findings: slow, written: [] };
-    const { lock, files: outputs } = await expectedOutputs(set, projectRoot, wardenRoot);
+    const { lock, files: outputs } = buildOutputs(set, version, sources);
     const prior = previousLock(await readText(join(projectRoot, LOCK_PATH)));
     const previous = prior?.guardrails;
     await writeAll(projectRoot, outputs);

@@ -340,9 +340,7 @@ const bare = (w, cmd, args, cwd, form) => {
             refuse(w, `${form}, which runs a program for each file`, projectFiles(w, cwd, args));
         return;
     }
-    const files = projectFiles(w, cwd, args);
-    if (files.length > 0)
-        refuse(w, `${form}, a program Warden does not know handed a project file`, files);
+    refuse(w, `${form}, an unrecognized program`, projectFiles(w, cwd, args));
 };
 const unwrap = (w, words, cwd, form) => {
     const head = words[0];

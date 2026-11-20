@@ -350,8 +350,7 @@ const bare = (w: Walk, cmd: string, args: string[], cwd: string, form: string): 
     if (cmd === "find" && args.some((a) => RUN_FLAGS.has(a))) refuse(w, `${form}, which runs a program for each file`, projectFiles(w, cwd, args));
     return;
   }
-  const files = projectFiles(w, cwd, args);
-  if (files.length > 0) refuse(w, `${form}, a program Warden does not know handed a project file`, files);
+  refuse(w, `${form}, an unrecognized program`, projectFiles(w, cwd, args));
 };
 
 const unwrap = (w: Walk, words: string[], cwd: string, form: string): string[] | undefined => {
