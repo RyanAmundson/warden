@@ -8,7 +8,7 @@ import type { Capability } from "../records/types.js";
 import { type ReviewAdapter, type ReviewScope, reviewAdapters } from "../review/adapter.js";
 import { codeReview, codeReviewBase, isPullRequestUrl } from "../review/code-review.js";
 import { type Touched, type Triage, exitCode, touchedLines, triage } from "../review/findings.js";
-import { type ReviewRound, type ReviewRulingInput, type ReviewSeries, getRound, listRounds, recordEscape, recordReviewerError, recordRound, reviewHistoryState, reviewSignals, reviewState } from "../review/history.js";
+import { type ReviewRound, type ReviewRulingInput, type ReviewSeries, getRound, listRepositoryEscapeRounds, listRounds, recordEscape, recordReviewerError, recordRound, reviewHistoryState, reviewSignals, reviewState } from "../review/history.js";
 import { isAncestor } from "../runner/changed.js";
 
 export interface ReviewOptions {
@@ -191,12 +191,16 @@ export async function runTriage(root: string, wardenRoot: string, o: ReviewOptio
 
 type SeriesOptions = Omit<ReviewSeries, "repository">;
 
-function seriesKey(root: string, o: SeriesOptions): ReviewSeries {
+function reviewRepository(root: string): string {
   const common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: root, encoding: "utf8" }).trimEnd();
+  return realpathSync(common);
+}
+
+function seriesKey(root: string, o: SeriesOptions): ReviewSeries {
   if (o.series.trim() === "" || o.target.trim() === "") {
     throw new Error("Series and target names must be nonempty. Next action: supply the controller's change ID and review target.");
   }
-  return { repository: realpathSync(common), series: o.series, target: o.target, capability: o.capability };
+  return { repository: reviewRepository(root), series: o.series, target: o.target, capability: o.capability };
 }
 
 const roundSummary = (round: ReviewRound) => ({
@@ -226,8 +230,24 @@ export function runReviewHistory(root: string, o: SeriesOptions & { round?: stri
   return 0;
 }
 
-export function runReviewProposals(root: string, o: SeriesOptions): number {
-  const escapes = listRounds(seriesKey(root, o)).flatMap((round) => reviewHistoryState(round).escapes);
+export function runReviewProposals(root: string, { series, target, capability }: Partial<SeriesOptions>): number {
+  const repositoryWide = series === undefined && target === undefined && capability === undefined;
+  let rounds: ReviewRound[];
+  if (repositoryWide) {
+    rounds = listRepositoryEscapeRounds(reviewRepository(root));
+  } else {
+    if (series === undefined || target === undefined || capability === undefined) {
+      throw new Error("A series query needs its complete scope. Next action: supply --series, --target and --capability together, or omit all three to query the repository.");
+    }
+    rounds = listRounds(seriesKey(root, { series, target, capability }));
+  }
+  const escapes = rounds.flatMap((round) => {
+    const { input } = round;
+    const state = reviewHistoryState(round);
+    return repositoryWide
+      ? state.escapes.map((escape) => ({ ...escape, series: input.series, target: input.target, capability: input.capability }))
+      : state.escapes;
+  });
   const evidence = new Map<string, typeof escapes>();
   for (const escape of escapes) {
     const group = evidence.get(escape.practice);

@@ -5,19 +5,27 @@ import { wardenHome } from "../runner/evidence.js";
 const roundId = (number, entry) => `${number}:${sha256(canonicalJson(JSON.parse(JSON.stringify(entry))))}`;
 const seriesPath = (key) => join(wardenHome(), "review", sha256(canonicalJson([key.repository, key.series, key.target, key.capability])));
 const roundPath = (directory, number) => join(directory, `round-${number}.json`);
-const readRound = (directory, number) => {
+const readRound = (directory, number, repository) => {
     const path = roundPath(directory, number);
     let text;
     try {
         text = readFileSync(path, "utf8");
     }
     catch (cause) {
-        if (cause.code === "ENOENT")
+        if (cause.code !== "ENOENT")
+            throw cause;
+        if (repository === undefined)
             return undefined;
-        throw cause;
+        throw new Error(`Missing review round at ${path}. Next action: restore the recorded round from backup.`);
     }
     try {
         const round = JSON.parse(text);
+        if (repository !== undefined) {
+            if (typeof round.input?.repository !== "string" || seriesPath(round.input) !== directory)
+                throw new Error("invalid series");
+            if (round.input.repository !== repository)
+                return undefined;
+        }
         if (round.schema !== 1 || round.number !== number || round.input === undefined ||
             round.result === undefined || round.id !== roundId(number, { input: round.input, result: round.result })) {
             throw new Error("invalid round");
@@ -46,6 +54,67 @@ export function listRounds(key) {
         rounds.push(round);
     }
 }
+const ownerPath = (directory) => join(directory, "owner.json");
+function readSeriesOwner(directory) {
+    const path = ownerPath(directory);
+    let text;
+    try {
+        text = readFileSync(path, "utf8");
+    }
+    catch (cause) {
+        if (cause.code === "ENOENT")
+            return undefined;
+        throw cause;
+    }
+    try {
+        const owner = JSON.parse(text);
+        if ([owner.repository, owner.series, owner.target, owner.capability].every((part) => typeof part === "string") &&
+            seriesPath(owner) === directory)
+            return owner;
+        throw new Error("invalid series ownership");
+    }
+    catch {
+        return new Error(`Invalid review series owner at ${path}. Next action: restore the series owner from backup.`);
+    }
+}
+export function listRepositoryEscapeRounds(repository) {
+    const root = join(wardenHome(), "review");
+    let directories;
+    try {
+        directories = readdirSync(root, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory() && /^[a-f0-9]{64}$/.test(entry.name))
+            .map((entry) => entry.name)
+            .sort();
+    }
+    catch (cause) {
+        if (cause.code === "ENOENT")
+            return [];
+        throw cause;
+    }
+    const rounds = [];
+    for (const name of directories) {
+        const directory = join(root, name);
+        const numbers = readdirSync(directory, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => Number(/^escape-([1-9]\d*)$/.exec(entry.name)?.[1]))
+            .filter(Number.isSafeInteger)
+            .sort((left, right) => left - right);
+        if (numbers.length === 0)
+            continue;
+        const owner = readSeriesOwner(directory);
+        if (owner !== undefined && !(owner instanceof Error) && owner.repository !== repository)
+            continue;
+        for (const number of numbers) {
+            const round = readRound(directory, number, repository);
+            if (round === undefined)
+                continue;
+            if (owner instanceof Error)
+                throw owner;
+            rounds.push(round);
+        }
+    }
+    return rounds;
+}
 const linkRecord = (directory, path, value) => {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const temp = mkdtempSync(join(directory, ".pending-"));
@@ -58,6 +127,25 @@ const linkRecord = (directory, path, value) => {
         rmSync(temp, { recursive: true, force: true });
     }
 };
+function recordSeriesOwner(directory, { repository, series, target, capability }) {
+    const owner = readSeriesOwner(directory);
+    if (owner instanceof Error)
+        throw owner;
+    if (owner !== undefined)
+        return;
+    try {
+        linkRecord(directory, ownerPath(directory), { repository, series, target, capability });
+    }
+    catch (cause) {
+        if (cause.code !== "EEXIST")
+            throw cause;
+        const recorded = readSeriesOwner(directory);
+        if (recorded instanceof Error)
+            throw recorded;
+        if (recorded === undefined)
+            throw cause;
+    }
+}
 export function recordRound(entry, previous) {
     const { input } = entry;
     const number = (previous?.number ?? 0) + 1;
@@ -159,6 +247,7 @@ export function recordEscape(round, input) {
     if (readRuling(series, round, input.finding) !== undefined) {
         throw new Error(`Finding ${input.finding} has a reviewer-error ruling. Next action: run warden review history for this series to inspect it.`);
     }
+    recordSeriesOwner(series, round.input);
     const directory = escapeDirectory(series, round);
     const name = escapeKey(input.finding, input.practice);
     const escape = { ...input, kind: "escaped", round: round.id, head: round.input.head, confirmedAt: new Date().toISOString() };

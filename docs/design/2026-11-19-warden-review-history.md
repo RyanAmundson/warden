@@ -125,6 +125,21 @@ reviewer-error ruling removes the affected evidence from future output. The
 command reads the existing records and leaves policy changes to the approval
 process described in the [learning layer](2026-11-18-warden-guardrail-framework-design.md#the-learning-layer).
 
+Omit all three scope flags to run `warden review proposals` for the Git
+repository. The query combines active confirmations across change series,
+targets, and Capabilities into one Add proposal per Practice. Each confirmation
+includes its series, target, and Capability alongside the round ID and head.
+Linked worktrees share the repository's history. Separate clones have their
+own history.
+
+New confirmations record the series owner before writing the confirmation.
+That lets Warden skip rounds from a separate repository even if their contents
+are damaged. Existing confirmations are read using their round's ownership.
+If a round predates the ownership record and Warden cannot identify its
+repository, restore the round from backup before running a repository-wide
+query. Reconfirming a finding in an intact round also saves its series owner
+and returns the original confirmation.
+
 ## Acceptance
 
 1. Replaying the same scope and report or racing two writers leaves one

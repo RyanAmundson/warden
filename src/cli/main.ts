@@ -229,9 +229,11 @@ reviewSeriesFlags(review.command("history").description("list completed review r
   .action((o: { series: string; target: string; capability: string; round?: string }) => {
     process.exitCode = runReviewHistory(root(), o);
   });
-reviewSeriesFlags(review.command("proposals").description("list Add proposals supported by confirmed review escapes"))
-  .requiredOption("--capability <id>", "the recording Capability")
-  .action((o: { series: string; target: string; capability: string }) => {
+review.command("proposals").description("list Add proposals for the repository or a review series")
+  .option("--series <id>", "the change ID for a series query")
+  .option("--target <name>", "the target for a series query")
+  .option("--capability <id>", "the recording Capability for a series query")
+  .action((o: { series?: string; target?: string; capability?: string }) => {
     process.exitCode = runReviewProposals(root(), o);
   });
 type ReviewAttributionOptions = { series: string; target: string; capability: string; round: string; finding: string; role: string; actor: string; reason: string; evidence: string };
