@@ -9,6 +9,9 @@ const git = (root, args, missing) => {
         const e = cause;
         if (typeof e.status !== "number")
             throw new Error("install git and put it on PATH, then run the review again");
+        if (args[0]?.startsWith("--attr-source=") && e.stderr?.includes("unknown option: --attr-source")) {
+            throw new Error("Recording a review needs Git 2.41 or later. Next action: upgrade Git and rerun warden review record.");
+        }
         throw new Error(`run git rev-parse --verify ${missing ?? "HEAD"} to find the missing ref, then run the review again`);
     }
 };
@@ -35,13 +38,14 @@ const untrackedText = (root, file) => {
         throw new Error("Git listed " + file + " as untracked, but Warden could not read it. Next action: check that " + file + " is readable or remove it, then run the review again");
     }
 };
-export function touchedLines(root, from, to, includeUntracked = true) {
+export function touchedLines(root, from, to, mode = "worktree") {
     const out = Object.create(null);
     for (const ref of [from, to])
         git(root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], ref);
     let file;
     let header = false;
-    const patch = git(root, ["-c", "core.quotePath=false", "diff", "-U0", "--inter-hunk-context=0", "--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/", from, to, "--"]);
+    const attrs = mode === "commits" ? [`--attr-source=${to}`] : [];
+    const patch = git(root, [...attrs, "-c", "core.quotePath=false", "diff", "-U0", "--inter-hunk-context=0", "--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/", from, to, "--"]);
     for (const l of patch.split("\n")) {
         if (l.startsWith("diff --git ")) {
             file = undefined;
@@ -60,7 +64,7 @@ export function touchedLines(root, from, to, includeUntracked = true) {
         if (count > 0)
             (out[file] ??= []).push([start, start + count - 1]);
     }
-    if (!includeUntracked)
+    if (mode !== "worktree")
         return out;
     for (const f of git(root, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0").filter((x) => x !== "")) {
         const text = untrackedText(root, f);

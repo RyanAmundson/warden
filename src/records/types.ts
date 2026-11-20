@@ -42,6 +42,7 @@ export interface Practice {
 export interface ReviewRule {
   adapter: string;
   model: string;
+  roundLimit?: number;
 }
 
 export interface Capability {

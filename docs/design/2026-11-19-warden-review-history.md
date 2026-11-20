@@ -8,19 +8,19 @@ can continue to use their reports and previous-round inputs.
 
 ## Record completed rounds
 
-A review series covers one registered repository, one Unit or other named
+A review series covers one configured repository, one Unit or other named
 review target, and one Capability. The controller supplies a stable series ID
 from its existing change record. A new head in the same change keeps the same
-series. Separate changes to the same Unit have separate series. Worktrees of
-one registered repository share a history, while unrelated checkouts that use
+series. Separate changes to the same Unit have separate series. Worktrees sharing a Git common directory
+share a history, while unrelated checkouts that use
 the same project name do not.
 
 A completed round references its series and the previous completed round. It
 records the exact base and reviewed head commits, target, Capability, adapter,
 Warden release, resolved review settings, and digests of the requirements and
 native report. Store the normalized findings with their original numbers,
-kinds, evidence, and locations. Preserve the native report reference so an
-independent reviewer can reproduce normalization. The recorder validates the
+kinds, evidence, and locations. Store the exact UTF-8 native report so an independent reviewer can reproduce
+normalization. The recorder validates the
 reported head through the Capability's existing adapter and recomputes triage
 from the recorded commits. Use the committed diff from the previous completed
 head, or the base for the first round. Preserve any additional adapter input
@@ -36,6 +36,28 @@ result, report a conflict and require the caller to reload the series. The
 storage operation must check those conditions and write the record together,
 including across processes. The caller cannot choose the round number. It
 follows from the previous accepted record.
+
+## Record or inspect a round from the CLI
+
+Recording requires Git 2.41 or later to use the compared commit’s attributes.
+
+```bash
+warden review record --series "$change_id" --target "$unit" --capability "$capability" \
+  --base "$base" --head "$head" --requirements requirements.md --report report.txt
+warden review history --series "$change_id" --target "$unit" --capability "$capability"
+```
+
+For a subsequent round, add `--previous-round "$round_id"` to the recording
+command. Pass any adapter-specific scope, such as `--pull-request` or
+`--component`, alongside the report. The recorder prints JSON and exits with
+0 for pass, 1 for blocking findings, or 2 when no round could be recorded.
+To retrieve immutable inputs and the native report, add `--round "$round_id"`
+to the history command. The history lives in Warden's local data directory.
+
+Set `roundLimit: 4` in the Capability's `review` block to flag a fourth
+completed round that still has blocking findings. Use the returned escalation
+signal to send that round and its blocking findings to the designated reviewer
+or repository owner.
 
 ## Derive signals from the records
 

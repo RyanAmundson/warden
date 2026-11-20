@@ -21,7 +21,7 @@ import { runDoctor, runInit } from "./init.js";
 import { runNewUnit } from "./new-unit.js";
 import { runPacks } from "./packs.js";
 import { runReport } from "./report.js";
-import { type ReviewOptions, reviewOptions, runBrief, runTriage } from "./review.js";
+import { type ReviewOptions, reviewOptions, runBrief, runReviewHistory, runReviewRecord, runTriage } from "./review.js";
 import { runRuns } from "./runs.js";
 import { runWhere } from "./where.js";
 import { type Screen, liveView, loadView, plainDeterminism, plainLayers, plainView, plainViolations } from "./view.js";
@@ -172,16 +172,21 @@ program
   });
 
 const review = program.command("review").description("brief a reviewer on a change, and triage the reviewer's report");
-const reviewFlags = (c: Command): Command =>
+const reviewScopeFlags = (c: Command): Command =>
   c
     .option("--capability <id>", "the Capability with a review block")
     .option("--base <ref>", "the branch the change merges into")
     .option("--head <ref>", "the head to review")
     .option("--component <name>", "the component to audit with component-quality")
     .option("--pull-request <url>", "the GitHub pull request to review with code-review")
-    .option("--previous-head <ref>", "the head the previous round reviewed; makes this round 2")
-    .option("--previous-report <file>", "the reviewer's report of the previous round; needs --previous-head")
     .option("--requirements <paths...>", "files that state what the change must do");
+const reviewFlags = (c: Command): Command =>
+  reviewScopeFlags(c)
+    .option("--previous-head <ref>", "the head the previous round reviewed; makes this round 2")
+    .option("--previous-report <file>", "the reviewer's report of the previous round; needs --previous-head");
+const reviewSeriesFlags = (c: Command): Command =>
+  c.requiredOption("--series <id>", "the controller's stable change ID")
+    .requiredOption("--target <name>", "the Unit or other review target");
 reviewFlags(review.command("brief").description("print the reviewer's full invocation as JSON"))
   .option("--previous <file>", "the triage JSON of the previous round")
   .action(async (o: Partial<ReviewOptions>) => {
@@ -192,6 +197,19 @@ reviewFlags(review.command("triage").description("route the reviewer's report by
   .option("--format <format>", "text or json", "text")
   .action(async (o: Partial<ReviewOptions>) => {
     process.exitCode = await runTriage(root(), findWardenRoot(), reviewOptions("triage", { ...o, format: oneOf("review triage", "format", o.format ?? "text", ["text", "json"] as const) }));
+  });
+
+reviewSeriesFlags(reviewScopeFlags(review.command("record").description("validate and save a completed review round")))
+  .option("--report <file>", "the reviewer's report")
+  .option("--previous-round <id>", "the preceding completed round ID")
+  .action(async (o: Partial<ReviewOptions> & { series: string; target: string; previousRound?: string }) => {
+    process.exitCode = await runReviewRecord(root(), findWardenRoot(), reviewOptions("record", o), o);
+  });
+reviewSeriesFlags(review.command("history").description("list completed review rounds for a series"))
+  .requiredOption("--capability <id>", "the recording Capability")
+  .option("--round <id>", "show the full record and native report for this round")
+  .action((o: { series: string; target: string; capability: string; round?: string }) => {
+    process.exitCode = runReviewHistory(root(), o);
   });
 
 program

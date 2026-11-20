@@ -167,7 +167,8 @@
                     "required": ["adapter", "model"],
                     "properties": {
                         "adapter": { "type": "string", "minLength": 1 },
-                        "model": { "type": "string", "minLength": 1 }
+                        "model": { "type": "string", "minLength": 1 },
+                        "roundLimit": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
                     }
                 }
             }

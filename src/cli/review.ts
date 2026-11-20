@@ -1,10 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { relative, resolve } from "node:path";
+import { wardenVersion } from "../compiler/compile.js";
+import { sha256 } from "../compiler/lock.js";
 import { loadRecords } from "../records/load.js";
 import type { Capability } from "../records/types.js";
 import { type ReviewAdapter, type ReviewScope, reviewAdapters } from "../review/adapter.js";
 import { codeReview, codeReviewBase, isPullRequestUrl } from "../review/code-review.js";
 import { type Touched, type Triage, exitCode, touchedLines, triage } from "../review/findings.js";
+import { type ReviewRound, type ReviewSeries, getRound, listRounds, recordRound, reviewSignals } from "../review/history.js";
 import { isAncestor } from "../runner/changed.js";
 
 export interface ReviewOptions {
@@ -23,10 +27,10 @@ export interface ReviewOptions {
 
 const FLAGS: [keyof ReviewOptions, string][] = [["capability", "--capability <id>"], ["base", "--base <ref>"], ["head", "--head <ref>"]];
 
-export function reviewOptions(sub: "brief" | "triage", raw: Partial<ReviewOptions>): ReviewOptions {
+export function reviewOptions(sub: "brief" | "triage" | "record", raw: Partial<ReviewOptions>): ReviewOptions {
   const missing = FLAGS.filter(([k]) => raw[k] === undefined).map(([, f]) => f);
-  if (sub === "brief" && (raw.requirements ?? []).length === 0) missing.push("--requirements <paths...>");
-  if (sub === "triage" && raw.report === undefined) missing.push("--report <file>");
+  if (sub !== "triage" && (raw.requirements ?? []).length === 0) missing.push("--requirements <paths...>");
+  if (sub !== "brief" && raw.report === undefined) missing.push("--report <file>");
   if (missing.length > 0) throw new Error(`warden review ${sub} needs ${missing.join(", ")}. Next action: run warden review ${sub} again with ${missing.join(", ")}`);
   if (raw.previous !== undefined && raw.previousReport !== undefined) throw new Error("--previous and --previous-report both give the previous findings. Next action: run the command again with only one of them");
   if (sub === "triage" && raw.previousHead !== undefined && raw.previousReport === undefined) throw new Error("--previous-head needs --previous-report. Next action: run the command again with --previous-report <file>, the previous round's report");
@@ -69,7 +73,7 @@ const briefLine = (o: ReviewOptions, base: string, r: Rerun): string =>
     `--requirements ${o.requirements.map(quote).join(" ")}`,
   ].join(" ");
 
-async function prepare(root: string, wardenRoot: string, o: ReviewOptions) {
+async function prepare(root: string, wardenRoot: string, o: ReviewOptions, diffMode: "no-untracked" | "commits" = "no-untracked") {
   const set = await loadRecords(root, wardenRoot);
   const capabilities = set.packs.flatMap((p) => p.capabilities);
   const capability = capabilities.find((c) => c.id === o.capability && c.review !== undefined) as (Capability & { review: NonNullable<Capability["review"]> }) | undefined;
@@ -97,7 +101,7 @@ async function prepare(root: string, wardenRoot: string, o: ReviewOptions) {
     const key = `${from}..${to}`;
     const previous = committedDiffs.get(key);
     if (previous !== undefined) return previous;
-    const changed = touchedLines(root, from, to, false);
+    const changed = touchedLines(root, from, to, diffMode);
     committedDiffs.set(key, changed);
     return changed;
   };
@@ -182,5 +186,104 @@ export async function runTriage(root: string, wardenRoot: string, o: ReviewOptio
     for (const f of result.findings) process.stdout.write(`${label(f)} ${f.n} ${f.kind} ${f.file === undefined ? "-" : `${f.file}${f.line === undefined ? "" : `:${f.line}`}`}  ${f.title}\n`);
     if (result.next !== null) process.stdout.write(`Next action: ${result.next}\n`);
   }
+  return exitCode(result);
+}
+
+type SeriesOptions = Omit<ReviewSeries, "repository">;
+
+function seriesKey(root: string, o: SeriesOptions): ReviewSeries {
+  const common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: root, encoding: "utf8" }).trimEnd();
+  if (o.series.trim() === "" || o.target.trim() === "") {
+    throw new Error("Series and target names must be nonempty. Next action: supply the controller's change ID and review target.");
+  }
+  return { repository: realpathSync(common), series: o.series, target: o.target, capability: o.capability };
+}
+
+const roundSummary = (round: ReviewRound) => ({
+  id: round.id,
+  number: round.number,
+  previous: round.input.previous,
+  base: round.input.base,
+  head: round.input.head,
+  ...round.result,
+});
+
+const printRecord = (value: unknown): void => {
+  process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+};
+
+export function runReviewHistory(root: string, o: SeriesOptions & { round?: string }): number {
+  const key = seriesKey(root, o);
+  if (o.round === undefined) {
+    const rounds = listRounds(key);
+    printRecord(rounds.map((round, index) => ({ ...roundSummary(round), signals: reviewSignals(round, rounds[index - 1]) })));
+  } else {
+    printRecord(getRound(key, o.round));
+  }
+  return 0;
+}
+
+export async function runReviewRecord(
+  root: string, wardenRoot: string, o: ReviewOptions, options: Pick<SeriesOptions, "series" | "target"> & { previousRound?: string },
+): Promise<number> {
+  const { adapter, capability, scope } = await prepare(root, wardenRoot, o, "commits");
+  const key = seriesKey(root, { ...options, capability: capability.id });
+  const previous = options.previousRound === undefined ? undefined : getRound(key, options.previousRound);
+  if (previous !== undefined) {
+    scope.previousHead = previous.input.head;
+    scope.previous = previous.result.findings;
+  }
+  const reportPath = o.report as string;
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(reportPath);
+  } catch {
+    throw new Error(`${reportPath} cannot be read. Next action: save the reviewer's report to ${reportPath} and rerun warden review record.`);
+  }
+  let report: string;
+  try {
+    report = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw new Error(`${reportPath} is not UTF-8. Next action: save the native report as UTF-8 and rerun warden review record.`);
+  }
+  const normalized = adapter.normalize(report, scope);
+  const from = scope.previousHead ?? scope.base;
+  const touched = scope.committedChanges?.(from, scope.head) ?? touchedLines(root, from, scope.head, "commits");
+  const rerun = "rerun warden review record with the completed report";
+  const number = (previous?.number ?? 0) + 1;
+  const result = triage(normalized.findings, touched, number, rerun);
+  if (result.verdict === "operational") {
+    printRecord(result);
+    return 2;
+  }
+  if (normalized.reviewedHead !== scope.head) {
+    throw new Error(`The report must cover ${scope.head}. Next action: save the report on that commit and rerun warden review record.`);
+  }
+  const findingNumbers = normalized.findings.map((finding) => finding.n);
+  if (new Set(findingNumbers).size !== findingNumbers.length ||
+      findingNumbers.some((n) => !Number.isSafeInteger(n) || n < 1) ||
+      normalized.findings.some((finding) => finding.earlier !== undefined && !previous?.result.findings.some(({ n }) => n === finding.earlier))) {
+    throw new Error("The report has invalid finding numbers or a missing earlier finding. Next action: correct the finding references and rerun warden review record.");
+  }
+  const round = recordRound({
+    input: {
+      ...key,
+      previous: previous?.id ?? null,
+      base: scope.base,
+      head: scope.head,
+      warden: await wardenVersion(wardenRoot),
+      settings: capability.review,
+      upholds: scope.upholds,
+      requirements: o.requirements.map((path) => ({
+        path: relative(root, resolve(path)),
+        sha256: sha256(readFileSync(path)),
+      })),
+      report: { sha256: sha256(bytes), text: report },
+      ...(o.pullRequest === undefined ? {} : { pullRequest: o.pullRequest }),
+      ...(o.component === undefined ? {} : { component: o.component }),
+    },
+    result: { verdict: result.verdict, findings: result.findings },
+  }, previous);
+  printRecord({ ...roundSummary(round), signals: reviewSignals(round, previous) });
   return exitCode(result);
 }
