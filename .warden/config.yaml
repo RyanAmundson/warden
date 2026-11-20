@@ -4,6 +4,12 @@ base: main
 packs:
   - id: core
     paths: ["src/**/*.ts", "eslint-plugin/**/*.ts", "vitest.config.ts", "test/*.ts", "test/cli/*.ts", "test/runner/*.ts", "test/compiler/*.ts", "test/records/*.ts", "test/adapters/*.ts", "test/eslint-plugin/*.ts"]
+  - id: review
+    paths: ["**/*"]
+    settings:
+      build:
+        command: npm run -s build:dist
+        output: dist/src
 tierBudgetMs:
   edit: 2000
   commit: 10000
