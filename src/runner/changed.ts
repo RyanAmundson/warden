@@ -367,8 +367,8 @@ export interface Worktree {
 
 const UNBORN = /^0+$/;
 
-export function worktrees(root: string): Worktree[] {
-  return must(root, ["worktree", "list", "--porcelain"])
+export async function worktrees(root: string): Promise<Worktree[]> {
+  return (await gitLines(root, ["worktree", "list", "--porcelain"])).join("\n")
     .split("\n\n")
     .flatMap((block) => {
       const path = /^worktree (.+)$/m.exec(block)?.[1];
@@ -377,8 +377,10 @@ export function worktrees(root: string): Worktree[] {
     });
 }
 
-export const repoTips = (root: string): string[] =>
-  [...new Set([...must(root, ["for-each-ref", "--format=%(objectname)", "refs/heads"]).split("\n").filter((l) => l !== ""), ...worktrees(root).flatMap((w) => (w.head === undefined ? [] : [w.head]))])].sort();
+export async function repoTips(root: string, trees: Worktree[]): Promise<string[]> {
+  const branches = await gitLines(root, ["for-each-ref", "--format=%(objectname)", "refs/heads"]);
+  return [...new Set([...branches, ...trees.flatMap((w) => (w.head === undefined ? [] : [w.head]))])].sort();
+}
 
 const mergedTree = (root: string, parents: string[]): string | undefined => {
   if (parents.length !== 2) return undefined;
@@ -433,7 +435,7 @@ export async function newCommits(root: string, tips: string[], seen: string[]): 
   return describeCommits(root, await gitLines(root, ["log", "--format=%H %T %P", "--stdin", "--"], [...tips.map((tip) => `${tip}\n`), ...known].join("")));
 }
 
-export const allTips = (root: string): string[] => [...new Set([...must(root, ["for-each-ref", "--format=%(objectname)"]).split("\n").filter((l) => l !== ""), ...repoTips(root)])];
+export const allTips = async (root: string, tips: string[]): Promise<string[]> => [...new Set([...await gitLines(root, ["for-each-ref", "--format=%(objectname)"]), ...tips])];
 
 export const covers = (root: string, run: { tree?: string; mergeBase?: string }, c: Committed): boolean => {
   const parent = c.parents[0];
@@ -513,12 +515,12 @@ export const lockVersionAt = (root: string, commit: string): string | undefined 
 export const reachableFrom = async (root: string, sha: string, tips: string[]): Promise<boolean> =>
   (await gitLines(root, ["rev-list", "-1", "--ignore-missing", "--stdin", sha], tips.map((t) => `^${t}\n`).join(""))).length === 0;
 
-export async function holdersOf(root: string, sha: string): Promise<string[]> {
+export async function holdersOf(root: string, sha: string, trees: Worktree[]): Promise<string[]> {
   const refs: string[] = [];
   const error = await gitRecords(root, ["for-each-ref", "--contains", sha, "--format=%(refname)"], "\n", (ref) => refs.push(ref));
   if (error !== undefined) throw new Error(`git for-each-ref --contains ${sha} failed: ${error}`);
   const checked = new Map<string, boolean>();
-  for (const { path, detached, head } of worktrees(root)) {
+  for (const { path, detached, head } of trees) {
     if (detached !== true || head === undefined) continue;
     if (!checked.has(head)) {
       checked.set(head, (await gitRecords(root, ["merge-base", "--is-ancestor", sha, head], "\n", () => {})) === undefined);

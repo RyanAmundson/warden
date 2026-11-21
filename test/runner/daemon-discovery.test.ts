@@ -47,17 +47,61 @@ it("discovers every linked worktree with one listing per repository on each disc
     appendEvidence("primary", { at: new Date().toISOString(), kind: "registered", root: linked });
     appendEvidence("separate", { at: new Date().toISOString(), kind: "registered", root: separate });
     daemon = startWatching({ wardenRoot, port: 0 });
-    daemon.discover();
+    await daemon.discover();
     expect([...daemon.projects.keys()].sort()).toEqual([linked, primary, separate].sort());
 
+    await daemon.settled();
     git(primary, "worktree", "move", linked, moved);
     mkdirSync(linked);
     git(primary, "worktree", "add", "--detach", sibling);
     list.mockClear();
-    daemon.discover();
+    await Promise.all([daemon.discover(), daemon.discover()]);
     expect([...daemon.projects.keys()]).toEqual(expect.arrayContaining([moved, primary, separate, sibling]));
-    expect(list).toHaveBeenCalledTimes(2);
+    expect(list.mock.calls.filter(([root]) => root.endsWith("/.git"))).toHaveLength(2);
   } finally {
+    await daemon?.stop();
+    list.mockRestore();
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+it("watches new evidence and other repositories while a worktree listing waits", async () => {
+  const scratch = realpathSync(mkdtempSync(join(tmpdir(), "warden-discovery-wait-")));
+  const slow = join(scratch, "slow");
+  const separate = join(scratch, "separate");
+  const linked = join(scratch, "linked");
+  const registered = join(scratch, "registered");
+  let release: (() => void) | undefined;
+  const waiting = new Promise<void>((resolve) => { release = resolve; });
+  let started = false;
+  const original = changed.worktrees;
+  const module: { worktrees(root: string): changed.Worktree[] | Promise<changed.Worktree[]> } = changed;
+  const list = vi.spyOn(module, "worktrees").mockImplementation(async (root) => {
+    if (root === join(slow, ".git")) {
+      started = true;
+      await waiting;
+    }
+    return original(root);
+  });
+  let daemon: Daemon | undefined;
+
+  try {
+    init(slow, "slow");
+    init(separate, "separate");
+    init(registered, "registered");
+    git(separate, "worktree", "add", "--detach", linked);
+    appendEvidence("slow", { at: new Date().toISOString(), kind: "registered", root: slow });
+    appendEvidence("separate", { at: new Date().toISOString(), kind: "registered", root: separate });
+    const live = startWatching({ wardenRoot, port: 0, intervalMs: 60_000 });
+    daemon = live;
+    await vi.waitFor(() => expect(started).toBe(true));
+    appendEvidence("registered", { at: new Date().toISOString(), kind: "registered", root: registered });
+    await vi.waitFor(() => {
+      expect(live.projects.has(linked)).toBe(true);
+      expect(live.projects.has(registered)).toBe(true);
+    });
+  } finally {
+    release?.();
     await daemon?.stop();
     list.mockRestore();
     rmSync(scratch, { recursive: true, force: true });

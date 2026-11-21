@@ -142,19 +142,19 @@ const stampingVersion = (root, c, running) => {
     const version = lockVersionAt(root, c.commit);
     return version === undefined || !/^\d+\.\d+\.\d+$/.test(version) || olderThan(version, FIRST_STAMPING) || olderThan(running, version) ? undefined : version;
 };
-const unstampable = async (root, repo, c, running, port) => {
+const unstampable = async (root, repo, c, running, port, trees) => {
     const why = `its ${LOCK_PATH} is missing, unreadable, older than Warden ${FIRST_STAMPING}, or newer than this daemon's Warden ${running}, so no release can stamp it`;
-    const holders = await holdersOf(root, c.commit);
+    const holders = await holdersOf(root, c.commit, trees);
     const published = holders.filter((h) => h.startsWith("refs/remotes/"));
     if (published.length > 0)
         return `ask the repository owner to stop the daemon with warden daemon uninstall, add commit ${c.commit} with a reason to the trusted list of ${repo} in ${stateFile()}, and start it again with warden daemon install --port ${port}, because it is published in ${published.join(", ")} and ${why}`;
     return `remove commit ${c.commit.slice(0, 12)} from ${holders.join(", ")} by resetting or deleting each, because ${why}; then make its change again in a new commit with the hook`;
 };
-const uncheckedAlert = async (root, repo, c, base, running, port) => {
+const uncheckedAlert = async (root, repo, c, base, running, port, trees) => {
     const short = c.commit.slice(0, 12);
     const version = stampingVersion(root, c, running);
     if (version === undefined)
-        return { file: c.commit, detail: "unchecked-commit", next: await unstampable(root, repo, c, running, port) };
+        return { file: c.commit, detail: "unchecked-commit", next: await unstampable(root, repo, c, running, port, trees) };
     const warden = version === running ? "warden" : `npx --yes --package=${RELEASES}#v${version} warden`;
     const verify = c.parents[0] === undefined
         ? `run git switch -c warden-check-${short} ${base}, then git read-tree -u --reset ${short}, then ${warden} check --base ${base}`
@@ -192,6 +192,7 @@ export function startWatching(opts) {
     const debounce = opts.debounceMs ?? 200;
     let stopped = false;
     let scanQueue = Promise.resolve();
+    const discoveries = new Map();
     const report = (cause) => (opts.onError ?? ((e) => process.stderr.write(`${e.message}\n`)))(cause instanceof Error ? cause : new Error(String(cause)));
     const saveState = () => writeAtomic(stateFile(), `${JSON.stringify(state)}\n`);
     const indexFor = (project) => {
@@ -229,11 +230,12 @@ export function startWatching(opts) {
             .map((e) => ({ file: `run ${e.run ?? ""}`, detail: "gate-off", next: `unset WARDEN_DAEMON, then run warden check --base ${e.base ?? "main"} in ${w.root} with the daemon running` }));
     };
     const commitFound = async (w, base) => {
-        const tips = repoTips(w.root);
+        const trees = await worktrees(w.root);
+        const tips = await repoTips(w.root, trees);
         const ix = indexFor(w.project);
         const known = state.repos[w.repo];
         const rebuilt = known === undefined ? commitsOf(w.root, [...ix.unchecked]) : [];
-        const refs = allTips(w.root);
+        const refs = await allTips(w.root, tips);
         const boundary = known?.boundary ?? refs;
         const trusted = (c) => (known?.trusted ?? []).some((t) => t.commit === c.commit);
         const flagged = new Set([...(known?.flagged ?? []), ...(known?.unchecked ?? []).map((c) => c.commit)]);
@@ -259,7 +261,7 @@ export function startWatching(opts) {
         state.repos[w.repo] = { tips, unchecked, boundary, flagged: [...flagged], ...(known?.trusted === undefined ? {} : { trusted: known.trusted }) };
         const alerts = [];
         for (const c of unchecked)
-            alerts.push(await uncheckedAlert(w.root, w.repo, c, base, running, opts.port));
+            alerts.push(await uncheckedAlert(w.root, w.repo, c, base, running, opts.port, trees));
         return alerts;
     };
     const scanRoot = async (w) => {
@@ -412,9 +414,9 @@ export function startWatching(opts) {
         projects.set(root, w);
         void scan(w);
     };
-    const worktreeRoots = (repo) => {
+    const worktreeRoots = async (repo) => {
         try {
-            return worktrees(repo)
+            return (await worktrees(repo))
                 .map((t) => t.path)
                 .filter((p) => existsSync(join(p, ".warden/config.yaml")) && !existsSync(join(p, SELF_CHECK_MARKER)));
         }
@@ -423,16 +425,41 @@ export function startWatching(opts) {
             return [];
         }
     };
-    const discover = () => {
-        const remembered = Object.keys(state.roots).filter((r) => existsSync(join(r, ".warden/config.yaml")));
-        const repositories = new Set([...projects.values()].map((w) => w.repo));
-        for (const root of [...discoverRoots(), ...remembered, ...[...repositories].flatMap(worktreeRoots)]) {
+    const watchRoots = (roots) => {
+        for (const root of roots) {
+            if (stopped)
+                return;
             try {
                 watchRoot(root);
             }
             catch (cause) {
                 report(cause);
             }
+        }
+    };
+    const discover = () => {
+        if (stopped)
+            return Promise.resolve();
+        const remembered = Object.keys(state.roots).filter((r) => existsSync(join(r, ".warden/config.yaml")));
+        watchRoots([...discoverRoots(), ...remembered]);
+        const repositories = new Set([...projects.values()].map((w) => w.repo));
+        return Promise.all([...repositories].map((repo) => {
+            const pending = discoveries.get(repo);
+            if (pending !== undefined)
+                return pending;
+            const discovery = worktreeRoots(repo)
+                .then(watchRoots)
+                .finally(() => { discoveries.delete(repo); });
+            discoveries.set(repo, discovery);
+            return discovery;
+        })).then(() => { });
+    };
+    const discoverInBackground = () => {
+        try {
+            void discover().catch(report);
+        }
+        catch (cause) {
+            report(cause);
         }
     };
     const heartbeat = () => {
@@ -463,7 +490,6 @@ export function startWatching(opts) {
                 report(cause);
             }
         }
-        discover();
     };
     const evidenceDir = join(wardenHome(), "evidence");
     mkdirSync(evidenceDir, { recursive: true });
@@ -475,11 +501,21 @@ export function startWatching(opts) {
         const known = [...projects.values()].filter((w) => w.project === project);
         for (const w of known)
             schedule(w);
-        if (known.length === 0 && !stopped)
-            discover();
+        if (known.length === 0)
+            discoverInBackground();
     });
+    try {
+        void discover().catch(report);
+    }
+    catch (cause) {
+        evidenceWatcher.close();
+        throw cause;
+    }
     tick();
-    const interval = setInterval(tick, opts.intervalMs ?? HEARTBEAT_MS);
+    const interval = setInterval(() => {
+        tick();
+        discoverInBackground();
+    }, opts.intervalMs ?? HEARTBEAT_MS);
     return {
         projects,
         startedAt,
@@ -492,12 +528,13 @@ export function startWatching(opts) {
             await Promise.all([...projects.values()].map(scan));
         },
         settled: async () => {
-            while ([...projects.values()].some((w) => w.scanning !== undefined || w.timer !== undefined))
+            while (discoveries.size > 0 || [...projects.values()].some((w) => w.scanning !== undefined || w.timer !== undefined))
                 await new Promise((r) => setTimeout(r, 20));
         },
         stop: async () => {
             stopped = true;
             clearInterval(interval);
+            await Promise.all(discoveries.values());
             evidenceWatcher.close();
             for (const w of projects.values()) {
                 clearTimeout(w.timer);
