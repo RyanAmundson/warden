@@ -108,6 +108,9 @@ export const headCommit = (root: string): string | undefined => {
   return r.ok ? r.out.trim() : undefined;
 };
 
+export const cleanHead = (root: string): string | undefined =>
+  must(root, ["status", "--porcelain", "-z", "--untracked-files=all", "--ignore-submodules=none"]) === "" ? headCommit(root) : undefined;
+
 export const matchesHead = (root: string, path: string): boolean => must(root, ["status", "--porcelain", "-z", "--ignored", "--", path]) === "";
 
 export const containsHead = (root: string, base: BaseRef): boolean => git(root, ["merge-base", "--is-ancestor", "HEAD", comparisonCommit(root, base)]).ok;

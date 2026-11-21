@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expectedOutputs } from "../compiler/compile.js";
 import { LOCK_PATH, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
@@ -6,7 +6,7 @@ import { RecordError, loadRecords } from "../records/load.js";
 import type { RecordSet } from "../records/types.js";
 import { listDisputeRulings } from "../runner/disputes.js";
 import { type Evidence, readEvidence } from "../runner/evidence.js";
-import { listRepositoryEscapeRounds, reviewHistoryState, reviewRepository } from "./history.js";
+import { listRepositoryEscapeRounds, listRepositoryRounds, reviewHistoryState, reviewRepository, reviewState } from "./history.js";
 
 const guardrailKey = (pack: string, guardrail: string): string => JSON.stringify([pack, guardrail]);
 
@@ -38,6 +38,81 @@ export async function retainedMutations(set: RecordSet, wardenRoot: string, reco
   return { strength, measuredGuardrails, mutationPolicyIssue };
 }
 
+interface ReviewOccurrence {
+  head: string;
+  series: string;
+  target: string;
+  capability: string;
+  round: string;
+  finding: number;
+  report: string;
+}
+
+function independentOccurrences(events: ReviewOccurrence[]): ReviewOccurrence[] {
+  const parents = events.map((_, index) => index);
+  const owner = new Map<string, number>();
+  const find = (index: number): number => {
+    let root = index;
+    while (parents[root] !== root) root = parents[root] as number;
+    while (index !== root) {
+      const next = parents[index] as number;
+      parents[index] = root;
+      index = next;
+    }
+    return root;
+  };
+  for (const [index, { head, series }] of events.entries()) {
+    for (const key of [`head:${head}`, `series:${series}`]) {
+      const prior = owner.get(key);
+      if (prior === undefined) owner.set(key, index);
+      else parents[find(index)] = find(prior);
+    }
+  }
+  const distinct = new Set<number>();
+  return events.filter((_, index) => {
+    const root = find(index);
+    if (distinct.has(root)) return false;
+    distinct.add(root);
+    return true;
+  });
+}
+
+export function recurringReviewProposals(set: RecordSet, repository: string) {
+  const minimum = set.config.learning?.repeatFindings;
+  if (minimum === undefined) return [];
+  const practices = new Map(set.packs.flatMap((pack) => pack.practices.map(({ id, statement }) => [id, statement] as const)));
+  const groups = new Map<string, {
+    practice: string;
+    title: string;
+    correction: string;
+    occurrences: ReviewOccurrence[];
+  }>();
+  const normalize = (value: string): string => value.trim().replace(/\s+/g, " ");
+  const rounds = listRepositoryRounds(repository).sort((a, b) => a.recordedAt.localeCompare(b.recordedAt) || a.id.localeCompare(b.id));
+  for (const round of rounds) {
+    const { head, series, target, capability, upholds, report } = round.input;
+    const [upheld] = upholds;
+    if (upholds.length !== 1 || upheld === undefined || practices.get(upheld.id) !== upheld.statement) continue;
+    for (const finding of reviewState(round).active) {
+      if (!finding.blocks || finding.file === undefined || finding.earlier !== undefined ||
+          !finding.reproducesOn.includes("head") || finding.reproducesOn.includes("base")) continue;
+      const title = normalize(finding.title);
+      const correction = normalize(finding.correction);
+      if (title === "" || correction === "") continue;
+      const key = canonicalJson([upheld.id, title, correction]);
+      const group = groups.get(key) ?? { practice: upheld.id, title, correction, occurrences: [] };
+      group.occurrences.push({ head, series, target, capability, round: round.id, finding: finding.n, report: report.sha256 });
+      groups.set(key, group);
+    }
+  }
+  return [...groups.values()]
+    .map((group) => ({ ...group, occurrences: independentOccurrences(group.occurrences) }))
+    .filter(({ occurrences }) => occurrences.length >= minimum)
+    .map(({ practice, title, correction, occurrences }) => ({
+      action: "add", practice, evidence: [{ kind: "recurring-review-finding", title, correction, occurrences }],
+    }));
+}
+
 export async function learningEditProposals(set: RecordSet, wardenRoot: string) {
   const { project } = set.config;
   const disputes = new Map<string, ReturnType<typeof listDisputeRulings>>();
@@ -62,6 +137,41 @@ export async function learningEditProposals(set: RecordSet, wardenRoot: string) 
     return [{ action: "edit" as const, pack: pack.id, practice: practice.id, guardrail: guardrail.id, evidence: signals }];
   })));
   return { edit, mutationPolicyIssue };
+}
+
+export async function learningRemovalProposals(set: RecordSet, wardenRoot: string, addPractices: ReadonlySet<string>) {
+  const minimum = set.config.learning?.removalRuns;
+  const { root } = set;
+  if (minimum === undefined || !existsSync(join(root, LOCK_PATH))) return [];
+  const actual = readLock(root);
+  const expected = await expectedOutputs(set, root, wardenRoot);
+  if (canonicalJson(actual) !== canonicalJson(expected.lock)) return [];
+  const policy = sha256(readFileSync(join(root, LOCK_PATH)));
+  const evidence = readEvidence(set.config.project).filter((e) => e.root === root);
+  const checked = evidence.filter((e) => e.kind === "coverage" && e.policy === policy && e.tier === "boundary" &&
+    e.run !== undefined && e.commit !== undefined && e.tree !== undefined && Array.isArray(e.members));
+  if (checked.length < minimum) return [];
+  const fired = new Set(evidence.filter((e) => e.kind === "fired").map((e) => e.guardrail));
+  return set.packs.flatMap((pack) => pack.practices.flatMap((practice) => {
+    if (addPractices.has(practice.id)) return [];
+    const keep = new Map<string, string>();
+    return practice.guardrails.flatMap((g) => {
+      if (g.scope !== "project" || !g.implementation.startsWith("fs:")) return [];
+      const { id, packDir: _packDir, ...rule } = g;
+      const key = canonicalJson(rule);
+      const replacement = keep.get(key);
+      if (replacement === undefined) {
+        keep.set(key, id);
+        return [];
+      }
+      if (fired.has(id) || fired.has(replacement)) return [];
+      const distinct = new Map(checked.filter((e) => e.members?.includes(id) && e.members.includes(replacement))
+        .map(({ at, run, commit, tree }) => [tree, { at, run, commit, tree }]));
+      if (distinct.size < minimum) return [];
+      return [{ action: "remove", pack: pack.id, practice: practice.id, guardrail: id, replacement,
+        approval: "policy-signer", evidence: [{ kind: "equivalent-coverage", policy, runs: [...distinct.values()] }] }];
+    });
+  }));
 }
 
 export async function learningScorecard(root: string, wardenRoot: string) {

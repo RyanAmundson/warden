@@ -9,7 +9,7 @@ import { type ReviewAdapter, type ReviewScope, reviewAdapters } from "../review/
 import { codeReview, codeReviewBase, isPullRequestUrl } from "../review/code-review.js";
 import { type Touched, type Triage, exitCode, touchedLines, triage } from "../review/findings.js";
 import { type ReviewRound, type ReviewRulingInput, type ReviewSeries, getRound, listRepositoryEscapeRounds, listRounds, recordEscape, recordReviewerError, recordRound, reviewHistoryState, reviewRepository, reviewSignals, reviewState } from "../review/history.js";
-import { learningEditProposals } from "../review/learning.js";
+import { learningEditProposals, learningRemovalProposals, recurringReviewProposals } from "../review/learning.js";
 import { isAncestor } from "../runner/changed.js";
 
 export interface ReviewOptions {
@@ -228,9 +228,10 @@ export function runReviewHistory(root: string, o: SeriesOptions & { round?: stri
 
 export async function runReviewProposals(root: string, wardenRoot: string, { series, target, capability }: Partial<SeriesOptions>): Promise<number> {
   const repositoryWide = series === undefined && target === undefined && capability === undefined;
+  const repository = repositoryWide ? reviewRepository(root) : undefined;
   let rounds: ReviewRound[];
-  if (repositoryWide) {
-    rounds = listRepositoryEscapeRounds(reviewRepository(root));
+  if (repository !== undefined) {
+    rounds = listRepositoryEscapeRounds(repository);
   } else {
     if (series === undefined || target === undefined || capability === undefined) {
       throw new Error("A series query needs its complete scope. Next action: supply --series, --target and --capability together, or omit all three to query the repository.");
@@ -251,20 +252,35 @@ export async function runReviewProposals(root: string, wardenRoot: string, { ser
     else group.push(escape);
   }
   const add = [...evidence].map(([practice, escapes]) => ({ action: "add", practice, evidence: escapes }));
-  if (repositoryWide && existsSync(join(root, ".warden/config.yaml"))) {
-    try {
-      const { edit, mutationPolicyIssue } = await learningEditProposals(await loadRecords(root, wardenRoot), wardenRoot);
-      if (mutationPolicyIssue !== undefined) process.stderr.write(`Mutation-backed Edit proposals are unavailable. ${mutationPolicyIssue}\n`);
-      printRecord([...add, ...edit]);
-      return 0;
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      const location = error instanceof RecordError ? `${error.file} ${error.pointer}`.trim() : "";
-      process.stderr.write(`Edit proposals are unavailable. ${location === "" ? detail : `${location}: ${detail}`}\nNext action: fix the reported Warden input and run warden review proposals again.\n`);
-    }
+  if (repository === undefined || !existsSync(join(root, ".warden/config.yaml"))) {
+    printRecord(add);
+    return 0;
   }
-  printRecord(add);
+  const set = await proposalSignal("Edit", () => loadRecords(root, wardenRoot));
+  if (set === undefined) {
+    printRecord(add);
+    return 0;
+  }
+  const recurring = await proposalSignal("Recurring Add", () => recurringReviewProposals(set, repository));
+  const edits = await proposalSignal("Edit", () => learningEditProposals(set, wardenRoot));
+  if (edits?.mutationPolicyIssue !== undefined) {
+    process.stderr.write(`Mutation-backed Edit proposals are unavailable. ${edits.mutationPolicyIssue}\n`);
+  }
+  const remove = recurring === undefined ? [] : await proposalSignal("Remove", () =>
+    learningRemovalProposals(set, wardenRoot, new Set([...add, ...recurring].map(({ practice }) => practice))));
+  printRecord([...add, ...(recurring ?? []), ...(edits?.edit ?? []), ...(remove ?? [])]);
   return 0;
+}
+
+async function proposalSignal<T>(name: string, read: () => T | Promise<T>): Promise<T | undefined> {
+  try {
+    return await read();
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const location = error instanceof RecordError ? `${error.file} ${error.pointer}`.trim() : "";
+    process.stderr.write(`${name} proposals are unavailable. ${location === "" ? detail : `${location}: ${detail}`}\nNext action: fix the reported Warden input and run warden review proposals again.\n`);
+    return undefined;
+  }
 }
 
 type FindingOptions = SeriesOptions & Omit<ReviewRulingInput, "finding"> & { round: string; finding: string };

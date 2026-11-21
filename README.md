@@ -75,8 +75,15 @@ for review.
 
 Run `warden review proposals` to see Add suggestions from confirmed escapes
 and Edit suggestions from upheld disputes or current hollow measurements.
-The output cites the underlying Evidence. An independent reviewer can accept
-a tighter rule. A trusted policy signer must approve any loosening.
+Set `learning.repeatFindings` in `.warden/config.yaml` to the minimum
+number of distinct review series and heads that can support an Add
+suggestion. Warden groups matching blocking findings for one Practice and
+cites the exact recorded reviews. Set `learning.removalRuns` to the minimum
+number of distinct clean project trees with passing boundary coverage for
+equivalent project-scoped filesystem rules. Warden suggests removing a duplicate
+only when the retained Evidence includes no violations from either rule.
+An independent reviewer can accept a tighter rule. A trusted policy signer
+must approve any loosening, including removal.
 
 ## Configure a System One decision Guardrail
 

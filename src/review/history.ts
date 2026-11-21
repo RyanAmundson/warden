@@ -121,7 +121,7 @@ function readSeriesOwner(directory: string): ReviewSeries | Error | undefined {
   }
 }
 
-export function listRepositoryEscapeRounds(repository: string): ReviewRound[] {
+const repositoryRounds = (repository: string, onlyEscapes: boolean): ReviewRound[] => {
   const root = join(wardenHome(), "review");
   let directories: string[];
   try {
@@ -137,14 +137,14 @@ export function listRepositoryEscapeRounds(repository: string): ReviewRound[] {
   const rounds: ReviewRound[] = [];
   for (const name of directories) {
     const directory = join(root, name);
-    const numbers = readdirSync(directory, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => Number(/^escape-([1-9]\d*)$/.exec(entry.name)?.[1]))
-      .filter(Number.isSafeInteger)
-      .sort((left, right) => left - right);
-    if (numbers.length === 0) continue;
     const owner = readSeriesOwner(directory);
     if (owner !== undefined && !(owner instanceof Error) && owner.repository !== repository) continue;
+    const pattern = onlyEscapes ? /^escape-([1-9]\d*)$/ : /^round-([1-9]\d*)\.json$/;
+    const numbers = readdirSync(directory, { withFileTypes: true })
+      .filter((entry) => onlyEscapes ? entry.isDirectory() : entry.isFile())
+      .map((entry) => Number(pattern.exec(entry.name)?.[1]))
+      .filter(Number.isSafeInteger)
+      .sort((left, right) => left - right);
     for (const number of numbers) {
       const round = readRound(directory, number, repository);
       if (round === undefined) continue;
@@ -153,7 +153,11 @@ export function listRepositoryEscapeRounds(repository: string): ReviewRound[] {
     }
   }
   return rounds;
-}
+};
+
+export const listRepositoryEscapeRounds = (repository: string): ReviewRound[] => repositoryRounds(repository, true);
+
+export const listRepositoryRounds = (repository: string): ReviewRound[] => repositoryRounds(repository, false);
 
 function recordSeriesOwner(directory: string, { repository, series, target, capability }: ReviewSeries): void {
   const owner = readSeriesOwner(directory);
@@ -174,6 +178,7 @@ export function recordRound(entry: ReviewEntry, previous: ReviewRound | undefine
   const number = (previous?.number ?? 0) + 1;
   const directory = seriesPath(input);
   const id = roundId(number, entry);
+  recordSeriesOwner(directory, input);
   for (let prior = 1; prior < number; prior++) {
     const round = readRound(directory, prior);
     if (round?.input.report.sha256 === input.report.sha256) {

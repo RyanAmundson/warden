@@ -6,7 +6,7 @@ import type { RunResult } from "../adapters/types.js";
 
 export interface Evidence {
   at: string;
-  kind: "disputed" | "fired" | "resolved" | "cost" | "tampered" | "stalled" | "scaling" | "step" | "registered" | "plugin" | "commit" | "change" | "gate-off" | "mutation" | "hollow";
+  kind: "disputed" | "fired" | "resolved" | "cost" | "tampered" | "stalled" | "scaling" | "step" | "registered" | "plugin" | "commit" | "change" | "gate-off" | "mutation" | "hollow" | "coverage";
   guardrail?: string;
   file?: string;
   status?: string;

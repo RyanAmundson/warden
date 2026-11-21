@@ -93,6 +93,7 @@ export interface ProjectConfig {
   tierBudgetMs: Record<Tier, number>;
   loopBreakerRepeats: number;
   bench?: Partial<BenchSettings>;
+  learning?: { repeatFindings?: number; removalRuns?: number };
 }
 
 export interface BenchSettings {

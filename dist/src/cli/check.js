@@ -10,7 +10,7 @@ import { LOCK_FORMAT, LOCK_PATH, bundledTools, canonicalJson, olderThan, readLoc
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, projectFiles, projectInventory, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { commitsOf, covers, indexTree, stagedMismatch, changedFiles, mergeBase, changesSinceMergeBase, hasPathCommitIndex, headCommit, matchesHead, lastCommittedText, showAtMergeBase, skippedIndexPaths, stageFile, sparseMode, stagedFiles, trackedFiles, unstagedFiles, checkoutBlobs } from "../runner/changed.js";
+import { cleanHead, commitsOf, covers, indexTree, stagedMismatch, changedFiles, mergeBase, changesSinceMergeBase, hasPathCommitIndex, headCommit, matchesHead, lastCommittedText, showAtMergeBase, skippedIndexPaths, stageFile, sparseMode, stagedFiles, trackedFiles, unstagedFiles, checkoutBlobs } from "../runner/changed.js";
 import { heartbeatProblem, openAlerts } from "../runner/daemon.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
@@ -414,6 +414,11 @@ const check = async (opts, live) => {
         }),
     };
     const lockSha = sha256(readFileSync(join(root, LOCK_PATH)));
+    const coverageRules = tier === "boundary" && opts.rule === undefined && opts.paths === undefined &&
+        set.config.learning?.removalRuns !== undefined && sparseMode(root) === "off"
+        ? new Set(guardrails.filter((g) => g.scope === "project" && g.implementation.startsWith("fs:")).map((g) => g.id))
+        : new Set();
+    const beforeCoverage = coverageRules.size === 0 ? undefined : cleanHead(root);
     const ran = await runCached(set, guardrails, scanned, shas, ctx, project, { lockSha, warden: running, tier });
     const blobs = [...absent, ...inherited];
     const blobPaths = blobs.map((b) => b.path);
@@ -533,6 +538,14 @@ const check = async (opts, live) => {
     const alert = failedOf(failures, notes) ? undefined : alerts.find((d) => !coveredHere(d));
     const code = alert === undefined ? report(failures, set, opts, notes) : refuseForAlert(alert, opts);
     finish(project, scanned.length === 0 && ran.ran.length === 0 && blobRun.length === 0 ? "empty" : "ran", scanned, code, { set, failures, notes, extra: { scope, ...(incompleteSparse ? { sparseCoverage, sparseProjectFiles } : {}), ...(alert === undefined ? {} : { alert: alert.detail, next: alert.next }), guardrails: chosen.length, cached: ran.cached, rules: ruleTimes, passes: passTimes, cachedRules: chosen.filter((g) => ruleTimes[g.id] === undefined).map((g) => g.id), ratchet: [baselineTotal(baseline), baselineTotal(wide.next)], ratchetFrom } }, { paths: blobPaths, bytes: blobBytes });
+    if (scope === "full" && code === 0 && alert === undefined && !failedOf(failures, notes) && beforeCoverage !== undefined &&
+        cleanHead(root) === beforeCoverage && sha256(readFileSync(join(root, LOCK_PATH))) === lockSha) {
+        const members = wholeProject.filter((r) => coverageRules.has(r.guardrail) && r.status === "pass" &&
+            r.overBudget !== true && (r.files ?? 0) > 0).map((r) => r.guardrail);
+        const coveredTree = members.length > 0 ? commitsOf(root, [beforeCoverage])[0]?.tree : undefined;
+        if (coveredTree !== undefined)
+            appendEvidence(project, { at, kind: "coverage", root, run, commit: beforeCoverage, tree: coveredTree, policy: lockSha, tier, members });
+    }
     if (alert === undefined && !failedOf(failures, notes))
         recordResolutions(project, prior, perFile, { at, root, tier, run, policy });
     return code;

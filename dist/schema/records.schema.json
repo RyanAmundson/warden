@@ -41,6 +41,14 @@
                 "units": { "type": "array", "items": { "$ref": "#/$defs/unit" } },
                 "tierBudgetMs": { "$ref": "#/$defs/tierBudgetMs" },
                 "loopBreakerRepeats": { "type": "integer", "minimum": 1 },
+                "learning": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "repeatFindings": { "type": "integer", "minimum": 2 },
+                        "removalRuns": { "type": "integer", "minimum": 2 }
+                    }
+                },
                 "bench": {
                     "type": "object",
                     "additionalProperties": false,
