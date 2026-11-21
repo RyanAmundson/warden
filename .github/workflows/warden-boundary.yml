@@ -1,0 +1,30 @@
+name: Warden boundary
+
+on:
+  push:
+    branches-ignore: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  boundary:
+    name: Warden boundary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: 25.2.1
+      - run: npm ci --ignore-scripts
+      - name: Install published Warden 0.1.14
+        run: npm install --prefix "$RUNNER_TEMP/warden-release" --ignore-scripts --no-audit --no-fund "git+https://github.com/RyanAmundson/warden.git#c430f4f3827b7c54b3caa198ac8b489da2d679c0"
+      - name: Judge the candidate against main
+        run: |
+          export PATH="$RUNNER_TEMP/warden-release/node_modules/.bin:$PATH"
+          test "$(warden --version)" = 0.1.14
+          sh scripts/check-origin-boundary.sh "$(git rev-parse refs/remotes/origin/main)" "$GITHUB_SHA"
