@@ -11,6 +11,7 @@ export interface TscRequest {
   project: string;
   parameterCodes: number[];
   lockedConfig?: LockedTscConfig | undefined;
+  includeProgramSize: boolean;
 }
 
 export interface TscReply {
@@ -43,7 +44,7 @@ export const parseKey = (options: ts.CompilerOptions): string => registry.getKey
 let reusedFor = "";
 const parsed = new Map<string, { text: string; file: ts.SourceFile }>();
 
-const check = ({ cwd, project, parameterCodes, lockedConfig }: TscRequest): TscReply => {
+const check = ({ cwd, project, parameterCodes, lockedConfig, includeProgramSize }: TscRequest): TscReply => {
   const format = (ds: readonly ts.Diagnostic[]): string =>
     ts.formatDiagnostics(ds, { getCanonicalFileName: (f) => f, getCurrentDirectory: () => cwd, getNewLine: () => "\n" });
   let parsedConfig: ReturnType<typeof readTscConfig>;
@@ -88,9 +89,9 @@ const check = ({ cwd, project, parameterCodes, lockedConfig }: TscRequest): TscR
     if (all.length === fromConfig) all.push(...program.getSemanticDiagnostics());
   }
   const diagnostics = ts.sortAndDeduplicateDiagnostics(all);
-  const files = program.getSourceFiles().map((f) => `${f.fileName}\n`);
+  const files = includeProgramSize ? program.getSourceFiles().map((f) => `${f.fileName}\n`).join("") : "";
   const parameters = diagnostics.filter((d) => parameterCodes.includes(d.code) && atParameter(d)).map((d) => format([d]).slice(0, format([d]).indexOf("): ") + 1));
-  return { stdout: format(diagnostics) + files.join(""), code: diagnostics.some((d) => d.category === ts.DiagnosticCategory.Error) ? 1 : 0, parameters };
+  return { stdout: format(diagnostics) + files, code: diagnostics.some((d) => d.category === ts.DiagnosticCategory.Error) ? 1 : 0, parameters };
 };
 
 parentPort?.on("message", (request: TscRequest) => parentPort?.postMessage(check(request)));

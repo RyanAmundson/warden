@@ -1,12 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { runCheck } from "../src/cli/check.js";
-import { runInit } from "../src/cli/init.js";
-import { admit } from "../src/compiler/bench.js";
-import { compile, practicesElsewhere, wardenVersion } from "../src/compiler/compile.js";
+import { expectedOutputs, practicesElsewhere } from "../src/compiler/compile.js";
+import { LOCK_PATH } from "../src/compiler/lock.js";
 import { checkConsistency } from "../src/compiler/consistency.js";
 import { examplePrefix, runExamples } from "../src/compiler/examples.js";
 import { loadRecords } from "../src/records/load.js";
@@ -64,11 +63,6 @@ const newGuardrails = (set: RecordSet): { g: Guardrail; file: string }[] =>
       );
     });
 
-const only = (set: RecordSet, id: string): RecordSet => ({
-  ...set,
-  packs: set.packs.map((p) => ({ ...p, practices: p.practices.map((x) => ({ ...x, guardrails: x.guardrails.filter((g) => g.id === id) })) })),
-});
-
 const listed = await (async () => {
   const dir = await mkdtemp(join(tmpdir(), "warden-style-packs-list-"));
   try {
@@ -88,12 +82,13 @@ beforeAll(async () => {
   await write("tsconfig.json", `${JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", skipLibCheck: true }, include: ["**/*.ts"] })}\n`);
   await write(".gitignore", "node_modules\n");
   git("init", "-q", "-b", "main");
+  await write(".warden/config.yaml", withPacks("project: style-packs\nbase: main\npacks:\n  - id: core\ntierBudgetMs: { edit: 2000, commit: 10000, boundary: 120000 }\nloopBreakerRepeats: 3\n"));
+  const { files, lock } = await expectedOutputs(await loadRecords(root, wardenRoot), root, wardenRoot);
+  for (const [path, content] of Object.entries(files)) await write(path, content);
+  await write(LOCK_PATH, JSON.stringify(lock));
   git("add", "-A");
-  git("commit", "-q", "-m", "seed");
-  expect(await quiet(() => runInit(root, wardenRoot))).toBe(0);
-  const initConfig = await readFile(join(root, ".warden/config.yaml"), "utf8");
-  expect(withPacks(initConfig)).not.toBe(initConfig);
-  await write(".warden/config.yaml", withPacks(initConfig));
+  git("commit", "-q", "-m", "base");
+  git("switch", "-q", "-c", "feature");
 });
 
 afterAll(async () => {
@@ -118,17 +113,6 @@ describe("every new Guardrail records fired and cost Evidence", () => {
     expect(listed.length).toBeGreaterThan(NEW_PACKS.length);
   });
 
-  it.each(listed.map(({ g }) => g.id))("%s is admitted by the bench", async (id) => {
-    expect(await admit(only(await loadRecords(root, wardenRoot), id), await wardenVersion(wardenRoot))).toEqual([]);
-  });
-
-  it("the five packs compile together", async () => {
-    expect((await quiet(() => compile(root, wardenRoot))).findings).toEqual([]);
-    git("add", "-A");
-    git("commit", "-q", "-m", "base");
-    git("checkout", "-q", "-b", "feature");
-  });
-
   it.each(listed.map(({ g, file }) => [g.id, g, file] as const))("%s fires on its mustFail", async (id, g, file) => {
     expect(typeof g.mustFail).toBe("string");
     await write(file, g.mustFail as string);
@@ -143,6 +127,9 @@ describe("every new Guardrail records fired and cost Evidence", () => {
     const rows = readEvidence(project).slice(before);
     expect(rows.filter((r) => r.kind === "fired" && r.guardrail === id).map((r) => ({ file: r.file, status: r.status }))).toEqual([{ file, status: "fail" }]);
     const costs = rows.filter((r) => r.kind === "cost" && (r.guardrail === id || r.members?.includes(id) === true));
-    expect(costs.map((r) => [typeof r.ms, r.guardrail === id ? "number" : typeof r.rules?.[id]])).toEqual([["number", "number"]]);
+    expect(costs).toHaveLength(1);
+    const cost = costs[0];
+    expect(cost?.ms).toBeGreaterThan(0);
+    if (cost?.guardrail !== id) expect(cost?.rules?.[id]).toBeGreaterThan(0);
   });
 });

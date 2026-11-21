@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { Adapter, RunResult } from "../adapters/types.js";
 import type { Finding } from "./consistency.js";
-import { examplePrefix, withExampleProject, withExampleUnits } from "./examples.js";
+import { examplePrefix, withExampleProject, withExampleScaffold, withExampleUnits } from "./examples.js";
 import { canonicalJson, packFiles, sha256 } from "./lock.js";
 import { RecordError, exampleSet } from "../records/load.js";
 import { enabledOn, pathGroups } from "../records/paths.js";
@@ -68,13 +68,24 @@ const writeTree = async (root: string, tree: Record<string, string>): Promise<vo
   }
 };
 
-const measure = (project: RecordSet, s: Subject, cfg: BenchSettings, rerun: string, signal?: AbortSignal): Promise<Measurement> =>
-  withExampleProject(async (root, commit) => {
+type BenchCommand = "warden bench" | "warden compile";
+
+const measure = (project: RecordSet, s: Subject, cfg: BenchSettings, rerun: BenchCommand, signal?: AbortSignal): Promise<Measurement> => {
+  const adapter = prefixOf(s.g);
+  const admission = rerun === "warden compile";
+  const run = async (root: string, commit?: string): Promise<Measurement> => {
     const set = exampleSet(project);
     const systemOne = s.g.implementation === "system-one:noul";
     const fixedInput = systemOne || s.g.benchmark === "fixed-input";
-    const ctx = { root, generatedDir: join(root, ".warden/generated"), base: commit, unbudgeted: !fixedInput, signal };
-    await writeTree(root, (adapters.get(prefixOf(s.g)) as Adapter).emit([s.g], set));
+    const ctx = {
+      root,
+      generatedDir: join(root, ".warden/generated"),
+      base: commit,
+      unbudgeted: !fixedInput,
+      ...(admission && { omitTscProgramSize: true, eslintBenchmarkScope: {} }),
+      signal,
+    };
+    await writeTree(root, (adapters.get(adapter) as Adapter).emit([s.g], set));
     const files: string[] = [];
     const folders: string[] = [];
     let copies = 0;
@@ -146,9 +157,11 @@ const measure = (project: RecordSet, s: Subject, cfg: BenchSettings, rerun: stri
     if ((points[3] as [number, number])[1] - f < cfg.constantMs) return { verdict: "constant", points, f };
     const k = slope(points, f);
     return { verdict: k > cfg.linearMax ? "superlinear" : k < cfg.sublinearMax ? "sublinear" : "linear", k, points, f };
-  });
+  };
+  return admission && (adapter === "eslint" || adapter === "tsc") ? withExampleScaffold(run) : withExampleProject(run);
+};
 
-export const benchSubject = async (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: string, signal?: AbortSignal): Promise<Measurement & { previous?: Measurement }> => {
+export const benchSubject = async (set: RecordSet, s: Subject, cfg: BenchSettings, rerun: BenchCommand, signal?: AbortSignal): Promise<Measurement & { previous?: Measurement }> => {
   refuseUnmatched(s, rerun);
   const first = await measure(set, s, cfg, rerun, signal);
   if (first.verdict !== "superlinear") return first;

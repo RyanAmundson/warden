@@ -94,20 +94,26 @@ const git = (project: string, args: string[]): string => {
   return execFileSync("git", args, { cwd: project, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 };
 
-export async function withExampleProject<T>(fn: (project: string, base: string) => Promise<T>): Promise<T> {
+export async function withExampleScaffold<T>(fn: (project: string) => Promise<T>): Promise<T> {
   const project = await mkdtemp(join(tmpdir(), "warden-examples-"));
   try {
     await writeFile(join(project, "package.json"), "{}\n");
     await writeFile(join(project, "tsconfig.json"), TSCONFIG);
-    git(project, ["init", "-q"]);
-    git(project, ["add", "-A"]);
-    git(project, ["-c", "user.name=warden", "-c", "user.email=warden@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "scaffold"]);
-    return await fn(project, git(project, ["rev-parse", "HEAD"]).trim());
+    return await fn(project);
   } finally {
     const removal = rm(project, { recursive: true, force: true }).catch((cause: Error) => Promise.reject<void>({ project, cause: cause.message } satisfies Unremoved));
     removals.add(removal);
     removal.then(() => removals.delete(removal), () => undefined);
   }
+}
+
+export function withExampleProject<T>(fn: (project: string, base: string) => Promise<T>): Promise<T> {
+  return withExampleScaffold(async (project) => {
+    git(project, ["init", "-q"]);
+    git(project, ["add", "-A"]);
+    git(project, ["-c", "user.name=warden", "-c", "user.email=warden@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "scaffold"]);
+    return fn(project, git(project, ["rev-parse", "HEAD"]).trim());
+  });
 }
 
 export async function runExamples(project: RecordSet): Promise<Finding[]> {

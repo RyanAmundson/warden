@@ -137,7 +137,7 @@ interface Linted {
   inputShas?: ReadonlyMap<string, string>;
 }
 
-const lintInProcess = async (gs: Guardrail[], entries: Linter.Config[], files: string[], ctx: RunContext): Promise<Linted> => {
+const makeLinter = async (gs: Guardrail[], entries: Linter.Config[], ctx: RunContext): Promise<{ eslint: ESLint; inputShas: Map<string, string> }> => {
   const [{ ESLint: Linting }, { default: tseslint }, { plugin }, { builtinRules }] = await Promise.all([import("eslint"), import("typescript-eslint"), import("../../eslint-plugin/index.js"), import("eslint/use-at-your-own-risk")]);
   const plugins: Record<string, ESLint.Plugin> = { warden: plugin };
   for (const g of gs) {
@@ -177,6 +177,19 @@ const lintInProcess = async (gs: Guardrail[], entries: Linter.Config[], files: s
     warnIgnored: false,
     stats: true,
   });
+  return { eslint, inputShas };
+};
+
+const benchmarkLinters = new WeakMap<object, ESLint>();
+
+const lintInProcess = async (gs: Guardrail[], entries: Linter.Config[], files: string[], ctx: RunContext): Promise<Linted> => {
+  const scope = ctx.captureLintSource === true ? undefined : ctx.eslintBenchmarkScope;
+  let eslint = scope === undefined ? undefined : benchmarkLinters.get(scope);
+  let inputShas: Map<string, string> | undefined;
+  if (eslint === undefined) {
+    ({ eslint, inputShas } = await makeLinter(gs, entries, ctx));
+    if (scope !== undefined) benchmarkLinters.set(scope, eslint);
+  }
   const results: ESLint.LintResult[] = [];
   let ms = 0;
   for (let i = 0; i < files.length; i += BATCH_FILES) {

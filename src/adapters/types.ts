@@ -45,6 +45,8 @@ export interface RunContext {
   signal?: AbortSignal;
   captureLintSource?: boolean;
   lockedTscConfig?: LockedTscConfig;
+  omitTscProgramSize?: boolean;
+  eslintBenchmarkScope?: object;
   projectInventory?: { nonRegular: string[]; discoveryMs: number };
   toolCommands?: string[];
   unitStructure?: { units: (Unit & { kindRecord: UnitKind })[]; ignoreCase: boolean; termDefinitions?: Pick<Term, "id" | "definition">[] };

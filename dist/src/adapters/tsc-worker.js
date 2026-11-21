@@ -23,7 +23,7 @@ const registry = ts.createDocumentRegistry();
 export const parseKey = (options) => registry.getKeyForCompilationSettings(options);
 let reusedFor = "";
 const parsed = new Map();
-const check = ({ cwd, project, parameterCodes, lockedConfig }) => {
+const check = ({ cwd, project, parameterCodes, lockedConfig, includeProgramSize }) => {
     const format = (ds) => ts.formatDiagnostics(ds, { getCanonicalFileName: (f) => f, getCurrentDirectory: () => cwd, getNewLine: () => "\n" });
     let parsedConfig;
     try {
@@ -74,8 +74,8 @@ const check = ({ cwd, project, parameterCodes, lockedConfig }) => {
             all.push(...program.getSemanticDiagnostics());
     }
     const diagnostics = ts.sortAndDeduplicateDiagnostics(all);
-    const files = program.getSourceFiles().map((f) => `${f.fileName}\n`);
+    const files = includeProgramSize ? program.getSourceFiles().map((f) => `${f.fileName}\n`).join("") : "";
     const parameters = diagnostics.filter((d) => parameterCodes.includes(d.code) && atParameter(d)).map((d) => format([d]).slice(0, format([d]).indexOf("): ") + 1));
-    return { stdout: format(diagnostics) + files.join(""), code: diagnostics.some((d) => d.category === ts.DiagnosticCategory.Error) ? 1 : 0, parameters };
+    return { stdout: format(diagnostics) + files, code: diagnostics.some((d) => d.category === ts.DiagnosticCategory.Error) ? 1 : 0, parameters };
 };
 parentPort?.on("message", (request) => parentPort?.postMessage(check(request)));

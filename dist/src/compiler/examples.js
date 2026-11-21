@@ -72,21 +72,26 @@ const git = (project, args) => {
     delete env["GIT_COMMON_DIR"];
     return execFileSync("git", args, { cwd: project, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 };
-export async function withExampleProject(fn) {
+export async function withExampleScaffold(fn) {
     const project = await mkdtemp(join(tmpdir(), "warden-examples-"));
     try {
         await writeFile(join(project, "package.json"), "{}\n");
         await writeFile(join(project, "tsconfig.json"), TSCONFIG);
-        git(project, ["init", "-q"]);
-        git(project, ["add", "-A"]);
-        git(project, ["-c", "user.name=warden", "-c", "user.email=warden@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "scaffold"]);
-        return await fn(project, git(project, ["rev-parse", "HEAD"]).trim());
+        return await fn(project);
     }
     finally {
         const removal = rm(project, { recursive: true, force: true }).catch((cause) => Promise.reject({ project, cause: cause.message }));
         removals.add(removal);
         removal.then(() => removals.delete(removal), () => undefined);
     }
+}
+export function withExampleProject(fn) {
+    return withExampleScaffold(async (project) => {
+        git(project, ["init", "-q"]);
+        git(project, ["add", "-A"]);
+        git(project, ["-c", "user.name=warden", "-c", "user.email=warden@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "scaffold"]);
+        return fn(project, git(project, ["rev-parse", "HEAD"]).trim());
+    });
 }
 export async function runExamples(project) {
     const set = exampleSet(project);

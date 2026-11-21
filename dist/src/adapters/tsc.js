@@ -96,7 +96,13 @@ const ask = (request, budgetMs, signal) => new Promise((resolve, reject) => {
 const run = async (gs, _files, ctx) => {
     const budgetMs = ctx.unbudgeted === true ? undefined : Math.min(...gs.map((g) => g.budgetMs));
     const project = join(relative(ctx.root, ctx.generatedDir), "tsconfig.json");
-    const { reply, ms } = await ask({ cwd: ctx.root, project, parameterCodes: FLAG_CODES.noUnusedParameters, lockedConfig: ctx.lockedTscConfig }, budgetMs, ctx.signal);
+    const { reply, ms } = await ask({
+        cwd: ctx.root,
+        project,
+        parameterCodes: FLAG_CODES.noUnusedParameters,
+        lockedConfig: ctx.lockedTscConfig,
+        includeProgramSize: ctx.omitTscProgramSize !== true,
+    }, budgetMs, ctx.signal);
     if (reply?.configError !== undefined)
         throw new RecordError(reply.configError.file, "", reply.configError.message);
     const killed = reply === undefined;
@@ -167,7 +173,7 @@ const run = async (gs, _files, ctx) => {
     if (!killed && reply.code !== 0 && !parsed) {
         throw new Error(`tsc exited with ${reply.code} and printed no diagnostics`);
     }
-    const size = { files: program.length, bytes: program.reduce((n, f) => n + statSync(f).size, 0) };
+    const size = ctx.omitTscProgramSize === true ? {} : { files: program.length, bytes: program.reduce((n, f) => n + statSync(f).size, 0) };
     return [...byGuardrail].map(([guardrail, violations]) => killed
         ? { guardrail, status: "killed", violations, ms, command: `npx tsc -p ${project} --pretty false` }
         : { guardrail, status: violations.length > 0 ? "fail" : "pass", violations, ms, ...size });

@@ -102,7 +102,13 @@ const ask = (request: TscRequest, budgetMs: number | undefined, signal?: AbortSi
 const run = async (gs: Guardrail[], _files: string[], ctx: RunContext): Promise<RunResult[]> => {
   const budgetMs = ctx.unbudgeted === true ? undefined : Math.min(...gs.map((g) => g.budgetMs));
   const project = join(relative(ctx.root, ctx.generatedDir), "tsconfig.json");
-  const { reply, ms } = await ask({ cwd: ctx.root, project, parameterCodes: FLAG_CODES.noUnusedParameters as number[], lockedConfig: ctx.lockedTscConfig }, budgetMs, ctx.signal);
+  const { reply, ms } = await ask({
+    cwd: ctx.root,
+    project,
+    parameterCodes: FLAG_CODES.noUnusedParameters as number[],
+    lockedConfig: ctx.lockedTscConfig,
+    includeProgramSize: ctx.omitTscProgramSize !== true,
+  }, budgetMs, ctx.signal);
   if (reply?.configError !== undefined) throw new RecordError(reply.configError.file, "", reply.configError.message);
   const killed = reply === undefined;
   const stdout = reply?.stdout ?? "";
@@ -165,7 +171,7 @@ const run = async (gs: Guardrail[], _files: string[], ctx: RunContext): Promise<
   if (!killed && reply.code !== 0 && !parsed) {
     throw new Error(`tsc exited with ${reply.code} and printed no diagnostics`);
   }
-  const size = { files: program.length, bytes: program.reduce((n, f) => n + statSync(f).size, 0) };
+  const size = ctx.omitTscProgramSize === true ? {} : { files: program.length, bytes: program.reduce((n, f) => n + statSync(f).size, 0) };
   return [...byGuardrail].map(([guardrail, violations]): RunResult =>
     killed
       ? { guardrail, status: "killed", violations, ms, command: `npx tsc -p ${project} --pretty false` }

@@ -168,6 +168,9 @@ describe("tsc adapter", () => {
         expect(r.files).toBeGreaterThan(1);
         expect(r.bytes).toBeGreaterThan(own);
       }
+      const benchmarkContext = { ...ctxFor(root), omitTscProgramSize: true };
+      const benchmark = await tscAdapter.run([g], [], benchmarkContext);
+      expect(benchmark).toEqual(results.map(({ files, bytes, ...result }) => ({ ...result, ms: expect.any(Number) })));
     });
   });
 

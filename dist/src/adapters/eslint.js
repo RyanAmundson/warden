@@ -120,7 +120,7 @@ const shippedDoThis = (shipped, id, message) => {
 };
 const doThisFor = (doThis) => (doThis === undefined ? {} : { doThis });
 const shippedRule = (g) => isPluginRule(targetOf(g)) && !targetOf(g).startsWith("warden/");
-const lintInProcess = async (gs, entries, files, ctx) => {
+const makeLinter = async (gs, entries, ctx) => {
     const [{ ESLint: Linting }, { default: tseslint }, { plugin }, { builtinRules }] = await Promise.all([import("eslint"), import("typescript-eslint"), import("../../eslint-plugin/index.js"), import("eslint/use-at-your-own-risk")]);
     const plugins = { warden: plugin };
     for (const g of gs) {
@@ -161,6 +161,18 @@ const lintInProcess = async (gs, entries, files, ctx) => {
         warnIgnored: false,
         stats: true,
     });
+    return { eslint, inputShas };
+};
+const benchmarkLinters = new WeakMap();
+const lintInProcess = async (gs, entries, files, ctx) => {
+    const scope = ctx.captureLintSource === true ? undefined : ctx.eslintBenchmarkScope;
+    let eslint = scope === undefined ? undefined : benchmarkLinters.get(scope);
+    let inputShas;
+    if (eslint === undefined) {
+        ({ eslint, inputShas } = await makeLinter(gs, entries, ctx));
+        if (scope !== undefined)
+            benchmarkLinters.set(scope, eslint);
+    }
     const results = [];
     let ms = 0;
     for (let i = 0; i < files.length; i += BATCH_FILES) {

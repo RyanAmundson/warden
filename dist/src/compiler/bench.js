@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { examplePrefix, withExampleProject, withExampleUnits } from "./examples.js";
+import { examplePrefix, withExampleProject, withExampleScaffold, withExampleUnits } from "./examples.js";
 import { canonicalJson, packFiles, sha256 } from "./lock.js";
 import { RecordError, exampleSet } from "../records/load.js";
 import { enabledOn, pathGroups } from "../records/paths.js";
@@ -41,88 +41,100 @@ const writeTree = async (root, tree) => {
         await Promise.all(entries.slice(i, i + WRITE_BATCH).map(({ path, content }) => writeFile(path, content)));
     }
 };
-const measure = (project, s, cfg, rerun, signal) => withExampleProject(async (root, commit) => {
-    const set = exampleSet(project);
-    const systemOne = s.g.implementation === "system-one:noul";
-    const fixedInput = systemOne || s.g.benchmark === "fixed-input";
-    const ctx = { root, generatedDir: join(root, ".warden/generated"), base: commit, unbudgeted: !fixedInput, signal };
-    await writeTree(root, adapters.get(prefixOf(s.g)).emit([s.g], set));
-    const files = [];
-    const folders = [];
-    let copies = 0;
-    const timed = async (n, count) => {
-        signal?.throwIfAborted();
-        const tree = {};
-        for (; copies < n; copies++) {
-            if (s.g.unitExample !== undefined)
-                folders.push(copies === 0 ? "" : `${s.prefix}bench-${copies}`);
-            for (const c of copyOf(s.g, s.prefix, copies)) {
-                tree[c.path] = c.content;
-                files.push(c.path);
-            }
-        }
-        await writeTree(root, tree);
-        const scenario = withExampleUnits(set, s.g, folders);
-        const times = [];
-        for (let i = 0; i < count; i++) {
+const measure = (project, s, cfg, rerun, signal) => {
+    const adapter = prefixOf(s.g);
+    const admission = rerun === "warden compile";
+    const run = async (root, commit) => {
+        const set = exampleSet(project);
+        const systemOne = s.g.implementation === "system-one:noul";
+        const fixedInput = systemOne || s.g.benchmark === "fixed-input";
+        const ctx = {
+            root,
+            generatedDir: join(root, ".warden/generated"),
+            base: commit,
+            unbudgeted: !fixedInput,
+            ...(admission && { omitTscProgramSize: true, eslintBenchmarkScope: {} }),
+            signal,
+        };
+        await writeTree(root, adapters.get(adapter).emit([s.g], set));
+        const files = [];
+        const folders = [];
+        let copies = 0;
+        const timed = async (n, count) => {
             signal?.throwIfAborted();
-            const results = await runGuardrails(scenario, [s.g], files, ctx);
-            signal?.throwIfAborted();
-            const bad = results.find((r) => r.status !== "pass");
-            if (bad?.status === "killed" && bad.recovery !== undefined) {
-                throw new RecordError(s.pack.file, `/guardrails/${s.g.id}/budgetMs`, `Guardrail ${s.g.id} exceeded its ${s.g.budgetMs} ms budget. ${bad.recovery}`);
+            const tree = {};
+            for (; copies < n; copies++) {
+                if (s.g.unitExample !== undefined)
+                    folders.push(copies === 0 ? "" : `${s.prefix}bench-${copies}`);
+                for (const c of copyOf(s.g, s.prefix, copies)) {
+                    tree[c.path] = c.content;
+                    files.push(c.path);
+                }
             }
-            if (bad !== undefined) {
-                throw new RecordError(s.pack.file, `/guardrails/${s.g.id}/mustPass`, `Guardrail ${s.g.id} failed on a copy of its mustPass example at ${bad.violations[0]?.file || files[0]}. Next action: change the mustPass example of Guardrail ${s.g.id} in ${s.pack.file} so every copy of it passes, then run ${rerun}.`);
+            await writeTree(root, tree);
+            const scenario = withExampleUnits(set, s.g, folders);
+            const times = [];
+            for (let i = 0; i < count; i++) {
+                signal?.throwIfAborted();
+                const results = await runGuardrails(scenario, [s.g], files, ctx);
+                signal?.throwIfAborted();
+                const bad = results.find((r) => r.status !== "pass");
+                if (bad?.status === "killed" && bad.recovery !== undefined) {
+                    throw new RecordError(s.pack.file, `/guardrails/${s.g.id}/budgetMs`, `Guardrail ${s.g.id} exceeded its ${s.g.budgetMs} ms budget. ${bad.recovery}`);
+                }
+                if (bad !== undefined) {
+                    throw new RecordError(s.pack.file, `/guardrails/${s.g.id}/mustPass`, `Guardrail ${s.g.id} failed on a copy of its mustPass example at ${bad.violations[0]?.file || files[0]}. Next action: change the mustPass example of Guardrail ${s.g.id} in ${s.pack.file} so every copy of it passes, then run ${rerun}.`);
+                }
+                const own = results.find((r) => r.guardrail === s.g.id);
+                if (own === undefined)
+                    throw new Error(`no result for guardrail ${s.g.id}`);
+                if (own.overBudget === true || (systemOne && (own.judgment?.liveMs ?? 0) > s.g.budgetMs)) {
+                    throw new RecordError(s.pack.file, `/guardrails/${s.g.id}/budgetMs`, `Guardrail ${s.g.id} exceeded its ${s.g.budgetMs} ms budget. Next action: make the mustPass example finish within budget, then run ${rerun}.`);
+                }
+                if (systemOne && own.judgment === undefined)
+                    throw new Error(`no model timing for guardrail ${s.g.id}`);
+                times.push(own.judgment?.liveMs ?? s.time(own));
             }
-            const own = results.find((r) => r.guardrail === s.g.id);
-            if (own === undefined)
-                throw new Error(`no result for guardrail ${s.g.id}`);
-            if (own.overBudget === true || (systemOne && (own.judgment?.liveMs ?? 0) > s.g.budgetMs)) {
-                throw new RecordError(s.pack.file, `/guardrails/${s.g.id}/budgetMs`, `Guardrail ${s.g.id} exceeded its ${s.g.budgetMs} ms budget. Next action: make the mustPass example finish within budget, then run ${rerun}.`);
-            }
-            if (systemOne && own.judgment === undefined)
-                throw new Error(`no model timing for guardrail ${s.g.id}`);
-            times.push(own.judgment?.liveMs ?? s.time(own));
+            return times;
+        };
+        if (fixedInput) {
+            const f = Math.min(...await timed(1, systemOne ? 1 : RUNS));
+            return { verdict: "fixed-input", points: [[1, f]], f, ...(systemOne ? { timing: "live-model" } : {}) };
         }
-        return times;
-    };
-    if (fixedInput) {
-        const f = Math.min(...await timed(1, systemOne ? 1 : RUNS));
-        return { verdict: "fixed-input", points: [[1, f]], f, ...(systemOne ? { timing: "live-model" } : {}) };
-    }
-    const seen = new Map();
-    const at = async (n) => {
-        if (!seen.has(n))
-            seen.set(n, await timed(n, RUNS));
-        return Math.min(...seen.get(n));
-    };
-    const sampled = async (n, reps) => {
-        const kept = seen.get(n) ?? [];
-        const all = [...kept, ...(await timed(n, RUNS * reps - kept.length))];
-        return Math.min(...Array.from({ length: RUNS }, (_, i) => mean(all.slice(i * reps, (i + 1) * reps))));
-    };
-    const sizes = async (base) => {
+        const seen = new Map();
+        const at = async (n) => {
+            if (!seen.has(n))
+                seen.set(n, await timed(n, RUNS));
+            return Math.min(...seen.get(n));
+        };
+        const sampled = async (n, reps) => {
+            const kept = seen.get(n) ?? [];
+            const all = [...kept, ...(await timed(n, RUNS * reps - kept.length))];
+            return Math.min(...Array.from({ length: RUNS }, (_, i) => mean(all.slice(i * reps, (i + 1) * reps))));
+        };
+        const sizes = async (base) => {
+            const points = [];
+            for (const m of [1, 2, 4, 8])
+                points.push([base * m, await at(base * m)]);
+            return points;
+        };
+        const f = Math.min(...(await timed(1, FIXED_RUNS)));
+        let base = cfg.baseFiles;
+        while ((await at(base)) - f < cfg.minMarginalMs) {
+            if (base * 16 > cfg.maxFiles)
+                return { verdict: "constant", points: await sizes(cfg.baseFiles), f };
+            base *= 2;
+        }
         const points = [];
         for (const m of [1, 2, 4, 8])
-            points.push([base * m, await at(base * m)]);
-        return points;
+            points.push([base * m, await sampled(base * m, Math.max(1, 4 / m))]);
+        if (points[3][1] - f < cfg.constantMs)
+            return { verdict: "constant", points, f };
+        const k = slope(points, f);
+        return { verdict: k > cfg.linearMax ? "superlinear" : k < cfg.sublinearMax ? "sublinear" : "linear", k, points, f };
     };
-    const f = Math.min(...(await timed(1, FIXED_RUNS)));
-    let base = cfg.baseFiles;
-    while ((await at(base)) - f < cfg.minMarginalMs) {
-        if (base * 16 > cfg.maxFiles)
-            return { verdict: "constant", points: await sizes(cfg.baseFiles), f };
-        base *= 2;
-    }
-    const points = [];
-    for (const m of [1, 2, 4, 8])
-        points.push([base * m, await sampled(base * m, Math.max(1, 4 / m))]);
-    if (points[3][1] - f < cfg.constantMs)
-        return { verdict: "constant", points, f };
-    const k = slope(points, f);
-    return { verdict: k > cfg.linearMax ? "superlinear" : k < cfg.sublinearMax ? "sublinear" : "linear", k, points, f };
-});
+    return admission && (adapter === "eslint" || adapter === "tsc") ? withExampleScaffold(run) : withExampleProject(run);
+};
 export const benchSubject = async (set, s, cfg, rerun, signal) => {
     refuseUnmatched(s, rerun);
     const first = await measure(set, s, cfg, rerun, signal);
