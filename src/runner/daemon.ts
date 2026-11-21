@@ -482,9 +482,9 @@ export function startWatching(opts: DaemonOptions): Daemon {
     projects.set(root, w);
     void scan(w);
   };
-  const worktreeRoots = (w: Watched): string[] => {
+  const worktreeRoots = (repo: string): string[] => {
     try {
-      return worktrees(w.root)
+      return worktrees(repo)
         .map((t) => t.path)
         .filter((p) => existsSync(join(p, ".warden/config.yaml")) && !existsSync(join(p, SELF_CHECK_MARKER)));
     } catch (cause) {
@@ -494,7 +494,8 @@ export function startWatching(opts: DaemonOptions): Daemon {
   };
   const discover = (): void => {
     const remembered = Object.keys(state.roots).filter((r) => existsSync(join(r, ".warden/config.yaml")));
-    for (const root of [...discoverRoots(), ...remembered, ...[...projects.values()].flatMap(worktreeRoots)]) {
+    const repositories = new Set([...projects.values()].map((w) => w.repo));
+    for (const root of [...discoverRoots(), ...remembered, ...[...repositories].flatMap(worktreeRoots)]) {
       try {
         watchRoot(root);
       } catch (cause) {
