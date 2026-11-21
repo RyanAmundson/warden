@@ -3,7 +3,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { it } from "vitest";
-import { toolRegistrationAdapter as toolAdapter } from "../../src/adapters/tool-registration.js";
+import { toolRegistrationAdapter } from "../../src/adapters/tool-registration.js";
+import type { Adapter } from "../../src/adapters/types.js";
 import type { Guardrail } from "../../src/records/types.js";
 import { conformance } from "./conformance.js";
 import { treeSet } from "./tree-pack.js";
@@ -17,17 +18,21 @@ it("reports new tools and accepts registered tools", async () => {
     id: "registered-tools", implementation: "tool:registration", kind: "lint",
     scope: "project", runs: ["boundary"], version: 1, budgetMs: 5000,
   };
+  const toolAdapter = (toolCommands: string[]): Adapter => ({
+    ...toolRegistrationAdapter,
+    run: (rules, files, context) => toolRegistrationAdapter.run(rules, files, { ...context, base: "main", toolCommands }),
+  });
   try {
     git("init", "-qb", "main");
     await writeFile(join(root, "package.json"), "{}\n");
     git("add", "package.json");
     git("commit", "-qm", "Add fixture manifest");
     await writeFile(join(root, "package.json"), '{"scripts":{"report":"node report.js"}}\n');
-    await conformance(toolAdapter, root, [rule], treeSet(rule), ["package.json"], [{
+    await conformance(toolAdapter([]), root, [rule], treeSet(rule), ["package.json"], [{
       guardrail: rule.id, file: "package.json", line: 1, message: "New npm script report has no tool Capability.",
       doThis: "Register npm run report in an enabled tool Capability, then compile and sign the policy.",
-    }], { base: "main" });
-    await conformance(toolAdapter, root, [rule], treeSet(rule), ["package.json"], [], { base: "main", toolCommands: ["npm run report"] });
+    }]);
+    await conformance(toolAdapter(["npm run report"]), root, [rule], treeSet(rule), ["package.json"], []);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
