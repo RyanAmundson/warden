@@ -237,6 +237,7 @@ review.command("proposals").description("list repository proposals or Add propos
     .option("--series <id>", "the change ID for a series query")
     .option("--target <name>", "the target for a series query")
     .option("--capability <id>", "the recording Capability for a series query")
+    .option("--record", "save the proposals with their evidence and immutable IDs")
     .action(async (o) => {
     process.exitCode = await runReviewProposals(root(), findWardenRoot(), o);
 });

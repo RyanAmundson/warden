@@ -9,6 +9,7 @@ import { codeReview, codeReviewBase, isPullRequestUrl } from "../review/code-rev
 import { exitCode, touchedLines, triage } from "../review/findings.js";
 import { getRound, listRepositoryEscapeRounds, listRounds, recordEscape, recordReviewerError, recordRound, reviewHistoryState, reviewRepository, reviewSignals, reviewState } from "../review/history.js";
 import { learningEditProposals, learningRemovalProposals, recurringReviewProposals } from "../review/learning.js";
+import { recordProposals } from "../review/proposals.js";
 import { isAncestor } from "../runner/changed.js";
 const FLAGS = [["capability", "--capability <id>"], ["base", "--base <ref>"], ["head", "--head <ref>"]];
 export function reviewOptions(sub, raw) {
@@ -205,7 +206,7 @@ export function runReviewHistory(root, o) {
     }
     return 0;
 }
-export async function runReviewProposals(root, wardenRoot, { series, target, capability }) {
+export async function runReviewProposals(root, wardenRoot, { series, target, capability, record }) {
     const repositoryWide = series === undefined && target === undefined && capability === undefined;
     const repository = repositoryWide ? reviewRepository(root) : undefined;
     let rounds;
@@ -234,13 +235,16 @@ export async function runReviewProposals(root, wardenRoot, { series, target, cap
             group.push(escape);
     }
     const add = [...evidence].map(([practice, escapes]) => ({ action: "add", practice, evidence: escapes }));
+    const publish = (proposals) => {
+        printRecord(record === true ? recordProposals({ repository: repository ?? reviewRepository(root), series, target, capability }, proposals) : proposals);
+    };
     if (repository === undefined || !existsSync(join(root, ".warden/config.yaml"))) {
-        printRecord(add);
+        publish(add);
         return 0;
     }
     const set = await proposalSignal("Edit", () => loadRecords(root, wardenRoot));
     if (set === undefined) {
-        printRecord(add);
+        publish(add);
         return 0;
     }
     const recurring = await proposalSignal("Recurring Add", () => recurringReviewProposals(set, repository));
@@ -249,7 +253,7 @@ export async function runReviewProposals(root, wardenRoot, { series, target, cap
         process.stderr.write(`Mutation-backed Edit proposals are unavailable. ${edits.mutationPolicyIssue}\n`);
     }
     const remove = recurring === undefined ? [] : await proposalSignal("Remove", () => learningRemovalProposals(set, wardenRoot, new Set([...add, ...recurring].map(({ practice }) => practice))));
-    printRecord([...add, ...(recurring ?? []), ...(edits?.edit ?? []), ...(remove ?? [])]);
+    publish([...add, ...(recurring ?? []), ...(edits?.edit ?? []), ...(remove ?? [])]);
     return 0;
 }
 async function proposalSignal(name, read) {

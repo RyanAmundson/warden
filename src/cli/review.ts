@@ -10,6 +10,7 @@ import { codeReview, codeReviewBase, isPullRequestUrl } from "../review/code-rev
 import { type Touched, type Triage, exitCode, touchedLines, triage } from "../review/findings.js";
 import { type ReviewRound, type ReviewRulingInput, type ReviewSeries, getRound, listRepositoryEscapeRounds, listRounds, recordEscape, recordReviewerError, recordRound, reviewHistoryState, reviewRepository, reviewSignals, reviewState } from "../review/history.js";
 import { learningEditProposals, learningRemovalProposals, recurringReviewProposals } from "../review/learning.js";
+import { recordProposals } from "../review/proposals.js";
 import { isAncestor } from "../runner/changed.js";
 
 export interface ReviewOptions {
@@ -226,7 +227,7 @@ export function runReviewHistory(root: string, o: SeriesOptions & { round?: stri
   return 0;
 }
 
-export async function runReviewProposals(root: string, wardenRoot: string, { series, target, capability }: Partial<SeriesOptions>): Promise<number> {
+export async function runReviewProposals(root: string, wardenRoot: string, { series, target, capability, record }: Partial<SeriesOptions> & { record?: boolean }): Promise<number> {
   const repositoryWide = series === undefined && target === undefined && capability === undefined;
   const repository = repositoryWide ? reviewRepository(root) : undefined;
   let rounds: ReviewRound[];
@@ -252,13 +253,16 @@ export async function runReviewProposals(root: string, wardenRoot: string, { ser
     else group.push(escape);
   }
   const add = [...evidence].map(([practice, escapes]) => ({ action: "add", practice, evidence: escapes }));
+  const publish = (proposals: Parameters<typeof recordProposals>[1]): void => {
+    printRecord(record === true ? recordProposals({ repository: repository ?? reviewRepository(root), series, target, capability }, proposals) : proposals);
+  };
   if (repository === undefined || !existsSync(join(root, ".warden/config.yaml"))) {
-    printRecord(add);
+    publish(add);
     return 0;
   }
   const set = await proposalSignal("Edit", () => loadRecords(root, wardenRoot));
   if (set === undefined) {
-    printRecord(add);
+    publish(add);
     return 0;
   }
   const recurring = await proposalSignal("Recurring Add", () => recurringReviewProposals(set, repository));
@@ -268,7 +272,7 @@ export async function runReviewProposals(root: string, wardenRoot: string, { ser
   }
   const remove = recurring === undefined ? [] : await proposalSignal("Remove", () =>
     learningRemovalProposals(set, wardenRoot, new Set([...add, ...recurring].map(({ practice }) => practice))));
-  printRecord([...add, ...(recurring ?? []), ...(edits?.edit ?? []), ...(remove ?? [])]);
+  publish([...add, ...(recurring ?? []), ...(edits?.edit ?? []), ...(remove ?? [])]);
   return 0;
 }
 

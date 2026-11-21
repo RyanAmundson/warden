@@ -255,7 +255,8 @@ review.command("proposals").description("list repository proposals or Add propos
   .option("--series <id>", "the change ID for a series query")
   .option("--target <name>", "the target for a series query")
   .option("--capability <id>", "the recording Capability for a series query")
-  .action(async (o: { series?: string; target?: string; capability?: string }) => {
+  .option("--record", "save the proposals with their evidence and immutable IDs")
+  .action(async (o: { series?: string; target?: string; capability?: string; record?: boolean }) => {
     process.exitCode = await runReviewProposals(root(), findWardenRoot(), o);
   });
 review.command("mutations").description("measure the Guardrails against their declared must-fail variants")

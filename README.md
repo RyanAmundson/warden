@@ -83,7 +83,9 @@ number of distinct clean project trees with passing boundary coverage for
 equivalent project-scoped filesystem rules. Warden suggests removing a duplicate
 only when the retained Evidence includes no violations from either rule.
 An independent reviewer can accept a tighter rule. A trusted policy signer
-must approve any loosening, including removal.
+must approve any loosening, including removal. Use `warden review proposals --record`
+to save an immutable copy of each proposal and its evidence for review.
+Repeating the command with the same evidence returns the same record.
 
 ## Configure a System One decision Guardrail
 
