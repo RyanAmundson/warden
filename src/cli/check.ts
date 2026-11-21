@@ -437,7 +437,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
     openStep(live, "rules", { detail: adapter, members: ids, ...scopeOf(files) });
   };
   const ctx = {
-    root, generatedDir: join(root, ".warden/generated"), base, onGroup: onGroup(scanned),
+    root, generatedDir: join(root, ".warden/generated"), base, mergeBase: live.base.mergeBase, onGroup: onGroup(scanned),
     ...(working === undefined ? {} : {
       lockedTscConfig: {
         generated: working.generated[GENERATED_TSCONFIG],

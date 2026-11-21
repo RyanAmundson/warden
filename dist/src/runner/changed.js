@@ -249,12 +249,51 @@ function renamesAt(root, at, stagedOnly = false) {
     }
     return renames;
 }
-export function showAtMergeBase(root, base, path) {
-    const spec = `${mergeBase(root, base)}:./${path}`;
+export async function treeBlobsAt(root, at, folders) {
+    const result = new Map();
+    const failure = await gitRecords(root, ["--literal-pathspecs", "ls-tree", "-r", "-z", "--full-tree", at, "--", ...folders], "\0", (row) => {
+        const tab = row.indexOf("\t");
+        const match = /^(100[067][0-7]{2}) blob ([a-f0-9]+)$/.exec(row.slice(0, tab));
+        if (match !== null)
+            result.set(row.slice(tab + 1), { mode: match[1], oid: match[2] });
+    });
+    if (failure !== undefined)
+        throw new RecordError(root, "", `Git could not read the comparison tree: ${failure}. Next action: inspect that commit with git ls-tree, then rerun the check.`);
+    return result;
+}
+export async function blobHeader(root, oid, size) {
+    const child = spawn("git", ["cat-file", "blob", oid], { cwd: root, env: env(), stdio: ["ignore", "pipe", "ignore"] });
+    const header = Buffer.alloc(size);
+    let length = 0;
+    let stopped = false;
+    const completed = new Promise((done) => {
+        child.once("error", () => done(false));
+        child.once("close", (code, signal) => done(code === 0 || (stopped && (signal === "SIGTERM" || signal === "SIGPIPE"))));
+    });
+    try {
+        for await (const chunk of child.stdout) {
+            length += chunk.copy(header, length, 0, size - length);
+            if (length === size) {
+                stopped = child.kill();
+                break;
+            }
+        }
+    }
+    finally {
+        if (length < size && child.exitCode === null && child.signalCode === null)
+            child.stdout.resume();
+        if (!await completed)
+            throw new RecordError(root, "", `Git could not read blob ${oid}. Next action: verify the comparison commit is available locally, then rerun the check.`);
+    }
+    return header.toString("utf8", 0, length);
+}
+export function showAtCommit(root, commit, path) {
+    const spec = `${commit}:./${path}`;
     if (!git(root, ["cat-file", "-e", spec]).ok)
         return undefined;
     return must(root, ["show", spec]);
 }
+export const showAtMergeBase = (root, base, path) => showAtCommit(root, mergeBase(root, base), path);
 export const indexTree = (root) => {
     const r = git(root, ["write-tree"]);
     return r.ok ? r.out.trim() : undefined;

@@ -40,11 +40,13 @@ export interface RunContext {
   generatedDir: string;
   unbudgeted?: boolean;
   base?: string;
+  mergeBase?: string;
   settingsOf?: (g: Guardrail) => Record<string, unknown> | undefined;
   signal?: AbortSignal;
   captureLintSource?: boolean;
   lockedTscConfig?: LockedTscConfig;
   projectInventory?: { nonRegular: string[]; discoveryMs: number };
+  toolCommands?: string[];
   unitStructure?: { units: (Unit & { kindRecord: UnitKind })[]; ignoreCase: boolean; termDefinitions?: Pick<Term, "id" | "definition">[] };
   onGroup?: (adapter: string, guardrails: string[]) => void;
 }

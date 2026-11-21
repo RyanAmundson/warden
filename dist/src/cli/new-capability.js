@@ -103,9 +103,7 @@ export async function runNewCapability(root, wardenRoot, packId, declaration) {
         }
         const [badCommand] = await checkCommands({ ...set, packs: [{ ...pack, capabilities: [capability] }] }, wardenRoot);
         if (badCommand !== undefined) {
-            if (badCommand.code === "warden-unrunnable")
-                throw new RecordError(file, "/capabilities", badCommand.message);
-            throw new RecordError(file, "/capabilities", "A command was not recognized. Next action: supply a valid warden subcommand with --command and retry.");
+            throw new RecordError(file, "/capabilities", badCommand.message);
         }
         stopped.signal.throwIfAborted();
         if (readFileSync(config, "utf8") !== configSource || readFileSync(file, "utf8") !== original) {

@@ -3,9 +3,12 @@ import { eslintAdapter } from "../adapters/eslint.js";
 import { fsAdapter, graphAdapter } from "../adapters/tree.js";
 import { tscAdapter } from "../adapters/tsc.js";
 import { systemOneAdapter } from "../adapters/system-one.js";
+import { toolRegistrationAdapter } from "../adapters/tool-registration.js";
 import { RecordError } from "../records/load.js";
 import { declaredUnits } from "../records/units.js";
-export const adapters = new Map([eslintAdapter, tscAdapter, cmdAdapter, fsAdapter, graphAdapter, systemOneAdapter].map((a) => [a.id, a]));
+export const adapters = new Map([
+    eslintAdapter, tscAdapter, cmdAdapter, fsAdapter, graphAdapter, systemOneAdapter, toolRegistrationAdapter,
+].map((a) => [a.id, a]));
 export const prefixOf = (g) => g.implementation.slice(0, g.implementation.indexOf(":"));
 export const unknownAdapters = (set) => {
     const known = [...adapters.keys()];
@@ -40,6 +43,9 @@ export async function runGuardrails(set, gs, files, ctx) {
         termDefinitions: set.packs.flatMap((pack) => pack.terms.map(({ id, definition }) => ({ id, definition }))),
     };
     ctx = { ...ctx, settingsOf, ...(unitStructure === undefined ? {} : { unitStructure }) };
+    if (gs.some((g) => prefixOf(g) === "tool")) {
+        ctx.toolCommands = set.packs.flatMap((pack) => pack.capabilities.filter((c) => c.kind === "tool").flatMap((c) => c.commands));
+    }
     const groups = new Map();
     for (const g of gs)
         groups.set(prefixOf(g), [...(groups.get(prefixOf(g)) ?? []), g]);

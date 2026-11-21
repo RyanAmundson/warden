@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { stringify } from "yaml";
 import type { Capability, RecordSet } from "../records/types.js";
+import { probeToolCommand } from "../records/tools.js";
 import type { Finding } from "./consistency.js";
 import { literalCommand } from "./emit.js";
 
@@ -73,7 +74,9 @@ const helps = async (command: string, wardenRoot: string): Promise<Probe> => {
 
 export async function checkCommands(set: RecordSet, wardenRoot: string): Promise<Finding[]> {
   const fileOf = new Map(set.packs.map((p) => [p.id, p.file]));
-  const checked = await Promise.all(capabilities(set).flatMap((c) => c.commands.map(async (command) => ({ c, command, probe: await helps(command, wardenRoot) }))));
+  const checked = await Promise.all(capabilities(set).flatMap((c) => c.commands.map(async (command) => ({
+    c, command, probe: c.kind === "tool" && probeToolCommand(set.root, command) ? "ok" : await helps(command, wardenRoot),
+  }))));
   const broken = checked.filter(({ probe }) => probe === "unrunnable");
   const unrunnable: Finding[] =
     broken.length === 0
@@ -86,7 +89,7 @@ export async function checkCommands(set: RecordSet, wardenRoot: string): Promise
       .map(({ c, command }) => ({
         code: "unknown-command",
         record: c.id,
-        message: `Capability ${c.id} runs "${command}", which is not a warden subcommand whose --help exits 0. Next action: change that command to a warden subcommand in ${fileOf.get(c.pack) as string}, then run warden compile.`,
+        message: `Capability ${c.id} runs "${command}", which does not resolve. Next action: use a Warden subcommand${c.kind === "tool" ? ", a declared npm script, or a local executable entry" : ""} in ${fileOf.get(c.pack) as string}, then run warden compile.`,
       })),
   ];
 }

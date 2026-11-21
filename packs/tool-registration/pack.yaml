@@ -1,0 +1,42 @@
+id: tool-registration
+layer: 13
+terms: []
+settings:
+  type: object
+  additionalProperties: false
+  properties:
+    manifests:
+      type: array
+      uniqueItems: true
+      items:
+        type: string
+        pattern: '^(?:(?!\.{1,2}/)[A-Za-z0-9_.-]+/)*package\.json$'
+      default: [package.json]
+    scriptFolders:
+      type: array
+      uniqueItems: true
+      items:
+        type: string
+        pattern: '^(?:(?!\.{1,2}(?:/|$))[A-Za-z0-9_.-]+/)*(?!\.{1,2}$)[A-Za-z0-9_.-]+$'
+      default: [scripts]
+  examples:
+    - manifests: [fixture/package.json]
+      scriptFolders: [fixture/scripts]
+practices:
+  - id: register-project-tools
+    statement: Register each new project tool under a single discoverable Capability.
+    terms: []
+    paths: []
+    conflictsWith: []
+    guardrails:
+      - id: no-unregistered-tools
+        kind: lint
+        scope: project
+        runs: [boundary]
+        budgetMs: 5000
+        version: 1
+        implementation: tool:registration
+        mustPass:
+          fixture/package.json: '{"scripts": {}}'
+        mustFail:
+          fixture/package.json: '{"scripts": {"report": "node report.js"}}'

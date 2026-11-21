@@ -159,7 +159,7 @@ for (const kind of ["skill", "tool"] as const) {
     .requiredOption("--serves <term>", "Term that identifies its purpose")
     .requiredOption("--purpose <text>", "what the Capability does")
     .requiredOption("--when <text>", "when to use the Capability")
-    .requiredOption("--command <commands...>", "quoted Warden command lines")
+    .requiredOption("--command <commands...>", kind === "tool" ? "quoted Warden or local tool commands" : "quoted Warden command lines")
     .option("--upholds <practices...>", "Practices this Capability enforces", [])
     .option("--replaces <actions...>", "ad hoc actions this Capability replaces", [])
     .action(async (id: string, options: { pack: string; serves: string; purpose: string; when: string; command: string[]; upholds: string[]; replaces: string[] }) => {

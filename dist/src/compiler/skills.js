@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { stringify } from "yaml";
+import { probeToolCommand } from "../records/tools.js";
 import { literalCommand } from "./emit.js";
 export const SKILLS_DIR = ".warden/generated/skills";
 export const skillPath = (id) => `${SKILLS_DIR}/${id}/SKILL.md`;
@@ -56,7 +57,9 @@ const helps = async (command, wardenRoot) => {
 };
 export async function checkCommands(set, wardenRoot) {
     const fileOf = new Map(set.packs.map((p) => [p.id, p.file]));
-    const checked = await Promise.all(capabilities(set).flatMap((c) => c.commands.map(async (command) => ({ c, command, probe: await helps(command, wardenRoot) }))));
+    const checked = await Promise.all(capabilities(set).flatMap((c) => c.commands.map(async (command) => ({
+        c, command, probe: c.kind === "tool" && probeToolCommand(set.root, command) ? "ok" : await helps(command, wardenRoot),
+    }))));
     const broken = checked.filter(({ probe }) => probe === "unrunnable");
     const unrunnable = broken.length === 0
         ? []
@@ -68,7 +71,7 @@ export async function checkCommands(set, wardenRoot) {
             .map(({ c, command }) => ({
             code: "unknown-command",
             record: c.id,
-            message: `Capability ${c.id} runs "${command}", which is not a warden subcommand whose --help exits 0. Next action: change that command to a warden subcommand in ${fileOf.get(c.pack)}, then run warden compile.`,
+            message: `Capability ${c.id} runs "${command}", which does not resolve. Next action: use a Warden subcommand${c.kind === "tool" ? ", a declared npm script, or a local executable entry" : ""} in ${fileOf.get(c.pack)}, then run warden compile.`,
         })),
     ];
 }

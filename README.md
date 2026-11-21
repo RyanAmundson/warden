@@ -361,6 +361,21 @@ already be declared by an enabled pack. Use `--upholds` for Practice IDs and
 `--replaces` for the actions the Capability replaces. Sign the changes to
 `.warden/` after compiling.
 
+Enable the `tool-registration` pack to check new tools at the boundary.
+The pack checks the root `package.json` for additions to `scripts` and `bin`.
+Set `manifests` to the full list of npm manifests to monitor in a workspace.
+The pack also checks new executable files and Node, sh, or Bash scripts
+with shebangs under `scriptFolders`, which defaults to `[scripts]`. Use
+portable names with letters, digits, dots, dashes, and underscores in these
+paths. Warden compares the declarations with the merge base.
+
+Run `warden check --rule no-unregistered-tools --tier boundary --base main`
+to see the command to register for each new tool. In a tool Capability,
+use `npm run report` for a root npm script, `npm --prefix packages/tools run report`
+for a workspace script, or a project-relative command such as
+`node ./scripts/report.js` for a launcher. Compilation checks that the
+declarations resolve without executing the project tools.
+
 In a pack record, use text for process steps and a `command` entry for a
 literal Bash tool request that the Capability replaces.
 
