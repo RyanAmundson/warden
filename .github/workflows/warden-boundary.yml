@@ -27,4 +27,5 @@ jobs:
         run: |
           export PATH="$RUNNER_TEMP/warden-release/node_modules/.bin:$PATH"
           test "$(warden --version)" = 0.1.14
+          git config --local core.hooksPath .warden/generated/hooks
           sh scripts/check-origin-boundary.sh "$(git rev-parse refs/remotes/origin/main)" "$GITHUB_SHA"
