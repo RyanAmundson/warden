@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { setImmediate as yieldToEvents } from "node:timers/promises";
 import { COMMIT_HOOK, RELEASES } from "../compiler/emit.js";
 import { FIRST_STAMPING, LOCK_PATH, firstLine, olderThan, readLock } from "../compiler/lock.js";
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
@@ -141,19 +142,19 @@ const stampingVersion = (root, c, running) => {
     const version = lockVersionAt(root, c.commit);
     return version === undefined || !/^\d+\.\d+\.\d+$/.test(version) || olderThan(version, FIRST_STAMPING) || olderThan(running, version) ? undefined : version;
 };
-const unstampable = (root, repo, c, running, port) => {
+const unstampable = async (root, repo, c, running, port) => {
     const why = `its ${LOCK_PATH} is missing, unreadable, older than Warden ${FIRST_STAMPING}, or newer than this daemon's Warden ${running}, so no release can stamp it`;
-    const holders = holdersOf(root, c.commit);
+    const holders = await holdersOf(root, c.commit);
     const published = holders.filter((h) => h.startsWith("refs/remotes/"));
     if (published.length > 0)
         return `ask the repository owner to stop the daemon with warden daemon uninstall, add commit ${c.commit} with a reason to the trusted list of ${repo} in ${stateFile()}, and start it again with warden daemon install --port ${port}, because it is published in ${published.join(", ")} and ${why}`;
     return `remove commit ${c.commit.slice(0, 12)} from ${holders.join(", ")} by resetting or deleting each, because ${why}; then make its change again in a new commit with the hook`;
 };
-const uncheckedAlert = (root, repo, c, base, running, port) => {
+const uncheckedAlert = async (root, repo, c, base, running, port) => {
     const short = c.commit.slice(0, 12);
     const version = stampingVersion(root, c, running);
     if (version === undefined)
-        return { file: c.commit, detail: "unchecked-commit", next: unstampable(root, repo, c, running, port) };
+        return { file: c.commit, detail: "unchecked-commit", next: await unstampable(root, repo, c, running, port) };
     const warden = version === running ? "warden" : `npx --yes --package=${RELEASES}#v${version} warden`;
     const verify = c.parents[0] === undefined
         ? `run git switch -c warden-check-${short} ${base}, then git read-tree -u --reset ${short}, then ${warden} check --base ${base}`
@@ -174,10 +175,10 @@ const projectOf = (root) => {
 const gitPath = (root, args) => resolve(root, execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim());
 const REPO_FILE = /^(config|packed-refs|HEAD|refs\/heads\/.+|worktrees\/[^/]+\/HEAD)$/;
 const named = (...names) => (name) => names.includes(name);
-const watchSpecs = (root) => [
+const watchSpecs = (root, repo) => [
     { path: join(root, ".warden"), recursive: true, changes: true },
     { path: root, recursive: false, accept: named(".warden", ".claude") },
-    { path: gitPath(root, ["rev-parse", "--git-common-dir"]), recursive: true, accept: (name) => REPO_FILE.test(name) },
+    { path: repo, recursive: true, accept: (name) => REPO_FILE.test(name) },
     { path: gitPath(root, ["rev-parse", "--git-path", "hooks"]), recursive: false },
     { path: join(root, ".claude"), recursive: false, accept: named("settings.json", "settings.local.json") },
     { path: claudeDir(), recursive: false, accept: named("settings.json") },
@@ -190,6 +191,7 @@ export function startWatching(opts) {
     const startedAt = now();
     const debounce = opts.debounceMs ?? 200;
     let stopped = false;
+    let scanQueue = Promise.resolve();
     const report = (cause) => (opts.onError ?? ((e) => process.stderr.write(`${e.message}\n`)))(cause instanceof Error ? cause : new Error(String(cause)));
     const saveState = () => writeAtomic(stateFile(), `${JSON.stringify(state)}\n`);
     const indexFor = (project) => {
@@ -226,7 +228,7 @@ export function startWatching(opts) {
             .filter((e) => e.root === w.root && (gated === undefined || e.at > gated))
             .map((e) => ({ file: `run ${e.run ?? ""}`, detail: "gate-off", next: `unset WARDEN_DAEMON, then run warden check --base ${e.base ?? "main"} in ${w.root} with the daemon running` }));
     };
-    const commitFound = (w, base) => {
+    const commitFound = async (w, base) => {
         const tips = repoTips(w.root);
         const ix = indexFor(w.project);
         const known = state.repos[w.repo];
@@ -235,17 +237,30 @@ export function startWatching(opts) {
         const boundary = known?.boundary ?? refs;
         const trusted = (c) => (known?.trusted ?? []).some((t) => t.commit === c.commit);
         const flagged = new Set([...(known?.flagged ?? []), ...(known?.unchecked ?? []).map((c) => c.commit)]);
-        const fresh = newCommits(w.root, tips, known?.tips ?? tips).filter((c) => {
-            const status = trusted(c) ? "trusted" : !ix.unchecked.has(c.commit) && !flagged.has(c.commit) && reachableFrom(w.root, c.commit, boundary) ? "in-boundary" : stamped(w.root, ix, c) ? "checked" : "unchecked";
+        const fresh = [];
+        for (const c of await newCommits(w.root, tips, known?.tips ?? tips)) {
+            const status = trusted(c) ? "trusted" : !ix.unchecked.has(c.commit) && !flagged.has(c.commit) && await reachableFrom(w.root, c.commit, boundary) ? "in-boundary" : stamped(w.root, ix, c) ? "checked" : "unchecked";
             appendEvidence(w.project, { at: now(), kind: "commit", trigger: "daemon", root: w.root, commit: c.commit, tree: c.tree, status });
-            return status === "unchecked";
-        });
+            if (status === "unchecked")
+                fresh.push(c);
+        }
         const pending = [...(known?.unchecked ?? []), ...rebuilt, ...fresh];
-        const unchecked = pending.filter((c, i) => pending.findIndex((x) => x.commit === c.commit) === i && !stamped(w.root, ix, c) && reachable(w.root, c.commit, refs) && !trusted(c));
+        const unchecked = [];
+        const checked = new Set();
+        for (const c of pending) {
+            if (checked.has(c.commit))
+                continue;
+            checked.add(c.commit);
+            if (!trusted(c) && !stamped(w.root, ix, c) && await reachable(w.root, c.commit, refs))
+                unchecked.push(c);
+        }
         for (const c of unchecked)
             flagged.add(c.commit);
         state.repos[w.repo] = { tips, unchecked, boundary, flagged: [...flagged], ...(known?.trusted === undefined ? {} : { trusted: known.trusted }) };
-        return unchecked.map((c) => uncheckedAlert(w.root, w.repo, c, base, running, opts.port));
+        const alerts = [];
+        for (const c of unchecked)
+            alerts.push(await uncheckedAlert(w.root, w.repo, c, base, running, opts.port));
+        return alerts;
     };
     const scanRoot = async (w) => {
         const own = (state.roots[w.root] ??= { open: [] });
@@ -254,13 +269,16 @@ export function startWatching(opts) {
             return [at({ file: ".warden/config.yaml", detail: "removed", next: restoreAction(w.root, ".warden/config.yaml") })];
         const ix = indexFor(w.project);
         const found = [];
+        const scanError = (source, cause) => {
+            report(cause);
+            found.push(at({ file: source, detail: "scan-error", next: `fix what this error names in ${w.root}, and the daemon scans again: ${firstLine(cause.message)}` }));
+        };
         const guarded = (source, run) => {
             try {
                 found.push(...run().map(at));
             }
             catch (cause) {
-                report(cause);
-                found.push(at({ file: source, detail: "scan-error", next: `fix what this error names in ${w.root}, and the daemon scans again: ${firstLine(cause.message)}` }));
+                scanError(source, cause);
             }
         };
         guarded("git hooks", () => {
@@ -287,8 +305,14 @@ export function startWatching(opts) {
                     : at({ file: ".warden", detail: "scan-error", next: `fix what this error names in ${w.root}, and the daemon scans again: ${firstLine(cause.message)}` }));
             }
         }
-        if (owner(w))
-            guarded(HISTORY, () => commitFound(w, w.base ?? "main"));
+        if (owner(w)) {
+            try {
+                found.push(...(await commitFound(w, w.base ?? "main")).map(at));
+            }
+            catch (cause) {
+                scanError(HISTORY, cause);
+            }
+        }
         return [...found, ...w.recordFound];
     };
     const schedule = (w) => {
@@ -328,7 +352,12 @@ export function startWatching(opts) {
             w.again = true;
             return w.scanning;
         }
-        w.scanning = (async () => {
+        w.scanning = scanQueue.then(async () => {
+            if (stopped)
+                return;
+            await yieldToEvents();
+            if (stopped)
+                return;
             if (!existsSync(w.root)) {
                 drop(w);
                 return;
@@ -350,7 +379,7 @@ export function startWatching(opts) {
             w.open = current;
             (state.roots[w.root] ??= { open: [] }).open = [...current.values()];
             saveState();
-        })()
+        })
             .catch(report)
             .finally(() => {
             w.scanning = undefined;
@@ -359,6 +388,7 @@ export function startWatching(opts) {
                 void scan(w);
             }
         });
+        scanQueue = w.scanning;
         return w.scanning;
     };
     const drop = (w) => {
@@ -377,7 +407,8 @@ export function startWatching(opts) {
         if (projects.has(root))
             return;
         const saved = state.roots[root]?.open ?? [];
-        const w = { root, project: projectOf(root), repo: commonDir(root), specs: watchSpecs(root), open: new Map(saved.map((d) => [key(d), d])), watchers: new Map(), changes: new Set(), filesChanged: true, recordFound: [] };
+        const repo = commonDir(root);
+        const w = { root, project: projectOf(root), repo, specs: watchSpecs(root, repo), open: new Map(saved.map((d) => [key(d), d])), watchers: new Map(), changes: new Set(), filesChanged: true, recordFound: [] };
         projects.set(root, w);
         void scan(w);
     };

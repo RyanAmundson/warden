@@ -4,11 +4,14 @@ import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 import { stringify } from "yaml";
+import { systemOneAdapter } from "../../src/adapters/system-one.js";
 import { benchSubject, subjectsOf } from "../../src/compiler/bench.js";
 import { exampleProjectsRemoved, runExamples } from "../../src/compiler/examples.js";
 import { readPack } from "../../src/records/load.js";
 import { benchSettings, type Guardrail, type RecordSet } from "../../src/records/types.js";
 import { adapters } from "../../src/runner/run.js";
+import { conformance } from "./conformance.js";
+import { treeSet } from "./tree-pack.js";
 
 it("assesses declared inputs and reuses only the same pinned model request", async () => {
   const root = await mkdtemp(join(tmpdir(), "warden-system-one-"));
@@ -54,6 +57,8 @@ it("assesses declared inputs and reuses only the same pinned model request", asy
     const { ms: _elapsed, ...initial } = first[0]!;
     expect(initial).toMatchObject({ judgment: { source: "live", liveMs: expect.any(Number) } });
     expect(await run()).toMatchObject([{ status: "pass", judgment: { source: "cache", liveMs: expect.any(Number) } }]);
+    expect(await conformance(systemOneAdapter, root, [rule], treeSet(rule), ["port.md"], []))
+      .toMatchObject([{ status: "pass", judgment: { source: "cache" } }]);
     expect(endpoint).toHaveBeenCalledTimes(1);
 
     await writeFile(input, "Returns something and may also import something.");

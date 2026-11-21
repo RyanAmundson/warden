@@ -87,7 +87,7 @@ export interface UnitKind {
 export interface ProjectConfig {
   project: string;
   base: string;
-  packs: { id: string; paths: string[]; settings?: Record<string, unknown> }[];
+  packs: { id: string; paths: string[]; enabled?: boolean; settings?: Record<string, unknown> }[];
   unitKinds?: Record<string, UnitKind>;
   units?: UnitDeclaration[];
   tierBudgetMs: Record<Tier, number>;

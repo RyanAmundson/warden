@@ -8,6 +8,7 @@ import { wardenVersion } from "../compiler/compile.js";
 import { RecordError } from "../records/load.js";
 import { type Daemon, type Detection, HEARTBEAT_MS, STALE_MS, heartbeatFile, readHeartbeat, startWatching } from "../runner/daemon.js";
 import { type Evidence, readEvidence, wardenHome } from "../runner/evidence.js";
+import { PackSettingsError, packSettings, packSettingsBody, savePackSettings } from "./pack-settings.js";
 import { runRecords } from "./runs.js";
 import { BANDS, bandCounts, loadView, packViolations } from "./view.js";
 
@@ -52,6 +53,25 @@ const openAlerts = (daemon: Daemon, project?: string): Detection[] => [...daemon
 
 const bandsOf = (run: Evidence): Record<string, number> => Object.fromEntries([...BANDS.map((b) => b.name.toLowerCase()), "unknown"].map((name, i) => [name, bandCounts(run)[i] ?? 0]));
 
+function projectCheckout(daemon: Daemon, entry: ProjectEntry, url: URL): string {
+  const selected = url.searchParams.get("root");
+  if (selected !== null && !entry.roots.includes(selected)) {
+    throw new PackSettingsError(404, "This checkout is not watched for the selected project.");
+  }
+  const roots = entry.roots.filter((root) => existsSync(join(root, ".warden", "config.yaml")));
+  const root = selected ?? roots.find((path) => daemon.projects.get(path)?.repo === join(path, ".git")) ?? roots[0];
+  if (!root || !roots.includes(root)) throw new PackSettingsError(409, "The selected project's config is unavailable. Reload the project list.");
+  return root;
+}
+
+export async function changeProjectPacks(daemon: Daemon, wardenRoot: string, url: URL, request: IncomingMessage): Promise<unknown> {
+  const { revision, changes } = await packSettingsBody(request);
+  const entry = projectsOf(daemon).find((project) => project.project === url.searchParams.get("project"));
+  if (!entry || !url.searchParams.has("root")) throw new PackSettingsError(404, "Select a watched project and checkout.");
+  const root = projectCheckout(daemon, entry, url);
+  return savePackSettings(root, entry.project, wardenRoot, revision, changes);
+}
+
 export async function route(daemon: Daemon, wardenRoot: string, url: URL): Promise<unknown> {
   const projects = projectsOf(daemon);
   const pick = (): ProjectEntry => {
@@ -75,19 +95,24 @@ export async function route(daemon: Daemon, wardenRoot: string, url: URL): Promi
       return { project, runs: runRecords(readEvidence(project)).slice(-limit).reverse() };
     }
     case "/api/layers": {
-      const { project, roots } = pick();
-      const model = await loadView(roots[0] as string, wardenRoot);
+      const entry = pick();
+      const { project } = entry;
+      const root = projectCheckout(daemon, entry, url);
+      const model = await loadView(root, wardenRoot);
       const promoted = new Set(model.practices.filter((p) => p.promote).map((p) => p.practice));
       return {
         project,
         bands: BANDS.map((b) => ({ band: b.name.toLowerCase(), kinds: b.kinds.map((kind) => ({ kind, rules: model.layers.filter((r) => r.kind === kind).map((r) => ({ ...r, promote: promoted.has(r.practice) })) })) })),
         practices: model.practices,
         packs: model.packList,
+        ...(url.searchParams.get("edit") === "1" ? { packSettings: await packSettings(root, project, wardenRoot) } : {}),
       };
     }
     case "/api/violations": {
-      const { project, roots } = pick();
-      const model = await loadView(roots[0] as string, wardenRoot);
+      const entry = pick();
+      const { project } = entry;
+      const root = projectCheckout(daemon, entry, url);
+      const model = await loadView(root, wardenRoot);
       return {
         project,
         packs: packViolations(model).map((p) => ({ pack: p.label, baselined: p.old, new: p.fresh ?? null, lastRun: p.run === undefined ? null : { at: p.run.at, trigger: p.run.trigger ?? null, run: p.run.run ?? null }, guardrails: p.rows.map((r) => ({ guardrail: r.label.trim(), baselined: r.old, new: r.fresh ?? null })) })),
@@ -146,7 +171,8 @@ export async function serve(wardenRoot: string, port: number, opts: { intervalMs
       res.writeHead(403, { "content-type": "application/json" }).end(`${JSON.stringify({ error: `Host ${req.headers.host ?? "(none)"} is not this daemon`, next: `open http://127.0.0.1:${bound}/ directly` })}\n`);
       return;
     }
-    if (req.method !== "GET") {
+    const changes = req.method === "POST" && url.pathname === "/api/packs";
+    if (req.method !== "GET" && !changes) {
       res.writeHead(405, { "content-type": "application/json" }).end(`${JSON.stringify({ error: `${req.method} is not supported`, next: "send a GET request" })}\n`);
       return;
     }
@@ -165,10 +191,11 @@ export async function serve(wardenRoot: string, port: number, opts: { intervalMs
       req.on("close", () => clients.delete(res));
       return;
     }
-    route(daemon, wardenRoot, url).then(
+    const result = changes ? changeProjectPacks(daemon, wardenRoot, url, req) : route(daemon, wardenRoot, url);
+    result.then(
       (body) => res.writeHead(200, { "content-type": "application/json" }).end(`${JSON.stringify(body)}\n`),
       (cause: Error) => {
-        const http = cause instanceof HttpError ? cause : cause instanceof RecordError ? new HttpError(422, cause.message, /Next action: (.*?)\.?$/.exec(cause.message)?.[1] ?? "run warden check in the project and fix what it reports") : new HttpError(500, cause.message, "read the daemon log and fix what it names");
+        const http = cause instanceof HttpError ? cause : cause instanceof PackSettingsError ? new HttpError(cause.status, cause.message, "review the pack selection and reload Layers if the checkout changed") : cause instanceof RecordError ? new HttpError(422, cause.message, /Next action: (.*?)\.?$/.exec(cause.message)?.[1] ?? "run warden check in the project and fix what it reports") : new HttpError(500, cause.message, "read the daemon log and fix what it names");
         res.writeHead(http.status, { "content-type": "application/json" }).end(`${JSON.stringify({ error: http.message, next: http.next })}\n`);
       },
     );

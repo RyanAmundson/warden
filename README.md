@@ -514,6 +514,19 @@ The daemon serves a JSON API on `http://127.0.0.1:7419` (`--port` changes
 it). It answers only requests whose `Host` is `127.0.0.1` or `localhost` on
 that port.
 
+### Change a project's packs
+
+On the dashboard, open **Layers**, choose the project, and scroll to **Packs**.
+If the project has multiple worktrees, choose the checkout to edit. Select the
+packs you want and click **Save pack changes**. Warden writes the selection to
+that checkout's `.warden/config.yaml`. Disabled packs keep their paths and
+settings under `enabled: false`. Newly added packs start with `paths: ["**/*"]`.
+The dashboard keeps an enabled `core` pack on.
+
+Review the config diff, run `warden compile` in that checkout using the same
+Warden build as the dashboard, and sign the commit that changes `.warden/`.
+The save action only writes the config.
+
 ## Release
 
 ```bash

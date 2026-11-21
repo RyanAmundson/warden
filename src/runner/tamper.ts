@@ -113,7 +113,7 @@ export const widens = (now: string, was: string): boolean => {
   return a.length === b.length && a.every((glob, i) => globWidens(glob, b[i] as string));
 };
 
-const loosened = (set: RecordSet, wardenRoot: string, comparison: BaseRef, lock: Lock): Tamper[] => {
+const loosened = async (set: RecordSet, wardenRoot: string, comparison: BaseRef, lock: Lock): Promise<Tamper[]> => {
   const { root } = set;
   const base = typeof comparison === "string" ? comparison : comparison.name;
   const before = readBaseLock(root, comparison);
@@ -123,8 +123,11 @@ const loosened = (set: RecordSet, wardenRoot: string, comparison: BaseRef, lock:
   const tiers = Object.keys(lock.config.tierBudgetMs) as (keyof Lock["config"]["tierBudgetMs"])[];
   const committed = lastCommittedText(root, LOCK_PATH);
   const heads = [lock, ...((committed === undefined ? [] : parsedOrSkipped(committed)) as Lock[])];
-  const restoring = base === recordedBases(root).at(-1) && containsHead(root, comparison);
-  if (heads.some((l) => changed(before.config.base, l.config?.base) && !(restoring && l.config?.base === base))) found.push({ file: LOCK_PATH, detail: "base-moved" });
+  const differentBases = heads.filter((l) => changed(before.config.base, l.config?.base));
+  if (differentBases.length > 0) {
+    const restoring = base === recordedBases(root).at(-1) && containsHead(root, comparison);
+    if (!restoring || differentBases.some((l) => l.config?.base !== base)) found.push({ file: LOCK_PATH, detail: "base-moved" });
+  }
   if (
     changed(before.config.project, lock.config.project) ||
     lock.config.loopBreakerRepeats > before.config.loopBreakerRepeats ||
@@ -159,7 +162,7 @@ const loosened = (set: RecordSet, wardenRoot: string, comparison: BaseRef, lock:
   }
   const editedCode = Object.keys(before.sources ?? {}).filter((k) => ((/^\.warden\/packs\/[^/]+\/./.test(k) && !k.endsWith("/pack.yaml")) || k.startsWith(PROJECT_SOURCE)) && before.sources[k] !== lock.sources[k]);
   if (editedCode.length > 0) found.push({ file: LOCK_PATH, detail: "loosened" });
-  const renames = renamesSinceMergeBase(root, comparison);
+  const renames = await renamesSinceMergeBase(root, comparison);
   const baseBaseline = carryRenames(JSON.parse(showAtMergeBase(root, comparison, BASELINE_PATH) ?? "{}") as Baseline, renames);
   for (const [id, entries] of Object.entries(carryRenames(readBaseline(root), renames))) {
     if (id in lock.guardrails && !(id in before.guardrails)) continue;
@@ -213,5 +216,5 @@ export async function findTampering(set: RecordSet, wardenRoot: string, base: Ba
 
   found.push(...projectWideEntries(readBaseline(root)).map((guardrail): Tamper => ({ file: BASELINE_PATH, detail: "loosened", guardrail })));
   const comparison = typeof base === "string" ? (resolveBaseCommit(root, base) ?? base) : base;
-  return [...found, ...loosened(set, wardenRoot, comparison, lock), ...unsignedChanges(root, comparison, wardenRoot, staged)];
+  return [...found, ...await loosened(set, wardenRoot, comparison, lock), ...unsignedChanges(root, comparison, wardenRoot, staged)];
 }

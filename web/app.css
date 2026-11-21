@@ -66,7 +66,16 @@ td.clip{width:100%;max-width:0;min-width:120px;overflow:hidden;text-overflow:ell
 .frozen .tag{color:var(--muted);background:#EEF0F2;border-color:var(--line)}
 .btn,.btnr,.btnw,select,input{font:inherit;font-size:12px;line-height:16px}
 .btn{font-weight:600;padding:6px 11px;border:1px solid #9AA3AE;background:#FFFFFF;color:var(--ink);cursor:pointer}
-.btn:hover{background:#EEF0F2;border-color:#6B7480}
+.pack-toolbar{padding:10px 14px;border-bottom:1px solid var(--line)}
+.pack-toolbar:last-child{border-top:1px solid var(--line);border-bottom:0}
+.pack-toolbar p{margin:6px 0 0;color:var(--muted)}
+.pack-toolbar select{max-width:100%}
+.pack-toolbar .mono{overflow-wrap:anywhere}
+.pack-toggle{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.pack-details{display:none}
+.pack-toggle input{flex:none;width:16px;height:16px;margin:0;accent-color:var(--steel)}
+.btn:disabled{opacity:.58;cursor:default}
+.btn:not(:disabled):hover{background:#EEF0F2;border-color:#6B7480}
 .btn[aria-pressed=true]{background:var(--steel);color:#FFFFFF;border-color:var(--steel)}
 .btnr{font-weight:600;padding:6px 11px;border:1px solid var(--brasslt);background:transparent;color:var(--brasstx);cursor:pointer}
 .btnr:hover{background:var(--steel3)}
@@ -159,6 +168,13 @@ input::placeholder{color:#5E6773}
 @media (max-width:779px){.shell{align-content:flex-start}.side{gap:14px}.side .navs{display:flex;flex-wrap:wrap;align-items:flex-start;gap:14px 24px}.side .navs>*{flex:1 1 200px}.side .navs>.nav{flex-direction:row;flex-wrap:wrap}.main{padding:16px 16px 28px}.alert>.slot{flex-basis:100%}th,td{padding:6px 10px}.track{width:120px}}
 
 @media (max-width:620px){
+  .pack-table{table-layout:fixed}
+  .pack-details{display:block;margin-top:3px;color:var(--muted)}
+  .pack-details summary{cursor:pointer}
+  .pack-table :is(th,td){white-space:normal;overflow-wrap:anywhere}
+  .pack-table :is(th,td):is(:nth-child(2),:nth-child(5),:nth-child(6)){display:none}
+  .pack-table th:first-child{width:46%}
+  .pack-table th:nth-child(4){width:18%}
   .failures{table-layout:fixed;overflow-wrap:anywhere}
   .failures :is(th,td){white-space:normal}
   .failures th:first-child{width:36%}

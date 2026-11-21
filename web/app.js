@@ -3,7 +3,7 @@ import { beatText, frozenHtml, pageTitle, renderApp } from "/render.js";
 const params = new URLSearchParams(location.search);
 const page = location.pathname.replace(/^\/+|\/+$/g, "") || "overview";
 const root = document.getElementById("app");
-const state = { page, project: params.get("project") ?? undefined, health: null, projects: [], data: null, error: null, lost: false, frozen: "", frozenAt: null, now: Date.now(), view: { run: params.get("run") ?? undefined, outcome: "all", tier: "", file: "", filter: "", paused: false, fresh: new Set() } };
+const state = { page, project: params.get("project") ?? undefined, health: null, projects: [], data: null, error: null, lost: false, frozen: "", frozenAt: null, now: Date.now(), view: { run: params.get("run") ?? undefined, outcome: "all", tier: "", file: "", filter: "", paused: false, packDraft: new Map(), fresh: new Set() } };
 const seen = new Set();
 let lastBeat = Date.now();
 let events;
@@ -11,8 +11,8 @@ let pending;
 let loads = 0;
 let jump = location.hash === "#detail";
 
-const api = async (path) => {
-  const res = await fetch(path, { cache: "no-store" }).catch((cause) => {
+const api = async (path, options) => {
+  const res = await fetch(path, { cache: "no-store", ...options }).catch((cause) => {
     throw Object.assign(cause, { network: true });
   });
   const body = await res.json();
@@ -28,7 +28,7 @@ const LOAD = {
   overview: async (ps) => ({ tamper: await api("/api/tamper"), runs: await runsOf(ps, 50) }),
   runs: async (ps, project) => ({ runs: await runsFor(project, 100) }),
   run: async (ps, project) => ({ runs: await runsFor(project, 100) }),
-  layers: async (ps, project) => ({ layers: await api(`/api/layers?project=${q(project)}`) }),
+  layers: async (ps, project) => ({ layers: await api(`/api/layers?project=${q(project)}&edit=1${params.has("root") ? `&root=${q(params.get("root"))}` : ""}`) }),
   violations: async (ps, project) => ({ violations: await api(`/api/violations?project=${q(project)}`), layers: await api(`/api/layers?project=${q(project)}`), runs: await runsFor(project, 50) }),
   determinism: async (ps) => ({ determinism: await api("/api/determinism"), runs: await runsOf(ps, 100) }),
   tamper: async () => ({ tamper: await api("/api/tamper") }),
@@ -85,6 +85,12 @@ const load = async () => {
     const loaded = needsProject && state.project === undefined ? {} : await (LOAD[page] ?? LOAD.overview)(projects, state.project);
     if (seq !== loads) return;
     const data = { projects, ...loaded };
+    const { view } = state;
+    if (view.packDraft.size && !view.packSaving &&
+        (view.packTarget.project !== state.project || view.packTarget.root !== loaded.layers?.packSettings?.root)) {
+      view.packDraft.clear();
+      view.packMessage = "The selected checkout is unavailable. Your unsaved pack changes were discarded.";
+    }
     const ids = runIds(data);
     state.view.fresh = new Set(seen.size === 0 ? [] : ids.filter((id) => !seen.has(id)));
     for (const id of ids) seen.add(id);
@@ -111,7 +117,7 @@ const load = async () => {
 };
 
 const schedule = () => {
-  if (state.view.paused) return;
+  if (state.view.paused || state.view.packDraft.size || state.view.packSaving) return;
   clearTimeout(pending);
   pending = setTimeout(load, 250);
 };
@@ -139,6 +145,38 @@ const connect = () => {
   });
 };
 
+window.addEventListener("beforeunload", (e) => {
+  if (state.view.packDraft.size === 0) return;
+  e.preventDefault();
+  e.returnValue = "";
+});
+
+root.addEventListener("submit", async (e) => {
+  if (e.target.id !== "pack-settings") return;
+  e.preventDefault();
+  const { view } = state;
+  if (view.packDraft.size === 0 || view.packSaving) return;
+  view.packSaving = true;
+  view.packMessage = undefined;
+  render();
+  try {
+    const { project, root: checkout, revision } = view.packTarget;
+    await api(`/api/packs?project=${q(project)}&root=${q(checkout)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ revision, changes: [...view.packDraft].map(([id, enabled]) => ({ id, enabled })) }),
+    });
+    view.packDraft.clear();
+    view.packMessage = "Config saved. Run warden compile in this checkout, then sign the commit.";
+    view.packSaving = false;
+    await load();
+  } catch (error) {
+    view.packSaving = false;
+    view.packMessage = error.message;
+    render();
+  }
+});
+
 root.addEventListener("click", async (e) => {
   const el = e.target.closest("button");
   if (!el) return;
@@ -154,6 +192,11 @@ root.addEventListener("click", async (e) => {
     state.view.run = undefined;
     return render();
   }
+  if (el.dataset.action === "discard-packs") {
+    state.view.packDraft.clear();
+    state.view.packMessage = undefined;
+    return load();
+  }
   if (el.dataset.action === "pause") {
     state.view.paused = !state.view.paused;
     if (state.view.paused) return render();
@@ -168,6 +211,21 @@ root.addEventListener("click", async (e) => {
 root.addEventListener("change", (e) => {
   const el = e.target;
   if (el.dataset.nav === "project") location.href = `/${page}?project=${q(el.value)}`;
+  if (el.dataset.nav === "checkout") location.href = `/layers?project=${q(state.project)}&root=${q(el.value)}`;
+  if (el.dataset.pack !== undefined) {
+    const { view } = state;
+    const { root: checkout, revision, packs } = state.data.layers.packSettings;
+    if (view.packDraft.size === 0) {
+      clearTimeout(pending);
+      view.packTarget = { project: state.project, root: checkout, revision };
+      loads += 1;
+    }
+    const saved = packs.find((pack) => pack.id === el.dataset.pack);
+    if (el.checked === saved.on) view.packDraft.delete(saved.id);
+    else view.packDraft.set(saved.id, el.checked);
+    view.packMessage = undefined;
+    render();
+  }
   if (el.dataset.action === "filter") {
     state.view.filter = el.value;
     render();

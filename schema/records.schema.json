@@ -28,6 +28,7 @@
             "required": ["id", "paths"],
             "properties": {
               "id": { "type": "string", "minLength": 1 },
+              "enabled": { "type": "boolean" },
               "paths": { "type": "array", "items": { "type": "string" } },
               "settings": { "type": "object" }
             }

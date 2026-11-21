@@ -234,23 +234,25 @@ export const exampleSet = (set: RecordSet): RecordSet => ({
   },
 });
 
-export async function loadRecords(projectRoot: string, wardenRoot: string): Promise<RecordSet> {
+export async function loadRecords(projectRoot: string, wardenRoot: string, source?: string): Promise<RecordSet> {
   const configFile = join(projectRoot, ".warden", "config.yaml");
-  const configText = await readText(configFile);
+  const configText = source ?? await readText(configFile);
   if (configText === undefined) throw new RecordError(configFile, "", "not found. Next action: run warden init.");
   const config = parseConfig(configFile, configText);
   const packs: Pack[] = [];
   const seen = new Set<string>();
-  for (const entry of config.packs) {
+  for (const [index, entry] of config.packs.entries()) {
     if (seen.has(entry.id)) {
       throw new RecordError(configFile, "/packs", `pack ${entry.id} is listed more than once`);
     }
     seen.add(entry.id);
+    if (entry.enabled === false) continue;
     const { pack } = await readPack(projectRoot, wardenRoot, entry.id, configFile);
-    const settings = resolveSettings(pack, entry.settings, configFile, `/packs/${config.packs.indexOf(entry)}/settings`);
+    const settings = resolveSettings(pack, entry.settings, configFile, `/packs/${index}/settings`);
     if (settings !== undefined) entry.settings = settings;
     packs.push(pack);
   }
+  config.packs = config.packs.filter((entry) => entry.enabled !== false);
   const unitIgnoreCase = config.units !== undefined && ignoresPathCase(projectRoot);
   validateUnits(configFile, config, packs, unitIgnoreCase);
   return { config, packs: packs.sort((a, b) => a.layer - b.layer), root: projectRoot, ...(unitIgnoreCase ? { unitIgnoreCase } : {}) };

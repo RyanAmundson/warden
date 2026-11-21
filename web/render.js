@@ -177,7 +177,7 @@ const sidebar = (state) => {
 const header = (title, sub, controls = "") => `<header class="head"><div><h1 class="h1">${title}</h1><div class="muted">${sub}</div></div>${controls === "" ? "" : `<div class="controls">${controls}</div>`}</header>`;
 
 const projectPicker = (state, id) =>
-  `<label class="lbl" for="${id}">Project</label><select id="${id}" data-nav="project">${state.projects.map((p) => `<option value="${esc(p.project)}"${p.project === state.project ? " selected" : ""}>${esc(p.project)}</option>`).join("")}</select>`;
+  `<label class="lbl" for="${id}">Project</label><select id="${id}" data-nav="project"${state.view.packDraft?.size || state.view.packSaving ? " disabled" : ""}>${state.projects.map((p) => `<option value="${esc(p.project)}"${p.project === state.project ? " selected" : ""}>${esc(p.project)}</option>`).join("")}</select>`;
 
 export const emptyState = (page) => `${header(PAGES[page === "run" ? "runs" : page] ?? "Overview", "0 projects watched")}
 <section class="mod empty" aria-labelledby="em-h">
@@ -403,19 +403,36 @@ export const layersPage = (state) => {
       return `<section class="mod" aria-labelledby="ly-${id}"><div class="modh"><div style="flex-direction:row;align-items:center;gap:10px">${marks[b.band] ?? ""}<h2 class="h2" id="ly-${id}">${name}</h2><span class="muted">${esc(BAND_TEXT[b.band] ?? "")}</span></div><span class="muted">${plural(count, "rule")}</span></div><div class="scroll"><table class="bandt"><colgroup><col style="width:56px"><col style="width:19%"><col style="width:10%"><col style="width:15%"><col style="width:10%"><col style="width:11%"><col style="width:90px"><col style="width:96px"></colgroup>${count === 0 ? "" : '<thead><tr><th scope="col">Rank</th><th scope="col">Kind or Guardrail</th><th scope="col">Pack</th><th scope="col">Practice</th><th scope="col">Adapter</th><th scope="col">Runs at</th><th scope="col" class="r">Median</th><th scope="col"><span class="lbl">Weak</span></th></tr></thead>'}<tbody>${rows}</tbody></table></div></section>`;
     })
     .join("");
+  const settings = l.packSettings;
+  const { packDraft, packSaving, packMessage } = state.view;
+  const packCount = packDraft?.size ?? 0;
+  const roots = state.projects.find((project) => project.project === l.project)?.roots ?? [];
+  const checkout = settings && (roots.length > 1
+    ? `<label for="pack-checkout" class="lbl">Checkout</label><select id="pack-checkout" data-nav="checkout"${packSaving || packCount ? " disabled" : ""}>${roots.map((root) => `<option value="${esc(root)}"${root === settings.root ? " selected" : ""}>${esc(root)}</option>`).join("")}</select>`
+    : `<span class="mono">${esc(settings.root)}</span>`);
   const rulesOf = (id) => l.bands.flatMap((b) => b.kinds.flatMap((k) => k.rules.filter((r) => r.pack === id)));
   const packs = l.packs
     .map((p) => {
       const rules = rulesOf(p.id);
       const kinds = Object.entries(rules.reduce((m, r) => ({ ...m, [r.kind]: (m[r.kind] ?? 0) + 1 }), {})).map(([k, n]) => `${n} ${k}`);
       const practices = [...new Set(rules.map((r) => r.practice))];
-      return `<tr><td style="font-weight:650">${esc(p.id)}</td><td>${esc(p.source)}</td><td>${p.on ? '<span class="on"><i aria-hidden="true"></i>On</span>' : '<span class="muted">Off</span>'}</td><td class="r">${num(p.rules)}</td><td>${p.on ? esc(kinds.join(", ") || "–") : "–"}</td><td class="wrap">${p.on ? esc(practices.join(", ") || "–") : '<span class="muted">turn the pack on to list its practices</span>'}</td></tr>`;
+      const saved = settings?.packs.find((pack) => pack.id === p.id);
+      const checked = packDraft?.get(p.id) ?? saved?.on ?? p.on;
+      const status = saved && !saved.required
+        ? `<label class="pack-toggle"><input type="checkbox" id="pack-${esc(p.id)}" data-pack="${esc(p.id)}" aria-label="${esc(p.id)} pack"${checked ? " checked" : ""}${packSaving ? " disabled" : ""}>${checked ? "On" : "Off"}${packDraft?.has(p.id) ? " (unsaved)" : ""}</label>`
+        : p.on ? `<span class="on"><i aria-hidden="true"></i>${saved?.required ? "On · Required" : "On"}</span>` : '<span class="muted">Off</span>';
+      const strength = p.on ? kinds.join(", ") || "–" : "–";
+      const practiceList = p.on ? practices.join(", ") || "–" : "–";
+      return `<tr><td><strong>${esc(p.id)}</strong><details class="pack-details"><summary>Details</summary><div>Source: ${esc(p.source)}</div><div>Strength: ${esc(strength)}</div><div>Practices: ${esc(practiceList)}</div></details></td><td>${esc(p.source)}</td><td>${status}</td><td class="r">${num(p.rules)}</td><td>${esc(strength)}</td><td class="wrap">${esc(practiceList)}</td></tr>`;
     })
     .join("");
   return `${header(`Layers · ${esc(l.project)}`, "Strongest first. A rule can only move up.", projectPicker(state, "ly-proj"))}
 <div class="next"><span class="lbl">Weakest practice</span><span style="flex:1 1 320px;font-size:14px">${verdict}</span></div>
 ${bands}
-<section class="mod" aria-labelledby="ly-packs"><div class="modh"><h2 class="h2" id="ly-packs">Packs</h2><span class="muted">Bundled with Warden${state.health?.version ? ` ${esc(state.health.version)}` : ""}, plus any local pack in .warden</span></div><div class="scroll"><table><thead><tr><th scope="col">Pack</th><th scope="col">Source</th><th scope="col">In this project</th><th scope="col" class="r">Rules</th><th scope="col">Strength</th><th scope="col">Practices</th></tr></thead><tbody>${packs}</tbody></table></div></section>`;
+<section class="mod" aria-labelledby="ly-packs"><form id="pack-settings"><div class="modh"><h2 class="h2" id="ly-packs">Packs</h2><span class="muted">Bundled with Warden${state.health?.version ? ` ${esc(state.health.version)}` : ""}, plus any local pack in .warden</span></div>
+${settings ? `<div class="pack-toolbar"><div class="controls">${checkout}</div><p>Changes apply to this checkout. New packs cover all paths. After saving, run <code>warden compile</code> with this Warden build and sign the commit.</p></div>` : ""}
+<div class="scroll"><table class="pack-table"><thead><tr><th scope="col">Pack</th><th scope="col">Source</th><th scope="col">In this project</th><th scope="col" class="r">Rules</th><th scope="col">Strength</th><th scope="col">Practices</th></tr></thead><tbody>${packs}</tbody></table></div>
+${settings ? `<div class="pack-toolbar controls"><button type="submit" class="btn"${!packCount || packSaving ? " disabled" : ""}>${packSaving ? "Saving…" : "Save pack changes"}</button><button type="button" class="btn" data-action="discard-packs"${!packCount || packSaving ? " disabled" : ""}>Discard changes</button><span role="status">${esc(packMessage ?? (packCount ? plural(packCount, "unsaved change") : ""))}</span></div>` : ""}</form></section>`;
 };
 
 export const violationsPage = (state) => {

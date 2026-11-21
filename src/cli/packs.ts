@@ -14,10 +14,10 @@ export interface PackRow {
 
 const ids = (dir: string): string[] => (existsSync(dir) ? readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name) : []);
 
-export async function listPacks(root: string, wardenRoot: string): Promise<PackRow[]> {
+export async function listPacks(root: string, wardenRoot: string, source?: string): Promise<PackRow[]> {
   const configFile = join(root, ".warden", "config.yaml");
-  const text = await readText(configFile);
-  const configured = new Map((text === undefined ? [] : parseConfig(configFile, text).packs).map((p) => [p.id, p.paths]));
+  const text = source ?? await readText(configFile);
+  const configured = new Map((text === undefined ? [] : parseConfig(configFile, text).packs).filter((p) => p.enabled !== false).map((p) => [p.id, p.paths]));
   const all = [...new Set([...ids(join(wardenRoot, "packs")), ...ids(join(root, ".warden", "packs"))])];
   const rows: PackRow[] = [];
   for (const id of all) {

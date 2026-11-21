@@ -178,8 +178,8 @@ export interface Changes {
 
 const HUNK = /^@@ -\S+ \+(\d+)(?:,(\d+))? @@/;
 
-async function gitRecords(root: string, args: string[], delimiter: string, receive: (record: string) => void): Promise<string | undefined> {
-  const child = spawn("git", args, { cwd: root, env: env(), stdio: ["ignore", "pipe", "pipe"] });
+async function gitRecords(root: string, args: string[], delimiter: string, receive: (record: string) => void, input?: string): Promise<string | undefined> {
+  const child = spawn("git", args, { cwd: root, env: env(), stdio: ["pipe", "pipe", "pipe"] });
   let error = "";
   child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
     if (error.length < 4096) error += chunk.slice(0, 4096 - error.length);
@@ -188,6 +188,11 @@ async function gitRecords(root: string, args: string[], delimiter: string, recei
     child.once("error", (cause) => done(cause.message));
     child.once("close", (code, signal) => done(code === 0 ? undefined : error.trim() || `git stopped with ${signal ?? `exit ${code}`}`));
   });
+  const written = new Promise<void>((resolve, reject) => {
+    child.stdin.once("error", reject);
+    child.stdin.end(input, resolve);
+  });
+  const inputError = written.catch((cause: NodeJS.ErrnoException) => cause);
   try {
     let remainder = "";
     for await (const chunk of child.stdout.setEncoding("utf8") as AsyncIterable<string>) {
@@ -201,7 +206,14 @@ async function gitRecords(root: string, args: string[], delimiter: string, recei
     await completed;
     throw cause;
   }
-  return completed;
+  return (await completed) ?? (await inputError)?.message;
+}
+
+async function gitLines(root: string, args: string[], input?: string): Promise<string[]> {
+  const lines: string[] = [];
+  const error = await gitRecords(root, args, "\n", (line) => lines.push(line), input);
+  if (error !== undefined) throw new Error(`git ${args[0]} failed: ${error}`);
+  return lines;
 }
 
 async function patchLines(root: string, at: string, stagedOnly: boolean, receive: (line: string) => void): Promise<void> {
@@ -260,14 +272,22 @@ export async function changesSinceMergeBase(root: string, base: BaseRef, stagedO
     for (let n = start; n < start + count; n++) current.add(n);
   });
   if (!stagedOnly) for (const file of names(must(root, ["ls-files", "-z", "--others", "--exclude-standard"]))) lines.set(file, "all");
-  return { lines, renames: renamesAt(root, at, stagedOnly) };
+  return { lines, renames: await renamesAt(root, at, stagedOnly) };
 }
 
-export const renamesSinceMergeBase = (root: string, base: BaseRef): Changes["renames"] => renamesAt(root, mergeBase(root, base));
+export const renamesSinceMergeBase = (root: string, base: BaseRef): Promise<Changes["renames"]> =>
+  renamesAt(root, mergeBase(root, base));
 
-function renamesAt(root: string, at: string, stagedOnly = false): Changes["renames"] {
+async function renamesAt(root: string, at: string, stagedOnly = false): Promise<Changes["renames"]> {
+  const entries: string[] = [];
+  const args = ["diff", "-z", "-M", "--name-status", "--relative", ...(stagedOnly ? ["--cached"] : []), at];
+  const error = await gitRecords(root, args, "\0", (entry) => entries.push(entry));
+  if (error !== undefined) throw new Error(`git diff failed: ${error}`);
+  return parseRenames(entries);
+}
+
+function parseRenames(status: string[]): Changes["renames"] {
   const renames = new Map<string, string>();
-  const status = names(must(root, ["diff", "-z", "-M", "--name-status", "--relative", ...(stagedOnly ? ["--cached"] : []), at]));
   for (let i = 0; i < status.length; i++) {
     const kind = status[i] as string;
     if (kind.startsWith("R")) renames.set(status[i + 1] as string, status[i + 2] as string);
@@ -366,9 +386,8 @@ const mergedTree = (root: string, parents: string[]): string | undefined => {
   return r.ok || r.out !== "" ? r.out.split("\n")[0] : undefined;
 };
 
-const described = (root: string, range: string[]): Committed[] => {
-  const commits = must(root, ["log", "--format=%H %T %P", ...range, "--"])
-    .split("\n")
+const describeCommits = (root: string, lines: string[]): Committed[] => {
+  const commits = lines
     .filter((l) => l !== "")
     .map((l) => {
       const [commit, tree, ...parents] = l.split(" ") as [string, string, ...string[]];
@@ -388,28 +407,30 @@ const described = (root: string, range: string[]): Committed[] => {
     return { ...c, ...(expectedTree === undefined ? {} : { expectedTree }) };
   });
 };
+const described = (root: string, range: string[]): Committed[] =>
+  describeCommits(root, must(root, ["log", "--format=%H %T %P", ...range, "--"]).split("\n"));
 
 const FETCHED = /^(fetch|pull|clone)/;
 
-export function fetchedTips(root: string): string[] {
+export async function fetchedTips(root: string): Promise<string[]> {
   const remotes = must(root, ["remote"]).split("\n").filter((r) => r !== "");
   const refs = remotes.flatMap((r) => must(root, ["for-each-ref", "--format=%(refname)", `refs/remotes/${r}/`]).split("\n").filter((l) => l !== ""));
-  return [
-    ...new Set(
-      refs.flatMap((ref) => {
-        const r = git(root, ["reflog", "show", "--format=%H%x09%gs", ref, "--"]);
-        return r.ok ? r.out.split("\n").flatMap((line) => {
-          const [sha, subject] = line.split("\t");
-          return sha !== undefined && sha !== "" && FETCHED.test(subject ?? "") ? [sha] : [];
-        }) : [];
-      }),
-    ),
-  ];
+  if (refs.length === 0) return [];
+  const log = await gitLines(root, ["reflog", "show", "--format=%H%x09%gs", "--stdin", "--"], refs.join("\n") + "\n");
+  return [...new Set(log.flatMap((line) => {
+    const [sha, subject] = line.split("\t");
+    return sha !== undefined && sha !== "" && FETCHED.test(subject ?? "") ? [sha] : [];
+  }))];
 }
 
-export function newCommits(root: string, tips: string[], seen: string[]): Committed[] {
-  if (tips.length === 0) return [];
-  return described(root, [...tips, ...[...seen, ...fetchedTips(root)].filter((t) => hasCommit(root, t)).map((t) => `^${t}`)]);
+export async function newCommits(root: string, tips: string[], seen: string[]): Promise<Committed[]> {
+  const previous = new Set(seen);
+  if (tips.every((tip) => previous.has(tip))) return [];
+  const revisions = [...new Set([...seen, ...await fetchedTips(root)])];
+  const known = (await gitLines(root, ["cat-file", "--batch-check=%(objectname) %(objecttype)"], revisions.map((tip) => `${tip}^{commit}\n`).join("")))
+    .filter((line) => line.endsWith(" commit"))
+    .map((line) => `^${line.split(" ")[0]}\n`);
+  return describeCommits(root, await gitLines(root, ["log", "--format=%H %T %P", "--stdin", "--"], [...tips.map((tip) => `${tip}\n`), ...known].join("")));
 }
 
 export const allTips = (root: string): string[] => [...new Set([...must(root, ["for-each-ref", "--format=%(objectname)"]).split("\n").filter((l) => l !== ""), ...repoTips(root)])];
@@ -489,19 +510,27 @@ export const lockVersionAt = (root: string, commit: string): string | undefined 
   }
 };
 
-export const reachableFrom = (root: string, sha: string, tips: string[]): boolean =>
-  execFileSync("git", ["rev-list", "-1", "--ignore-missing", "--stdin", sha], { cwd: root, env: env(), encoding: "utf8", input: tips.map((t) => `^${t}\n`).join(""), stdio: ["pipe", "pipe", "pipe"] }).trim() === "";
+export const reachableFrom = async (root: string, sha: string, tips: string[]): Promise<boolean> =>
+  (await gitLines(root, ["rev-list", "-1", "--ignore-missing", "--stdin", sha], tips.map((t) => `^${t}\n`).join(""))).length === 0;
 
-export const holdersOf = (root: string, sha: string): string[] => [
-  ...must(root, ["for-each-ref", "--contains", sha, "--format=%(refname)"]).split("\n").filter((l) => l !== ""),
-  ...worktrees(root)
-    .filter((w) => w.detached === true && w.head !== undefined && isAncestor(root, sha, w.head))
-    .map((w) => `the detached HEAD of worktree ${w.path}`),
-];
+export async function holdersOf(root: string, sha: string): Promise<string[]> {
+  const refs: string[] = [];
+  const error = await gitRecords(root, ["for-each-ref", "--contains", sha, "--format=%(refname)"], "\n", (ref) => refs.push(ref));
+  if (error !== undefined) throw new Error(`git for-each-ref --contains ${sha} failed: ${error}`);
+  const checked = new Map<string, boolean>();
+  for (const { path, detached, head } of worktrees(root)) {
+    if (detached !== true || head === undefined) continue;
+    if (!checked.has(head)) {
+      checked.set(head, (await gitRecords(root, ["merge-base", "--is-ancestor", sha, head], "\n", () => {})) === undefined);
+    }
+    if (checked.get(head)) refs.push(`the detached HEAD of worktree ${path}`);
+  }
+  return refs;
+}
 
 export const isAncestor = (root: string, ancestor: string, of: string): boolean => git(root, ["merge-base", "--is-ancestor", ancestor, of]).ok;
 
-export const reachable = (root: string, sha: string, tips: string[]): boolean => hasCommit(root, sha) && tips.some((tip) => isAncestor(root, sha, tip));
+export const reachable = async (root: string, sha: string, tips: string[]): Promise<boolean> => hasCommit(root, sha) && await reachableFrom(root, sha, tips);
 
 export function restoreAction(root: string, path: string): string {
   if (git(root, ["cat-file", "-e", `HEAD:${path}`]).ok) return `run git checkout HEAD -- .warden in ${root}`;
