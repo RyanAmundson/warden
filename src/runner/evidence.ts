@@ -2,6 +2,7 @@ import { appendFileSync, closeSync, fstatSync, linkSync, mkdirSync, mkdtempSync,
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Kind, Tier } from "../records/types.js";
+import type { RunResult } from "../adapters/types.js";
 
 export interface Evidence {
   at: string;
@@ -22,6 +23,7 @@ export interface Evidence {
   session?: string;
   policy?: string;
   mutations?: { caught: string[]; missed: string[] };
+  judgment?: RunResult["judgment"];
   tier?: Tier;
   pack?: string;
   files?: number;
@@ -75,6 +77,7 @@ export type Verdict = "fixed-input" | "constant" | "sublinear" | "linear" | "sup
 
 export interface Measurement {
   verdict: Verdict;
+  timing?: "live-model";
   k?: number;
   points: [number, number][];
   f: number;

@@ -2,13 +2,14 @@ import { cmdAdapter } from "../adapters/cmd.js";
 import { eslintAdapter } from "../adapters/eslint.js";
 import { fsAdapter, graphAdapter } from "../adapters/tree.js";
 import { tscAdapter } from "../adapters/tsc.js";
+import { systemOneAdapter } from "../adapters/system-one.js";
 import type { Adapter, RunContext, RunResult } from "../adapters/types.js";
 import { RecordError } from "../records/load.js";
 import { declaredUnits } from "../records/units.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
 import type { Finding } from "../compiler/consistency.js";
 
-export const adapters = new Map<string, Adapter>([eslintAdapter, tscAdapter, cmdAdapter, fsAdapter, graphAdapter].map((a) => [a.id, a]));
+export const adapters = new Map<string, Adapter>([eslintAdapter, tscAdapter, cmdAdapter, fsAdapter, graphAdapter, systemOneAdapter].map((a) => [a.id, a]));
 
 export const prefixOf = (g: Guardrail): string => g.implementation.slice(0, g.implementation.indexOf(":"));
 

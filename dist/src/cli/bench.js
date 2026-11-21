@@ -56,7 +56,8 @@ export async function runBench(root, wardenRoot, opts) {
         const width = Math.max(0, ...rows.map((r) => r.indent.length + r.label.length)) + 2;
         const lines = [`scaling (warden bench at ${warden}, ${at.slice(0, 10)})`];
         for (const { indent, label, m } of rows) {
-            const k = m.verdict === "fixed-input" ? `${Math.round(m.f)}ms on the declared example` : m.k === undefined ? "" : `k=${m.k.toFixed(2)}`;
+            const sample = m.timing === "live-model" ? " for the live model evaluation of the declared example" : " on the declared example";
+            const k = m.verdict === "fixed-input" ? `${Math.round(m.f)}ms${sample}` : m.k === undefined ? "" : `k=${m.k.toFixed(2)}`;
             lines.push(`${`${indent}${label}`.padEnd(width)}${m.verdict.padEnd(13)}${k}${m.verdict === "superlinear" ? "  DEFECT" : ""}`.trimEnd());
         }
         const defects = rows.filter((r) => r.id !== undefined && r.m.verdict === "superlinear");

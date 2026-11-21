@@ -432,7 +432,7 @@ const check = async (opts, live) => {
     const overBudget = [...perFile, ...wholeProject].filter((r) => r.overBudget === true).map((r) => ({ guardrail: r.guardrail, ms: r.ms, ...(r.shared?.budgetMs === undefined ? {} : { budgetMs: r.shared.budgetMs }) }));
     const killed = [...perFile, ...wholeProject]
         .filter((r) => r.status === "killed")
-        .map((r) => ({ guardrail: r.guardrail, ms: r.ms, command: r.command }));
+        .map((r) => ({ guardrail: r.guardrail, ms: r.ms, command: r.command, ...(r.recovery === undefined ? {} : { recovery: r.recovery }) }));
     const changes = await changesSinceMergeBase(root, comparison, indexedLint);
     const touched = (v) => {
         const lines = changes.lines.get(v.file);
@@ -491,7 +491,7 @@ const check = async (opts, live) => {
             const pack = packOf.get(r.guardrail);
             if (r.guardrail !== PARSE_ERROR)
                 ruleTimes[r.guardrail] = (ruleTimes[r.guardrail] ?? 0) + r.ms;
-            appendEvidence(project, { at, kind: "cost", guardrail: r.guardrail, status: r.overBudget === true ? "over-budget" : r.status, ms: r.ms, ...size, ...(pack === undefined ? {} : { pack }) });
+            appendEvidence(project, { at, kind: "cost", guardrail: r.guardrail, status: r.overBudget === true ? "over-budget" : r.status, ms: r.ms, ...size, ...(pack === undefined ? {} : { pack }), ...(r.judgment === undefined ? {} : { judgment: r.judgment }) });
         }
         else if (!sharedPasses.has(r.shared)) {
             sharedPasses.add(r.shared);

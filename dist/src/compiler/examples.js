@@ -217,7 +217,9 @@ async function runExample(set, g, emitted, source, file, ctx) {
         const own = results.find((r) => r.guardrail === g.id);
         if (own === undefined)
             throw new Error(`no result for guardrail ${g.id}`);
-        return own.status === "killed" || own.overBudget === true ? "over-budget" : own.status;
+        if (own.status === "killed" || own.overBudget === true || (own.judgment?.liveMs ?? 0) > g.budgetMs)
+            return "over-budget";
+        return own.judgment?.verdict === "needs-review" ? "needs-review" : own.status;
     }
     finally {
         for (const path of Object.keys(tree))

@@ -78,6 +78,30 @@ and Edit suggestions from upheld disputes or current hollow measurements.
 The output cites the underlying Evidence. An independent reviewer can accept
 a tighter rule. A trusted policy signer must approve any loosening.
 
+## Configure a System One decision Guardrail
+
+Use `system-one:noul` as a project-scoped `model` Guardrail at the boundary
+tier. Set `options.model` to an exact Jev or Laya version available to
+the provider account. Use `options.question` to ask whether the files meet
+the Practice.
+List the files the runner can send in `options.inputs`. Provide
+`failBelow` and `passAt` for the confidence thresholds. Results below
+`failBelow` fail, results at or above `passAt` pass, and results between the
+two require independent review. The Warden policy lock covers these settings.
+
+Compilation checks the model's must-pass and must-fail examples against the
+same decision thresholds. Enable uncached requests with `WARDEN_TYPESAFE=1`
+and `TYPESAFE_API_KEY` only in a trusted runner approved to send those files
+to TypeSafe. Warden sends the declared files and the question, records the
+model, request digest, probability, verdict, and whether each answer came
+from the provider or cache. The fixed-input benchmark uses the recorded
+live evaluation time for the must-pass example. A cache hit reuses that
+measurement. Use a runner-owned `WARDEN_HOME` for boundary checks and
+use admission examples with the same declared input paths.
+
+See the [System One API](https://docs.typesafe.ai/api/system-one.md) for
+the response schema and the model-discovery endpoint.
+
 ## Resolve a conflict in .warden/baseline.json
 
 Every commit-tier check rewrites `.warden/baseline.json`, so parallel branches

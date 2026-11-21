@@ -463,7 +463,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
   const overBudget = [...perFile, ...wholeProject].filter((r) => r.overBudget === true).map((r) => ({ guardrail: r.guardrail, ms: r.ms, ...(r.shared?.budgetMs === undefined ? {} : { budgetMs: r.shared.budgetMs }) }));
   const killed = [...perFile, ...wholeProject]
     .filter((r) => r.status === "killed")
-    .map((r) => ({ guardrail: r.guardrail, ms: r.ms, command: r.command as string }));
+    .map((r) => ({ guardrail: r.guardrail, ms: r.ms, command: r.command, ...(r.recovery === undefined ? {} : { recovery: r.recovery }) }));
 
   const changes = await changesSinceMergeBase(root, comparison, indexedLint);
   const touched = (v: Violation): boolean => {
@@ -520,7 +520,7 @@ const check = async (opts: CheckOptions, live: Live): Promise<number> => {
     if (r.shared === undefined || r.shared.guardrails === 1) {
       const pack = packOf.get(r.guardrail);
       if (r.guardrail !== PARSE_ERROR) ruleTimes[r.guardrail] = (ruleTimes[r.guardrail] ?? 0) + r.ms;
-      appendEvidence(project, { at, kind: "cost", guardrail: r.guardrail, status: r.overBudget === true ? "over-budget" : r.status, ms: r.ms, ...size, ...(pack === undefined ? {} : { pack }) });
+      appendEvidence(project, { at, kind: "cost", guardrail: r.guardrail, status: r.overBudget === true ? "over-budget" : r.status, ms: r.ms, ...size, ...(pack === undefined ? {} : { pack }), ...(r.judgment === undefined ? {} : { judgment: r.judgment }) });
     } else if (!sharedPasses.has(r.shared)) {
       sharedPasses.add(r.shared);
       const members = measured.filter((x) => x.shared === r.shared && x.guardrail !== PARSE_ERROR);

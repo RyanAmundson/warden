@@ -164,15 +164,18 @@ export async function readPack(projectRoot: string, wardenRoot: string, id: stri
   for (const [practiceIndex, practice] of pack.practices.entries()) {
     for (const [guardrailIndex, guardrail] of practice.guardrails.entries()) {
       const pointer = `/practices/${practiceIndex}/guardrails/${guardrailIndex}`;
-      if (guardrail.benchmark === "fixed-input" && (guardrail.kind !== "model" || !guardrail.implementation.startsWith("cmd:") || guardrail.runs.some((tier) => tier !== "boundary"))) {
-        throw new RecordError(file, `${pointer}/benchmark`, "Fixed-input benchmarking requires a model Guardrail that uses the cmd adapter and runs at the boundary.");
+      const systemOne = guardrail.implementation === "system-one:noul";
+      const boundaryOnly = guardrail.runs.length === 1 && guardrail.runs[0] === "boundary";
+      if (guardrail.benchmark === "fixed-input" && (guardrail.kind !== "model" ||
+          !(systemOne || guardrail.implementation.startsWith("cmd:")) || !boundaryOnly)) {
+        throw new RecordError(file, `${pointer}/benchmark`, "Fixed-input benchmarking requires a model Guardrail that uses the cmd or System One adapter and runs at the boundary.");
       }
-      if (guardrail.scope === "project" && (!guardrail.implementation.startsWith("fs:") || guardrail.runs.some((tier) => tier !== "boundary"))) {
-        throw new RecordError(file, `${pointer}/scope`, "Project scope requires the fs adapter and runs: [boundary].");
+      if (guardrail.scope === "project" && (!(systemOne || guardrail.implementation.startsWith("fs:")) || !boundaryOnly)) {
+        throw new RecordError(file, `${pointer}/scope`, "Project scope requires the fs or System One adapter and runs: [boundary].");
       }
       if (guardrail.unitExample === undefined) continue;
       const { kind, folder, publicEntry } = guardrail.unitExample;
-      if (guardrail.scope !== "project" || folder === "." || !validUnitFolder(folder)) {
+      if (guardrail.scope !== "project" || systemOne || folder === "." || !validUnitFolder(folder)) {
         throw new RecordError(file, `${pointer}/unitExample`, "Use a project-scoped fs Guardrail and a non-root example Unit folder.");
       }
       validateUnitLayout(file, `${pointer}/unitExample/kind/layout`, kind.layout);

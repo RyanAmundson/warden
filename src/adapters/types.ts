@@ -25,12 +25,14 @@ export interface RunResult {
   ms: number;
   overBudget?: boolean;
   command?: string;
+  recovery?: string;
   shared?: SharedPass;
   files?: number;
   bytes?: number;
   ruleMs?: number;
   inputShas?: ReadonlyMap<string, string>;
   judgedFiles?: ReadonlyMap<string, string>;
+  judgment?: { model: string; input: string; probability: number; verdict: "pass" | "fail" | "needs-review"; source: "live" | "cache"; liveMs: number };
 }
 
 export interface RunContext {

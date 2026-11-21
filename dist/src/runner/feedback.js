@@ -104,7 +104,9 @@ const nextAction = (failures, set, notes) => {
         return 'change the code at the lines above to match "Do this". Do not edit .warden/ or generated config; that is recorded as tampering.';
     }
     const killed = notes.killed?.[0];
-    if (killed !== undefined)
+    if (killed?.recovery !== undefined)
+        return killed.recovery;
+    if (killed?.command !== undefined)
         return `run \`${killed.command}\` directly to see why it does not finish.`;
     if ((notes.overBudget ?? []).length > 0)
         return "continue your task; nothing in your code failed.";

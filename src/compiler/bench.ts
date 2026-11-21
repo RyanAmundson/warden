@@ -71,7 +71,8 @@ const writeTree = async (root: string, tree: Record<string, string>): Promise<vo
 const measure = (project: RecordSet, s: Subject, cfg: BenchSettings, rerun: string, signal?: AbortSignal): Promise<Measurement> =>
   withExampleProject(async (root, commit) => {
     const set = exampleSet(project);
-    const fixedInput = s.g.benchmark === "fixed-input";
+    const systemOne = s.g.implementation === "system-one:noul";
+    const fixedInput = systemOne || s.g.benchmark === "fixed-input";
     const ctx = { root, generatedDir: join(root, ".warden/generated"), base: commit, unbudgeted: !fixedInput, signal };
     await writeTree(root, (adapters.get(prefixOf(s.g)) as Adapter).emit([s.g], set));
     const files: string[] = [];
@@ -95,6 +96,9 @@ const measure = (project: RecordSet, s: Subject, cfg: BenchSettings, rerun: stri
         const results = await runGuardrails(scenario, [s.g], files, ctx);
         signal?.throwIfAborted();
         const bad = results.find((r) => r.status !== "pass");
+        if (bad?.status === "killed" && bad.recovery !== undefined) {
+          throw new RecordError(s.pack.file, `/guardrails/${s.g.id}/budgetMs`, `Guardrail ${s.g.id} exceeded its ${s.g.budgetMs} ms budget. ${bad.recovery}`);
+        }
         if (bad !== undefined) {
           throw new RecordError(
             s.pack.file,
@@ -104,16 +108,17 @@ const measure = (project: RecordSet, s: Subject, cfg: BenchSettings, rerun: stri
         }
         const own = results.find((r) => r.guardrail === s.g.id);
         if (own === undefined) throw new Error(`no result for guardrail ${s.g.id}`);
-        if (own.overBudget === true) {
+        if (own.overBudget === true || (systemOne && (own.judgment?.liveMs ?? 0) > s.g.budgetMs)) {
           throw new RecordError(s.pack.file, `/guardrails/${s.g.id}/budgetMs`, `Guardrail ${s.g.id} exceeded its ${s.g.budgetMs} ms budget. Next action: make the mustPass example finish within budget, then run ${rerun}.`);
         }
-        times.push(s.time(own));
+        if (systemOne && own.judgment === undefined) throw new Error(`no model timing for guardrail ${s.g.id}`);
+        times.push(own.judgment?.liveMs ?? s.time(own));
       }
       return times;
     };
     if (fixedInput) {
-      const f = Math.min(...await timed(1, RUNS));
-      return { verdict: "fixed-input", points: [[1, f]], f };
+      const f = Math.min(...await timed(1, systemOne ? 1 : RUNS));
+      return { verdict: "fixed-input", points: [[1, f]], f, ...(systemOne ? { timing: "live-model" as const } : {}) };
     }
     const seen = new Map<number, number[]>();
     const at = async (n: number): Promise<number> => {

@@ -2,9 +2,10 @@ import { cmdAdapter } from "../adapters/cmd.js";
 import { eslintAdapter } from "../adapters/eslint.js";
 import { fsAdapter, graphAdapter } from "../adapters/tree.js";
 import { tscAdapter } from "../adapters/tsc.js";
+import { systemOneAdapter } from "../adapters/system-one.js";
 import { RecordError } from "../records/load.js";
 import { declaredUnits } from "../records/units.js";
-export const adapters = new Map([eslintAdapter, tscAdapter, cmdAdapter, fsAdapter, graphAdapter].map((a) => [a.id, a]));
+export const adapters = new Map([eslintAdapter, tscAdapter, cmdAdapter, fsAdapter, graphAdapter, systemOneAdapter].map((a) => [a.id, a]));
 export const prefixOf = (g) => g.implementation.slice(0, g.implementation.indexOf(":"));
 export const unknownAdapters = (set) => {
     const known = [...adapters.keys()];
