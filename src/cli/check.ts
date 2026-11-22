@@ -601,9 +601,10 @@ export async function runCheck(opts: CheckOptions): Promise<number> {
     if (known) process.stderr.write(`${cause.file} ${cause.pointer}: ${cause.message}\n`);
     closeStep(live, "fail");
     if (live.project !== undefined) {
-      const commit = headCommit(resolve(opts.root));
+      const attemptedRoot = resolve(opts.root);
+      const commit = headCommit(attemptedRoot);
       const next = known ? nextOf(cause.message) : `run warden check again; it stopped with: ${(cause as Error).message}`;
-      appendEvidence(live.project, { at: live.at, kind: "cost", guardrail: RUN_TOTAL, run: live.run, tier: live.tier, trigger: live.trigger, outcome: "error", exit: 2, ms: performance.now() - live.started, steps: live.steps, baseVerificationMs: live.baseVerificationMs, files: 0, bytes: 0, next, ...(commit === undefined ? {} : { commit }), ...live.base });
+      appendEvidence(live.project, { at: live.at, kind: "cost", guardrail: RUN_TOTAL, run: live.run, tier: live.tier, trigger: live.trigger, attemptedRoot, outcome: "error", exit: 2, ms: performance.now() - live.started, steps: live.steps, baseVerificationMs: live.baseVerificationMs, files: 0, bytes: 0, next, ...(commit === undefined ? {} : { commit }), ...live.base });
     }
     if (!known) throw cause;
     return 2;

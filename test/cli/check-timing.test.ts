@@ -9,7 +9,7 @@ import { readEvidence } from "../../src/runner/evidence.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
 
-it("records base verification time for accepted and rejected bases", async () => {
+it("records checkout and base verification timing for accepted and rejected bases", async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "warden-check-timing-")));
   const git = (...args: string[]) => execFileSync("git", [
     "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
@@ -29,7 +29,7 @@ it("records base verification time for accepted and rejected bases", async () =>
     const runs = readEvidence("fixture").filter((entry) => entry.guardrail === "run");
     expect(runs).toMatchObject([
       { root, outcome: "ran", baseVerificationMs: expect.any(Number) },
-      { outcome: "error", baseVerificationMs: expect.any(Number) },
+      { attemptedRoot: root, outcome: "error", baseVerificationMs: expect.any(Number) },
     ]);
     expect(runs[1]).not.toHaveProperty("root");
   } finally {

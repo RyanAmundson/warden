@@ -55,6 +55,7 @@ export interface Evidence {
   steps?: Partial<Record<Step, number>>;
   baseVerificationMs?: number;
   root?: string;
+  attemptedRoot?: string;
   tree?: string;
   scope?: "full" | "partial";
   sparseCoverage?: Record<string, Kind[]>;
