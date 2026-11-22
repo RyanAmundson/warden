@@ -9,6 +9,7 @@ Reviewed head: <full commit id>
 - Earlier: <n of the previous finding, only when it is not fixed>
 - Flaky: yes | no
 - Correction condition: <what makes it pass>`;
+const REPORT_INSTRUCTIONS = "For Reproduces on, use only comma-separated tokens from head, base, and previous. For Spec and Flaky, use only yes or no. Put explanations in Correction condition.";
 const REPRODUCES = ["head", "base", "previous"];
 const YES_NO = /^(yes|no)$/;
 const field = (f, name, value) => {
@@ -74,7 +75,7 @@ export const superpowersReview = {
     id: "superpowers-review",
     invocation: (rule, scope) => ({
         tool: "Agent",
-        input: { description: `Independent review of ${scope.head.slice(0, 12)}`, subagent_type: "general-purpose", model: rule.model, prompt: reviewPrompt(scope, REPORT_SHAPE) },
+        input: { description: `Independent review of ${scope.head.slice(0, 12)}`, subagent_type: "general-purpose", model: rule.model, prompt: reviewPrompt(scope, REPORT_SHAPE, REPORT_INSTRUCTIONS) },
     }),
     normalize,
 };

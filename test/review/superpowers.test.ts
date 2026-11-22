@@ -74,6 +74,7 @@ describe("superpowers-review adapter", () => {
           `This is round 1. Review the whole change ${BASE}..${HEAD}.`,
           "Requirements:\n- docs/plan.md\n- docs/brief.md",
           "Upheld Practices:\n- errors-explicit: Raise errors explicitly.",
+          "For Reproduces on, use only comma-separated tokens from head, base, and previous. For Spec and Flaky, use only yes or no. Put explanations in Correction condition.",
           `Report in exactly this shape:\n\n${REPORT_SHAPE}`,
         ].join("\n\n"),
       },
