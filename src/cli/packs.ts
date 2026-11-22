@@ -1,6 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { KIND_LADDER, type Kind } from "../records/types.js";
+import { KIND_LADDER, type Kind, type Pack } from "../records/types.js";
 import { parseConfig, readPack, readText } from "../records/load.js";
 
 export interface PackRow {
@@ -14,19 +14,23 @@ export interface PackRow {
 
 const ids = (dir: string): string[] => (existsSync(dir) ? readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name) : []);
 
-export async function listPacks(root: string, wardenRoot: string, source?: string): Promise<PackRow[]> {
+export async function packCatalog(root: string, wardenRoot: string, source?: string): Promise<{ row: PackRow; pack: Pack }[]> {
   const configFile = join(root, ".warden", "config.yaml");
   const text = source ?? await readText(configFile);
   const configured = new Map((text === undefined ? [] : parseConfig(configFile, text).packs).filter((p) => p.enabled !== false).map((p) => [p.id, p.paths]));
   const all = [...new Set([...ids(join(wardenRoot, "packs")), ...ids(join(root, ".warden", "packs"))])];
-  const rows: PackRow[] = [];
+  const rows: { row: PackRow; pack: Pack }[] = [];
   for (const id of all) {
     const { pack, source } = await readPack(root, wardenRoot, id, configFile);
     const all = pack.practices.flatMap((x) => x.guardrails);
     const kinds = Object.fromEntries(KIND_LADDER.flat().flatMap((k) => (all.some((g) => g.kind === k) ? [[k, all.filter((g) => g.kind === k).length]] : [])));
-    rows.push({ id, source, practices: pack.practices.length, kinds, on: configured.has(id), paths: configured.get(id) ?? [] });
+    rows.push({ pack, row: { id, source, practices: pack.practices.length, kinds, on: configured.has(id), paths: configured.get(id) ?? [] } });
   }
-  return rows.sort((a, b) => (a.source === b.source ? a.id.localeCompare(b.id) : a.source === "bundled" ? -1 : 1));
+  return rows.sort(({ row: a }, { row: b }) => (a.source === b.source ? a.id.localeCompare(b.id) : a.source === "bundled" ? -1 : 1));
+}
+
+export async function listPacks(root: string, wardenRoot: string, source?: string): Promise<PackRow[]> {
+  return (await packCatalog(root, wardenRoot, source)).map(({ row }) => row);
 }
 
 export const initAction = (rows: PackRow[]): string => `run warden init --packs ${rows.map((r) => r.id).join(",")}`;

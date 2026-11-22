@@ -380,6 +380,17 @@ ${streak.length > 1 ? `<section class="mod" aria-labelledby="er-streak"><div cla
 
 export const weakest = (practices) => [...practices].sort((a, b) => (KIND_RANK[b.strongestKind] ?? 9) - (KIND_RANK[a.strongestKind] ?? 9))[0];
 
+const readinessTag = (status) => tag({ text: status, cls: ({ Ready: "pass", "Needs setup": "err", Unavailable: "block" })[status] ?? "idle" });
+
+const packDetailsPanel = (pack, detail) => `<div class="pack-detail-body">
+<p class="pack-source muted">${esc(pack.source)} pack</p>
+${detail.setup ? `<p>${esc(detail.setup)}</p>` : ""}
+<h3>Adapter setup</h3>
+${detail.adapters.length ? `<ul class="pack-detail-list">${detail.adapters.map((adapter) => `<li><div><code>${esc(adapter.id)}</code> ${readinessTag(adapter.status)}</div><p>${esc(adapter.setup)}</p></li>`).join("")}</ul>` : '<p class="muted">No execution adapters required.</p>'}
+<h3>Checks</h3>
+${detail.checks.length ? `<ul class="pack-detail-list">${detail.checks.map((check) => `<li><code>${esc(check.id)}</code><p>${esc(check.statement)}</p><span class="muted">${check.adapter === null ? "Instruction" : esc([check.adapter, check.model, ...check.runs].filter(Boolean).join(" · "))}</span></li>`).join("")}</ul>` : '<p class="muted">This pack has no checks.</p>'}
+</div>`;
+
 export const layersPage = (state) => {
   const { data } = state;
   if (data.projects.length === 0) return emptyState(state.page);
@@ -411,6 +422,7 @@ export const layersPage = (state) => {
     ? `<label for="pack-checkout" class="lbl">Checkout</label><select id="pack-checkout" data-nav="checkout"${packSaving || packCount ? " disabled" : ""}>${roots.map((root) => `<option value="${esc(root)}"${root === settings.root ? " selected" : ""}>${esc(root)}</option>`).join("")}</select>`
     : `<span class="mono">${esc(settings.root)}</span>`);
   const rulesOf = (id) => l.bands.flatMap((b) => b.kinds.flatMap((k) => k.rules.filter((r) => r.pack === id)));
+  const detailById = new Map(settings?.details?.map((detail) => [detail.id, detail]));
   const packs = l.packs
     .map((p) => {
       const rules = rulesOf(p.id);
@@ -423,15 +435,18 @@ export const layersPage = (state) => {
         : p.on ? `<span class="on"><i aria-hidden="true"></i>${saved?.required ? "On · Required" : "On"}</span>` : '<span class="muted">Off</span>';
       const strength = p.on ? kinds.join(", ") || "–" : "–";
       const practiceList = p.on ? practices.join(", ") || "–" : "–";
-      return `<tr><td><strong>${esc(p.id)}</strong><details class="pack-details"><summary>Details</summary><div>Source: ${esc(p.source)}</div><div>Strength: ${esc(strength)}</div><div>Practices: ${esc(practiceList)}</div></details></td><td>${esc(p.source)}</td><td>${status}</td><td class="r">${num(p.rules)}</td><td>${esc(strength)}</td><td class="wrap">${esc(practiceList)}</td></tr>`;
+      const detail = detailById.get(p.id);
+      const panel = detail ? `<tr class="pack-detail-row"><td colspan="6"><details id="details-${esc(p.id)}" data-pack-details><summary id="summary-${esc(p.id)}" aria-label="Checks and setup for ${esc(p.id)}">Checks and setup</summary>${packDetailsPanel(p, detail)}</details></td></tr>` : "";
+      return `<tr><td><strong>${esc(p.id)}</strong></td><td>${esc(p.source)}</td><td>${status}</td><td class="r">${num(p.rules)}</td><td>${esc(strength)}</td><td class="wrap">${esc(practiceList)}</td></tr>${panel}`;
     })
     .join("");
   return `${header(`Layers · ${esc(l.project)}`, "Strongest first. A rule can only move up.", projectPicker(state, "ly-proj"))}
 <div class="next"><span class="lbl">Weakest practice</span><span style="flex:1 1 320px;font-size:14px">${verdict}</span></div>
 ${bands}
 <section class="mod" aria-labelledby="ly-packs"><form id="pack-settings"><div class="modh"><h2 class="h2" id="ly-packs">Packs</h2><span class="muted">Bundled with Warden${state.health?.version ? ` ${esc(state.health.version)}` : ""}, plus any local pack in .warden</span></div>
-${settings ? `<div class="pack-toolbar"><div class="controls">${checkout}</div><p>Changes apply to this checkout. New packs cover all paths. After saving, run <code>warden compile</code> with this Warden build and sign the commit.</p></div>` : ""}
+${settings ? `<div class="pack-toolbar"><div class="controls">${checkout}</div><p>Changes apply to this checkout. New packs cover all paths. After saving, run <code>warden compile</code> with this Warden build and sign the commit.</p><p>Readiness reflects this checkout and the dashboard process. Check separate runners in their own environment.</p></div>` : ""}
 <div class="scroll"><table class="pack-table"><thead><tr><th scope="col">Pack</th><th scope="col">Source</th><th scope="col">In this project</th><th scope="col" class="r">Rules</th><th scope="col">Strength</th><th scope="col">Practices</th></tr></thead><tbody>${packs}</tbody></table></div>
+${settings?.jev ? `<details class="pack-evaluator" id="jev-evaluator" data-pack-details><summary id="jev-evaluator-summary">Jev live calls (TypeSafe) ${readinessTag(settings.jev.status)}</summary><div class="pack-detail-body"><p>${settings.jev.packIds.length ? `Declared in ${esc(settings.jev.packIds.join(", "))}.` : "Optional evaluator. No pack in this checkout declares a Jev check."}</p><p>${esc(settings.jev.setup)}</p></div></details>` : ""}
 ${settings ? `<div class="pack-toolbar controls"><button type="submit" class="btn"${!packCount || packSaving ? " disabled" : ""}>${packSaving ? "Saving…" : "Save pack changes"}</button><button type="button" class="btn" data-action="discard-packs"${!packCount || packSaving ? " disabled" : ""}>Discard changes</button><span role="status">${esc(packMessage ?? (packCount ? plural(packCount, "unsaved change") : ""))}</span></div>` : ""}</form></section>`;
 };
 

@@ -3,7 +3,8 @@ import { closeSync, lstatSync, openSync, readFileSync, realpathSync, renameSync,
 import { join } from "node:path";
 import { parseDocument } from "yaml";
 import { loadRecords, parseConfig } from "../records/load.js";
-import { listPacks } from "./packs.js";
+import { jevReadiness, packDetails } from "./pack-details.js";
+import { listPacks, packCatalog } from "./packs.js";
 export class PackSettingsError extends Error {
     status;
     constructor(status, message) {
@@ -29,8 +30,16 @@ function readConfig(root, project) {
 }
 export async function packSettings(root, project, wardenRoot) {
     const { text, revision } = readConfig(root, project);
-    const packs = await listPacks(root, wardenRoot, text);
-    return { root, revision, packs: packs.map(({ id, on }) => ({ id, on, required: id === "core" && on })) };
+    const catalog = await packCatalog(root, wardenRoot, text);
+    const details = catalog.map(({ pack }) => packDetails(root, pack));
+    const jevPackIds = details.filter(({ checks }) => checks.some(({ model }) => model?.startsWith("jev-"))).map(({ id }) => id);
+    return {
+        root,
+        revision,
+        packs: catalog.map(({ row: { id, on } }) => ({ id, on, required: id === "core" && on })),
+        details,
+        jev: { ...jevReadiness(), packIds: jevPackIds },
+    };
 }
 function parseChanges(value) {
     if (!Array.isArray(value) || value.length === 0)

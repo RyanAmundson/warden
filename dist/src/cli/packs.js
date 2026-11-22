@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { KIND_LADDER } from "../records/types.js";
 import { parseConfig, readPack, readText } from "../records/load.js";
 const ids = (dir) => (existsSync(dir) ? readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name) : []);
-export async function listPacks(root, wardenRoot, source) {
+export async function packCatalog(root, wardenRoot, source) {
     const configFile = join(root, ".warden", "config.yaml");
     const text = source ?? await readText(configFile);
     const configured = new Map((text === undefined ? [] : parseConfig(configFile, text).packs).filter((p) => p.enabled !== false).map((p) => [p.id, p.paths]));
@@ -13,9 +13,12 @@ export async function listPacks(root, wardenRoot, source) {
         const { pack, source } = await readPack(root, wardenRoot, id, configFile);
         const all = pack.practices.flatMap((x) => x.guardrails);
         const kinds = Object.fromEntries(KIND_LADDER.flat().flatMap((k) => (all.some((g) => g.kind === k) ? [[k, all.filter((g) => g.kind === k).length]] : [])));
-        rows.push({ id, source, practices: pack.practices.length, kinds, on: configured.has(id), paths: configured.get(id) ?? [] });
+        rows.push({ pack, row: { id, source, practices: pack.practices.length, kinds, on: configured.has(id), paths: configured.get(id) ?? [] } });
     }
-    return rows.sort((a, b) => (a.source === b.source ? a.id.localeCompare(b.id) : a.source === "bundled" ? -1 : 1));
+    return rows.sort(({ row: a }, { row: b }) => (a.source === b.source ? a.id.localeCompare(b.id) : a.source === "bundled" ? -1 : 1));
+}
+export async function listPacks(root, wardenRoot, source) {
+    return (await packCatalog(root, wardenRoot, source)).map(({ row }) => row);
 }
 export const initAction = (rows) => `run warden init --packs ${rows.map((r) => r.id).join(",")}`;
 export async function runPacks(root, wardenRoot, json) {

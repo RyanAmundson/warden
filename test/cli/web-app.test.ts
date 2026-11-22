@@ -56,7 +56,7 @@ beforeEach(() => {
   up = true;
   FakeSource.all = [];
   bodies = { "/api/health": health, "/api/projects": { projects: [] }, "/api/tamper": { open: [], recent: [] }, "/api/determinism": { projects: [] } };
-  const root = { set innerHTML(v: string) { html = v; }, get innerHTML() { return html; }, addEventListener() {}, querySelector() { return null; } };
+  const root = { set innerHTML(v: string) { html = v; }, get innerHTML() { return html; }, addEventListener() {}, querySelector() { return null; }, querySelectorAll() { return []; } };
   vi.stubGlobal("document", { getElementById: (id: string) => (id === "app" ? root : null), activeElement: null, title: "" });
   vi.stubGlobal("window", { addEventListener() {} });
   vi.stubGlobal("CSS", { escape: (s: string) => s });

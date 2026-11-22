@@ -42,10 +42,15 @@ const render = () => {
   state.now = Date.now();
   const key = focusKey(document.activeElement);
   const caret = document.activeElement?.selectionStart;
+  const openDetails = state.page === "layers" ? [...root.querySelectorAll("[data-pack-details][open]")].map((details) => details.id) : [];
   try {
     root.innerHTML = renderApp(state);
   } catch (cause) {
     root.innerHTML = renderApp({ ...state, lost: false, error: { error: `This page could not be drawn: ${cause.message}`, next: "reload this page" } });
+  }
+  for (const id of openDetails) {
+    const details = root.querySelector(`#${CSS.escape(id)}`);
+    if (details) details.open = true;
   }
   document.title = pageTitle(state);
   const el = key ? root.querySelector(key) : null;
