@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, it, vi } from "vitest";
@@ -132,8 +132,20 @@ it("reads each unchecked commit once when listing alerts for a repository", () =
     mkdirSync(resolve(stateFile(), ".."), { recursive: true });
     writeFileSync(stateFile(), JSON.stringify({ roots: { [root]: { open } } }));
 
-    expect(openAlerts(root)).toEqual(open);
+    const trace = join(scratch, "git-trace.jsonl");
+    vi.stubEnv("GIT_TRACE2_EVENT", trace);
+    try {
+      expect(openAlerts(root)).toEqual(open);
+    } finally {
+      vi.unstubAllEnvs();
+    }
     expect(lookup.mock.calls).toEqual([[root, [first, second, missing]]]);
+    const commands = readFileSync(trace, "utf8").trim().split("\n")
+      .map((line) => JSON.parse(line) as { event: string; argv?: string[] })
+      .filter(({ event }) => event === "start")
+      .map(({ argv }) => argv);
+    expect(commands.filter((argv) => argv?.includes("--batch-check=%(objectname) %(objecttype)"))).toHaveLength(1);
+    expect(commands.filter((argv) => argv?.includes("--verify"))).toEqual([]);
 
     const backlog = Array.from({ length: 260 }, (_, i) => ({ ...alert, file: (i + 1).toString(16).padStart(first.length, "0") }));
     writeFileSync(stateFile(), JSON.stringify({ roots: { [root]: { open: backlog } } }));

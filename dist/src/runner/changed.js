@@ -13,9 +13,9 @@ const env = () => ({
     GIT_CONFIG_KEY_0: "core.commitGraph",
     GIT_CONFIG_VALUE_0: "false",
 });
-const git = (root, args) => {
+const git = (root, args, input) => {
     try {
-        return { ok: true, out: execFileSync("git", args, { cwd: root, env: env(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }), err: "" };
+        return { ok: true, out: execFileSync("git", args, { cwd: root, env: env(), encoding: "utf8", input, stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] }), err: "" };
     }
     catch (cause) {
         const e = cause;
@@ -46,8 +46,8 @@ export function resolveBaseCommit(root, name) {
     return { name, commit: upstream.startsWith("refs/remotes/") ? (commitOf(root, upstream) ?? local) : local };
 }
 const comparisonCommit = (root, base) => typeof base === "string" ? (resolveBaseCommit(root, base)?.commit ?? base) : base.commit;
-const must = (root, args) => {
-    const r = git(root, args);
+const must = (root, args, input) => {
+    const r = git(root, args, input);
     if (!r.ok)
         throw new Error(`git ${args.join(" ")} failed: ${r.err.trim()}`);
     return r.out;
@@ -422,8 +422,15 @@ export function stagedMismatch(root, base, readInherited = false) {
         ...(inherited.size === 0 ? {} : { inherited: blobs(inherited) }),
     };
 }
+export const COMMIT_LOOKUP_BATCH = 256;
+const fullObjectId = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 export function commitsOf(root, shas) {
-    const known = shas.filter((sha) => hasCommit(root, sha));
+    const batchable = shas.length > 1 && shas.length <= COMMIT_LOOKUP_BATCH && shas.every((sha) => fullObjectId.test(sha));
+    const known = batchable
+        ? must(root, ["cat-file", "--batch-check=%(objectname) %(objecttype)"], shas.map((sha) => `${sha}^{commit}\n`).join(""))
+            .split("\n")
+            .flatMap((line) => line.endsWith(" commit") ? [line.slice(0, -" commit".length)] : [])
+        : shas.filter((sha) => hasCommit(root, sha));
     return known.length === 0 ? [] : described(root, ["--no-walk=unsorted", ...known]);
 }
 export const lockVersionAt = (root, commit) => {

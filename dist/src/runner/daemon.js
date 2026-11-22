@@ -5,7 +5,7 @@ import { setImmediate as yieldToEvents } from "node:timers/promises";
 import { COMMIT_HOOK, RELEASES } from "../compiler/emit.js";
 import { FIRST_STAMPING, LOCK_PATH, firstLine, olderThan, readLock } from "../compiler/lock.js";
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
-import { allTips, commitsOf, commonDir, covers, holdersOf, lockVersionAt, newCommits, reachableFrom, reachable, repoTips, restoreAction, worktrees } from "./changed.js";
+import { COMMIT_LOOKUP_BATCH, allTips, commitsOf, commonDir, covers, holdersOf, lockVersionAt, newCommits, reachableFrom, reachable, repoTips, restoreAction, worktrees } from "./changed.js";
 import { claudeDir, commitHookItem, pluginAction, pluginState } from "./doctor.js";
 import { LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, evidenceProjects, readEvidenceFrom, readEvidenceTail, wardenHome } from "./evidence.js";
 import { formatFeedback } from "./feedback.js";
@@ -87,7 +87,6 @@ export function readState() {
         throw new RecordError(stateFile(), "", `is not valid JSON. Next action: delete ${stateFile()} and restart the daemon; it rebuilds the file from git and Evidence`);
     return { roots: value.roots ?? {}, repos: value.repos ?? {} };
 }
-const ALERT_COMMIT_BATCH = 256;
 const REPO_WIDE = new Set(["hook-unwired", "unchecked-commit"]);
 const repoWide = (d) => REPO_WIDE.has(d.detail) || (d.detail === "scan-error" && d.file === HISTORY);
 export function openAlerts(root) {
@@ -99,8 +98,8 @@ export function openAlerts(root) {
         .filter((d) => d.repo === repo && (d.root === root || repoWide(d)));
     const unchecked = [...new Set(alerts.filter((d) => d.detail === "unchecked-commit").map((d) => d.file))];
     const commits = new Map();
-    for (let offset = 0; offset < unchecked.length; offset += ALERT_COMMIT_BATCH) {
-        for (const commit of commitsOf(root, unchecked.slice(offset, offset + ALERT_COMMIT_BATCH)))
+    for (let offset = 0; offset < unchecked.length; offset += COMMIT_LOOKUP_BATCH) {
+        for (const commit of commitsOf(root, unchecked.slice(offset, offset + COMMIT_LOOKUP_BATCH)))
             commits.set(commit.commit, commit);
     }
     return alerts.filter((d) => {
