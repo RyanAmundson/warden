@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { existsSync, lstatSync, readdirSync } from "node:fs";
@@ -137,6 +137,22 @@ export function lastCommittedText(root, path) {
 }
 export const mergeBase = (root, comparison) => {
     const r = git(root, ["merge-base", comparisonCommit(root, comparison), "HEAD"]);
+    return checkedMergeBase(root, comparison, r);
+};
+export async function mergeBaseForScan(root, comparison, head) {
+    const args = ["merge-base", comparisonCommit(root, comparison), head ?? "HEAD"];
+    const result = await new Promise((resolve, reject) => {
+        const child = execFile("git", args, { cwd: root, env: env(), encoding: "utf8" }, (error, out) => {
+            if (error !== null && typeof error.code !== "number")
+                reject(error);
+            else
+                resolve({ ok: error === null, out });
+        });
+        child.stdin?.end();
+    });
+    return checkedMergeBase(root, comparison, result);
+}
+function checkedMergeBase(root, comparison, r) {
     const base = baseName(comparison);
     if (r.ok)
         return r.out.trim();
@@ -144,7 +160,7 @@ export const mergeBase = (root, comparison) => {
         throw new RecordError("", "/base", `${base} and HEAD have no merge base in this shallow clone. Next action: run git fetch --unshallow, then run warden check --base ${base} again.`);
     }
     throw new RecordError("", "/base", `${base} and HEAD share no history. Next action: run warden check --base <the branch this work merges into>.`);
-};
+}
 const HUNK = /^@@ -\S+ \+(\d+)(?:,(\d+))? @@/;
 async function gitRecords(root, args, delimiter, receive, input) {
     const child = spawn("git", args, { cwd: root, env: env(), stdio: ["pipe", "pipe", "pipe"] });
@@ -250,8 +266,7 @@ export async function changesSinceMergeBase(root, base, stagedOnly = false) {
             lines.set(file, "all");
     return { lines, renames: await renamesAt(root, at, stagedOnly) };
 }
-export const renamesSinceMergeBase = (root, base) => renamesAt(root, mergeBase(root, base));
-async function renamesAt(root, at, stagedOnly = false) {
+export async function renamesAt(root, at, stagedOnly = false) {
     const entries = [];
     const args = ["diff", "-z", "-M", "--name-status", "--relative", ...(stagedOnly ? ["--cached"] : []), at];
     const error = await gitRecords(root, args, "\0", (entry) => entries.push(entry));
@@ -474,11 +489,13 @@ export function restoreAction(root, path) {
     return `run git checkout ${removedBy}^ -- .warden in ${root}`;
 }
 export function changeSignatures(root, base, dir, allowedSignersFile, staged, alongside) {
-    const at = mergeBase(root, base);
+    return changeSignaturesAt(root, mergeBase(root, base), "HEAD", dir, allowedSignersFile, staged, alongside);
+}
+export function changeSignaturesAt(root, at, head, dir, allowedSignersFile, staged, alongside) {
     const icase = git(root, ["config", "--bool", "core.ignorecase"]).out.trim() === "true";
     const spec = `:(literal${icase ? ",icase" : ""})${dir}`;
     const diff = (...trees) => names(must(root, ["diff", "-z", "--name-only", "--no-renames", "--ignore-submodules=none", "--relative", ...trees, "--", spec]));
-    const committed = diff(at, "HEAD");
+    const committed = diff(at, head);
     const judged = staged ? diff("--cached", at) : committed;
     const scope = [...new Set([...committed, ...judged])];
     const files = new Map();
@@ -486,7 +503,7 @@ export function changeSignatures(root, base, dir, allowedSignersFile, staged, al
         return { files, restore: { base: at, paths: [], known: [], stray: [], unstage: [], aliased: false } };
     const verify = ["-c", "gpg.ssh.program=ssh-keygen", "-c", "gpg.program=false", "-c", "gpg.x509.program=false", "-c", `gpg.ssh.allowedSignersFile=${allowedSignersFile}`, "--literal-pathspecs"];
     const mark = `\x01${randomUUID()}`;
-    const log = must(root, [...verify, "log", "-z", "--topo-order", "--diff-merges=dense-combined", "--no-renames", "--ignore-submodules=none", "--relative", "--name-only", `--format=${mark}%G?`, `${at}..HEAD`, "--", ...scope]);
+    const log = must(root, [...verify, "log", "-z", "--topo-order", "--diff-merges=dense-combined", "--no-renames", "--ignore-submodules=none", "--relative", "--name-only", `--format=${mark}%G?`, `${at}..${head}`, "--", ...scope]);
     const seen = new Set();
     const bad = new Map();
     for (const entry of log.split(mark).slice(1)) {

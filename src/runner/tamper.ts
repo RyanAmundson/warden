@@ -7,7 +7,7 @@ import { LOCK_FORMAT, LOCK_PATH, PROJECT_SOURCE, type Lock, canonicalJson, readL
 import { RecordError, readText } from "../records/load.js";
 import { type BenchSettings, type Kind, type RecordSet, kindRank } from "../records/types.js";
 import { BASELINE_PATH, type Baseline, carryRenames, projectWideEntries, readBaseline } from "./baseline.js";
-import { type BaseRef, type Restore, changeSignatures, trackedFiles, renamesSinceMergeBase, containsHead, resolveBaseCommit, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
+import { type BaseRef, type Restore, changeSignaturesAt, trackedFiles, renamesAt, containsHead, resolveBaseCommit, headCommit, historyOf, lastCommittedText, mergeBase, mergeBaseForScan, showAtCommit } from "./changed.js";
 
 export interface Tamper {
   file: string;
@@ -69,7 +69,11 @@ export function recordedBases(root: string): string[] {
 }
 
 export function readBaseLock(root: string, comparison: BaseRef): Lock | undefined {
-  const text = showAtMergeBase(root, comparison, LOCK_PATH);
+  return readBaseLockAt(root, comparison, mergeBase(root, comparison));
+}
+
+function readBaseLockAt(root: string, comparison: BaseRef, at: string): Lock | undefined {
+  const text = showAtCommit(root, at, LOCK_PATH);
   const base = typeof comparison === "string" ? comparison : comparison.name;
   if (text === undefined) return undefined;
   let before: Lock;
@@ -113,10 +117,10 @@ export const widens = (now: string, was: string): boolean => {
   return a.length === b.length && a.every((glob, i) => globWidens(glob, b[i] as string));
 };
 
-const loosened = async (set: RecordSet, wardenRoot: string, comparison: BaseRef, lock: Lock): Promise<Tamper[]> => {
+const loosened = async (set: RecordSet, wardenRoot: string, comparison: BaseRef, at: string, lock: Lock): Promise<Tamper[]> => {
   const { root } = set;
   const base = typeof comparison === "string" ? comparison : comparison.name;
-  const before = readBaseLock(root, comparison);
+  const before = readBaseLockAt(root, comparison, at);
   if (before === undefined) return [];
   const changed = (was: unknown, now: unknown): boolean => was !== undefined && was !== now;
   const found: Tamper[] = [];
@@ -162,8 +166,8 @@ const loosened = async (set: RecordSet, wardenRoot: string, comparison: BaseRef,
   }
   const editedCode = Object.keys(before.sources ?? {}).filter((k) => ((/^\.warden\/packs\/[^/]+\/./.test(k) && !k.endsWith("/pack.yaml")) || k.startsWith(PROJECT_SOURCE)) && before.sources[k] !== lock.sources[k]);
   if (editedCode.length > 0) found.push({ file: LOCK_PATH, detail: "loosened" });
-  const renames = await renamesSinceMergeBase(root, comparison);
-  const baseBaseline = carryRenames(JSON.parse(showAtMergeBase(root, comparison, BASELINE_PATH) ?? "{}") as Baseline, renames);
+  const renames = await renamesAt(root, at);
+  const baseBaseline = carryRenames(JSON.parse(showAtCommit(root, at, BASELINE_PATH) ?? "{}") as Baseline, renames);
   for (const [id, entries] of Object.entries(carryRenames(readBaseline(root), renames))) {
     if (id in lock.guardrails && !(id in before.guardrails)) continue;
     for (const [file, n] of Object.entries(entries)) {
@@ -175,10 +179,10 @@ const loosened = async (set: RecordSet, wardenRoot: string, comparison: BaseRef,
   return sources.length === 0 ? found : found.map((t) => (t.file === LOCK_PATH && t.detail === "loosened" ? { ...t, sources } : t));
 };
 
-const unsignedChanges = (root: string, base: BaseRef, wardenRoot: string, staged: boolean): Tamper[] => {
+const unsignedChanges = (root: string, at: string, head: string, wardenRoot: string, staged: boolean): Tamper[] => {
   const signers = join(wardenRoot, SIGNERS_FILE);
   const listed = existsSync(signers) && readFileSync(signers, "utf8").trim() !== "";
-  const { files, restore } = changeSignatures(root, base, ".warden", signers, staged, [BASELINE_PATH]);
+  const { files, restore } = changeSignaturesAt(root, at, head, ".warden", signers, staged, [BASELINE_PATH]);
   const failed = [...files].filter(([file]) => file !== BASELINE_PATH);
   if (!listed) return failed.map(([file]): Tamper => ({ file, detail: "no-allowed-signers" }));
   if (failed.some(([, status]) => status !== "N") && spawnSync("ssh-keygen", ["-?"]).error !== undefined) {
@@ -216,5 +220,10 @@ export async function findTampering(set: RecordSet, wardenRoot: string, base: Ba
 
   found.push(...projectWideEntries(readBaseline(root)).map((guardrail): Tamper => ({ file: BASELINE_PATH, detail: "loosened", guardrail })));
   const comparison = typeof base === "string" ? (resolveBaseCommit(root, base) ?? base) : base;
-  return [...found, ...await loosened(set, wardenRoot, comparison, lock), ...unsignedChanges(root, comparison, wardenRoot, staged)];
+  const head = headCommit(root);
+  const at = await mergeBaseForScan(root, comparison, head);
+  const weakened = await loosened(set, wardenRoot, comparison, at, lock);
+  const unsigned = unsignedChanges(root, at, head ?? "HEAD", wardenRoot, staged);
+  if (headCommit(root) === head) return [...found, ...weakened, ...unsigned];
+  throw new RecordError(root, "", "the checkout's HEAD changed during the rule integrity scan. Next action: rerun Warden against the current HEAD");
 }

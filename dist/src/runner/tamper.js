@@ -7,7 +7,7 @@ import { LOCK_FORMAT, LOCK_PATH, PROJECT_SOURCE, canonicalJson, readLock, sha256
 import { RecordError, readText } from "../records/load.js";
 import { kindRank } from "../records/types.js";
 import { BASELINE_PATH, carryRenames, projectWideEntries, readBaseline } from "./baseline.js";
-import { changeSignatures, trackedFiles, renamesSinceMergeBase, containsHead, resolveBaseCommit, historyOf, lastCommittedText, showAtMergeBase } from "./changed.js";
+import { changeSignaturesAt, trackedFiles, renamesAt, containsHead, resolveBaseCommit, headCommit, historyOf, lastCommittedText, mergeBase, mergeBaseForScan, showAtCommit } from "./changed.js";
 const SETTINGS_FILES = [".claude/settings.json", ".claude/settings.local.json"];
 export const SIGNERS_FILE = "allowed_signers";
 const isObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -52,7 +52,10 @@ export function recordedBases(root) {
     }));
 }
 export function readBaseLock(root, comparison) {
-    const text = showAtMergeBase(root, comparison, LOCK_PATH);
+    return readBaseLockAt(root, comparison, mergeBase(root, comparison));
+}
+function readBaseLockAt(root, comparison, at) {
+    const text = showAtCommit(root, at, LOCK_PATH);
     const base = typeof comparison === "string" ? comparison : comparison.name;
     if (text === undefined)
         return undefined;
@@ -88,10 +91,10 @@ export const widens = (now, was) => {
     const [a, b] = [now.split(" & "), was.split(" & ")];
     return a.length === b.length && a.every((glob, i) => globWidens(glob, b[i]));
 };
-const loosened = async (set, wardenRoot, comparison, lock) => {
+const loosened = async (set, wardenRoot, comparison, at, lock) => {
     const { root } = set;
     const base = typeof comparison === "string" ? comparison : comparison.name;
-    const before = readBaseLock(root, comparison);
+    const before = readBaseLockAt(root, comparison, at);
     if (before === undefined)
         return [];
     const changed = (was, now) => was !== undefined && was !== now;
@@ -139,8 +142,8 @@ const loosened = async (set, wardenRoot, comparison, lock) => {
     const editedCode = Object.keys(before.sources ?? {}).filter((k) => ((/^\.warden\/packs\/[^/]+\/./.test(k) && !k.endsWith("/pack.yaml")) || k.startsWith(PROJECT_SOURCE)) && before.sources[k] !== lock.sources[k]);
     if (editedCode.length > 0)
         found.push({ file: LOCK_PATH, detail: "loosened" });
-    const renames = await renamesSinceMergeBase(root, comparison);
-    const baseBaseline = carryRenames(JSON.parse(showAtMergeBase(root, comparison, BASELINE_PATH) ?? "{}"), renames);
+    const renames = await renamesAt(root, at);
+    const baseBaseline = carryRenames(JSON.parse(showAtCommit(root, at, BASELINE_PATH) ?? "{}"), renames);
     for (const [id, entries] of Object.entries(carryRenames(readBaseline(root), renames))) {
         if (id in lock.guardrails && !(id in before.guardrails))
             continue;
@@ -154,10 +157,10 @@ const loosened = async (set, wardenRoot, comparison, lock) => {
     const sources = Object.keys({ ...before.sources, ...lock.sources }).filter((k) => (k.startsWith(".warden/") || (k.startsWith(PROJECT_SOURCE) && k in (before.sources ?? {}))) && before.sources?.[k] !== lock.sources[k]);
     return sources.length === 0 ? found : found.map((t) => (t.file === LOCK_PATH && t.detail === "loosened" ? { ...t, sources } : t));
 };
-const unsignedChanges = (root, base, wardenRoot, staged) => {
+const unsignedChanges = (root, at, head, wardenRoot, staged) => {
     const signers = join(wardenRoot, SIGNERS_FILE);
     const listed = existsSync(signers) && readFileSync(signers, "utf8").trim() !== "";
-    const { files, restore } = changeSignatures(root, base, ".warden", signers, staged, [BASELINE_PATH]);
+    const { files, restore } = changeSignaturesAt(root, at, head, ".warden", signers, staged, [BASELINE_PATH]);
     const failed = [...files].filter(([file]) => file !== BASELINE_PATH);
     if (!listed)
         return failed.map(([file]) => ({ file, detail: "no-allowed-signers" }));
@@ -195,5 +198,11 @@ export async function findTampering(set, wardenRoot, base, staged) {
     }
     found.push(...projectWideEntries(readBaseline(root)).map((guardrail) => ({ file: BASELINE_PATH, detail: "loosened", guardrail })));
     const comparison = typeof base === "string" ? (resolveBaseCommit(root, base) ?? base) : base;
-    return [...found, ...await loosened(set, wardenRoot, comparison, lock), ...unsignedChanges(root, comparison, wardenRoot, staged)];
+    const head = headCommit(root);
+    const at = await mergeBaseForScan(root, comparison, head);
+    const weakened = await loosened(set, wardenRoot, comparison, at, lock);
+    const unsigned = unsignedChanges(root, at, head ?? "HEAD", wardenRoot, staged);
+    if (headCommit(root) === head)
+        return [...found, ...weakened, ...unsigned];
+    throw new RecordError(root, "", "the checkout's HEAD changed during the rule integrity scan. Next action: rerun Warden against the current HEAD");
 }

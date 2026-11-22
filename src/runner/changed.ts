@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { existsSync, lstatSync, readdirSync } from "node:fs";
@@ -163,13 +163,29 @@ export function lastCommittedText(root: string, path: string): string | undefine
 
 export const mergeBase = (root: string, comparison: BaseRef): string => {
   const r = git(root, ["merge-base", comparisonCommit(root, comparison), "HEAD"]);
+  return checkedMergeBase(root, comparison, r);
+};
+
+export async function mergeBaseForScan(root: string, comparison: BaseRef, head: string | undefined): Promise<string> {
+  const args = ["merge-base", comparisonCommit(root, comparison), head ?? "HEAD"];
+  const result = await new Promise<{ ok: boolean; out: string }>((resolve, reject) => {
+    const child = execFile("git", args, { cwd: root, env: env(), encoding: "utf8" }, (error, out) => {
+      if (error !== null && typeof error.code !== "number") reject(error);
+      else resolve({ ok: error === null, out });
+    });
+    child.stdin?.end();
+  });
+  return checkedMergeBase(root, comparison, result);
+}
+
+function checkedMergeBase(root: string, comparison: BaseRef, r: { ok: boolean; out: string }): string {
   const base = baseName(comparison);
   if (r.ok) return r.out.trim();
   if (git(root, ["rev-parse", "--is-shallow-repository"]).out.trim() === "true") {
     throw new RecordError("", "/base", `${base} and HEAD have no merge base in this shallow clone. Next action: run git fetch --unshallow, then run warden check --base ${base} again.`);
   }
   throw new RecordError("", "/base", `${base} and HEAD share no history. Next action: run warden check --base <the branch this work merges into>.`);
-};
+}
 
 export interface Changes {
   lines: Map<string, Set<number> | "all">;
@@ -275,10 +291,7 @@ export async function changesSinceMergeBase(root: string, base: BaseRef, stagedO
   return { lines, renames: await renamesAt(root, at, stagedOnly) };
 }
 
-export const renamesSinceMergeBase = (root: string, base: BaseRef): Promise<Changes["renames"]> =>
-  renamesAt(root, mergeBase(root, base));
-
-async function renamesAt(root: string, at: string, stagedOnly = false): Promise<Changes["renames"]> {
+export async function renamesAt(root: string, at: string, stagedOnly = false): Promise<Changes["renames"]> {
   const entries: string[] = [];
   const args = ["diff", "-z", "-M", "--name-status", "--relative", ...(stagedOnly ? ["--cached"] : []), at];
   const error = await gitRecords(root, args, "\0", (entry) => entries.push(entry));
@@ -566,18 +579,21 @@ export interface Signatures {
 }
 
 export function changeSignatures(root: string, base: BaseRef, dir: string, allowedSignersFile: string, staged: boolean, alongside: string[]): Signatures {
-  const at = mergeBase(root, base);
+  return changeSignaturesAt(root, mergeBase(root, base), "HEAD", dir, allowedSignersFile, staged, alongside);
+}
+
+export function changeSignaturesAt(root: string, at: string, head: string, dir: string, allowedSignersFile: string, staged: boolean, alongside: string[]): Signatures {
   const icase = git(root, ["config", "--bool", "core.ignorecase"]).out.trim() === "true";
   const spec = `:(literal${icase ? ",icase" : ""})${dir}`;
   const diff = (...trees: string[]): string[] => names(must(root, ["diff", "-z", "--name-only", "--no-renames", "--ignore-submodules=none", "--relative", ...trees, "--", spec]));
-  const committed = diff(at, "HEAD");
+  const committed = diff(at, head);
   const judged = staged ? diff("--cached", at) : committed;
   const scope = [...new Set([...committed, ...judged])];
   const files = new Map<string, string>();
   if (scope.length === 0) return { files, restore: { base: at, paths: [], known: [], stray: [], unstage: [], aliased: false } };
   const verify = ["-c", "gpg.ssh.program=ssh-keygen", "-c", "gpg.program=false", "-c", "gpg.x509.program=false", "-c", `gpg.ssh.allowedSignersFile=${allowedSignersFile}`, "--literal-pathspecs"];
   const mark = `\x01${randomUUID()}`;
-  const log = must(root, [...verify, "log", "-z", "--topo-order", "--diff-merges=dense-combined", "--no-renames", "--ignore-submodules=none", "--relative", "--name-only", `--format=${mark}%G?`, `${at}..HEAD`, "--", ...scope]);
+  const log = must(root, [...verify, "log", "-z", "--topo-order", "--diff-merges=dense-combined", "--no-renames", "--ignore-submodules=none", "--relative", "--name-only", `--format=${mark}%G?`, `${at}..${head}`, "--", ...scope]);
   const seen = new Set<string>();
   const bad = new Map<string, string>();
   for (const entry of log.split(mark).slice(1)) {

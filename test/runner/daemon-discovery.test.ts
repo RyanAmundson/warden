@@ -1,11 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, it, vi } from "vitest";
+import { serve } from "../../src/cli/daemon.js";
+import { compile } from "../../src/compiler/compile.js";
 import * as changed from "../../src/runner/changed.js";
 import { type Daemon, openAlerts, startWatching, stateFile } from "../../src/runner/daemon.js";
-import { appendEvidence } from "../../src/runner/evidence.js";
+import { appendEvidence, readEvidence } from "../../src/runner/evidence.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
 
@@ -161,3 +163,54 @@ it("reads each unchecked commit once when listing alerts for a repository", () =
     rmSync(scratch, { recursive: true, force: true });
   }
 });
+
+it.each([false, true])("serves dashboard health while a merge-base lookup waits (HEAD changes: %s)", async (moveHead) => {
+  const scratch = realpathSync(mkdtempSync(join(tmpdir(), "warden-merge-base-wait-")));
+  const root = join(scratch, "repo");
+  const bin = join(scratch, "bin");
+  const active = join(scratch, "merge-base-active");
+  let dashboard: Awaited<ReturnType<typeof serve>> | undefined;
+
+  try {
+    init(root, "repo");
+    await compile(root, wardenRoot);
+    git(root, "add", ".warden");
+    git(root, "commit", "-qm", "Record fixture lock");
+    appendEvidence("repo", { at: new Date().toISOString(), kind: "registered", root });
+    const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+    mkdirSync(bin);
+    writeFileSync(join(bin, "git"), `#!/bin/sh
+if [ "$1" = merge-base ] && [ "$2" != --is-ancestor ]; then
+  touch "$WARDEN_FIXTURE_ACTIVE"
+  sleep 1
+  rm "$WARDEN_FIXTURE_ACTIVE"
+fi
+exec "$WARDEN_FIXTURE_GIT" "$@"
+`, { mode: 0o755 });
+    vi.stubEnv("WARDEN_FIXTURE_GIT", realGit);
+    vi.stubEnv("WARDEN_FIXTURE_ACTIVE", active);
+    vi.stubEnv("PATH", `${bin}:${process.env.PATH}`);
+
+    dashboard = await serve(wardenRoot, 0, { intervalMs: 60_000 });
+    await vi.waitFor(() => expect(existsSync(active)).toBe(true), { timeout: 1500 });
+    const response = await fetch(`http://127.0.0.1:${dashboard.port}/api/health`);
+    expect(response.status).toBe(200);
+    expect(existsSync(active)).toBe(true);
+    if (moveHead) {
+      writeFileSync(join(root, "notes.txt"), "Updated during the scan");
+      git(root, "add", "notes.txt");
+      git(root, "commit", "-qm", "Update fixture notes");
+    }
+    await dashboard.daemon.settled();
+    const errors = readEvidence("repo").filter((entry) => entry.kind === "tampered" && entry.detail === "record-error");
+    if (moveHead) expect(errors.some((entry) => entry.next?.includes("rerun Warden against the current HEAD"))).toBe(true);
+    else {
+      expect(errors).toEqual([]);
+      expect([...dashboard.daemon.projects.get(root)!.open.values()].map((alert) => alert.detail)).toEqual(["hook-unwired"]);
+    }
+  } finally {
+    await dashboard?.close();
+    vi.unstubAllEnvs();
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}, 10_000);
