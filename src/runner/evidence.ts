@@ -53,6 +53,7 @@ export interface Evidence {
   passes?: Record<string, number>;
   cachedRules?: string[];
   steps?: Partial<Record<Step, number>>;
+  baseVerificationMs?: number;
   root?: string;
   tree?: string;
   scope?: "full" | "partial";

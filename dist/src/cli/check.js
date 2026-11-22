@@ -249,6 +249,7 @@ const check = async (opts, live) => {
             exit: code,
             ms: performance.now() - live.started,
             steps: live.steps,
+            baseVerificationMs: live.baseVerificationMs,
             files: inputs.length,
             ...(inputs.length === 1 ? { file: inputs[0] } : {}),
             bytes,
@@ -289,9 +290,16 @@ const check = async (opts, live) => {
             }
         }
     }
-    const comparison = verifyCheckBase(root, opts.base ?? (opts.hook === "claude" ? hookBase(root) : undefined), set.config.base);
+    let comparison;
+    const verificationStarted = performance.now();
+    try {
+        comparison = verifyCheckBase(root, opts.base ?? (opts.hook === "claude" ? hookBase(root) : undefined), set.config.base);
+        live.base = { base: comparison.name, mergeBase: mergeBase(root, comparison) };
+    }
+    finally {
+        live.baseVerificationMs = performance.now() - verificationStarted;
+    }
     const base = comparison.name;
-    live.base = { base, mergeBase: mergeBase(root, comparison) };
     const alerts = openAlerts(root);
     openStep(live, "rules-intact");
     if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, comparison, LOCK_PATH) === undefined) {
@@ -570,7 +578,7 @@ export async function runCheck(opts) {
         if (live.project !== undefined) {
             const commit = headCommit(resolve(opts.root));
             const next = known ? nextOf(cause.message) : `run warden check again; it stopped with: ${cause.message}`;
-            appendEvidence(live.project, { at: live.at, kind: "cost", guardrail: RUN_TOTAL, run: live.run, tier: live.tier, trigger: live.trigger, outcome: "error", exit: 2, ms: performance.now() - live.started, steps: live.steps, files: 0, bytes: 0, next, ...(commit === undefined ? {} : { commit }), ...live.base });
+            appendEvidence(live.project, { at: live.at, kind: "cost", guardrail: RUN_TOTAL, run: live.run, tier: live.tier, trigger: live.trigger, outcome: "error", exit: 2, ms: performance.now() - live.started, steps: live.steps, baseVerificationMs: live.baseVerificationMs, files: 0, bytes: 0, next, ...(commit === undefined ? {} : { commit }), ...live.base });
         }
         if (!known)
             throw cause;
