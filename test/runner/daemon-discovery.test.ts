@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, it, vi } from "vitest";
 import * as changed from "../../src/runner/changed.js";
-import { type Daemon, startWatching } from "../../src/runner/daemon.js";
+import { type Daemon, openAlerts, startWatching, stateFile } from "../../src/runner/daemon.js";
 import { appendEvidence } from "../../src/runner/evidence.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
@@ -104,6 +104,48 @@ it("watches new evidence and other repositories while a worktree listing waits",
     release?.();
     await daemon?.stop();
     list.mockRestore();
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+it("reads each unchecked commit once when listing alerts for a repository", () => {
+  const scratch = realpathSync(mkdtempSync(join(tmpdir(), "warden-alerts-")));
+  const lookup = vi.spyOn(changed, "commitsOf");
+  try {
+    const root = join(scratch, "repo");
+    init(root, "repo");
+    const first = changed.headCommit(root)!;
+    writeFileSync(join(root, "changed.txt"), "updated");
+    git(root, "add", "changed.txt");
+    git(root, "commit", "-qm", "Update fixture");
+    const second = changed.headCommit(root)!;
+    const missing = "0".repeat(first.length);
+    const repo = join(root, ".git");
+    const atOtherWorktree = join(scratch, "other");
+    const alert = { project: "repo", root, repo, detail: "unchecked-commit", next: "check the commit" };
+    const open = [
+      { ...alert, file: first },
+      { ...alert, file: second },
+      { ...alert, file: missing },
+      { ...alert, root: atOtherWorktree, file: second },
+    ];
+    mkdirSync(resolve(stateFile(), ".."), { recursive: true });
+    writeFileSync(stateFile(), JSON.stringify({ roots: { [root]: { open } } }));
+
+    expect(openAlerts(root)).toEqual(open);
+    expect(lookup.mock.calls).toEqual([[root, [first, second, missing]]]);
+
+    const backlog = Array.from({ length: 260 }, (_, i) => ({ ...alert, file: (i + 1).toString(16).padStart(first.length, "0") }));
+    writeFileSync(stateFile(), JSON.stringify({ roots: { [root]: { open: backlog } } }));
+    lookup.mockClear().mockReturnValue([]);
+
+    expect(openAlerts(root)).toEqual(backlog);
+    expect(lookup.mock.calls).toEqual([
+      [root, backlog.slice(0, 256).map((d) => d.file)],
+      [root, backlog.slice(256).map((d) => d.file)],
+    ]);
+  } finally {
+    lookup.mockRestore();
     rmSync(scratch, { recursive: true, force: true });
   }
 });

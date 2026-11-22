@@ -87,16 +87,26 @@ export function readState() {
         throw new RecordError(stateFile(), "", `is not valid JSON. Next action: delete ${stateFile()} and restart the daemon; it rebuilds the file from git and Evidence`);
     return { roots: value.roots ?? {}, repos: value.repos ?? {} };
 }
+const ALERT_COMMIT_BATCH = 256;
 const REPO_WIDE = new Set(["hook-unwired", "unchecked-commit"]);
 const repoWide = (d) => REPO_WIDE.has(d.detail) || (d.detail === "scan-error" && d.file === HISTORY);
 export function openAlerts(root) {
     const repo = commonDir(root);
     const indexes = new Map();
     const indexOf = (project) => indexes.get(project) ?? indexes.set(project, refresh(emptyIndex(), project)).get(project);
-    return Object.values(readState().roots)
+    const alerts = Object.values(readState().roots)
         .flatMap((r) => r.open)
-        .filter((d) => d.repo === repo && (d.root === root || repoWide(d)))
-        .filter((d) => d.detail !== "unchecked-commit" || !commitsOf(root, [d.file]).some((c) => stamped(root, indexOf(d.project), c)));
+        .filter((d) => d.repo === repo && (d.root === root || repoWide(d)));
+    const unchecked = [...new Set(alerts.filter((d) => d.detail === "unchecked-commit").map((d) => d.file))];
+    const commits = new Map();
+    for (let offset = 0; offset < unchecked.length; offset += ALERT_COMMIT_BATCH) {
+        for (const commit of commitsOf(root, unchecked.slice(offset, offset + ALERT_COMMIT_BATCH)))
+            commits.set(commit.commit, commit);
+    }
+    return alerts.filter((d) => {
+        const commit = d.detail === "unchecked-commit" ? commits.get(d.file) : undefined;
+        return commit === undefined || !stamped(root, indexOf(d.project), commit);
+    });
 }
 export function discoverRoots() {
     const roots = evidenceProjects().flatMap((p) => readEvidenceTail(p, LOOP_TAIL_BYTES).flatMap((e) => (e.root === undefined ? [] : [e.root])));
