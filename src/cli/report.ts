@@ -60,7 +60,9 @@ export interface TierRow {
   runs: number;
   earlyExits: number;
   budgetMs: number;
-  withinBudget: boolean;
+  withinBudget: boolean | null;
+  overBudgetRuns: number;
+  baseVerification?: ReturnType<typeof spread>;
   packs: PackTotalRow[];
   passes: PassTotalRow[];
 }
@@ -131,7 +133,7 @@ export async function buildReport(root: string, wardenRoot: string): Promise<Rep
   const tiers = TIERS.map((tier): TierRow => {
     const inTier = evidence.filter((e) => e.kind === "cost" && e.tier === tier && e.run !== undefined && e.ms !== undefined);
     const totals = inTier.filter((e) => e.guardrail === RUN_TOTAL && e.outcome !== undefined);
-    const ran = totals.filter((e) => e.outcome === "ran").map((e) => e.ms as number);
+    const ran = totals.filter((e) => e.outcome === "ran");
     const byPack = new Map<string, Map<string, number>>();
     const charge = (pack: string | undefined, run: string, ms: number): void => {
       if (pack === undefined) return;
@@ -160,8 +162,16 @@ export async function buildReport(root: string, wardenRoot: string): Promise<Rep
       return [{ shared: rows[0]?.shared as string, members: rows[0]?.members as string[], ...spread([...overhead.values()]) }];
     });
     const budgetMs = set.config.tierBudgetMs[tier];
-    const combined = spread(ran);
-    return { tier, ...combined, earlyExits: totals.length - ran.length, budgetMs, withinBudget: combined.medianMs <= budgetMs, packs, passes };
+    const durations = ran.map((e) => e.ms as number);
+    const combined = spread(durations);
+    const baseTimes = totals.flatMap((e) => e.baseVerificationMs === undefined ? [] : [e.baseVerificationMs]);
+    return {
+      tier, ...combined, earlyExits: totals.length - ran.length, budgetMs,
+      withinBudget: ran.length === 0 ? null : combined.medianMs <= budgetMs,
+      overBudgetRuns: durations.filter((ms) => ms > budgetMs).length,
+      ...(baseTimes.length === 0 ? {} : { baseVerification: spread(baseTimes) }),
+      packs, passes,
+    };
   });
   const practices = set.packs
     .flatMap((p) => p.practices)
@@ -207,7 +217,15 @@ export async function runReport(root: string, wardenRoot: string, json: boolean)
   lines.push(...shared.map((s) => `cost ${s.shared} (shared, ${s.guardrails} guardrails)  median=${s.medianMs}ms  slowest=${s.slowestMs}ms`));
   for (const t of tiers) {
     const exits = t.earlyExits === 0 ? "" : `, ${t.earlyExits} early exits`;
-    lines.push(`tier ${t.tier}: median ${t.medianMs}ms, slowest ${t.slowestMs}ms of ${t.budgetMs}ms over ${t.runs} runs${exits}${t.withinBudget ? "" : "  OVER"}`);
+    if (t.withinBudget === null) lines.push(`tier ${t.tier}: no completed runs${exits}`);
+    else {
+      const overruns = t.overBudgetRuns === 0 ? "" : `, ${t.overBudgetRuns} of ${t.runs} runs over budget`;
+      lines.push(`tier ${t.tier}: median ${t.medianMs}ms, slowest ${t.slowestMs}ms of ${t.budgetMs}ms over ${t.runs} runs${exits}${overruns}${t.withinBudget ? "" : "  OVER"}`);
+    }
+    if (t.baseVerification !== undefined) {
+      const base = t.baseVerification;
+      lines.push(`  base verification  median ${base.medianMs}ms  slowest ${base.slowestMs}ms  runs ${base.runs}`);
+    }
     lines.push(...t.packs.map((p) => `  pack ${p.pack}  median ${p.medianMs}ms  slowest ${p.slowestMs}ms  runs ${p.runs}`));
     lines.push(...t.passes.map((p) => `  pass ${p.shared} (${p.members.length} guardrails, parse and setup)  median ${p.medianMs}ms  slowest ${p.slowestMs}ms  runs ${p.runs}`));
   }

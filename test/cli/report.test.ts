@@ -161,3 +161,41 @@ it("the report shows the newest bench verdict for each pack and Guardrail with i
     ].join("\n"),
   );
 });
+
+it("distinguishes unmeasured tiers, median budget status, and individual overruns", async () => {
+  await evidence([
+    { ...runRow("fast", "edit", 100), baseVerificationMs: 30 },
+    runRow("exact", "edit", 1000),
+    { ...runRow("slow", "edit", 1800), baseVerificationMs: 1300 },
+    { ...runRow("rejected", "edit", 5000, "error"), baseVerificationMs: 4990 },
+    { ...runRow("rejected-boundary", "boundary", 5, "error"), baseVerificationMs: 4 },
+  ]);
+  const { tiers } = await buildReport(root, wardenRoot);
+  expect(tiers.find((t) => t.tier === "edit")).toMatchObject({
+    runs: 3,
+    earlyExits: 1,
+    withinBudget: true,
+    overBudgetRuns: 1,
+    baseVerification: { runs: 3, medianMs: 1300, slowestMs: 4990 },
+  });
+  expect(tiers.find((t) => t.tier === "boundary")).toMatchObject({
+    runs: 0,
+    earlyExits: 1,
+    withinBudget: null,
+    overBudgetRuns: 0,
+    baseVerification: { runs: 1, medianMs: 4, slowestMs: 4 },
+  });
+  let output = "";
+  vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+    output += String(chunk);
+    return true;
+  });
+  try {
+    expect(await runReport(root, wardenRoot, false)).toBe(0);
+  } finally {
+    vi.restoreAllMocks();
+  }
+  expect(output).toContain("1 of 3 runs over budget");
+  expect(output).toContain("base verification  median 1300ms  slowest 4990ms  runs 3");
+  expect(output).toContain("tier boundary: no completed runs, 1 early exits");
+});

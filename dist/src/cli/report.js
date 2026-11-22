@@ -57,7 +57,7 @@ export async function buildReport(root, wardenRoot) {
     const tiers = TIERS.map((tier) => {
         const inTier = evidence.filter((e) => e.kind === "cost" && e.tier === tier && e.run !== undefined && e.ms !== undefined);
         const totals = inTier.filter((e) => e.guardrail === RUN_TOTAL && e.outcome !== undefined);
-        const ran = totals.filter((e) => e.outcome === "ran").map((e) => e.ms);
+        const ran = totals.filter((e) => e.outcome === "ran");
         const byPack = new Map();
         const charge = (pack, run, ms) => {
             if (pack === undefined)
@@ -92,8 +92,16 @@ export async function buildReport(root, wardenRoot) {
             return [{ shared: rows[0]?.shared, members: rows[0]?.members, ...spread([...overhead.values()]) }];
         });
         const budgetMs = set.config.tierBudgetMs[tier];
-        const combined = spread(ran);
-        return { tier, ...combined, earlyExits: totals.length - ran.length, budgetMs, withinBudget: combined.medianMs <= budgetMs, packs, passes };
+        const durations = ran.map((e) => e.ms);
+        const combined = spread(durations);
+        const baseTimes = totals.flatMap((e) => e.baseVerificationMs === undefined ? [] : [e.baseVerificationMs]);
+        return {
+            tier, ...combined, earlyExits: totals.length - ran.length, budgetMs,
+            withinBudget: ran.length === 0 ? null : combined.medianMs <= budgetMs,
+            overBudgetRuns: durations.filter((ms) => ms > budgetMs).length,
+            ...(baseTimes.length === 0 ? {} : { baseVerification: spread(baseTimes) }),
+            packs, passes,
+        };
     });
     const practices = set.packs
         .flatMap((p) => p.practices)
@@ -139,7 +147,16 @@ export async function runReport(root, wardenRoot, json) {
     lines.push(...shared.map((s) => `cost ${s.shared} (shared, ${s.guardrails} guardrails)  median=${s.medianMs}ms  slowest=${s.slowestMs}ms`));
     for (const t of tiers) {
         const exits = t.earlyExits === 0 ? "" : `, ${t.earlyExits} early exits`;
-        lines.push(`tier ${t.tier}: median ${t.medianMs}ms, slowest ${t.slowestMs}ms of ${t.budgetMs}ms over ${t.runs} runs${exits}${t.withinBudget ? "" : "  OVER"}`);
+        if (t.withinBudget === null)
+            lines.push(`tier ${t.tier}: no completed runs${exits}`);
+        else {
+            const overruns = t.overBudgetRuns === 0 ? "" : `, ${t.overBudgetRuns} of ${t.runs} runs over budget`;
+            lines.push(`tier ${t.tier}: median ${t.medianMs}ms, slowest ${t.slowestMs}ms of ${t.budgetMs}ms over ${t.runs} runs${exits}${overruns}${t.withinBudget ? "" : "  OVER"}`);
+        }
+        if (t.baseVerification !== undefined) {
+            const base = t.baseVerification;
+            lines.push(`  base verification  median ${base.medianMs}ms  slowest ${base.slowestMs}ms  runs ${base.runs}`);
+        }
         lines.push(...t.packs.map((p) => `  pack ${p.pack}  median ${p.medianMs}ms  slowest ${p.slowestMs}ms  runs ${p.runs}`));
         lines.push(...t.passes.map((p) => `  pass ${p.shared} (${p.members.length} guardrails, parse and setup)  median ${p.medianMs}ms  slowest ${p.slowestMs}ms  runs ${p.runs}`));
     }
