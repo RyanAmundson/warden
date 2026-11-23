@@ -427,7 +427,8 @@ supplies the baseline. The project can have zero Git remotes.
 
 The session lets the agent read and edit project files. Its only validation
 tools list enabled Guardrails and run a selected Guardrail through Warden.
-The edit hook runs the edit tier after file changes. Other shell tools,
+The edit hook runs the edit tier after file changes. Project metadata under
+.git, .warden, and .claude is protected from edits within this session. Shell tools,
 external tool servers, and agent dispatch are unavailable in this session.
 Ask the project owner to register missing checks in an enabled Warden pack.
 Use the edit tier for working-tree checks and the boundary tier for a

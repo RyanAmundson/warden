@@ -34,7 +34,11 @@ export async function runLocalSession(root, wardenRoot, print) {
     const bin = cli(wardenRoot);
     const command = [node, bin].map(quote).join(" ");
     const hook = (args) => [{ matcher: "^(Edit|Write|MultiEdit)$", hooks: [{ type: "command", command: command + " " + args, onFailure: "block" }] }];
-    const settings = JSON.stringify({ hooks: { PreToolUse: hook("guard"), PostToolUse: hook("check --format agent --hook claude") } });
+    const settings = JSON.stringify({ hooks: {
+            PreToolUse: hook("guard --local-session"),
+            PostToolUse: hook("check --format agent --hook claude"),
+            SessionEnd: [{ hooks: [{ type: "command", command: command + " session-end" }] }],
+        } });
     const mcp = JSON.stringify({ mcpServers: { warden: { command: node, args: [bin, "local-session-tools"] } } });
     const args = [
         "--restricted", "--setting-sources", "", "--disable-slash-commands", "--strict-mcp-config",
@@ -91,14 +95,20 @@ async function validate(root, wardenRoot, input) {
     if (!available.some((entry) => entry.id === check && entry.tiers.includes(tier))) {
         throw new Error(`Check "${check}" is unavailable at the ${tier} tier. Run list_checks or ask the user to register it.`);
     }
-    const base = readLock(root).config.base;
+    const { base, tierBudgetMs } = readLock(root).config;
     const args = [cli(wardenRoot), "check", "--base", base, "--rule", check, "--tier", tier, "--format", "json"];
+    const options = { cwd: root, maxBuffer: 1024 * 1024, timeout: tierBudgetMs[tier] + 15_000 };
     try {
-        const { stdout } = await exec(process.execPath, args, { cwd: root, maxBuffer: 1024 * 1024 });
+        const { stdout } = await exec(process.execPath, args, options);
         return { check, tier, exit: 0, report: JSON.parse(stdout) };
     }
     catch (cause) {
         const error = cause;
+        if (error.killed === true || error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+            const detail = error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ? "exceeded the output limit" : "timed out";
+            return { check, tier, exit: 2, report: {}, error: `The Warden check ${detail}.`,
+                next: "Ask the user to inspect the registered check and its budget." };
+        }
         if (error.code !== 1 && error.code !== 2)
             throw cause;
         const report = error.stdout?.trim() ? object(JSON.parse(error.stdout)) : {};

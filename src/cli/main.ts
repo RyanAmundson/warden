@@ -5,7 +5,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command, CommanderError } from "commander";
-import { refusal } from "../adapters/claude.js";
+import { localSessionRefusal, refusal } from "../adapters/claude.js";
 import { compile, wardenVersion } from "../compiler/compile.js";
 import { thenRemoveExampleProjects } from "../compiler/examples.js";
 import { COMMAND_PROBE, UNKNOWN_COMMAND } from "../compiler/skills.js";
@@ -113,8 +113,10 @@ program
   .command("guard")
   .description("check a harness PreToolUse request against Warden's editing, commit, and command policies; read input on stdin")
   .option("--compiled-replacements", "require the compiled Capability command policy for shell requests")
-  .action((options: { compiledReplacements?: boolean }) => {
-    const reason = refusal(root(), readFileSync(0, "utf8"), options.compiledReplacements === true);
+  .option("--local-session", "protect project metadata and contain edits to the checkout")
+  .action((options: { compiledReplacements?: boolean; localSession?: boolean }) => {
+    const input = readFileSync(0, "utf8");
+    const reason = options.localSession ? localSessionRefusal(root(), input) : refusal(root(), input, options.compiledReplacements === true);
     if (reason !== undefined) process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } })}\n`);
   });
 

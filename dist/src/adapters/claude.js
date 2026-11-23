@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { COMMAND_REPLACEMENTS, literalCommand } from "../compiler/emit.js";
 import { LOCK_PATH, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError } from "../records/load.js";
@@ -206,4 +206,28 @@ export function refusal(root, input, requireReplacements = false) {
     if (file === undefined)
         return undefined;
     return `${file} is a Warden record, and only a person changes Warden's records. Next action: tell the user what to change in ${file}, so they edit it and run warden compile.`;
+}
+function localEditTarget(path) {
+    if (lstatSync(path, { throwIfNoEntry: false }) !== undefined)
+        return realpathSync.native(path);
+    return join(localEditTarget(dirname(path)), basename(path));
+}
+export function localSessionRefusal(root, input) {
+    const canonicalRoot = realpathSync.native(root);
+    const files = editedFiles(parseInput(input));
+    for (const file of files) {
+        const absolute = resolve(root, file);
+        const path = relative(root, absolute);
+        const target = relative(canonicalRoot, localEditTarget(absolute));
+        for (const location of [path, target]) {
+            const parts = location.toLowerCase().split(sep);
+            if (location === "" || parts[0] === ".." || isAbsolute(location)) {
+                return "Local session edits must stay inside the project. Next action: ask the user to make the external edit.";
+            }
+            if (parts.some((part) => part === ".git" || part === ".warden" || part === ".claude")) {
+                return `${location} is protected project metadata. Next action: ask the user to make the change.`;
+            }
+        }
+    }
+    return undefined;
 }
