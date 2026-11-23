@@ -436,7 +436,8 @@ through `warden check`.
 
 Run the packaged watcher under a process supervisor to audit a published ref.
 Pass the repository path, the project ID from its config, a full Git ref, and
-the absolute path to the Warden executable.
+the absolute path to the Warden executable. Run one watcher per repository
+and ref within a Warden home.
 
 ```sh
 node /path/to/warden/scripts/watch-main.mjs /path/to/repo sample refs/remotes/origin/main /path/to/warden/bin/warden.js
@@ -444,14 +445,16 @@ node /path/to/warden/scripts/watch-main.mjs /path/to/repo sample refs/remotes/or
 
 The watcher checks the local ref every 10 seconds. It audits the first
 observed commit and subsequent advances in a temporary Git checkout, using
-both the edit and boundary tiers. The watcher uses the previous audited
-commit as the base, or the first commit's parent on startup. It relies on
-your existing Git fetch process to update remote-tracking refs. Each receipt
-records the source root, ref, commit, base, and enabled packs.
+both the edit and boundary tiers. Each tier uses its last completed
+revision as the base, or the first observed commit's parent before any
+completed run. Failed runs retry after one minute or when the ref advances.
+The watcher relies on your existing Git fetch process to update remote-tracking
+refs. Each receipt records the source root, ref, commit, base, and enabled packs.
 
 To restrict execution to approved policy versions, append the path to a
 JSON file containing an array of objects with `config` and `lock` SHA-256
-digests. Append `--once` to check the current ref and exit.
+digests. Append `--once` to check the current ref and exit. Use a separate
+`WARDEN_HOME` for this mode when a watcher already runs for that ref.
 
 ## Daemon
 

@@ -108,10 +108,14 @@ export async function route(daemon: Daemon, wardenRoot: string, url: URL): Promi
     case "/api/projects":
       return { projects: projects.map((p) => {
         const runs = runRecords(readEvidence(p.project));
+        const mainRuns = runs.filter((run) => run.trigger === "main audit" && run.root !== undefined && p.roots.includes(run.root));
+        const latest = mainRuns.at(-1);
+        const revisionRuns = mainRuns.filter((run) => run.commit === latest?.commit && run.ref === latest?.ref && run.root === latest?.root);
         return {
           ...p,
           lastRun: runs.at(-1) ?? null,
-          lastMainAudit: runs.filter((run) => run.trigger === "main audit" && run.root !== undefined && p.roots.includes(run.root)).at(-1) ?? null,
+          lastMainAudit: latest ?? null,
+          mainAuditRuns: ["edit", "boundary"].flatMap((tier) => revisionRuns.filter((run) => run.tier === tier).slice(-1)),
           openAlerts: p.repositories.reduce((sum, r) => sum + r.openAlerts, 0),
         };
       }) };

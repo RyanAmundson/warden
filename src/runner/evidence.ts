@@ -98,6 +98,13 @@ export const wardenHome = (): string => process.env.WARDEN_HOME ?? join(homedir(
 
 export const evidenceFile = (project: string): string => join(wardenHome(), "evidence", `${project}.jsonl`);
 
+export function writeAtomic(file: string, text: string): void {
+  mkdirSync(dirname(file), { recursive: true });
+  const temp = `${file}.${process.pid}.tmp`;
+  writeFileSync(temp, text);
+  renameSync(temp, file);
+}
+
 export const previousEvidenceFile = (project: string): string => join(wardenHome(), "evidence", `${project}.1.jsonl`);
 
 export const ROTATE_BYTES = 16 * 1024 * 1024;

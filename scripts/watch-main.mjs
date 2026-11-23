@@ -6,14 +6,16 @@ import { isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import { appendEvidence, readEvidenceTail, RUN_TOTAL } from "../dist/src/runner/evidence.js";
+import { appendEvidence, RUN_TOTAL, wardenHome, writeAtomic } from "../dist/src/runner/evidence.js";
 import { parseConfig } from "../dist/src/records/load.js";
 
 const exec = promisify(execFile);
 const tiers = ["edit", "boundary"];
 const intervalMs = 10_000;
+const retryMs = 60_000;
 const trigger = "main audit";
-const receiptBytes = 1024 * 1024;
+const sha256 = (content) => createHash("sha256").update(content).digest("hex");
+const commitSha = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 const gitEnv = { ...process.env, GIT_ALLOW_PROTOCOL: "file", GIT_NO_REPLACE_OBJECTS: "1", GIT_OPTIONAL_LOCKS: "0" };
 delete gitEnv.GIT_DIR;
 delete gitEnv.GIT_WORK_TREE;
@@ -28,6 +30,7 @@ const commitAt = (root, ref, signal) =>
   git(root, ["rev-parse", "--verify", "--end-of-options", ref + "^{commit}"], signal);
 
 const total = (entry) => entry.kind === "cost" && entry.guardrail === RUN_TOTAL;
+const completed = (entry) => entry.exit === 0 && (entry.outcome === "ran" || entry.outcome === "empty");
 
 async function auditTier({ root, project, ref, commit, base, tier, checkout, executable, auditHome, packs, signal }) {
   const at = new Date().toISOString();
@@ -62,19 +65,30 @@ async function auditTier({ root, project, ref, commit, base, tier, checkout, exe
   const fallback = { at, kind: "cost", guardrail: RUN_TOTAL, run: randomUUID(), tier,
     outcome: "error", exit, ms: performance.now() - start, files: 0, next: message };
   appendEvidence(project, {
-    ...(summary ?? fallback), ...(message === undefined ? {} : { next: summary?.next ?? message }),
+    ...(summary ?? fallback),
+    ...(exit !== 0 && summary?.exit !== exit ? { outcome: "error", exit } : {}),
+    ...(message === undefined ? {} : { next: summary?.next ?? message }),
     root, ref, commit, base, packs, trigger,
   });
+  return exit === 0 && summary !== undefined && completed(summary);
 }
 
-export async function auditMain({ root, project, ref, executable, approvedPolicies, signal }) {
+async function auditMain({ root, project, ref, executable, approvedPolicies, once, signal }) {
   const commit = await commitAt(root, ref, signal);
-  const previous = readEvidenceTail(project, receiptBytes, (line) => line.includes(trigger))
-    .filter((entry) => total(entry) && entry.trigger === trigger && entry.ref === ref && entry.root === root);
-  const current = previous.filter((entry) => entry.commit === commit);
-  const pending = tiers.filter((tier) => !current.some((entry) => entry.tier === tier));
-  const priorEdit = previous.findLast((entry) => entry.tier === "edit");
-  const prior = priorEdit?.commit;
+  const path = join(wardenHome(), "main-audits", sha256([root, project, ref].join("\0")) + ".json");
+  let checkpoint = { tiers: {} };
+  try {
+    checkpoint = JSON.parse(await readFile(path, "utf8"));
+    if (!checkpoint || !commitSha.test(checkpoint.head) || !commitSha.test(checkpoint.base) || !checkpoint.tiers ||
+        Object.entries(checkpoint.tiers).some(([tier, state]) => !tiers.includes(tier) ||
+          !state || !commitSha.test(state.base) || !commitSha.test(state.commit) ||
+          !Number.isFinite(state.at) || state.completed !== undefined && !commitSha.test(state.completed))) {
+      throw new Error("invalid checkpoint");
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") throw new Error(`Cannot read the main audit checkpoint at ${path}: ${error.message}`);
+  }
+  const prior = checkpoint.head;
   if (prior !== undefined && prior !== commit) {
     try {
       await git(root, ["merge-base", "--is-ancestor", prior, commit], signal);
@@ -83,8 +97,11 @@ export async function auditMain({ root, project, ref, executable, approvedPolici
       throw error;
     }
   }
-  if (pending.length === 0) return false;
-  const base = current[0]?.base ?? prior ?? await commitAt(root, commit + "^", signal);
+  const pending = tiers.filter((tier) => {
+    const state = checkpoint.tiers[tier];
+    return state?.completed !== commit && (once || state?.commit !== commit || Date.now() - state.at >= retryMs);
+  });
+  if (pending.length === 0) return true;
   const scratch = await mkdtemp(join(tmpdir(), "warden-main-audit-"));
   try {
     const checkout = join(scratch, "checkout");
@@ -95,7 +112,6 @@ export async function auditMain({ root, project, ref, executable, approvedPolici
       readFile(join(checkout, ".warden/lock.json"), "utf8"),
     ]);
     if (approvedPolicies !== undefined) {
-      const sha256 = (content) => createHash("sha256").update(content).digest("hex");
       const configHash = sha256(config);
       const lockHash = sha256(lockText);
       if (!approvedPolicies.some((policy) => policy.config === configHash && policy.lock === lockHash)) {
@@ -107,10 +123,23 @@ export async function auditMain({ root, project, ref, executable, approvedPolici
     if (compiled.project !== project) throw new Error(`Expected Warden project ${project}, got ${compiled.project}.`);
     if (lock.config.base !== compiled.base) throw new Error(`Config and lock record different bases at ${commit}.`);
     const packs = compiled.packs.filter((pack) => pack.enabled !== false).map((pack) => pack.id);
+    checkpoint.head = commit;
+    checkpoint.base ??= await commitAt(root, commit + "^", signal);
+    let allCompleted = true;
     for (const tier of pending) {
-      await auditTier({ root, project, ref, commit, base, tier, checkout, executable, auditHome: join(scratch, "evidence-home"), packs, signal });
+      const previous = checkpoint.tiers[tier];
+      const base = previous?.completed ?? previous?.base ?? checkpoint.base;
+      const state = { ...previous, base, commit, at: Date.now() };
+      checkpoint.tiers[tier] = state;
+      writeAtomic(path, JSON.stringify(checkpoint) + "\n");
+      const completedTier = await auditTier({ root, project, ref, commit, base, tier, checkout, executable, auditHome: join(scratch, "evidence-home"), packs, signal });
+      if (completedTier) {
+        state.completed = commit;
+        writeAtomic(path, JSON.stringify(checkpoint) + "\n");
+      }
+      allCompleted = allCompleted && completedTier;
     }
-    return true;
+    return allCompleted;
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }
@@ -134,11 +163,11 @@ async function main() {
       approvedPolicies.some((policy) => !/^[0-9a-f]{64}$/.test(policy?.config) || !/^[0-9a-f]{64}$/.test(policy?.lock)))) {
     throw new Error("The approved policy list must contain pairs of config and lock SHA-256 digests.");
   }
-  const options = { root: await realpath(root), project, ref, executable, approvedPolicies, signal: controller.signal };
+  const options = { root: await realpath(root), project, ref, executable, approvedPolicies, once, signal: controller.signal };
   let lastError;
   do {
     try {
-      await auditMain(options);
+      if (!await auditMain(options) && once) process.exitCode = 1;
       lastError = undefined;
     } catch (error) {
       if (controller.signal.aborted) return;

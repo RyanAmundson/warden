@@ -5,6 +5,12 @@ export const RUN_TOTAL = "run";
 export const ESLINT_PASS = "eslint-pass";
 export const wardenHome = () => process.env.WARDEN_HOME ?? join(homedir(), ".warden");
 export const evidenceFile = (project) => join(wardenHome(), "evidence", `${project}.jsonl`);
+export function writeAtomic(file, text) {
+    mkdirSync(dirname(file), { recursive: true });
+    const temp = `${file}.${process.pid}.tmp`;
+    writeFileSync(temp, text);
+    renameSync(temp, file);
+}
 export const previousEvidenceFile = (project) => join(wardenHome(), "evidence", `${project}.1.jsonl`);
 export const ROTATE_BYTES = 16 * 1024 * 1024;
 export const LOOP_TAIL_BYTES = 1024 * 1024;
