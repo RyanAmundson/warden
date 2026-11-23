@@ -29,6 +29,7 @@ a{color:var(--link);text-underline-offset:3px}a:hover{color:#0E2747}
 .nav small.bad{color:#F3C27A}
 .nav small.none{color:#9AA8BA}
 .nav .empty-item{padding:7px 10px;color:#9AA8BA}
+.watch-audit{display:block;color:#ABB8CA;font-size:12px;overflow-wrap:anywhere}
 .main{flex:999 1 560px;min-width:0;padding:20px 24px 32px;display:flex;flex-direction:column;gap:16px}
 .head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px 24px;flex-wrap:wrap}
 .head>div:first-child{display:flex;flex-direction:column;gap:2px;min-width:0}
@@ -123,6 +124,9 @@ input::placeholder{color:#5E6773}
 .track span{display:block;height:10px;flex:none}
 .filters{display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap}
 .filters label{display:inline-flex;align-items:center;gap:8px}
+.run-source{white-space:normal;overflow-wrap:anywhere}
+.run-location{max-width:18ch;white-space:normal;overflow-wrap:anywhere}
+.run-list{container-type:inline-size}
 .split{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start}
 .split>.wide{flex:3 1 620px}
 .split>.narrow{flex:2 1 400px}
@@ -135,6 +139,8 @@ input::placeholder{color:#5E6773}
 .detail .next{margin:14px}
 .facts{margin:0;padding:14px;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 14px}
 .facts dd{margin:0;overflow-wrap:anywhere}
+.facts+.modh,.steps+.modh,.scroll:has(.failures)+.modh{border-top:1px solid var(--line)}
+.rule-timings th:last-child{width:90px}
 .banner{display:flex;flex-direction:column;gap:12px;padding:18px 20px}
 .banner p{margin:0;font-size:14px;line-height:21px;max-width:75ch}
 .banner h1,.banner h2{margin:0;font-stretch:87%;font-weight:750;font-size:20px;line-height:26px;text-wrap:balance}
@@ -185,6 +191,13 @@ input::placeholder{color:#5E6773}
   .failures :is(th,td){white-space:normal}
   .failures th:first-child{width:36%}
   .failures th:nth-child(2){width:46px}
+}
+
+@container (width < 580px){
+  .run-list :is(th,td):is(:nth-child(5),:nth-child(7)),.run-list .bar-note{display:none}
+  .run-list :is(th,td),.run-list .tag{white-space:normal}
+  .run-list :is(th,td){padding-inline:6px}
+  .run-list .run-location{max-width:10ch}
 }
 
 @container (600px <= width <= 780px){

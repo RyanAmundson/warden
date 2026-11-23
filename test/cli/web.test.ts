@@ -63,7 +63,7 @@ describe("pages render from API responses", () => {
     expect(html).toContain("1 open detection: source-drift");
     expect(html).toContain(`href="/run?project=context-manager&amp;run=r-err2"`);
     expect(html).toContain("Error · rules intact");
-    expect(html).toContain("…/p/w</span> and 1 other worktree");
+    expect(html).toContain("…/p/w</span> and 1 other checkout");
     expect(html).toContain("43,634");
     expect(nextActions(html)).toEqual([ERROR_NEXT]);
     expect((html.match(/<tr class="held">/g) ?? []).length).toBe(3);
@@ -81,7 +81,9 @@ describe("pages render from API responses", () => {
     expect(all).toContain("Runs · context-manager");
     expect(all).toContain("4 recent runs · 3 not passing");
     expect(all).toContain("Commit check");
-    expect(all).toContain("Block · L212");
+    expect(all).toContain(">Blocked</span>");
+    expect(all).toContain('title="src/cli/view.ts:212">view.ts:212');
+    expect(all).toContain('src/cli/view.ts</td><td class="r">212</td>');
     expect(all).toContain("Do this: delete the eslint-disable comment on line 212");
     expect(nextActions(all)).toEqual([BLOCK_NEXT]);
     expect(all.split(`>${BLOCK_NEXT}<`)).toHaveLength(2);
@@ -90,6 +92,63 @@ describe("pages render from API responses", () => {
     const not = renderApp(state("runs", { runs: { project: "context-manager", runs: cmRuns } }, { view: { outcome: "not", fresh: new Set() } }));
     expect(not).toContain("Not passing · newest first");
     expect(not).not.toContain('run=r-pass"');
+  });
+
+  it("shows which ref is automatically audited even after a later manual run", () => {
+    const audit = run({ run: "r-main", trigger: "main audit", ref: "refs/remotes/origin/main" });
+    const watched = [{ ...projects[0], lastRun: cmRuns[0], lastMainAudit: audit }, { ...projects[1], repositories: [{ repo: "/p/w/.git", roots: ["/p/w", "/p/w2"], openAlerts: 0 }, { repo: "/p/copy/.git", roots: ["/p/copy"], openAlerts: 1 }] }];
+    const html = renderApp(state("overview", { projects: watched, tamper, runs: { "context-manager": [...cmRuns, audit], warden: [] } }, { projects: watched }));
+    expect(html).toContain('class="watch-audit">Automatic audit · origin/main');
+    expect(html).toContain('href="/run?project=context-manager&amp;run=r-main" title="refs/remotes/origin/main">origin/main');
+    expect(html).toContain('href="/runs?project=context-manager&amp;run=r-main#detail"');
+    expect(html).toContain("1 of 2 repositories have open detections");
+  });
+
+  it("shows advisory findings and the exact main audit receipt in both run views", () => {
+    const audit = run({
+      run: "r-audit", tier: "boundary", trigger: "main audit", ref: "refs/remotes/origin/main", result: "fail", exit: 0,
+      root: "/worktrees/context-manager-main-audit", commit: "0123456789abcdef0123456789abcdef01234567", scope: "full", packs: ["core", "delivery"],
+      file: "build/core-plugin-bundles.ts", files: 1, ms: 2875, rules: { "warden-no-comments": 0.3, "delivery-boundary": 135.2 }, cachedRules: ["warden-no-suppressions"],
+      failures: [{ file: "build/core-plugin-bundles.ts", line: 1, guardrail: "delivery-boundary", practice: "delivery-check" }],
+    });
+    for (const page of ["runs", "run"]) {
+      const html = renderApp(state(page, { runs: { project: "context-manager", runs: [audit] } }, { view: { run: "r-audit" } }));
+      expect(html).toContain("Advisory findings");
+      expect(html).toContain("main branch update · 2,875 ms · exit 0");
+      expect(html).toContain("/worktrees/context-manager-main-audit");
+      expect(html).toContain("0123456789abcdef0123456789abcdef01234567");
+      expect(html).toContain("refs/remotes/origin/main");
+      expect(html).toContain("Full tier");
+      expect(html).toContain("build/core-plugin-bundles.ts</td><td class=\"r\">1</td>");
+      expect(html).toContain('<code class="mono">core</code>, <code class="mono">delivery</code>');
+      expect(html).toContain('>warden-no-comments</td><td class="r">&lt;1 ms');
+      expect(html).toContain('>delivery-boundary</td><td class="r">135 ms');
+      expect(html).toContain('>warden-no-suppressions</td><td class="r">Cached');
+      expect(html).not.toContain("Block · L1");
+    }
+  });
+
+  it("distinguishes an incomplete audit from refusal and leaves unknown receipt fields blank", () => {
+    const incomplete = run({ run: "r-incomplete", trigger: "main audit", result: "fail", exit: 1, rules: undefined, cachedRules: undefined, scope: undefined, commit: undefined });
+    const refused = run({ run: "r-refused", trigger: "audit", outcome: "refused", result: "fail", exit: 1, alert: "lock-drift" });
+    const runs = { project: "context-manager", runs: [incomplete, refused] };
+    const list = renderApp(state("runs", { runs }));
+    expect(list).toContain("Incomplete audit");
+    expect(list).toContain(">Refused</span>");
+    expect(list).toContain("No per-rule timings were recorded.");
+    expect(list).toContain('>Commit</dt><dd>–</dd>');
+    expect(list).toContain('>Scope</dt><dd>–</dd>');
+    const detail = renderApp(state("run", { runs }, { view: { run: refused.run } }));
+    expect(detail).toContain("Audit refused by an open tamper alert");
+    expect(detail).not.toContain("Blocked by an open tamper alert");
+  });
+
+  it("shows a historical continuous audit finding without implying that it blocked an edit", () => {
+    const previous = run({ trigger: "continuous audit", result: "fail", failures: [{ file: "build/delivery.ts", line: 1 }] });
+    const html = renderApp(state("runs", { runs: { project: "context-manager", runs: [previous] } }));
+    expect(html).toContain("continuous audit");
+    expect(html).toContain("Advisory findings");
+    expect(html).toContain('title="build/delivery.ts:1">delivery.ts:1');
   });
 
   it("renders the error-run state with one next action and the streak", () => {
@@ -149,7 +208,7 @@ describe("pages render from API responses", () => {
     const next = "run git sparse-checkout add --skip-checks -- 'packs/core' to bring packs/core/a.ts onto disk, then change the code at the lines above to match \"Do this\"";
     const sparse = run({ run: "r-sparse", at: at(45), tier: "commit", trigger: "git-commit", result: "fail", exit: 1, treeOid: "abc", failures: [{ file: "packs/core/a.ts", line: 3, guardrail: "warden-no-comments", practice: "no-comments" }], next });
     const html = renderApp(state("run", { runs: { project: "context-manager", runs: [sparse, ...cmRuns] } }, { view: { run: "r-sparse", fresh: new Set() } }));
-    expect(html).toContain("Blocked by 1 failure");
+    expect(html).toContain("Check blocked");
     expect(nextActions(html).map((n) => n.replaceAll("&#39;", "'").replaceAll("&quot;", '"'))).toEqual([next]);
   });
 
@@ -230,7 +289,7 @@ describe("runs blocked by an open alert", () => {
     const runs = [alertRun, run()];
     const list = renderApp(state("runs", { runs: { project: "context-manager", runs } }, { view: { run: "r-alert", outcome: "not", fresh: new Set() } }));
     expect(list).toContain("1 not passing");
-    expect(list).toContain("Block · alert");
+    expect(list).toContain("Blocked by alert");
     expect(list).toContain("open tamper alert: source-drift");
     const page = renderApp(state("run", { runs: { project: "context-manager", runs } }, { view: { run: "r-alert", fresh: new Set() } }));
     expect(page).toContain("Blocked by an open tamper alert");
@@ -300,7 +359,7 @@ describe("review and UI QA round 2", () => {
     expect(overview).not.toContain("Next action:");
     expect(overview.match(/next action/gi)).toHaveLength(1);
     const runPage = lost("run", { runs: { project: "context-manager", runs: cmRuns } }, { view: { run: "r-block", fresh: new Set() } });
-    expect(runPage).toContain("Blocked by 1 failure");
+    expect(runPage).toContain("Check blocked");
     expect(nextActions(runPage)).toEqual(["run warden daemon install"]);
     const list = lost("runs", { runs: { project: "context-manager", runs: cmRuns } }, { view: { run: "r-block" } });
     expect(nextActions(list)).toEqual(["run warden daemon install"]);
