@@ -8,7 +8,7 @@ import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { type Served, serve } from "../../src/cli/daemon.js";
 import { STALE_MS, heartbeatFile, heartbeatProblem, openAlerts, stateFile } from "../../src/runner/daemon.js";
-import { FIRST_STAMPING } from "../../src/compiler/lock.js";
+import { FIRST_STAMPING, LOCK_PATH, type Lock, sha256 } from "../../src/compiler/lock.js";
 import { type Evidence, appendEvidence, readEvidence } from "../../src/runner/evidence.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
@@ -178,6 +178,61 @@ it("records hook and .warden changes as tamper Evidence once, with one next acti
 });
 
 const openOf = (s: Served): { detail: string; file: string }[] => [...s.daemon.projects.values()].flatMap((w) => [...w.open.values()]);
+
+it("reconciles an older committed lock while still flagging generated and lock changes", async () => {
+  const file = ".warden/generated/hooks/pre-commit";
+  const lockFile = join(root, LOCK_PATH);
+  const generated = `${readFileSync(join(root, file), "utf8")}\n`;
+  const lock = JSON.parse(readFileSync(lockFile, "utf8")) as Lock;
+  lock.warden = "0.1.13";
+  lock.generated[file] = sha256(generated);
+  const committed = `${JSON.stringify(lock, null, 2)}\n`;
+  await writeFile(lockFile, committed);
+  await writeFile(join(root, file), generated);
+  git(root, "add", "-A");
+  commitUnhooked("older compiler snapshot");
+  const s = await start();
+  expect(openOf(s)).toEqual([]);
+  expect(warden(root, {}, "check", "--tier", "edit", "--base", "main", "src/a.ts")).toMatchObject({ code: 2, err: expect.stringContaining("an older release") });
+
+  await writeFile(join(root, file), `${generated}\n`);
+  await until("the older generated file change is flagged", () => openOf(s).some((d) => d.detail === "generated-drift"));
+  await writeFile(join(root, file), generated);
+  await writeFile(lockFile, `${committed}\n`);
+  await until("the older lock change is flagged", () => openOf(s).some((d) => d.detail === "lock-drift"));
+  await s.daemon.rescan();
+  expect(openOf(s)).toEqual([expect.objectContaining({ file: LOCK_PATH, detail: "lock-drift" })]);
+
+  await writeFile(lockFile, committed);
+  await until("the restored older snapshot clears the alert", () => openOf(s).length === 0);
+  expect(tampered()).toEqual(expect.arrayContaining([expect.objectContaining({ file, detail: "generated-drift" }), expect.objectContaining({ file: LOCK_PATH, detail: "lock-drift" })]));
+});
+
+it("separates same-name repositories in the project and tamper API", async () => {
+  const clone = join(scratch, "same-name-clone");
+  git(scratch, "clone", "-q", root, clone);
+  appendEvidence(PROJECT, { at: new Date().toISOString(), kind: "registered", root: clone });
+  git(clone, "config", "core.hooksPath", ".warden/generated/hooks");
+  const s = await start();
+  await writeFile(join(clone, "src/a.ts"), "export const a = 2;\n");
+  git(clone, "add", "src/a.ts");
+  git(clone, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "unchecked clone change");
+  const sha = git(clone, "rev-parse", "HEAD").trim();
+  await until("the clone commit is flagged", () => unchecked(s).includes(sha));
+  const primaryRepo = join(root, ".git");
+  const cloneRepo = join(clone, ".git");
+  expect((await get("/api/projects")).body).toMatchObject({ projects: [{ project: PROJECT, openAlerts: 1, repositories: expect.arrayContaining([
+    { repo: primaryRepo, roots: [root], openAlerts: 0 },
+    { repo: cloneRepo, roots: [clone], openAlerts: 1 },
+  ]) }] });
+  const endpoint = `/api/tamper?project=${PROJECT}&repo=`;
+  expect(await get(`${endpoint}${encodeURIComponent(primaryRepo)}`)).toEqual({ status: 200, body: { open: [], recent: [] } });
+  expect((await get(`${endpoint}${encodeURIComponent(cloneRepo)}`)).body).toMatchObject({
+    open: [{ root: clone, repo: cloneRepo, detail: "unchecked-commit", file: sha }],
+    recent: [{ root: clone, repo: cloneRepo, detail: "unchecked-commit", file: sha }],
+  });
+  expect((await get(`${endpoint}unknown`)).status).toBe(404);
+});
 
 const unchecked = (s: Served): string[] => openOf(s).filter((d) => d.detail === "unchecked-commit").map((d) => d.file);
 
@@ -369,9 +424,9 @@ const lockedBy = async (version: string): Promise<void> => {
 };
 
 const running = (JSON.parse(readFileSync(join(wardenRoot, "package.json"), "utf8")) as { version: string }).version;
-const why = `its .warden/lock.json is missing, unreadable, older than Warden ${FIRST_STAMPING}, or newer than this daemon's Warden ${running}, so no release can stamp it`;
+const why = `its .warden/lock.json records Warden 0.1.10, older than Warden ${FIRST_STAMPING}, the first release that can stamp commits`;
 
-const unstampable = (sha: string, holders: string[]): string => `remove commit ${sha.slice(0, 12)} from ${holders.join(", ")} by resetting or deleting each, because ${why}; then make its change again in a new commit with the hook`;
+const unstampable = (sha: string, holders: string[], reason = why): string => `remove commit ${sha.slice(0, 12)} from ${holders.join(", ")} by resetting or deleting each, because ${reason}; then make its change again in a new commit with the hook`;
 
 it("flags a merge whose first parent predates Warden", async () => {
   const s = await start();
@@ -423,7 +478,7 @@ it("flags a commit that downgrades its lock, names its branch, and closes once t
   const s = await start();
   const down = await downgrade();
   await until("the downgrade is flagged", () => unchecked(s).includes(down));
-  expect(openAlerts(root).find((d) => d.file === down)?.next).toBe(unstampable(down, ["refs/heads/main"]));
+  expect(openAlerts(root).find((d) => d.file === down)).toMatchObject({ status: "pre-stamping", next: unstampable(down, ["refs/heads/main"]) });
   git(root, "reset", "-q", "--hard", "HEAD^");
   await until("removing the commit closes the alert", () => !unchecked(s).includes(down));
 });
@@ -470,7 +525,7 @@ it("a malformed lock in history stays flagged in every worktree and never stops 
   commitUnhooked("malformed lock");
   const bad = git(root, "rev-parse", "HEAD").trim();
   await until("the malformed commit is flagged", () => openAlerts(wt).some((d) => d.file === bad));
-  expect(openAlerts(wt).find((d) => d.file === bad)?.next).toBe(unstampable(bad, ["refs/heads/main"]));
+  expect(openAlerts(wt).find((d) => d.file === bad)).toMatchObject({ status: "missing-lock-version", next: unstampable(bad, ["refs/heads/main"], "its .warden/lock.json does not record a readable Warden release, so no release can stamp it") });
   expect(openOf(s).filter((d) => d.detail === "scan-error" && d.file === "git history")).toEqual([]);
   git(root, "reset", "-q", "--hard", "HEAD^");
   await until("removing the commit closes the alert in every worktree", () => !openAlerts(wt).some((d) => d.file === bad));
@@ -500,13 +555,13 @@ it("clears a commit recorded as unchecked only when the owner lists it as truste
   expect(JSON.parse(readFileSync(stateFile(), "utf8")).repos[repo].trusted).toEqual([entry]);
 });
 
-it("gives a lock that names a release newer than the daemon's the unstampable next action", async () => {
+it("keeps a commit checked by a newer release open and asks for a daemon update", async () => {
   const s = await start();
   await lockedBy("9.9.9");
   commitUnhooked("compiled by a release that does not exist");
   const forged = git(root, "rev-parse", "HEAD").trim();
   await until("the commit is flagged", () => unchecked(s).includes(forged));
-  expect(openAlerts(root).find((d) => d.file === forged)?.next).toBe(unstampable(forged, ["refs/heads/main"]));
+  expect(openAlerts(root).find((d) => d.file === forged)).toMatchObject({ status: "newer-engine", next: `update the daemon to Warden 9.9.9, the release pinned by .warden/lock.json on ${forged.slice(0, 12)}, then check the commit again` });
   git(root, "reset", "-q", "--hard", "HEAD^");
   await until("removing the commit closes the alert", () => !unchecked(s).includes(forged));
 });

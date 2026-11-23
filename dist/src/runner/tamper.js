@@ -3,7 +3,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { TSC_CONFIG_SOURCE } from "../adapters/tsc-config.js";
 import { expectedOutputs } from "../compiler/compile.js";
-import { LOCK_FORMAT, LOCK_PATH, PROJECT_SOURCE, canonicalJson, readLock, sha256 } from "../compiler/lock.js";
+import { LOCK_FORMAT, LOCK_PATH, PROJECT_SOURCE, canonicalJson, olderThan, readLock, sha256 } from "../compiler/lock.js";
 import { RecordError, readText } from "../records/load.js";
 import { kindRank } from "../records/types.js";
 import { BASELINE_PATH, carryRenames, projectWideEntries, readBaseline } from "./baseline.js";
@@ -169,8 +169,19 @@ const unsignedChanges = (root, at, head, wardenRoot, staged) => {
     }
     return failed.map(([file, status]) => ({ file, detail: status === "N" ? "unsigned" : "untrusted-signature", restore }));
 };
-export async function findTampering(set, wardenRoot, base, staged) {
+const sameHistoricalPolicy = (root, head, lock, expected) => {
+    if (head === undefined || !/^\d+\.\d+\.\d+$/.test(lock.warden) || !olderThan(lock.warden, expected.warden))
+        return false;
+    const policy = ({ generated, ...rest }) => canonicalJson({ ...rest, tools: null, warden: null, generated: Object.keys(generated).sort() });
+    if (policy(lock) !== policy(expected))
+        return false;
+    const committed = showAtCommit(root, head, LOCK_PATH);
+    return committed !== undefined && committed === readFileSync(join(root, LOCK_PATH), "utf8") &&
+        canonicalJson(lock) === canonicalJson(JSON.parse(committed));
+};
+export async function findTampering(set, wardenRoot, base, staged, historicalLock = false) {
     const root = set.root;
+    const head = headCommit(root);
     const lock = existsSync(join(root, LOCK_PATH)) ? readLock(root) : undefined;
     const found = leftoverTemps(root, lock).map((file) => ({ file, detail: "leftover-temp" }));
     for (const file of SETTINGS_FILES) {
@@ -188,7 +199,8 @@ export async function findTampering(set, wardenRoot, base, staged) {
     found.push(...sourceDrift.map((file) => file.startsWith(TSC_CONFIG_SOURCE)
         ? { file: file.slice(TSC_CONFIG_SOURCE.length), detail: "typescript-config-drift" }
         : { file, detail: "source-drift", ...(file.startsWith(".warden/") && existsSync(join(root, file)) && !tracked.has(file) ? { untracked: true } : {}) }));
-    if (sourceDrift.length === 0 && canonicalJson({ ...lock, tools: null }) !== canonicalJson({ ...expected.lock, tools: null })) {
+    const lockDiffers = canonicalJson({ ...lock, tools: null }) !== canonicalJson({ ...expected.lock, tools: null });
+    if (sourceDrift.length === 0 && lockDiffers && !(historicalLock && sameHistoricalPolicy(root, head, lock, expected.lock))) {
         found.push({ file: LOCK_PATH, detail: "lock-drift" });
     }
     for (const [file, hash] of Object.entries(lock.generated)) {
@@ -198,7 +210,6 @@ export async function findTampering(set, wardenRoot, base, staged) {
     }
     found.push(...projectWideEntries(readBaseline(root)).map((guardrail) => ({ file: BASELINE_PATH, detail: "loosened", guardrail })));
     const comparison = typeof base === "string" ? (resolveBaseCommit(root, base) ?? base) : base;
-    const head = headCommit(root);
     const at = await mergeBaseForScan(root, comparison, head);
     const weakened = await loosened(set, wardenRoot, comparison, at, lock);
     const unsigned = unsignedChanges(root, at, head ?? "HEAD", wardenRoot, staged);

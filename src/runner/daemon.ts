@@ -32,6 +32,7 @@ export interface Detection {
   repo: string;
   file: string;
   detail: string;
+  status?: "missing-lock-version" | "pre-stamping" | "newer-engine";
   next: string;
 }
 
@@ -208,13 +209,7 @@ const stamped = (root: string, index: Index, c: Committed): boolean => c.expecte
 
 type Found = Omit<Detection, "project" | "root" | "repo">;
 
-const stampingVersion = (root: string, c: Committed, running: string): string | undefined => {
-  const version = lockVersionAt(root, c.commit);
-  return version === undefined || !/^\d+\.\d+\.\d+$/.test(version) || olderThan(version, FIRST_STAMPING) || olderThan(running, version) ? undefined : version;
-};
-
-const unstampable = async (root: string, repo: string, c: Committed, running: string, port: number, trees: Worktree[]): Promise<string> => {
-  const why = `its ${LOCK_PATH} is missing, unreadable, older than Warden ${FIRST_STAMPING}, or newer than this daemon's Warden ${running}, so no release can stamp it`;
+const unstampable = async (root: string, repo: string, c: Committed, why: string, port: number, trees: Worktree[]): Promise<string> => {
   const holders = await holdersOf(root, c.commit, trees);
   const published = holders.filter((h) => h.startsWith("refs/remotes/"));
   if (published.length > 0) return `ask the repository owner to stop the daemon with warden daemon uninstall, add commit ${c.commit} with a reason to the trusted list of ${repo} in ${stateFile()}, and start it again with warden daemon install --port ${port}, because it is published in ${published.join(", ")} and ${why}`;
@@ -223,8 +218,16 @@ const unstampable = async (root: string, repo: string, c: Committed, running: st
 
 const uncheckedAlert = async (root: string, repo: string, c: Committed, base: string, running: string, port: number, trees: Worktree[]): Promise<Found> => {
   const short = c.commit.slice(0, 12);
-  const version = stampingVersion(root, c, running);
-  if (version === undefined) return { file: c.commit, detail: "unchecked-commit", next: await unstampable(root, repo, c, running, port, trees) };
+  const version = lockVersionAt(root, c.commit);
+  if (version === undefined || !/^\d+\.\d+\.\d+$/.test(version)) {
+    return { file: c.commit, detail: "unchecked-commit", status: "missing-lock-version", next: await unstampable(root, repo, c, `its ${LOCK_PATH} does not record a readable Warden release, so no release can stamp it`, port, trees) };
+  }
+  if (olderThan(version, FIRST_STAMPING)) {
+    return { file: c.commit, detail: "unchecked-commit", status: "pre-stamping", next: await unstampable(root, repo, c, `its ${LOCK_PATH} records Warden ${version}, older than Warden ${FIRST_STAMPING}, the first release that can stamp commits`, port, trees) };
+  }
+  if (olderThan(running, version)) {
+    return { file: c.commit, detail: "unchecked-commit", status: "newer-engine", next: `update the daemon to Warden ${version}, the release pinned by ${LOCK_PATH} on ${short}, then check the commit again` };
+  }
   const warden = version === running ? "warden" : `npx --yes --package=${RELEASES}#v${version} warden`;
   const verify =
     c.parents[0] === undefined
@@ -410,7 +413,7 @@ export function startWatching(opts: DaemonOptions): Daemon {
       try {
         const set = await loadRecords(w.root, opts.wardenRoot);
         w.base = existsSync(join(w.root, LOCK_PATH)) ? readLock(w.root).config.base : set.config.base;
-        for (const t of await findTampering(set, opts.wardenRoot, w.base, false)) {
+        for (const t of await findTampering(set, opts.wardenRoot, w.base, false, true)) {
           const next = (JSON.parse(formatFeedback([], set, "json", { tampered: [t] })) as { next: string }).next.replace(/\.$/, "");
           w.recordFound.push(at({ file: t.file, detail: t.guardrail === undefined ? t.detail : `${t.detail} ${t.guardrail}`, next }));
         }
@@ -482,7 +485,7 @@ export function startWatching(opts: DaemonOptions): Daemon {
       const current = new Map(found.map((d) => [key(d), d]));
       for (const [k, d] of current) {
         if (w.open.has(k)) continue;
-        appendEvidence(w.project, { at: now(), kind: "tampered", trigger: "daemon", root: w.root, file: d.file, detail: d.detail, next: d.next });
+        appendEvidence(w.project, { at: now(), kind: "tampered", trigger: "daemon", root: w.root, repo: w.repo, file: d.file, detail: d.detail, status: d.status, next: d.next });
         opts.onDetection?.(d);
       }
       w.open = current;

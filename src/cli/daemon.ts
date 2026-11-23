@@ -39,17 +39,36 @@ class HttpError extends Error {
 interface ProjectEntry {
   project: string;
   roots: string[];
+  repositories: RepositoryEntry[];
+}
+
+interface RepositoryEntry {
+  repo: string;
+  roots: string[];
+  openAlerts: number;
 }
 
 const projectsOf = (daemon: Daemon): ProjectEntry[] => {
-  const byName = new Map<string, string[]>();
-  for (const w of daemon.projects.values()) byName.set(w.project, [...(byName.get(w.project) ?? []), w.root]);
-  return [...byName].map(([project, roots]) => ({ project, roots })).sort((a, b) => a.project.localeCompare(b.project));
+  const byName = new Map<string, Map<string, RepositoryEntry>>();
+  for (const w of daemon.projects.values()) {
+    const repositories = byName.get(w.project) ?? new Map<string, RepositoryEntry>();
+    const entry = repositories.get(w.repo) ?? { repo: w.repo, roots: [], openAlerts: 0 };
+    entry.roots.push(w.root);
+    entry.openAlerts += w.open.size;
+    repositories.set(w.repo, entry);
+    byName.set(w.project, repositories);
+  }
+  return [...byName].map(([project, repos]) => {
+    const repositories = [...repos.values()];
+    return { project, roots: repositories.flatMap((r) => r.roots), repositories };
+  }).sort((a, b) => a.project.localeCompare(b.project));
 };
 
 const lastRan = (evidence: Evidence[]): Evidence | undefined => runRecords(evidence).filter((e) => e.outcome === "ran").at(-1);
 
-const openAlerts = (daemon: Daemon, project?: string): Detection[] => [...daemon.projects.values()].filter((w) => project === undefined || w.project === project).flatMap((w) => [...w.open.values()]);
+const openAlerts = (daemon: Daemon, project?: string, repo?: string): Detection[] => [...daemon.projects.values()]
+  .filter((w) => (project === undefined || w.project === project) && (repo === undefined || w.repo === repo))
+  .flatMap((w) => [...w.open.values()]);
 
 const bandsOf = (run: Evidence): Record<string, number> => Object.fromEntries([...BANDS.map((b) => b.name.toLowerCase()), "unknown"].map((name, i) => [name, bandCounts(run)[i] ?? 0]));
 
@@ -87,7 +106,7 @@ export async function route(daemon: Daemon, wardenRoot: string, url: URL): Promi
       return { status: "ok", pid: process.pid, version: await wardenVersion(wardenRoot), startedAt: daemon.startedAt, heartbeatAt: beat?.at ?? null, heartbeatFile: heartbeatFile(), intervalMs: HEARTBEAT_MS, staleAfterMs: STALE_MS, port: beat?.port ?? null, projects: projects.length, openAlerts: openAlerts(daemon).length };
     }
     case "/api/projects":
-      return { projects: projects.map((p) => ({ ...p, lastRun: runRecords(readEvidence(p.project)).at(-1) ?? null, openAlerts: openAlerts(daemon, p.project).length })) };
+      return { projects: projects.map((p) => ({ ...p, lastRun: runRecords(readEvidence(p.project)).at(-1) ?? null, openAlerts: p.repositories.reduce((sum, r) => sum + r.openAlerts, 0) })) };
     case "/api/runs": {
       const { project } = pick();
       const limit = Number(url.searchParams.get("limit") ?? "20");
@@ -127,8 +146,18 @@ export async function route(daemon: Daemon, wardenRoot: string, url: URL): Promi
       };
     case "/api/tamper": {
       const project = url.searchParams.get("project") ?? undefined;
-      const names = project === undefined ? projects.map((p) => p.project) : [pick().project];
-      return { open: openAlerts(daemon, project), recent: names.flatMap((name) => readEvidence(name).filter((e) => e.kind === "tampered").map((e) => ({ project: name, ...e }))).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 50) };
+      const repo = url.searchParams.get("repo") ?? undefined;
+      const entries = project === undefined ? projects : [pick()];
+      if (repo !== undefined && !entries.some((entry) => entry.repositories.some((r) => r.repo === repo))) {
+        throw new HttpError(404, "the selected repository is not watched", "pick a repository from GET /api/projects");
+      }
+      const recent = entries.flatMap((entry) => {
+        const roots = new Set(entry.repositories.find((r) => r.repo === repo)?.roots);
+        return readEvidence(entry.project).filter((e) => e.kind === "tampered" &&
+          (repo === undefined || (e.repo === undefined ? e.root !== undefined && roots.has(e.root) : e.repo === repo)))
+          .map((e) => ({ project: entry.project, ...e }));
+      });
+      return { open: openAlerts(daemon, project, repo), recent: recent.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 50) };
     }
     default:
       throw new HttpError(404, `no route ${url.pathname}`, "GET /api/health, /api/projects, /api/runs, /api/layers, /api/violations, /api/determinism, /api/tamper, or /api/events");

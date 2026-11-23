@@ -480,6 +480,11 @@ cherry-pick, rebase, or `git am`. Tamper detections cover:
   automatic merge of its two parents needs no check; any other merge does;
 - a check that ran with `WARDEN_DAEMON=off`.
 
+The daemon can check integrity for an older lock committed at the checkout's
+HEAD when its policy, source hashes, and generated paths match the running
+compiler. It checks generated files against the committed manifest. Run checks
+with the Warden release pinned by the lock to evaluate the Guardrails.
+
 While the daemon holds an open alert for a repository, `warden check` fails
 at every tier with that alert's next action. The alert closes when the daemon
 sees the cause fixed. The daemon keeps its checkpoint in
@@ -558,7 +563,9 @@ check pass before the daemon's next scan rewrites it.
 
 The daemon serves a JSON API on `http://127.0.0.1:7419` (`--port` changes
 it). It answers only requests whose `Host` is `127.0.0.1` or `localhost` on
-that port.
+that port. `GET /api/projects` groups watched checkouts and open alert counts
+by Git common directory within each project label. Pass a URL-encoded `repo`
+from that response to `GET /api/tamper` to limit alerts to that repository.
 
 ### Change a project's packs
 
