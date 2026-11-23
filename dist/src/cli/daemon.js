@@ -86,7 +86,15 @@ export async function route(daemon, wardenRoot, url) {
             return { status: "ok", pid: process.pid, version: await wardenVersion(wardenRoot), startedAt: daemon.startedAt, heartbeatAt: beat?.at ?? null, heartbeatFile: heartbeatFile(), intervalMs: HEARTBEAT_MS, staleAfterMs: STALE_MS, port: beat?.port ?? null, projects: projects.length, openAlerts: openAlerts(daemon).length };
         }
         case "/api/projects":
-            return { projects: projects.map((p) => ({ ...p, lastRun: runRecords(readEvidence(p.project)).at(-1) ?? null, openAlerts: p.repositories.reduce((sum, r) => sum + r.openAlerts, 0) })) };
+            return { projects: projects.map((p) => {
+                    const runs = runRecords(readEvidence(p.project));
+                    return {
+                        ...p,
+                        lastRun: runs.at(-1) ?? null,
+                        lastMainAudit: runs.filter((run) => run.trigger === "main audit" && run.root !== undefined && p.roots.includes(run.root)).at(-1) ?? null,
+                        openAlerts: p.repositories.reduce((sum, r) => sum + r.openAlerts, 0),
+                    };
+                }) };
         case "/api/runs": {
             const { project } = pick();
             const limit = Number(url.searchParams.get("limit") ?? "20");

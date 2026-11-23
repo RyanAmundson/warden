@@ -26,6 +26,7 @@ export interface Evidence {
   judgment?: RunResult["judgment"];
   tier?: Tier;
   pack?: string;
+  packs?: string[];
   files?: number;
   bytes?: number;
   rules?: Record<string, number>;
@@ -47,6 +48,7 @@ export interface Evidence {
   ratchet?: [number, number];
   ratchetFrom?: "head" | "uncommitted";
   base?: string;
+  ref?: string;
   mergeBase?: string;
   step?: Step;
   state?: "start" | "done" | "fail";
@@ -64,7 +66,7 @@ export interface Evidence {
   alert?: string;
 }
 
-export type Trigger = "agent-edit" | "git-commit" | "manual" | "daemon" | "audit";
+export type Trigger = "agent-edit" | "git-commit" | "manual" | "daemon" | "audit" | "main audit";
 
 export type Step = "rules-intact" | "tools-ready" | "rules" | "verdict";
 

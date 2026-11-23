@@ -1341,6 +1341,18 @@ it("streams tamper and evidence events over server-sent events", async () => {
   }
 });
 
+it("keeps main-audit scope available after a later manual run", async () => {
+  await start();
+  const base = { at: new Date().toISOString(), kind: "cost", guardrail: "run", outcome: "ran", tier: "boundary", root } as const;
+  const main = { ...base, trigger: "main audit", ref: "refs/remotes/origin/main", commit: "main-revision", packs: ["core"] } as const;
+  appendEvidence(PROJECT, { ...main, packs: [...main.packs] });
+  appendEvidence(PROJECT, { ...base, trigger: "main audit", root: join(scratch, "removed"), commit: "other-revision" });
+  appendEvidence(PROJECT, { ...base, trigger: "manual", commit: "manual-revision" });
+  expect((await get("/api/projects")).body).toMatchObject({
+    projects: [{ project: PROJECT, lastRun: { trigger: "manual", commit: "manual-revision" }, lastMainAudit: main }],
+  });
+});
+
 it("install writes the launchd plist under HOME and bootstraps it; uninstall removes it", async () => {
   const bin = join(scratch, "bin");
   const calls = join(scratch, "launchctl.log");
