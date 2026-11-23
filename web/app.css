@@ -30,6 +30,9 @@ a{color:var(--link);text-underline-offset:3px}a:hover{color:#0E2747}
 .nav small.none{color:#9AA8BA}
 .nav .empty-item{padding:7px 10px;color:#9AA8BA}
 .watch-audit{display:block;color:#ABB8CA;font-size:12px;overflow-wrap:anywhere}
+.audit-results{list-style:none;margin:4px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:4px 12px}
+.audit-results li{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.detection-location{max-width:18ch;white-space:normal;overflow-wrap:anywhere}
 .main{flex:999 1 560px;min-width:0;padding:20px 24px 32px;display:flex;flex-direction:column;gap:16px}
 .head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px 24px;flex-wrap:wrap}
 .head>div:first-child{display:flex;flex-direction:column;gap:2px;min-width:0}

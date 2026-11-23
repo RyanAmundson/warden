@@ -34,7 +34,7 @@ const projects = [
 
 const detection = { project: "warden", root: "/p/w", file: "packs/core/fixtures/clean-pass.ts", detail: "source-drift", next: "revert your change to packs/core/fixtures/clean-pass.ts" };
 
-const tamper = { open: [detection], recent: [{ ...detection, at: at(10), kind: "tampered", trigger: "daemon" }, { project: "warden", at: at(5), kind: "tampered", file: ".warden/lock.json", detail: "lock-drift", next: "revert your change to .warden/lock.json" }] };
+const tamper = { open: [detection], recent: [{ ...detection, at: at(10), kind: "tampered", trigger: "daemon" }, { project: "warden", root: "/p/w", at: at(5), kind: "tampered", file: ".warden/lock.json", detail: "lock-drift", next: "revert your change to .warden/lock.json" }] };
 
 const layers = {
   project: "warden",
@@ -99,9 +99,23 @@ describe("pages render from API responses", () => {
     const watched = [{ ...projects[0], lastRun: cmRuns[0], lastMainAudit: audit }, { ...projects[1], repositories: [{ repo: "/p/w/.git", roots: ["/p/w", "/p/w2"], openAlerts: 0 }, { repo: "/p/copy/.git", roots: ["/p/copy"], openAlerts: 1 }] }];
     const html = renderApp(state("overview", { projects: watched, tamper, runs: { "context-manager": [...cmRuns, audit], warden: [] } }, { projects: watched }));
     expect(html).toContain('class="watch-audit">Automatic audit · origin/main');
-    expect(html).toContain('href="/run?project=context-manager&amp;run=r-main" title="refs/remotes/origin/main">origin/main');
+    expect(html).toContain('title="refs/remotes/origin/main">Automatic audit · origin/main');
+    expect(html).toContain('href="/run?project=context-manager&amp;run=r-main">Edit audit');
     expect(html).toContain('href="/runs?project=context-manager&amp;run=r-main#detail"');
     expect(html).toContain("1 of 2 repositories have open detections");
+  });
+
+  it("keeps edit findings and the passing boundary audit visible after a later manual check", () => {
+    const shared = { trigger: "main audit", ref: "refs/remotes/origin/main", commit: "a".repeat(40) };
+    const edit = run({ ...shared, run: "main-edit", result: "fail", exit: 0 });
+    const boundary = run({ ...shared, tier: "boundary", run: "main-boundary" });
+    const manual = run({ run: "manual", trigger: "manual", at: at(50) });
+    const watched = [{ ...projects[0], lastRun: manual, lastMainAudit: boundary, mainAuditRuns: [edit, boundary] }];
+    const html = renderApp(state("overview", { projects: watched, tamper, runs: { "context-manager": [manual, boundary, edit] } }, { projects: watched }));
+    expect(html).toContain('>edit · Advisory findings</span>');
+    expect(html).toContain('>boundary · Pass</span>');
+    expect(html).toContain('href="/run?project=context-manager&amp;run=main-edit">Edit audit</a> <span class="tag err">Advisory findings</span>');
+    expect(html).toContain('href="/run?project=context-manager&amp;run=main-boundary">Boundary audit</a> <span class="tag pass">Pass</span>');
   });
 
   it("shows advisory findings and the exact main audit receipt in both run views", () => {
@@ -193,6 +207,37 @@ describe("pages render from API responses", () => {
     expect(nextActions(html)).toEqual([detection.next]);
     expect(html).toContain("Open now · 1 detection");
     expect(html).toContain("Not open now");
+  });
+
+  it("shows alert history state by repository or by checkout and keeps unknown legacy records neutral", () => {
+    const cloneA = { project: "warden", root: "/p/clone-a", repo: "/p/clone-a/.git" };
+    const cloneB = { project: "warden", root: "/p/clone-b", repo: "/p/clone-b/.git" };
+    const worktreeB = { ...cloneB, root: "/p/worktree-b" };
+    const hook = { file: "pre-commit", detail: "hook-unwired", next: "inspect Git hooks" };
+    const lock = { file: ".warden/lock.json", detail: "lock-drift", next: "inspect the lock" };
+    const open = [{ ...cloneB, ...hook }, { ...cloneB, ...lock }];
+    const recent = [
+      { ...cloneA, ...hook, at: at(10) },
+      { ...worktreeB, ...hook, at: at(11) },
+      { ...cloneB, ...lock, at: at(12) },
+      { ...worktreeB, ...lock, at: at(13) },
+      { project: "warden", ...hook, at: at(14) },
+      { project: "warden", repo: cloneB.repo, ...lock, at: at(15) },
+    ];
+    const html = renderApp(state("tamper", { tamper: { open, recent } }));
+    const history = html.slice(html.indexOf('class="tamper-history-table"'));
+    const rows = [...history.matchAll(/<tr><td>(.*?)<\/tr>/g)].map((match) => match[1]);
+    expect(rows).toHaveLength(6);
+    expect(rows[0]).toContain('title="/p/clone-a">…/p/clone-a');
+    expect(rows[0]).toContain(">Not open now<");
+    expect(rows[1]).toContain('title="/p/worktree-b">…/p/worktree-b');
+    expect(rows[1]).toContain(">Open<");
+    expect(rows[2]).toContain(">Open<");
+    expect(rows[3]).toContain(">Not open now<");
+    expect(rows[4]).toContain("Checkout unavailable");
+    expect(rows[4]).toContain(">Unknown<");
+    expect(rows[5]).toContain("Repo …/p/clone-b");
+    expect(rows[5]).toContain(">Unknown<");
   });
 
   it("renders the refused outcome with its next action", () => {

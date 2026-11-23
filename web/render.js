@@ -72,7 +72,11 @@ const pathTail = (path) => path.split("/").slice(-2).join("/");
 
 const shortRef = (ref) => ref?.replace(/^refs\/(heads|remotes)\//, "");
 
-const latestMainAudit = (project) => project.lastMainAudit ?? (project.lastRun?.trigger === "main audit" ? project.lastRun : undefined);
+const mainAuditRuns = (project) => {
+  if (project.mainAuditRuns?.length) return project.mainAuditRuns;
+  const audit = project.lastMainAudit ?? (project.lastRun?.trigger === "main audit" ? project.lastRun : undefined);
+  return audit ? [audit] : [];
+};
 
 const auditRefLabel = (audit) => esc(shortRef(audit.ref) ?? "main");
 
@@ -177,8 +181,8 @@ const sidebar = (state) => {
     .map((p) => {
       const s = projectStatus(p);
       const tone = s.cls === "pass" ? "" : s.cls === "idle" ? " none" : " bad";
-      const audit = latestMainAudit(p);
-      return `<li><a href="${href("runs", { project: p.project })}"${PROJECT_PAGES.has(page) && p.project === project ? ' aria-current="true"' : ""}><span>${esc(p.project)}${audit ? `<span class="watch-audit">Automatic audit · ${auditRefLabel(audit)}</span>` : ""}</span><small class="${tone.trim()}">${esc(s.text)}</small></a></li>`;
+      const audits = mainAuditRuns(p);
+      return `<li><a href="${href("runs", { project: p.project })}"${PROJECT_PAGES.has(page) && p.project === project ? ' aria-current="true"' : ""}><span>${esc(p.project)}${audits.length > 0 ? `<span class="watch-audit">Automatic audit · ${auditRefLabel(audits[0])}</span>${audits.map((audit) => `<span class="watch-audit">${esc(audit.tier ?? "audit")} · ${esc(outcome(audit).text)}</span>`).join("")}` : ""}</span><small class="${tone.trim()}">${esc(s.text)}</small></a></li>`;
     })
     .join("");
   return `<nav class="side" aria-label="Warden">
@@ -241,8 +245,12 @@ const alertsSection = (data) => {
 
 const projectCard = (p, runs) => {
   const run = p.lastRun;
-  const audit = latestMainAudit(p);
-  const auditLabel = audit && (runs.some((recent) => recent.run === audit.run) ? `<a href="${href("run", { project: p.project, run: audit.run })}" title="${esc(audit.ref)}">${auditRefLabel(audit)}</a>` : auditRefLabel(audit));
+  const audits = mainAuditRuns(p);
+  const auditResults = audits.map((audit) => {
+    const name = (audit.tier ?? "Audit").replace(/^./, (letter) => letter.toUpperCase());
+    const label = runs.some((recent) => recent.run === audit.run) ? `<a href="${href("run", { project: p.project, run: audit.run })}">${esc(name)} audit</a>` : `${esc(name)} audit`;
+    return `<li>${label} ${tag(outcome(audit))}</li>`;
+  });
   const lastPass = runs.find(passed);
   const ratchet = runs.find((r) => r.ratchet !== undefined)?.ratchet;
   const s = projectStatus(p);
@@ -253,7 +261,7 @@ const projectCard = (p, runs) => {
   const repoCount = repositories.length > 1 ? `<span class="muted">${num(affected)} of ${num(repositories.length)} repositories have open detections</span>` : "";
   const end = run && notPassing(run) && run.next ? nextBox(run.next) : `<div class="calm">${run === null || run === undefined ? "No check has run here yet." : run.outcome === "empty" ? "The last run found no changes." : passed(run) ? "The last run passed." : "The last run recorded no next action."}</div>`;
   return `<section class="mod card" aria-labelledby="${id}">
-<div class="modh"><div><h2 class="h2" id="${id}">${esc(p.project)}</h2><span class="muted mono">${roots}</span>${audit ? `<span class="muted">Automatic audit · ${auditLabel}</span>` : ""}</div>${tag(s)}</div>
+<div class="modh"><div><h2 class="h2" id="${id}">${esc(p.project)}</h2><span class="muted mono">${roots}</span>${audits.length > 0 ? `<span class="muted" title="${esc(audits[0].ref)}">Automatic audit · ${auditRefLabel(audits[0])}</span><ul class="audit-results">${auditResults.join("")}</ul>` : ""}</div>${tag(s)}</div>
 <div class="keyrow">${projectKey(p.project, p.openAlerts > 0)}<div>${p.openAlerts > 0 ? `<span class="bad">${plural(p.openAlerts, "open tamper detection")}</span>${repoCount}<a href="${href("tamper")}">See what changed</a>` : '<span class="ok">No open tamper detections</span><span class="muted">The daemon is watching its hooks and records</span>'}</div></div>
 <div class="stats"><div><div class="lbl">Last run</div><div>${run ? `${esc(clock(run.at))} · ${esc(run.tier ?? "")}` : "–"}</div></div><div><div class="lbl">Last pass</div><div>${lastPass ? `${esc(clock(lastPass.at))} · ${esc(lastPass.tier ?? "")}` : (runs.length === 0 ? "–" : `none in the last ${plural(runs.length, "run")}`)}</div></div><div><div class="lbl">Open alerts</div><div>${num(p.openAlerts)}</div></div><div><div class="lbl">Ratchet left</div><div>${ratchet ? num(ratchet[1]) : "–"}</div></div></div>
 ${end}
@@ -580,7 +588,23 @@ export const determinismPage = (state) => {
 
 const LOCK_ART = `<svg class="lockart" viewBox="0 0 122 34" preserveAspectRatio="xMinYMid meet" role="img" aria-label="Illustration only: a key that no longer fits its lock"><rect x="1" y="4" width="26" height="24" rx="7" fill="#E1E5EA" stroke="#1C2A3F" stroke-width="0.5"/><circle cx="10" cy="16" r="3.5" fill="#F8F9FA" stroke="#1C2A3F" stroke-width="0.5"/><path d="M27 10 L112 10 L118 16.5 L112 23 L104 23 L100.5 12.75 L95.5 12.75 L88.5 24 L83.5 24 L76.5 16.5 L71.5 16.5 L64.5 14 L59.5 14 L52.5 21.5 L47.5 21.5 L40.5 21.5 L35.5 21.5 L32 24 L27 24 Z" fill="#B3261E" fill-opacity="0.22" stroke="#B3261E" stroke-width="0.5" stroke-dasharray="1.2 0.8"/><path d="M27 10 L112 10 L118 16.5 L112 23 L104 23 L100.5 20.25 L95.5 20.25 L88.5 24 L83.5 24 L76.5 24 L71.5 24 L64.5 14 L59.5 14 L52.5 21.5 L47.5 21.5 L40.5 21.5 L35.5 21.5 L32 24 L27 24 Z" fill="none" stroke="#1C2A3F" stroke-width="0.6"/><path d="M74 16.5 L74 24 M98 12.75 L98 20.25" stroke="#B3261E" stroke-width="1.1"/></svg>`;
 
-const isOpen = (open, e) => open.some((d) => d.project === e.project && d.file === e.file && d.detail === e.detail);
+const isRepositoryDetection = ({ detail, file }) => detail === "hook-unwired" || detail === "unchecked-commit" || (detail === "scan-error" && file === "git history");
+
+const detectionState = (open, e, reposByRoot) => {
+  const repo = e.repo ?? reposByRoot.get(e.root);
+  const repoWide = isRepositoryDetection(e);
+  if (repoWide ? !repo : !e.root) return tag({ cls: "idle", text: "Unknown" });
+  const active = open.some((d) => d.project === e.project && d.file === e.file && d.detail === e.detail &&
+    (repoWide ? d.repo === repo : d.root === e.root && (!repo || !d.repo || d.repo === repo)));
+  return active ? tag({ cls: "block", text: "Open" }) : tag({ cls: "pass", text: "Not open now" });
+};
+
+const detectionLocation = ({ root, repo }) => {
+  const path = root ?? repo;
+  if (!path) return '<div class="muted">Checkout unavailable</div>';
+  const label = root ? `…/${pathTail(root)}` : `Repo …/${pathTail(repo.replace(/\/\.git$/, ""))}`;
+  return `<div class="muted mono detection-location" title="${esc(path)}">${esc(label)}</div>`;
+};
 
 export const tamperPage = (state) => {
   const { data } = state;
@@ -588,10 +612,11 @@ export const tamperPage = (state) => {
   const { open, recent } = data.tamper;
   const projects = [...new Set(open.map((d) => d.project))];
   const kinds = [...new Set(open.map((d) => d.detail.split(" ")[0]))];
-  const history = `<section class="mod" aria-labelledby="tp-hist"><div class="modh"><h2 class="h2" id="tp-hist">Tamper records</h2><span class="muted">${plural(recent.length, "record")}, newest first, from checks and the daemon</span></div><div class="scroll fit-table"><table class="tamper-history-table"><thead><tr><th scope="col">Time</th><th scope="col">Project</th><th scope="col">Found by</th><th scope="col">File</th><th scope="col">Kind</th><th scope="col">Next action Warden gave</th><th scope="col">Now</th></tr></thead><tbody>${
+  const reposByRoot = new Map(data.projects.flatMap((p) => (p.repositories ?? []).flatMap((repository) => repository.roots.map((root) => [root, repository.repo]))));
+  const history = `<section class="mod" aria-labelledby="tp-hist"><div class="modh"><h2 class="h2" id="tp-hist">Tamper records</h2><span class="muted">${plural(recent.length, "record")}, newest first, from checks and the daemon</span></div><div class="scroll fit-table"><table class="tamper-history-table"><thead><tr><th scope="col">Time</th><th scope="col">Project and checkout</th><th scope="col">Found by</th><th scope="col">File</th><th scope="col">Kind</th><th scope="col">Next action Warden gave</th><th scope="col">Now</th></tr></thead><tbody>${
     recent.length === 0
       ? '<tr><td colspan="7" class="muted">No tamper has been recorded.</td></tr>'
-      : recent.map((e) => `<tr><td>${esc(clock(e.at))}</td><td>${esc(e.project)}</td><td>${esc(TRIGGERS[e.trigger] ?? "a check")}</td><td class="mono">${esc(e.file ?? "–")}</td><td class="mono">${esc(e.detail ?? "–")}</td><td class="mono clip" title="${esc(e.next ?? "")}">${esc(e.next ?? "–")}</td><td>${isOpen(open, e) ? tag({ cls: "block", text: "Open" }) : tag({ cls: "pass", text: "Not open now" })}</td></tr>`).join("")
+      : recent.map((e) => `<tr><td>${esc(clock(e.at))}</td><td>${esc(e.project)}${detectionLocation(e)}</td><td>${esc(TRIGGERS[e.trigger] ?? "a check")}</td><td class="mono">${esc(e.file ?? "–")}</td><td class="mono">${esc(e.detail ?? "–")}</td><td class="mono clip" title="${esc(e.next ?? "")}">${esc(e.next ?? "–")}</td><td>${detectionState(open, e, reposByRoot)}</td></tr>`).join("")
   }</tbody></table></div></section>`;
   if (open.length === 0) return `${header("Tamper", "The daemon compares each project's hooks, plugin, and records with its lock")}<section class="mod"><div class="alert">${tag({ cls: "pass", text: "Clear" })}<div>No open tamper detections in any watched project.</div></div></section>${history}`;
   const first = open[0];
