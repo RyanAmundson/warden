@@ -3,7 +3,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { appendEvidence, RUN_TOTAL, wardenHome, writeAtomic } from "../dist/src/runner/evidence.js";
@@ -102,6 +101,9 @@ async function auditMain({ root, project, ref, executable, approvedPolicies, onc
     return state?.completed !== commit && (once || state?.commit !== commit || Date.now() - state.at >= retryMs);
   });
   if (pending.length === 0) return true;
+  checkpoint.head = commit;
+  checkpoint.base ??= await commitAt(root, commit + "^", signal);
+  writeAtomic(path, JSON.stringify(checkpoint) + "\n");
   const scratch = await mkdtemp(join(tmpdir(), "warden-main-audit-"));
   try {
     const checkout = join(scratch, "checkout");
@@ -123,8 +125,6 @@ async function auditMain({ root, project, ref, executable, approvedPolicies, onc
     if (compiled.project !== project) throw new Error(`Expected Warden project ${project}, got ${compiled.project}.`);
     if (lock.config.base !== compiled.base) throw new Error(`Config and lock record different bases at ${commit}.`);
     const packs = compiled.packs.filter((pack) => pack.enabled !== false).map((pack) => pack.id);
-    checkpoint.head = commit;
-    checkpoint.base ??= await commitAt(root, commit + "^", signal);
     let allCompleted = true;
     for (const tier of pending) {
       const previous = checkpoint.tiers[tier];
@@ -180,10 +180,8 @@ async function main() {
   } while (!controller.signal.aborted);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((error) => {
-    if (error.name === "AbortError") return;
-    process.stderr.write(`${error.message}\n`);
-    process.exitCode = 1;
-  });
-}
+main().catch((error) => {
+  if (error.name === "AbortError") return;
+  process.stderr.write(`${error.message}\n`);
+  process.exitCode = 1;
+});

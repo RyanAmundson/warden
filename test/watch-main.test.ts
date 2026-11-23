@@ -99,15 +99,21 @@ test("audits only the published ref using clean snapshots and remembers each tie
 
 test("requires the approved policy pair before launching checks", () => {
   const { commit, git, path, root, run, receipts } = fixture();
-  commit("base");
-  git("update-ref", ref, commit("published"));
+  const base = commit("base");
+  const rejected = commit("rejected");
+  git("update-ref", ref, rejected);
   const allowlist = join(root, "policies.json");
   writeFileSync(allowlist, JSON.stringify([{ config: sha256(config), lock: sha256(lock + "\n") }]));
   expect(() => run([allowlist])).toThrow("outside the approved policy list");
   expect(existsSync(path)).toBe(false);
+  const approved = commit("approved");
+  git("update-ref", ref, approved);
   writeFileSync(allowlist, JSON.stringify([{ config: sha256(config), lock: sha256(lock) }]));
   run([allowlist]);
-  expect(receipts()).toHaveLength(2);
+  expect(receipts()).toMatchObject([
+    { tier: "edit", exit: 0, base, commit: approved },
+    { tier: "boundary", exit: 0, base, commit: approved },
+  ]);
 });
 
 test("makes an executable failure visible for both tiers", () => {
