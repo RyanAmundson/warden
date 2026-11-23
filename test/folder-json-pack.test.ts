@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -111,6 +111,18 @@ describe("folder-json pack", () => {
     await write("src/[widgets]/button/parts/knob/index.ts");
     const oid = git(["hash-object", "-w", file]).trim();
     git(["update-index", "--index-info"], `100644 ${oid} 1\t${file}\n100644 ${oid} 2\t${file}\n`);
+    expect((await run())?.status).toBe("pass");
+  });
+
+  it("ignores dangling Git symlinks beside or below a folder", async () => {
+    execFileSync("git", ["init", "-q"], { cwd: root });
+    await write("src/[widgets]/button/index.ts");
+    await write("src/[widgets]/button/parts/knob/index.ts");
+    await symlink("missing.ts", join(root, "src/[widgets]/button/dangling.ts"));
+    expect((await run())?.status).toBe("pass");
+    await write("src/[widgets]/button/styles.ts");
+    await rm(join(root, "src/[widgets]/button/parts/knob/index.ts"));
+    await symlink("missing.ts", join(root, "src/[widgets]/button/parts/knob/dangling.ts"));
     expect((await run())?.status).toBe("pass");
   });
 
