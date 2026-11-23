@@ -102,6 +102,18 @@ describe("folder-json pack", () => {
     expect((await run())?.violations[0]?.message).toContain("src/[widgets]/button/parts has subfolders and 2 files");
   });
 
+  it("counts one on-disk file once when Git lists multiple index stages", async () => {
+    const git = (args: string[], input?: string) =>
+      execFileSync("git", args, { cwd: root, encoding: "utf8", input });
+    git(["init", "-q"]);
+    const file = "src/[widgets]/button/index.ts";
+    await write(file);
+    await write("src/[widgets]/button/parts/knob/index.ts");
+    const oid = git(["hash-object", "-w", file]).trim();
+    git(["update-index", "--index-info"], `100644 ${oid} 1\t${file}\n100644 ${oid} 2\t${file}\n`);
+    expect((await run())?.status).toBe("pass");
+  });
+
   it("ignores folders outside a collection and leaves a collection's own files to collection-folders", async () => {
     await write("package.json", "{}\n");
     await write("README.md", "x\n");
