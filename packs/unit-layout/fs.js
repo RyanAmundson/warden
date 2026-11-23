@@ -113,7 +113,12 @@ const documentLinks = ({ files, nonRegular = [], read, markdownLinks, markdownAn
     for (let folder = posix.dirname(key(file)); !folders.has(folder); folder = posix.dirname(folder)) folders.add(folder);
   }
   const found = [];
+  const texts = new Map();
   const anchors = new Map();
+  const readOnce = (file) => {
+    if (!texts.has(file)) texts.set(file, read(file));
+    return texts.get(file);
+  };
   const hasAnchor = (file, fragment) => {
     let decoded;
     try {
@@ -121,12 +126,12 @@ const documentLinks = ({ files, nonRegular = [], read, markdownLinks, markdownAn
     } catch {
       return false;
     }
-    if (!anchors.has(file)) anchors.set(file, new Set(markdownAnchors(read(file))));
+    if (!anchors.has(file)) anchors.set(file, new Set(markdownAnchors(readOnce(file))));
     return anchors.get(file).has(decoded);
   };
   for (const file of files) {
     if (!documents.has(key(file)) || nonRegularEntries.has(file)) continue;
-    for (const href of new Set(markdownLinks(read(file)))) {
+    for (const href of new Set(markdownLinks(readOnce(file)))) {
       if (/^term:/i.test(href)) {
         if (termIds.has(termTarget(href))) continue;
         found.push({
