@@ -408,7 +408,15 @@ const check = async (opts: CheckOptions, live: Live, audit: boolean): Promise<nu
   closeStep(live, "done", doctorCached ? { status: "cached" } : {});
 
   const known = new Set(selectGuardrails(set, undefined).map((g) => g.id));
-  const chosen = selectGuardrails(set, opts.rule).filter((g) => g.runs.includes(tier));
+  const matching = selectGuardrails(set, opts.rule);
+  const chosen = matching.filter((g) => g.runs.includes(tier));
+  if (audit && opts.rule !== undefined && chosen.length === 0) {
+    const otherTier = tier === "edit" ? "boundary" : "edit";
+    const action = matching.some((g) => g.runs.includes(otherTier))
+      ? `run warden audit --tier ${otherTier} --rule ${opts.rule}`
+      : "choose a rule that runs at the edit or boundary tier";
+    throw new RecordError("", "/rule", `${opts.rule} does not run in the ${tier} tier. Next action: ${action}.`);
+  }
   const selected = new Set(chosen.map((g) => g.id));
   const directives = guardrailsOf(set, "eslint:warden/no-suppressions");
   if (guardrailsOf(set, "eslint:warden/no-comments").some((g) => selected.has(g.id))) for (const g of directives) if (g.runs.includes(tier)) selected.add(g.id);

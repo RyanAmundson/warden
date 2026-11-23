@@ -1154,6 +1154,9 @@ it("a boundary audit leaves the baseline and index intact and rejects policy dri
   expect(readFileSync(join(root, baselinePath), "utf8")).toBe(baseline);
   expect(git(root, "write-tree")).toBe(before);
 
+  const mismatched = warden(root, {}, "audit", "--rule", "warden-no-comments", ...args);
+  expect(mismatched).toMatchObject({ code: 2, err: expect.stringContaining("warden audit --tier edit --rule warden-no-comments") });
+
   await writeFile(join(root, ".warden/generated/hooks/pre-commit"), "#!/bin/sh\nexit 0\n");
   const drift = warden(root, {}, "audit", ...args);
   expect(drift.code).toBe(1);
