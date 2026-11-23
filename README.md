@@ -416,6 +416,29 @@ For a pack with skill Capabilities, `warden compile` writes a single locked
 for Claude Code or `warden doctor --harness codex` for Codex to check the
 corresponding repository skill links and get the command to create them.
 
+## Local coding session
+
+Run `warden local-session` in a Git checkout to open an opt-in Claude Code
+session. Use Claude Code 2.1.328 or later. If the checkout is new to Warden,
+run `warden init` first. Start `warden daemon` in another terminal, or install
+the daemon once with `warden daemon install` on macOS. Keep Node, Warden, and
+the Warden state directory outside the editable checkout. A local Git history
+supplies the baseline. The project can have zero Git remotes.
+
+The session lets the agent read and edit project files. Its only validation
+tools list enabled Guardrails and run a selected Guardrail through Warden.
+The edit hook runs the edit tier after file changes. Other shell tools,
+external tool servers, and agent dispatch are unavailable in this session.
+Ask the project owner to register missing checks in an enabled Warden pack.
+Use the edit tier for working-tree checks and the boundary tier for a
+registered check that declares it. Some checks need external tools or
+credentials. Warden runs each approved check with your local process permissions.
+
+The launcher supplies hooks for this session only. It uses the project's
+existing Warden policy and leaves your hook and pack configuration in place.
+For scripted sessions, `warden local-session --print` reads a prompt from
+standard input and streams Claude Code events as JSON.
+
 ## Daemon
 
 A commit-tier check, which includes the pre-commit hook and a plain

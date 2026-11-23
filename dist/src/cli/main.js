@@ -16,6 +16,7 @@ import { DEFAULT_PORT, installDaemon, runDaemon, uninstallDaemon } from "./daemo
 import { runDispute, runDisputeRuling } from "./dispute.js";
 import { runExplain } from "./explain.js";
 import { runDoctor, runInit } from "./init.js";
+import { runLocalSession, runLocalSessionTools } from "./local-session.js";
 import { runMutationReview } from "./mutations.js";
 import { runNewCapability } from "./new-capability.js";
 import { runNewUnit } from "./new-unit.js";
@@ -111,6 +112,16 @@ program
     if (reason !== undefined)
         process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } })}\n`);
 });
+program
+    .command("local-session")
+    .description("open a local Claude Code session that validates through Warden")
+    .option("--print", "read a prompt from stdin and stream the session as JSON")
+    .action(async ({ print }) => {
+    process.exitCode = await runLocalSession(root(), findWardenRoot(), print === true);
+});
+program
+    .command("local-session-tools", { hidden: true })
+    .action(async () => runLocalSessionTools(root(), findWardenRoot()));
 program
     .command("session-end", { hidden: true })
     .action(() => recordClaudeStalls(root(), readFileSync(0, "utf8")));
