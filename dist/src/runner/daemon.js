@@ -89,13 +89,15 @@ export function readState() {
 }
 const REPO_WIDE = new Set(["hook-unwired", "unchecked-commit"]);
 const repoWide = (d) => REPO_WIDE.has(d.detail) || (d.detail === "scan-error" && d.file === HISTORY);
-export function openAlerts(root) {
+export function openAlerts(root, audit = false) {
     const repo = commonDir(root);
     const indexes = new Map();
     const indexOf = (project) => indexes.get(project) ?? indexes.set(project, refresh(emptyIndex(), project)).get(project);
     const alerts = Object.values(readState().roots)
         .flatMap((r) => r.open)
         .filter((d) => d.repo === repo && (d.root === root || repoWide(d)));
+    if (audit)
+        return alerts.filter((d) => !REPO_WIDE.has(d.detail));
     const unchecked = [...new Set(alerts.filter((d) => d.detail === "unchecked-commit").map((d) => d.file))];
     const commits = new Map();
     for (let offset = 0; offset < unchecked.length; offset += COMMIT_LOOKUP_BATCH) {

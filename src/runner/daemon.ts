@@ -134,13 +134,14 @@ const REPO_WIDE = new Set(["hook-unwired", "unchecked-commit"]);
 
 const repoWide = (d: Detection): boolean => REPO_WIDE.has(d.detail) || (d.detail === "scan-error" && d.file === HISTORY);
 
-export function openAlerts(root: string): Detection[] {
+export function openAlerts(root: string, audit = false): Detection[] {
   const repo = commonDir(root);
   const indexes = new Map<string, Index>();
   const indexOf = (project: string): Index => indexes.get(project) ?? indexes.set(project, refresh(emptyIndex(), project)).get(project) as Index;
   const alerts = Object.values(readState().roots)
     .flatMap((r) => r.open)
     .filter((d) => d.repo === repo && (d.root === root || repoWide(d)));
+  if (audit) return alerts.filter((d) => !REPO_WIDE.has(d.detail));
   const unchecked = [...new Set(alerts.filter((d) => d.detail === "unchecked-commit").map((d) => d.file))];
   const commits = new Map<string, Committed>();
   for (let offset = 0; offset < unchecked.length; offset += COMMIT_LOOKUP_BATCH) {

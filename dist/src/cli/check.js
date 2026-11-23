@@ -167,17 +167,20 @@ const mergeResults = (results) => [...new Set(results.map((r) => r.guardrail))].
     return { ...first, status, violations, judgedFiles, ms: all.reduce((n, r) => n + r.ms, 0) };
 });
 const failedOf = (failures, notes) => failures.length > 0 || [notes.tampered, notes.killed, notes.unstaged].some((list) => (list ?? []).length > 0);
-const report = (failures, set, opts, notes) => {
+const report = (failures, set, opts, notes, audit = false) => {
     const failed = failedOf(failures, notes);
     if (opts.hook === "claude") {
         if (failed)
             process.stdout.write(`${JSON.stringify({ decision: "block", reason: formatFeedback(failures, set, "agent", notes) })}\n`);
         return 0;
     }
-    if (failed || opts.format === "json" || (notes.overBudget ?? []).length > 0) {
+    if (audit && opts.format === "text")
+        process.stdout.write(`Warden audit reported ${failures.length} findings.\n`);
+    if (failed || opts.format === "json" || (notes.overBudget ?? []).length > 0 || (audit && (notes.outside ?? []).length > 0)) {
         process.stdout.write(`${formatFeedback(failures, set, opts.format, notes)}\n`);
     }
-    return failed ? 1 : 0;
+    const incomplete = [notes.tampered, notes.killed, notes.unstaged, notes.outside].some((list) => (list ?? []).length > 0);
+    return (audit ? incomplete : failed) ? 1 : 0;
 };
 const refuseForAlert = (alert, opts) => {
     const message = `Warden's daemon holds an open tamper alert for this repository: ${alert.detail} ${alert.file} in ${alert.root}. Next action: ${alert.next}`;
@@ -222,7 +225,7 @@ const treeOf = (root) => {
     return tree === undefined ? {} : { tree };
 };
 const baselineTotal = (b) => Object.values(b).reduce((n, e) => n + Object.values(e).reduce((a, x) => a + x, 0), 0);
-const check = async (opts, live) => {
+const check = async (opts, live, audit) => {
     const root = resolve(opts.root);
     if (lstatSync(join(root, ".warden"), { throwIfNoEntry: false })?.isSymbolicLink() === true) {
         throw new RecordError(".warden", "", "is a symbolic link. Next action: move the link aside, restore the tracked .warden directory, then run warden check again.");
@@ -262,7 +265,9 @@ const check = async (opts, live) => {
         });
         return code;
     };
-    const removed = removedWarden(root, opts.base);
+    const committedLock = audit && opts.base === undefined ? lastCommittedText(root, LOCK_PATH) : undefined;
+    const requestedBase = committedLock === undefined ? opts.base : JSON.parse(committedLock).config.base;
+    const removed = removedWarden(root, requestedBase);
     if (removed !== undefined) {
         live.project = removed.set.config.project;
         openStep(live, "rules-intact");
@@ -293,14 +298,14 @@ const check = async (opts, live) => {
     let comparison;
     const verificationStarted = performance.now();
     try {
-        comparison = verifyCheckBase(root, opts.base ?? (opts.hook === "claude" ? hookBase(root) : undefined), set.config.base);
+        comparison = verifyCheckBase(root, requestedBase ?? (opts.hook === "claude" ? hookBase(root) : undefined), set.config.base);
         live.base = { base: comparison.name, mergeBase: mergeBase(root, comparison) };
     }
     finally {
         live.baseVerificationMs = performance.now() - verificationStarted;
     }
     const base = comparison.name;
-    const alerts = openAlerts(root);
+    const alerts = openAlerts(root, audit);
     openStep(live, "rules-intact");
     if (!existsSync(join(root, LOCK_PATH)) && showAtMergeBase(root, comparison, LOCK_PATH) === undefined) {
         throw new RecordError(LOCK_PATH, "", "not found; this project was never compiled. Next action: run warden compile.");
@@ -422,7 +427,7 @@ const check = async (opts, live) => {
         }),
     };
     const lockSha = sha256(readFileSync(join(root, LOCK_PATH)));
-    const coverageRules = tier === "boundary" && opts.rule === undefined && opts.paths === undefined &&
+    const coverageRules = !audit && tier === "boundary" && opts.rule === undefined && opts.paths === undefined &&
         set.config.learning?.removalRuns !== undefined && sparseMode(root) === "off"
         ? new Set(guardrails.filter((g) => g.scope === "project" && g.implementation.startsWith("fs:")).map((g) => g.id))
         : new Set();
@@ -485,7 +490,7 @@ const check = async (opts, live) => {
         ].filter((f) => f !== "");
     const wide = applyBaseline(wholeProject, narrow.next, judged, exists, touched);
     const failures = [...narrow.failures, ...wide.failures];
-    if (tier !== "edit" && !onlyCommit && canonicalJson(wide.next) !== canonicalJson(baseline)) {
+    if (!audit && tier !== "edit" && !onlyCommit && canonicalJson(wide.next) !== canonicalJson(baseline)) {
         writeBaseline(root, wide.next);
         if (tier === "commit") {
             stageFile(root, BASELINE_PATH);
@@ -543,8 +548,8 @@ const check = async (opts, live) => {
     const scope = opts.paths === undefined && opts.rule === undefined && !incompleteSparse ? "full" : "partial";
     const tree = tier === "commit" && scope === "full" && !failedOf(failures, notes) ? indexTree(root) : undefined;
     const coveredHere = (d) => d.detail === "unchecked-commit" && tree !== undefined && commitsOf(root, [d.file]).some((c) => covers(root, { tree, mergeBase: live.base?.mergeBase }, c));
-    const alert = failedOf(failures, notes) ? undefined : alerts.find((d) => !coveredHere(d));
-    const code = alert === undefined ? report(failures, set, opts, notes) : refuseForAlert(alert, opts);
+    const alert = !audit && failedOf(failures, notes) ? undefined : alerts.find((d) => !coveredHere(d));
+    const code = alert === undefined ? report(failures, set, opts, notes, audit) : refuseForAlert(alert, opts);
     finish(project, scanned.length === 0 && ran.ran.length === 0 && blobRun.length === 0 ? "empty" : "ran", scanned, code, { set, failures, notes, extra: { scope, ...(incompleteSparse ? { sparseCoverage, sparseProjectFiles } : {}), ...(alert === undefined ? {} : { alert: alert.detail, next: alert.next }), guardrails: chosen.length, cached: ran.cached, rules: ruleTimes, passes: passTimes, cachedRules: chosen.filter((g) => ruleTimes[g.id] === undefined).map((g) => g.id), ratchet: [baselineTotal(baseline), baselineTotal(wide.next)], ratchetFrom } }, { paths: blobPaths, bytes: blobBytes });
     if (scope === "full" && code === 0 && alert === undefined && !failedOf(failures, notes) && beforeCoverage !== undefined &&
         cleanHead(root) === beforeCoverage && sha256(readFileSync(join(root, LOCK_PATH))) === lockSha) {
@@ -558,17 +563,25 @@ const check = async (opts, live) => {
         recordResolutions(project, prior, perFile, { at, root, tier, run, policy });
     return code;
 };
-export async function runCheck(opts) {
+export function runCheck(opts) {
+    return runCheckMode(opts, false);
+}
+export function runAudit(opts) {
+    if (opts.tier !== "edit" && opts.tier !== "boundary")
+        throw new Error("An audit tier must be edit or boundary.");
+    return runCheckMode(opts, true);
+}
+async function runCheckMode(opts, audit) {
     const live = {
         run: randomUUID(),
         at: new Date().toISOString(),
         tier: opts.hook === "claude" ? "edit" : (opts.tier ?? "commit"),
-        trigger: opts.hook === "claude" ? "agent-edit" : (opts.trigger ?? "manual"),
+        trigger: audit ? "audit" : opts.hook === "claude" ? "agent-edit" : (opts.trigger ?? "manual"),
         started: performance.now(),
         steps: {},
     };
     try {
-        return await check(opts, live);
+        return await check(opts, live, audit);
     }
     catch (cause) {
         const known = cause instanceof RecordError;

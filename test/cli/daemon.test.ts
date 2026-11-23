@@ -1088,6 +1088,61 @@ it("every check tier fails with the alert's next action while an alert is open, 
   expect(warden(root, { WARDEN_DAEMON: undefined }, "check", "--tier", "edit", "--base", "main", "src/a.ts").code).toBe(0);
 });
 
+it("audits beside a missing hook and unchecked commit without changing either alert", async () => {
+  const s = await start();
+  git(root, "config", "core.hooksPath", "elsewhere");
+  await writeFile(join(root, "src/b.ts"), "export const b = 2;\n");
+  git(root, "add", "src/b.ts");
+  commitUnhooked("unchecked change");
+  const commit = git(root, "rev-parse", "HEAD").trim();
+  await until("both commit enforcement alerts are open", () =>
+    unchecked(s).includes(commit) && openOf(s).some((d) => d.detail === "hook-unwired"));
+
+  const edit = warden(root, {}, "audit", "--format", "json", "src/a.ts");
+  expect(edit).toMatchObject({ code: 0, err: "" });
+  expect(JSON.parse(edit.out)).toMatchObject({ failures: [], tampered: [] });
+
+  await writeFile(join(root, "src/a.ts"), "// An advisory finding.\nexport const a = 1;\n");
+  const findings = warden(root, {}, "audit", "--format", "json", "src/a.ts");
+  expect(findings).toMatchObject({ code: 0, err: "" });
+  expect(JSON.parse(findings.out).failures).toEqual([expect.objectContaining({ guardrail: "warden-no-comments" })]);
+  expect(warden(root, {}, "audit", "--tier", "commit")).toMatchObject({ code: 2, err: expect.stringContaining("edit, boundary") });
+  expect(readEvidence(PROJECT).filter((e) => e.guardrail === "run" && e.trigger === "audit")).toEqual([
+    expect.objectContaining({ result: "pass", tier: "edit", exit: 0 }),
+    expect.objectContaining({ result: "fail", tier: "edit", exit: 0 }),
+  ]);
+  expect(openOf(s)).toEqual(expect.arrayContaining([
+    expect.objectContaining({ detail: "hook-unwired" }),
+    expect.objectContaining({ detail: "unchecked-commit", file: commit }),
+  ]));
+});
+
+it("a boundary audit leaves the baseline and index intact and rejects policy drift", async () => {
+  const baselinePath = ".warden/baseline.json";
+  const baseline = '{ "warden-no-comments": { "src/deleted.ts": 1 } }\n';
+  await writeFile(join(root, baselinePath), baseline);
+  git(root, "add", baselinePath);
+  commitUnhooked("existing baseline");
+  const s = await start();
+  git(root, "config", "core.hooksPath", "elsewhere");
+  await until("the hook alert is open", () => openOf(s).some((d) => d.detail === "hook-unwired"));
+
+  const args = ["--tier", "boundary", "--format", "json", "src/a.ts"];
+  const before = git(root, "write-tree");
+  const boundary = warden(root, {}, "audit", ...args);
+  expect(boundary).toMatchObject({ code: 0, err: "" });
+  expect(JSON.parse(boundary.out)).toMatchObject({ failures: [], tampered: [] });
+  expect(readFileSync(join(root, baselinePath), "utf8")).toBe(baseline);
+  expect(git(root, "write-tree")).toBe(before);
+
+  await writeFile(join(root, ".warden/generated/hooks/pre-commit"), "#!/bin/sh\nexit 0\n");
+  const drift = warden(root, {}, "audit", ...args);
+  expect(drift.code).toBe(1);
+  expect(JSON.parse(drift.out).tampered).toEqual([
+    expect.objectContaining({ file: ".warden/generated/hooks/pre-commit", detail: "generated-drift" }),
+  ]);
+});
+
 it("an invalid Claude settings file is not recorded as tampering", async () => {
   const s = await start();
   await mkdir(claude, { recursive: true });

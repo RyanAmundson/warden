@@ -13,7 +13,7 @@ import { RecordError, findWardenRoot } from "../records/load.js";
 import type { Tier } from "../records/types.js";
 import type { Format } from "../runner/feedback.js";
 import { runBench } from "./bench.js";
-import { runCheck } from "./check.js";
+import { runAudit, runCheck } from "./check.js";
 import { DEFAULT_PORT, installDaemon, runDaemon, uninstallDaemon } from "./daemon.js";
 import { runDispute, runDisputeRuling } from "./dispute.js";
 import { runExplain } from "./explain.js";
@@ -105,6 +105,25 @@ program
       hook: o.hook === undefined ? undefined : oneOf("check", "hook", o.hook, ["claude"] as const),
       hookInput: o.hook === undefined ? undefined : readFileSync(0, "utf8"),
       trigger: oneOf("check", "trigger", o.trigger, ["git-commit", "manual"] as const),
+    });
+  });
+
+program
+  .command("audit [paths...]")
+  .description("run advisory checks and report findings")
+  .option("--rule <id>", "only this Practice or Guardrail")
+  .option("--tier <tier>", "edit or boundary", "edit")
+  .option("--format <format>", "text or json", "text")
+  .option("--base <ref>", "the branch this work merges into")
+  .action(async (paths: string[], o: { rule?: string; tier: string; format: string; base?: string }) => {
+    process.exitCode = await runAudit({
+      root: root(),
+      wardenRoot: findWardenRoot(),
+      paths: paths.length > 0 ? paths.map((p) => resolve(p)) : undefined,
+      rule: o.rule,
+      base: o.base,
+      tier: oneOf("audit", "tier", o.tier, ["edit", "boundary"] as const),
+      format: oneOf("audit", "format", o.format, ["text", "json"] as const),
     });
   });
 

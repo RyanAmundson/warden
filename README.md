@@ -416,6 +416,24 @@ For a pack with skill Capabilities, `warden compile` writes a single locked
 for Claude Code or `warden doctor --harness codex` for Codex to check the
 corresponding repository skill links and get the command to create them.
 
+## Advisory checks
+
+Run `warden audit` to report edit-tier findings. Use `--tier boundary` to
+evaluate boundary-tier rules, `--rule <id>` to select a rule, and
+`--format json` to capture the results. By default, Warden uses the base
+recorded in the committed lock.
+
+```sh
+warden audit --tier boundary --rule warden-unit-layout --format json
+```
+
+An audit exits successfully when it finishes evaluating the requested rules,
+including when it reports findings. Policy drift, unfinished checks, and
+daemon alerts about policy integrity cause a nonzero exit. An audit leaves
+the baseline, Git index, and commit approval records intact. The daemon
+continues to record commit-hook and unchecked-commit alerts for enforcement
+through `warden check`.
+
 ## Daemon
 
 A commit-tier check, which includes the pre-commit hook and a plain

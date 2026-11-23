@@ -63,7 +63,7 @@ export interface Evidence {
   alert?: string;
 }
 
-export type Trigger = "agent-edit" | "git-commit" | "manual" | "daemon";
+export type Trigger = "agent-edit" | "git-commit" | "manual" | "daemon" | "audit";
 
 export type Step = "rules-intact" | "tools-ready" | "rules" | "verdict";
 
