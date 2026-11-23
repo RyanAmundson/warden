@@ -37,6 +37,7 @@
     "dist/eslint-plugin",
     "dist/schema",
     "packs",
+    "scripts/watch-main.mjs",
     "web",
     "allowed_signers"
   ]

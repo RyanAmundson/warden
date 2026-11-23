@@ -434,6 +434,25 @@ the baseline, Git index, and commit approval records intact. The daemon
 continues to record commit-hook and unchecked-commit alerts for enforcement
 through `warden check`.
 
+Run the packaged watcher under a process supervisor to audit a published ref.
+Pass the repository path, the project ID from its config, a full Git ref, and
+the absolute path to the Warden executable.
+
+```sh
+node /path/to/warden/scripts/watch-main.mjs /path/to/repo sample refs/remotes/origin/main /path/to/warden/bin/warden.js
+```
+
+The watcher checks the local ref every 10 seconds. It audits the first
+observed commit and subsequent advances in a temporary Git checkout, using
+both the edit and boundary tiers. The watcher uses the previous audited
+commit as the base, or the first commit's parent on startup. It relies on
+your existing Git fetch process to update remote-tracking refs. Each receipt
+records the source root, ref, commit, base, and enabled packs.
+
+To restrict execution to approved policy versions, append the path to a
+JSON file containing an array of objects with `config` and `lock` SHA-256
+digests. Append `--once` to check the current ref and exit.
+
 ## Daemon
 
 A commit-tier check, which includes the pre-commit hook and a plain
