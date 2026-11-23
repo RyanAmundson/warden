@@ -553,16 +553,20 @@ const check = async (opts, live, audit) => {
             repeated = { guardrail, file, n };
     }
     const notes = { repeated, overBudget, killed, ...(sparsePaths.length === 0 ? {} : { outside: sparsePaths, sparse: sparseMode(root) }) };
-    closeStep(live, failedOf(failures, notes) ? "fail" : "done");
+    const failed = failedOf(failures, notes);
+    if (!audit)
+        closeStep(live, failed ? "fail" : "done");
     const scope = opts.paths === undefined && opts.rule === undefined && !incompleteSparse ? "full" : "partial";
-    const tree = tier === "commit" && scope === "full" && !failedOf(failures, notes) ? indexTree(root) : undefined;
+    const tree = tier === "commit" && scope === "full" && !failed ? indexTree(root) : undefined;
     const coveredHere = (d) => d.detail === "unchecked-commit" && tree !== undefined && commitsOf(root, [d.file]).some((c) => covers(root, { tree, mergeBase: live.base?.mergeBase }, c));
-    const alert = !audit && failedOf(failures, notes) ? undefined : alerts.find((d) => !coveredHere(d));
+    const alert = !audit && failed ? undefined : alerts.find((d) => !coveredHere(d));
     const code = alert === undefined ? report(failures, set, opts, notes, audit) : refuseForAlert(alert, opts);
+    if (audit)
+        closeStep(live, failed || code !== 0 ? "fail" : "done");
     const empty = scanned.length === 0 && ran.ran.length === 0 && blobRun.length === 0;
     const outcome = audit && alert !== undefined ? "refused" : empty && (!audit || code === 0) ? "empty" : "ran";
     finish(project, outcome, scanned, code, { set, failures, notes, extra: { scope, ...(incompleteSparse ? { sparseCoverage, sparseProjectFiles } : {}), ...(alert === undefined ? {} : { alert: alert.detail, next: alert.next }), guardrails: chosen.length, cached: ran.cached, rules: ruleTimes, passes: passTimes, cachedRules: chosen.filter((g) => ruleTimes[g.id] === undefined).map((g) => g.id), ratchet: [baselineTotal(baseline), baselineTotal(wide.next)], ratchetFrom } }, { paths: blobPaths, bytes: blobBytes });
-    if (scope === "full" && code === 0 && alert === undefined && !failedOf(failures, notes) && beforeCoverage !== undefined &&
+    if (scope === "full" && code === 0 && alert === undefined && !failed && beforeCoverage !== undefined &&
         cleanHead(root) === beforeCoverage && sha256(readFileSync(join(root, LOCK_PATH))) === lockSha) {
         const members = wholeProject.filter((r) => coverageRules.has(r.guardrail) && r.status === "pass" &&
             r.overBudget !== true && (r.files ?? 0) > 0).map((r) => r.guardrail);
@@ -570,7 +574,7 @@ const check = async (opts, live, audit) => {
         if (coveredTree !== undefined)
             appendEvidence(project, { at, kind: "coverage", root, run, commit: beforeCoverage, tree: coveredTree, policy: lockSha, tier, members });
     }
-    if (alert === undefined && !failedOf(failures, notes))
+    if (alert === undefined && !failed)
         recordResolutions(project, prior, perFile, { at, root, tier, run, policy });
     return code;
 };

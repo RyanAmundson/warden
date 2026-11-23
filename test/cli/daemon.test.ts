@@ -1131,9 +1131,12 @@ it("records a refused audit as failed when a policy alert is open", async () => 
 
   const audit = warden(root, {}, "audit", "--format", "json", "src/a.ts");
   expect(audit).toMatchObject({ code: 1, err: expect.stringContaining("plugin-disabled") });
-  expect(readEvidence(PROJECT).filter((e) => e.guardrail === "run").at(-1)).toMatchObject({
+  const evidence = readEvidence(PROJECT);
+  const summary = evidence.filter((e) => e.guardrail === "run").at(-1);
+  expect(summary).toMatchObject({
     trigger: "audit", outcome: "refused", exit: 1, result: "fail", alert: "plugin-disabled",
   });
+  expect(evidence.filter((e) => e.kind === "step" && e.step === "verdict" && e.run === summary?.run).at(-1)).toMatchObject({ state: "fail" });
 });
 
 it("a boundary audit leaves the baseline and index intact and rejects policy drift", async () => {
