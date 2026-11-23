@@ -1117,6 +1117,25 @@ it("audits beside a missing hook and unchecked commit without changing either al
   ]));
 });
 
+it("records a refused audit as failed when a policy alert is open", async () => {
+  const alert = {
+    project: PROJECT,
+    root,
+    repo: realpathSync(join(root, ".git")),
+    file: ".claude/settings.local.json",
+    detail: "plugin-disabled",
+    next: 'set enabledPlugins "warden@warden" to true',
+  };
+  await mkdir(join(home, "daemon"), { recursive: true });
+  await writeFile(stateFile(), JSON.stringify({ roots: { [root]: { open: [alert] } } }));
+
+  const audit = warden(root, {}, "audit", "--format", "json", "src/a.ts");
+  expect(audit).toMatchObject({ code: 1, err: expect.stringContaining("plugin-disabled") });
+  expect(readEvidence(PROJECT).filter((e) => e.guardrail === "run").at(-1)).toMatchObject({
+    trigger: "audit", outcome: "refused", exit: 1, result: "fail", alert: "plugin-disabled",
+  });
+});
+
 it("a boundary audit leaves the baseline and index intact and rejects policy drift", async () => {
   const baselinePath = ".warden/baseline.json";
   const baseline = '{ "warden-no-comments": { "src/deleted.ts": 1 } }\n';

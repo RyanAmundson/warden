@@ -287,7 +287,8 @@ const check = async (opts: CheckOptions, live: Live, audit: boolean): Promise<nu
       root,
       ...(tier === "commit" && judged?.extra?.sparseCoverage === undefined ? treeOf(root) : {}),
       outcome,
-      ...(outcome === "ran" && judged !== undefined ? { result: failedOf(failures, judged.notes) ? "fail" : "pass" } : {}),
+      ...(outcome === "refused" && audit ? { result: "fail" } :
+        outcome === "ran" && judged !== undefined ? { result: failedOf(failures, judged.notes) || (audit && code !== 0) ? "fail" : "pass" } : {}),
       exit: code,
       ms: performance.now() - live.started,
       steps: live.steps,
@@ -577,7 +578,9 @@ const check = async (opts: CheckOptions, live: Live, audit: boolean): Promise<nu
   const coveredHere = (d: Detection): boolean => d.detail === "unchecked-commit" && tree !== undefined && commitsOf(root, [d.file]).some((c) => covers(root, { tree, mergeBase: live.base?.mergeBase }, c));
   const alert = !audit && failedOf(failures, notes) ? undefined : alerts.find((d) => !coveredHere(d));
   const code = alert === undefined ? report(failures, set, opts, notes, audit) : refuseForAlert(alert, opts);
-  finish(project, scanned.length === 0 && ran.ran.length === 0 && blobRun.length === 0 ? "empty" : "ran", scanned, code, { set, failures, notes, extra: { scope, ...(incompleteSparse ? { sparseCoverage, sparseProjectFiles } : {}), ...(alert === undefined ? {} : { alert: alert.detail, next: alert.next }), guardrails: chosen.length, cached: ran.cached, rules: ruleTimes, passes: passTimes, cachedRules: chosen.filter((g) => ruleTimes[g.id] === undefined).map((g) => g.id), ratchet: [baselineTotal(baseline), baselineTotal(wide.next)], ratchetFrom } }, { paths: blobPaths, bytes: blobBytes });
+  const empty = scanned.length === 0 && ran.ran.length === 0 && blobRun.length === 0;
+  const outcome = audit && alert !== undefined ? "refused" : empty && (!audit || code === 0) ? "empty" : "ran";
+  finish(project, outcome, scanned, code, { set, failures, notes, extra: { scope, ...(incompleteSparse ? { sparseCoverage, sparseProjectFiles } : {}), ...(alert === undefined ? {} : { alert: alert.detail, next: alert.next }), guardrails: chosen.length, cached: ran.cached, rules: ruleTimes, passes: passTimes, cachedRules: chosen.filter((g) => ruleTimes[g.id] === undefined).map((g) => g.id), ratchet: [baselineTotal(baseline), baselineTotal(wide.next)], ratchetFrom } }, { paths: blobPaths, bytes: blobBytes });
   if (scope === "full" && code === 0 && alert === undefined && !failedOf(failures, notes) && beforeCoverage !== undefined &&
       cleanHead(root) === beforeCoverage && sha256(readFileSync(join(root, LOCK_PATH))) === lockSha) {
     const members = wholeProject.filter((r) => coverageRules.has(r.guardrail) && r.status === "pass" &&
