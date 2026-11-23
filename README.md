@@ -6,15 +6,24 @@ boundary. Warden stores configuration and generated controls under `.warden/`.
 
 ## Install
 
-The `warden` command is installed globally from a release tag:
+Install Node.js 25 or later and Git. Install Warden from a release tag:
 
 ```bash
-npm install -g git+https://github.com/RyanAmundson/warden.git#v0.1.8
+npm install -g git+https://github.com/RyanAmundson/warden.git#v0.1.15
 warden --version
 ```
 
-Replace `v0.1.8` with the release you want. Then run `warden init` in a
-project's git checkout.
+In a new project's Git checkout, run `warden init` to enable Core. Run
+`warden daemon install` once on macOS to start the dashboard and support commit
+checks. You can run `warden daemon` in the foreground instead. In an existing
+Warden project, run `warden compile` and commit the regenerated policy lock
+when you switch Warden versions.
+
+The install includes all bundled pack definitions and built-in adapters. Open
+**Layers > Packs > Checks and setup** to see the prerequisites for each pack.
+Set project-specific paths and settings before compiling a new selection.
+For example, give RxJS Declarative and Signals separate folder scopes if you
+enable both.
 
 ## Upgrade a project from Warden 0.1.7 or earlier
 
