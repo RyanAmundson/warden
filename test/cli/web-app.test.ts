@@ -52,6 +52,7 @@ const boot = async (path: string): Promise<FakeSource> => {
   const file = join(scratch, `app-${++copies}.mjs`);
   writeFileSync(file, source);
   await import(pathToFileURL(file).href);
+  vi.mocked(history.replaceState).mockClear();
   await vi.advanceTimersByTimeAsync(0);
   const es = FakeSource.all.at(-1) as FakeSource;
   es.readyState = 1;
@@ -69,18 +70,26 @@ beforeEach(() => {
   place.assign = vi.fn();
   place.reload = vi.fn();
   vi.stubGlobal("location", place);
-  const entries: string[] = [];
+  const entries: { href: string; state: unknown }[] = [];
   let at = -1;
+  const go = vi.fn((delta: number) => {
+    at += delta;
+    moveTo(entries[at]?.href ?? "/");
+  });
   vi.stubGlobal("history", {
-    pushState: vi.fn((_s: unknown, _t: string, href: string) => {
-      entries.splice(++at, Infinity, href);
+    get state() {
+      return entries[at]?.state ?? null;
+    },
+    pushState: vi.fn((state: unknown, _t: string, href: string) => {
+      entries.splice(++at, Infinity, { href, state });
       moveTo(href);
     }),
-    replaceState: vi.fn((_s: unknown, _t: string, href: string) => {
-      entries[at] = href;
+    replaceState: vi.fn((state: unknown, _t: string, href: string) => {
+      entries[at] = { href, state };
       moveTo(href);
     }),
-    back: vi.fn(() => moveTo(entries[--at] ?? "/")),
+    go,
+    back: () => go(-1),
   });
   vi.stubGlobal("confirm", vi.fn(() => false));
   fetches = 0;
@@ -209,7 +218,7 @@ it("switches pages in place, keeping the one event stream open", async () => {
   expect(document.title).toBe("Overview · Warden");
   const e = await click("/tamper");
   expect(e.preventDefault).toHaveBeenCalled();
-  expect(history.pushState).toHaveBeenCalledWith(null, "", `${origin}/tamper`);
+  expect(history.pushState).toHaveBeenCalledWith({ n: 1 }, "", `${origin}/tamper`);
   expect(document.title).toBe("Tamper · Warden");
   expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
   moveTo("/");
@@ -234,17 +243,20 @@ const layers = { project: "warden", bands: [], practices: [], packs: [], packSet
 it("asks before a switch discards unsaved pack changes, and stays when told to", async () => {
   bodies["/api/projects"] = warden;
   bodies["/api/layers"] = layers;
-  await boot("/layers?project=warden");
+  await boot("/tamper");
+  await click("/layers?project=warden");
   on.change?.({ target: { dataset: { pack: "custom" }, checked: true } });
   const e = await click("/tamper");
   expect(e.preventDefault).toHaveBeenCalled();
   expect(confirm).toHaveBeenCalledTimes(1);
   expect(document.title).toBe("Layers · Warden");
   expect(place.pathname).toBe("/layers");
-  moveTo("/tamper");
+  history.back();
   on.popstate?.({});
   await vi.advanceTimersByTimeAsync(0);
-  expect(history.pushState).toHaveBeenLastCalledWith(null, "", "/layers?project=warden");
+  expect(confirm).toHaveBeenCalledTimes(2);
+  expect(history.go).toHaveBeenLastCalledWith(1);
+  expect(place.pathname).toBe("/layers");
   expect(document.title).toBe("Layers · Warden");
   vi.mocked(confirm).mockReturnValue(true);
   await click("/tamper");
@@ -262,8 +274,24 @@ it("abandons a pending switch when a pack is toggled before it draws", async () 
   await vi.advanceTimersByTimeAsync(0);
   expect(place.pathname).toBe("/layers");
   expect(document.title).toBe("Layers · Warden");
-  expect(history.back).toHaveBeenCalledTimes(1);
+  expect(history.go).toHaveBeenCalledWith(-1);
   expect(history.replaceState).not.toHaveBeenCalled();
+});
+
+it("returns to the page on screen in one step after two quick switches and a pack toggle", async () => {
+  bodies["/api/projects"] = warden;
+  bodies["/api/layers"] = layers;
+  await boot("/layers?project=warden");
+  press("/tamper");
+  press("/determinism");
+  on.change?.({ target: { dataset: { pack: "custom" }, checked: true } });
+  await vi.advanceTimersByTimeAsync(0);
+  on.popstate?.({});
+  await vi.advanceTimersByTimeAsync(0);
+  expect(history.go).toHaveBeenCalledWith(-2);
+  expect(confirm).not.toHaveBeenCalled();
+  expect(place.pathname).toBe("/layers");
+  expect(document.title).toBe("Layers · Warden");
 });
 
 const press = (href: string): void => {
@@ -341,7 +369,7 @@ it("switches project from the picker in place", async () => {
   await boot("/runs?project=warden");
   on.change?.({ target: { dataset: { nav: "project" }, value: "other" } });
   await vi.advanceTimersByTimeAsync(0);
-  expect(history.pushState).toHaveBeenCalledWith(null, "", `${origin}/runs?project=other`);
+  expect(history.pushState).toHaveBeenCalledWith({ n: 1 }, "", `${origin}/runs?project=other`);
   expect(FakeSource.all).toHaveLength(1);
 });
 
@@ -358,6 +386,6 @@ it("leaves the page alone on a hash-only history change", async () => {
 it("replaces the history entry when the link names the page already open", async () => {
   await boot("/tamper");
   await click("/tamper");
-  expect(history.replaceState).toHaveBeenCalledWith(null, "", `${origin}/tamper`);
+  expect(history.replaceState).toHaveBeenCalledWith({ n: 0 }, "", `${origin}/tamper`);
   expect(history.pushState).not.toHaveBeenCalled();
 });

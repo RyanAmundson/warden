@@ -9,7 +9,9 @@ let next;
 // The address being opened, and the address of the page on screen. They differ while a switch loads.
 let at;
 let shown;
-let pushed = false;
+// Each history entry carries its position, so an abandoned switch can return to the page on screen in one step.
+const position = () => history.state?.n ?? 0;
+let shownAt;
 const pageOf = (path) => path.replace(/^\/+|\/+$/g, "") || "overview";
 const route = (url) => {
   params = new URLSearchParams(url.search);
@@ -22,6 +24,8 @@ const route = (url) => {
 const root = document.getElementById("app");
 const view = { ...route(location), packDraft: new Map(), fresh: new Set() };
 shown = at;
+if (typeof history.state?.n !== "number") history.replaceState({ n: 0 }, "", location.href);
+shownAt = position();
 const state = { page, project, health: null, projects: [], data: null, error: null, lost: false, frozen: "", frozenAt: null, now: Date.now(), view };
 const seen = new Set();
 let lastBeat = Date.now();
@@ -105,6 +109,7 @@ const arrive = () => {
 // Draw the opened page: its address, view settings, and whatever load() set.
 const commit = () => {
   shown = at;
+  shownAt = position();
   state.page = page;
   state.project = project;
   if (next !== undefined) Object.assign(state.view, next);
@@ -163,8 +168,7 @@ const load = async () => {
 
 // Abandon a switch that has not drawn yet: the address and target go back to the page on screen.
 const stay = () => {
-  if (pushed) history.back();
-  else if (`${location.pathname}${location.search}` !== shown) history.pushState(null, "", shown);
+  if (position() !== shownAt) history.go(shownAt - position());
   route(new URL(shown, location.href));
   project = state.project;
   next = undefined;
@@ -176,14 +180,13 @@ const go = (url, push = true) => {
   const { view } = state;
   if (view.packDraft.size || view.packSaving) {
     if (!confirm("Leave this page? Your unsaved pack changes will be lost.")) {
-      // ponytail: Back is undone with a new entry, so Forward history is lost after a cancelled Back.
-      if (!push) history.pushState(null, "", shown);
+      if (!push) history.go(shownAt - position());
       return;
     }
     view.packDraft.clear();
   }
-  pushed = push && url.href !== location.href;
-  if (push) history[pushed ? "pushState" : "replaceState"](null, "", url.href);
+  if (push && url.href === location.href) history.replaceState(history.state, "", url.href);
+  else if (push) history.pushState({ n: position() + 1 }, "", url.href);
   next = route(url);
   seen.clear();
   clearTimeout(pending);
