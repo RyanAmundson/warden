@@ -66,11 +66,14 @@ const render = () => {
   const key = focusKey(document.activeElement);
   const caret = document.activeElement?.selectionStart;
   const openDetails = state.page === "layers" ? [...root.querySelectorAll("[data-pack-details][open]")].map((details) => details.id) : [];
+  const playing = root.querySelector("video");
   try {
     root.innerHTML = renderApp(state);
   } catch (cause) {
     root.innerHTML = renderApp({ ...state, lost: false, error: { error: `This page could not be drawn: ${cause.message}`, next: "reload this page" } });
   }
+  const video = root.querySelector("video");
+  if (playing && video?.src === playing.src) video.replaceWith(playing);
   for (const id of openDetails) {
     const details = root.querySelector(`#${CSS.escape(id)}`);
     if (details) details.open = true;

@@ -28,6 +28,7 @@ import { recordClaudeStalls } from "./session-end.js";
 import { runRuns } from "./runs.js";
 import { runWhere } from "./where.js";
 import { runTrust } from "./trust.js";
+import { MAX_KEYFRAMES, runVideoRecord } from "./video.js";
 import { type Screen, liveView, loadView, plainDeterminism, plainLayers, plainView, plainViolations } from "./view.js";
 import { SKILL_HARNESSES } from "../runner/doctor.js";
 import { wardenHome } from "../runner/evidence.js";
@@ -229,6 +230,29 @@ program
       signal: AbortSignal.any([stop.signal, outputClosed.signal]),
       ...(o.html === undefined ? {} : { html: o.html }),
     });
+  });
+
+const video = program.command("video").description("record a UI change for the owner with the change-video pack");
+video
+  .command("record")
+  .description("replay a UI change in agent-browser, record a WebM for the owner, and keep it with this checkout's latest run")
+  .requiredOption("--url <url>", "the dev server page your change affects")
+  .requiredOption("--steps <file>", "a Bash file of the flow your diff changes; see below")
+  .option("--run <id>", "the run to keep the video with, instead of this checkout's latest")
+  .addHelpText("after", `
+The steps file runs inside the recording, after the page at --url opens at
+1280 x 800. Call agent-browser through ab, and use wait as the assertions:
+
+  ab wait '#save'                          # fails the replay if it never appears
+  ab screenshot "$OUT/01-before.jpg"
+  ab click '#save'
+  ab wait --text 'Saved' --timeout 5000
+  ab screenshot "$OUT/02-after.jpg"
+
+Take at most ${MAX_KEYFRAMES} keyframes, as JPEG files in $OUT. Read the keyframes; never read
+the video, which is for the owner. A page error also fails the replay.`)
+  .action(async (o: { url: string; steps: string; run?: string }) => {
+    process.exitCode = await runVideoRecord(root(), findWardenRoot(), o);
   });
 
 const review = program.command("review").description("brief a reviewer on a change, and triage the reviewer's report");

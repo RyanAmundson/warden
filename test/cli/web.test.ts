@@ -174,6 +174,21 @@ describe("pages render from API responses", () => {
     expect(nextActions(html)).toEqual([ERROR_NEXT]);
   });
 
+  it("plays a run's change video with its keyframes, and shows nothing extra for a run without one", () => {
+    const recorded = run({ run: "r-video", video: { file: "change.webm", keyframes: ["01-before.jpg", "02-after.jpg"] } });
+    const page = (id: string) => renderApp(state("run", { runs: { project: "context-manager", runs: [recorded, ...cmRuns] } }, { view: { run: id, fresh: new Set() } }));
+    const html = page("r-video");
+    const src = (file: string) => `/api/video?project=context-manager&amp;run=r-video&amp;file=${file}`;
+    expect(html).toContain(`<video controls preload="metadata" width="1280" height="800" src="${src("change.webm")}"></video>`);
+    expect(html).toContain("Recorded by the agent that made the change · 2 keyframes");
+    expect([...html.matchAll(/<img src="([^"]+)" alt="([^"]+)"/g)].map((m) => [m[1], m[2]])).toEqual([[src("01-before.jpg"), "Keyframe 01-before.jpg"], [src("02-after.jpg"), "Keyframe 02-after.jpg"]]);
+    for (const id of ["r-pass", "r-err2"]) {
+      const plain = page(id);
+      expect(plain).not.toContain("<video");
+      expect(plain).not.toContain("Change video");
+    }
+  });
+
   it("renders layers with the weakest practice and the packs", () => {
     const html = renderApp(state("layers", { layers }, { project: "warden" }));
     expect(html).toContain("say-why, held only by instruction");

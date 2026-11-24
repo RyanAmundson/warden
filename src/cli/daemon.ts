@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from "node:http";
 import { homedir, userInfo } from "node:os";
@@ -10,6 +10,7 @@ import { type Daemon, type Detection, HEARTBEAT_MS, STALE_MS, heartbeatFile, rea
 import { type Evidence, readEvidence, wardenHome } from "../runner/evidence.js";
 import { PackSettingsError, packSettings, packSettingsBody, savePackSettings } from "./pack-settings.js";
 import { runRecords } from "./runs.js";
+import { SAFE_NAME, VIDEO_FILE, recordings, videosRoot } from "./video.js";
 import { BANDS, bandCounts, loadView, packViolations } from "./view.js";
 
 export const DEFAULT_PORT = 7419;
@@ -123,7 +124,11 @@ export async function route(daemon: Daemon, wardenRoot: string, url: URL): Promi
       const { project } = pick();
       const limit = Number(url.searchParams.get("limit") ?? "20");
       if (!Number.isInteger(limit) || limit < 1) throw new HttpError(400, `limit must be a positive integer, not ${url.searchParams.get("limit")}`, "pass ?limit= with a positive integer");
-      return { project, runs: runRecords(readEvidence(project)).slice(-limit).reverse() };
+      const videos = recordings(project);
+      return { project, runs: runRecords(readEvidence(project)).slice(-limit).reverse().map((run) => {
+        const video = run.run === undefined ? undefined : videos.get(run.run);
+        return video === undefined ? run : { ...run, video };
+      }) };
     }
     case "/api/layers": {
       const entry = pick();
@@ -172,9 +177,48 @@ export async function route(daemon: Daemon, wardenRoot: string, url: URL): Promi
       return { open: openAlerts(daemon, project, repo), recent: recent.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 50) };
     }
     default:
-      throw new HttpError(404, `no route ${url.pathname}`, "GET /api/health, /api/projects, /api/runs, /api/layers, /api/violations, /api/determinism, /api/tamper, or /api/events");
+      throw new HttpError(404, `no route ${url.pathname}`, "GET /api/health, /api/projects, /api/runs, /api/video, /api/layers, /api/violations, /api/determinism, /api/tamper, or /api/events");
   }
 }
+
+const MEDIA: Record<string, string> = { webm: "video/webm", jpg: "image/jpeg" };
+
+function videoFile(daemon: Daemon, url: URL): { file: string; type: string } {
+  const project = url.searchParams.get("project");
+  const run = url.searchParams.get("run") ?? "";
+  const name = url.searchParams.get("file") ?? "";
+  if (project === null || !projectsOf(daemon).some((p) => p.project === project)) throw new HttpError(404, `the daemon watches no project named ${project ?? "(none)"}`, "pick a project name from GET /api/projects");
+  if (!SAFE_NAME.test(run) || !VIDEO_FILE.test(name)) throw new HttpError(400, "/api/video needs ?run=<run id>&file=<name>.webm or .jpg", "take run and file from a run's video in GET /api/runs");
+  const file = join(videosRoot(project), run, name);
+  if (!existsSync(file)) throw new HttpError(404, `run ${run} of ${project} has no recorded ${name}`, "take run and file from a run's video in GET /api/runs");
+  return { file, type: MEDIA[name.slice(name.lastIndexOf(".") + 1)] as string };
+}
+
+function sendFile(req: IncomingMessage, res: ServerResponse, { file, type }: { file: string; type: string }): void {
+  const size = statSync(file).size;
+  const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? "");
+  const head = { "content-type": type, "accept-ranges": "bytes", "cache-control": "no-cache" };
+  if (range === null || (range[1] === "" && range[2] === "")) {
+    res.writeHead(200, { ...head, "content-length": size });
+    createReadStream(file).on("error", () => res.destroy()).pipe(res);
+    return;
+  }
+  const start = range[1] === "" ? Math.max(0, size - Number(range[2])) : Number(range[1]);
+  const end = range[1] === "" || range[2] === "" ? size - 1 : Math.min(Number(range[2]), size - 1);
+  if (start >= size || start > end) {
+    res.writeHead(416, { ...head, "content-range": `bytes */${size}` }).end();
+    return;
+  }
+  res.writeHead(206, { ...head, "content-range": `bytes ${start}-${end}/${size}`, "content-length": end - start + 1 });
+  createReadStream(file, { start, end }).on("error", () => res.destroy()).pipe(res);
+}
+
+const failure = (cause: Error): HttpError => cause instanceof HttpError ? cause : cause instanceof PackSettingsError ? new HttpError(cause.status, cause.message, "review the pack selection and reload Layers if the checkout changed") : cause instanceof RecordError ? new HttpError(422, cause.message, /Next action: (.*?)\.?$/.exec(cause.message)?.[1] ?? "run warden check in the project and fix what it reports") : new HttpError(500, cause.message, "read the daemon log and fix what it names");
+
+const sendError = (res: ServerResponse, cause: Error): void => {
+  const http = failure(cause);
+  res.writeHead(http.status, { "content-type": "application/json" }).end(`${JSON.stringify({ error: http.message, next: http.next })}\n`);
+};
 
 export interface Served {
   server: Server;
@@ -232,13 +276,18 @@ export async function serve(wardenRoot: string, port: number, opts: { intervalMs
       req.on("close", () => clients.delete(res));
       return;
     }
+    if (url.pathname === "/api/video") {
+      try {
+        sendFile(req, res, videoFile(daemon, url));
+      } catch (cause) {
+        sendError(res, cause as Error);
+      }
+      return;
+    }
     const result = changes ? changeProjectPacks(daemon, wardenRoot, url, req) : route(daemon, wardenRoot, url);
     result.then(
       (body) => res.writeHead(200, { "content-type": "application/json" }).end(`${JSON.stringify(body)}\n`),
-      (cause: Error) => {
-        const http = cause instanceof HttpError ? cause : cause instanceof PackSettingsError ? new HttpError(cause.status, cause.message, "review the pack selection and reload Layers if the checkout changed") : cause instanceof RecordError ? new HttpError(422, cause.message, /Next action: (.*?)\.?$/.exec(cause.message)?.[1] ?? "run warden check in the project and fix what it reports") : new HttpError(500, cause.message, "read the daemon log and fix what it names");
-        res.writeHead(http.status, { "content-type": "application/json" }).end(`${JSON.stringify({ error: http.message, next: http.next })}\n`);
-      },
+      (cause: Error) => sendError(res, cause),
     );
   });
   return {

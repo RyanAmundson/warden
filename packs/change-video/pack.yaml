@@ -1,0 +1,19 @@
+id: change-video
+layer: 16
+terms:
+  - id: change-video
+    definition: A WebM recording of the flow a UI change affects, kept with the Warden run that checked the change.
+    bans: []
+practices: []
+capabilities:
+  - id: change-video
+    kind: skill
+    serves: change-video
+    purpose: Record a video of a UI change for the owner, and check the change with assertions and at most five keyframes.
+    when: a diff changes something a person sees, before you push it or open a pull request.
+    upholds: []
+    replaces: ["watching a recording to check a change", "clicking through the app one tool call and one screenshot at a time"]
+    commands:
+      - warden check --base <base>
+      - warden video record --help
+      - warden video record --url <url> --steps <file>

@@ -71,6 +71,7 @@ function adapterReadiness(root, pack, id) {
     }
 }
 const projectSetup = new Map([
+    ["change-video", "Put agent-browser 0.26 or later and jq on PATH, and run the project's dev server. Recordings stay in WARDEN_HOME/videos, outside git."],
     ["idempotency", "Add an <operation>.idempotency.js, .mjs, or .ts spec with setup, run, snapshot, and inputs. Call step() between the operation's writes so Warden can test a crash and retry."],
     ["machines", "Add a .machine.json transition table. Add a matching .trace.json when you want Warden to verify recorded transitions."],
     ["proofs", "Add a Lean 4 Lake project at the project setting, default proofs. Add a <logic>.conformance.js, .mjs, or .ts spec that names the proved model's command and the implementation it checks."],

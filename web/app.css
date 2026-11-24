@@ -227,3 +227,6 @@ input::placeholder{color:#5E6773}
   .tamper-history-table th:nth-child(4),.tamper-history-table th:nth-child(5){width:15%}
   .tamper-history-table th:last-child{width:12%}
 }
+.change-video video{display:block;width:100%;max-width:960px;height:auto;background:var(--ink)}
+.keyframes{list-style:none;margin:12px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;max-width:960px}
+.keyframes img{display:block;width:100%;height:auto;border:1px solid var(--line)}

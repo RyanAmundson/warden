@@ -608,6 +608,13 @@ that port. `GET /api/projects` groups watched checkouts and open alert counts
 by Git common directory within each project label. Pass a URL-encoded `repo`
 from that response to `GET /api/tamper` to limit alerts to that repository.
 
+### Watch an agent's UI change
+
+Enable the `change-video` pack to have agents record a video of each UI change
+with `warden video record`. The run's page on the dashboard plays the video and
+shows its keyframes. `GET /api/video` serves the files from
+`$WARDEN_HOME/videos`. See [packs/change-video/README.md](packs/change-video/README.md).
+
 ### Change a project's packs
 
 On the dashboard, open **Layers**, choose the project, and scroll to **Packs**.

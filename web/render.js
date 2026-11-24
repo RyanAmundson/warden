@@ -433,6 +433,14 @@ const banner = (run) => {
   return `<section class="banner ${run.outcome === "tampered" ? "red" : "amber"}" aria-labelledby="er-h"><div class="top">${tag(outcome(run))}<h2 id="er-h">${esc(title)}</h2></div><p>${esc(why)}</p>${run.next ? nextBox(run.next) : ""}</section>`;
 };
 
+const videoSection = (project, run) => {
+  if (!run.video) return "";
+  const src = (file) => esc(`/api/video?${new URLSearchParams({ project, run: run.run, file })}`);
+  const frames = run.video.keyframes ?? [];
+  return `<section class="mod change-video" aria-labelledby="er-video"><div class="modh"><h2 class="h2" id="er-video">Change video</h2><span class="muted">Recorded by the agent that made the change${frames.length ? ` · ${plural(frames.length, "keyframe")}` : ""}</span></div>
+<div class="pad"><video controls preload="metadata" width="1280" height="800" src="${src(run.video.file)}"></video>${frames.length ? `<ul class="keyframes">${frames.map((k) => `<li><a href="${src(k)}" target="_blank" rel="noopener"><img src="${src(k)}" alt="Keyframe ${esc(k)}" width="1280" height="800" loading="lazy"></a></li>`).join("")}</ul>` : ""}</div></section>`;
+};
+
 const missingRun = (project, id, count) => `<section class="mod pad" role="status">Run <span class="mono">${esc(id)}</span> is not among the last ${plural(count, "run")} of ${esc(project)}, so this page cannot show it. <a href="${href("runs", { project })}">Open the run list</a></section>`;
 
 export const runPage = (state) => {
@@ -448,6 +456,7 @@ export const runPage = (state) => {
   const reached = STEPS.filter((s) => run.steps?.[s.id] !== undefined).length;
   return `<header class="head"><div><a href="${href("runs", { project })}" style="font-size:12px;font-weight:600">Runs · ${esc(project)}</a><h1 class="h1">${esc(tierTitle(run))}</h1><div class="muted">${esc(runSub(run))}</div></div><div class="controls"><button class="btn" type="button" data-copy="${esc(run.run)}">Copy run id</button></div></header>
 ${banner(run)}
+${videoSection(project, run)}
 <div class="split"><section class="mod narrow" aria-labelledby="er-run"><div class="modh"><h2 class="h2" id="er-run">Run details</h2>${notPassing(run) ? "" : tag(outcome(run))}</div>${runFacts(run, true)}</section>
 <section class="mod wide" aria-labelledby="er-steps"><div class="modh"><h2 class="h2" id="er-steps">Steps</h2><span class="muted">${notPassing(run) && run.outcome !== "ran" ? (reached === 0 ? "stopped before step 1" : `stopped at step ${reached} of 4`) : `${reached} of 4 steps ran`}</span></div>${stepsList(run)}${failuresTable(run)}${rulesTable(run)}</section></div>
 ${streak.length > 1 ? `<section class="mod" aria-labelledby="er-streak"><div class="modh"><h2 class="h2" id="er-streak">Same outcome, ${num(streak.length)} runs in a row</h2><span class="muted">since ${esc(clock(streak.at(-1).at))}${run.next ? " · each gave the same next action" : ""}</span></div><div class="scroll"><table><thead><tr><th scope="col">Time</th><th scope="col">Trigger</th><th scope="col">Tier</th><th scope="col" class="r">ms</th></tr></thead><tbody>${streak.map((r) => `<tr${r.run === run.run ? ' class="sel" aria-current="true"' : ""}><td><a href="${href("run", { project, run: r.run })}">${esc(clock(r.at))}</a></td><td>${esc(trigger(r))}</td><td>${esc(r.tier ?? "–")}</td><td class="r">${ms(r.ms)}</td></tr>`).join("")}</tbody></table></div></section>` : ""}`;

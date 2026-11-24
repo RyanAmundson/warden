@@ -1375,3 +1375,68 @@ it("install writes the launchd plist under HOME and bootstraps it; uninstall rem
   expect(failed.code).toBe(2);
   expect(failed.err).toContain(`Next action: run launchctl bootstrap gui/${uid} ${plist} and fix the error it prints`);
 });
+
+it("records a change video only with the change-video pack, keeps it with the checkout's latest run, and serves it", async () => {
+  expect(warden(root, {}, "check", "--base", "main", "src/a.ts").code).toBe(0);
+  const bin = join(scratch, "bin");
+  await mkdir(bin);
+  await writeFile(join(bin, "agent-browser"), `#!/bin/sh
+[ "$1" = --session ] && shift 2
+if [ "$1" = --json ]; then
+  if [ -n "$FAKE_PAGE_ERROR" ]; then echo "{\\"data\\":{\\"errors\\":[{\\"text\\":\\"$FAKE_PAGE_ERROR\\"}]}}"; else echo '{"data":{"errors":[]}}'; fi
+  exit 0
+fi
+[ "$1 $2" = "record start" ] && printf 'WEBM-0123456789' > "$3"
+[ "$1" = screenshot ] && printf 'JPEG' > "$2"
+exit 0
+`);
+  await chmod(join(bin, "agent-browser"), 0o755);
+  const env = { PATH: `${bin}:${process.env.PATH ?? ""}` };
+  const steps = join(scratch, "steps.sh");
+  await writeFile(steps, `ab wait '#save'\nab screenshot "$OUT/01-after.jpg"\n`);
+  const record = (extra: Record<string, string> = {}) => warden(root, { ...env, ...extra }, "video", "record", "--url", "http://localhost:5173/", "--steps", steps);
+  const off = record();
+  expect(off.code).toBe(2);
+  expect(off.err).toContain("the change-video pack is not enabled in proj, so Warden records no video. Next action: add change-video under packs in .warden/config.yaml");
+  expect(existsSync(join(home, "videos"))).toBe(false);
+  const config = join(root, ".warden/config.yaml");
+  await writeFile(config, readFileSync(config, "utf8").replace(/^packs:\n/m, "packs:\n  - id: change-video\n    paths: []\n"));
+  const thrown = record({ FAKE_PAGE_ERROR: "boom" });
+  expect(thrown.code).toBe(1);
+  expect(thrown.err).toContain("Page errors:\nboom");
+  expect(readdirSync(join(home, "videos/proj"))).toEqual([]);
+  const ok = record();
+  expect(ok.code, ok.err).toBe(0);
+  const run = readEvidence(PROJECT).filter((e) => e.kind === "cost" && e.guardrail === "run" && e.root === root).at(-1)?.run as string;
+  expect(ok.out).toContain(`Recorded run ${run} of proj.`);
+  expect(ok.out).toContain(join(home, "videos/proj", run, "01-after.jpg"));
+  await writeFile(steps, Array.from({ length: 6 }, (_, i) => `ab screenshot "$OUT/0${i}.jpg"\n`).join(""));
+  const many = record();
+  expect(many.code).toBe(1);
+  expect(many.err).toContain("The steps took 6 keyframes; the limit is 5.");
+  expect(readdirSync(join(home, "videos/proj", run)).sort()).toEqual(["01-after.jpg", "change.webm"]);
+
+  await start();
+  const runs = (await get("/api/runs?project=proj&limit=5")).body as { runs: (Evidence & { video?: unknown })[] };
+  expect(runs.runs.find((r) => r.run === run)?.video).toEqual({ file: "change.webm", keyframes: ["01-after.jpg"] });
+  expect(runs.runs.filter((r) => r.run !== run).every((r) => r.video === undefined)).toBe(true);
+  const raw = (path: string, headers: Record<string, string> = {}): Promise<{ status: number; headers: Record<string, unknown>; body: string }> =>
+    new Promise((done, fail) => {
+      request({ host: "127.0.0.1", port: served?.port, path, headers }, (res) => {
+        let body = "";
+        res.on("data", (c: Buffer) => (body += c.toString("latin1")));
+        res.on("end", () => done({ status: res.statusCode ?? 0, headers: res.headers, body }));
+      }).on("error", fail).end();
+    });
+  const video = `/api/video?project=proj&run=${run}&file=`;
+  expect(await raw(`${video}change.webm`)).toMatchObject({ status: 200, headers: { "content-type": "video/webm", "accept-ranges": "bytes", "content-length": "15" }, body: "WEBM-0123456789" });
+  expect(await raw(`${video}change.webm`, { range: "bytes=5-8" })).toMatchObject({ status: 206, headers: { "content-range": "bytes 5-8/15" }, body: "0123" });
+  expect(await raw(`${video}change.webm`, { range: "bytes=-3" })).toMatchObject({ status: 206, body: "789" });
+  expect((await raw(`${video}change.webm`, { range: "bytes=99-" })).status).toBe(416);
+  expect(await raw(`${video}01-after.jpg`)).toMatchObject({ status: 200, headers: { "content-type": "image/jpeg" }, body: "JPEG" });
+  expect((await raw(`${video}..%2Fsteps.webm`)).status).toBe(400);
+  expect((await raw(`/api/video?project=proj&run=..&file=change.webm`)).status).toBe(400);
+  expect((await raw(`${video}02-none.jpg`)).status).toBe(404);
+  expect((await raw(`/api/video?project=nope&run=${run}&file=change.webm`)).status).toBe(404);
+  expect((await raw(`${video}change.webm`, { host: "evil.example" })).status).toBe(403);
+});
