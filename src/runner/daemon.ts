@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { type FSWatcher, existsSync, mkdirSync, readFileSync, rmSync, watch } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { setImmediate as yieldToEvents } from "node:timers/promises";
 import { COMMIT_HOOK, RELEASES } from "../compiler/emit.js";
 import { FIRST_STAMPING, LOCK_PATH, firstLine, olderThan, readLock } from "../compiler/lock.js";
@@ -10,7 +10,7 @@ import { type PluginState, claudeDir, commitHookItem, pluginAction, pluginState 
 import { type Evidence, LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, evidenceProjects, readEvidenceFrom, readEvidenceTail, wardenHome, writeAtomic } from "./evidence.js";
 import { formatFeedback } from "./feedback.js";
 import { findTampering } from "./tamper.js";
-import { TRUST_SIGNERS, readTrustFiles, signatureValid } from "./trust.js";
+import { TRUST_SIGNERS, readTrustFiles, signatureValid, trustDir } from "./trust.js";
 
 export const HEARTBEAT_MS = 10_000;
 
@@ -262,6 +262,7 @@ const watchSpecs = (root: string, repo: string): WatchSpec[] => [
   { path: gitPath(root, ["rev-parse", "--git-path", "hooks"]), recursive: false },
   { path: join(root, ".claude"), recursive: false, accept: named("settings.json", "settings.local.json") },
   { path: claudeDir(), recursive: false, accept: named("settings.json") },
+  { path: dirname(trustDir()), recursive: true, accept: (name) => name.startsWith(`${basename(trustDir())}/`) },
 ];
 
 export interface DaemonOptions {
@@ -272,7 +273,6 @@ export interface DaemonOptions {
   onDetection?: (d: Detection) => void;
   onEvidence?: (project: string) => void;
   onError?: (cause: Error) => void;
-  trustSigners?: string;
 }
 
 export interface Watched {
@@ -321,8 +321,8 @@ export function startWatching(opts: DaemonOptions): Daemon {
   };
   const running = (JSON.parse(readFileSync(join(opts.wardenRoot, "package.json"), "utf8")) as { version: string }).version;
   const owner = (w: Watched): boolean => [...projects.values()].find((x) => x.repo === w.repo) === w;
-  const trustSigners = opts.trustSigners ?? join(opts.wardenRoot, TRUST_SIGNERS);
-  const verified = new Map<string, boolean>();
+  const trustSigners = join(opts.wardenRoot, TRUST_SIGNERS);
+  const verified = new Set<string>();
   const evidenceMergedSinceStart = new Set<string>();
 
   const trustFound = (w: Watched, known: RepoState | undefined): { trusted: Set<string>; found: Found[] } => {
@@ -332,8 +332,8 @@ export function startWatching(opts: DaemonOptions): Daemon {
     for (const t of readTrustFiles()) {
       if (t.record !== undefined && t.record.repo !== w.repo) continue;
       const cacheKey = `${signers}\0${t.text}`;
-      if (t.record !== undefined && !verified.has(cacheKey)) verified.set(cacheKey, signatureValid(trustSigners, t.record));
-      if (t.record !== undefined && verified.get(cacheKey) === true) trusted.add(t.record.commit);
+      if (t.record !== undefined && !verified.has(cacheKey) && signatureValid(trustSigners, t.record)) verified.add(cacheKey);
+      if (t.record !== undefined && verified.has(cacheKey)) trusted.add(t.record.commit);
       else found.push({ file: t.file, detail: "untrusted-trust", next: `delete ${t.file}, because it is not signed for ${w.repo} by a key in ${trustSigners}. To trust a commit, ${trustAction(w.root, t.record?.commit ?? "<commit>")}` });
     }
     if ((known?.trusted ?? []).length > 0) found.push({ file: `${stateFile()} trusted`, detail: "untrusted-trust", next: `stop the daemon with warden daemon uninstall, delete the trusted list of ${w.repo} in ${stateFile()}, and start it again with warden daemon install --port ${opts.port}; the daemon does not honor that list. To trust a commit, ${trustAction(w.root, "<commit>")}` });
@@ -370,8 +370,8 @@ export function startWatching(opts: DaemonOptions): Daemon {
     const tips = await repoTips(w.root, trees);
     const ix = indexFor(w.project);
     const known = state.repos[w.repo];
-    const rebuilt = evidenceMergedSinceStart.has(w.repo) ? [] : commitsOf(w.root, [...ix.unchecked]);
-    evidenceMergedSinceStart.add(w.repo);
+    const firstScan = !evidenceMergedSinceStart.has(w.repo);
+    const rebuilt = firstScan ? commitsOf(w.root, [...new Set([...ix.unchecked, ...(known?.unchecked ?? []).map((c) => c.commit)])]) : [];
     const refs = await allTips(w.root, tips);
     const boundary = known?.boundary ?? refs;
     const owned = trustFound(w, known);
@@ -383,7 +383,7 @@ export function startWatching(opts: DaemonOptions): Daemon {
       appendEvidence(w.project, { at: now(), kind: "commit", trigger: "daemon", root: w.root, commit: c.commit, tree: c.tree, status });
       if (status === "unchecked") fresh.push(c);
     }
-    const pending = [...(known?.unchecked ?? []), ...rebuilt, ...fresh];
+    const pending = [...rebuilt, ...(firstScan ? [] : (known?.unchecked ?? [])), ...fresh];
     const unchecked: Committed[] = [];
     const checked = new Set<string>();
     for (const c of pending) {
@@ -393,6 +393,7 @@ export function startWatching(opts: DaemonOptions): Daemon {
     }
     for (const c of unchecked) flagged.add(c.commit);
     state.repos[w.repo] = { tips, unchecked, boundary, flagged: [...flagged], ...(known?.trusted === undefined ? {} : { trusted: known.trusted }) };
+    evidenceMergedSinceStart.add(w.repo);
     const alerts: Found[] = [...owned.found];
     for (const c of unchecked) alerts.push(await uncheckedAlert(w.root, c, base, running, trees));
     return alerts;

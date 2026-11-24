@@ -1,14 +1,14 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { type Served, serve } from "../../src/cli/daemon.js";
 import { STALE_MS, heartbeatFile, heartbeatProblem, openAlerts, stateFile, trustAction } from "../../src/runner/daemon.js";
-import { TRUST_SIGNERS, signTrust, writeTrust } from "../../src/runner/trust.js";
+import { TRUST_SIGNERS, signTrust, trustDir, writeTrust } from "../../src/runner/trust.js";
 import { runTrust } from "../../src/cli/trust.js";
 import { FIRST_STAMPING } from "../../src/compiler/lock.js";
 import { type Evidence, appendEvidence, readEvidence } from "../../src/runner/evidence.js";
@@ -16,6 +16,7 @@ import { type Evidence, appendEvidence, readEvidence } from "../../src/runner/ev
 const wardenRoot = resolve(import.meta.dirname, "../..");
 const main = join(wardenRoot, "dist/src/cli/main.js");
 const PROJECT = "proj";
+let packageRoot: string;
 
 let scratch: string;
 let home: string;
@@ -73,8 +74,10 @@ const setPlugin = async (on: boolean, file = join(claude, "settings.json")): Pro
   await writeFile(file, JSON.stringify({ enabledPlugins: { "warden@warden": on } }));
 };
 
-beforeAll(() => {
+beforeAll(async () => {
   execFileSync("npx", ["tsc"], { cwd: wardenRoot, stdio: "ignore" });
+  packageRoot = await mkdtemp(join(tmpdir(), "warden-package-"));
+  for (const entry of await readdir(wardenRoot)) if (entry !== TRUST_SIGNERS && entry !== ".git") await symlink(join(wardenRoot, entry), join(packageRoot, entry));
 });
 
 beforeEach(async () => {
@@ -84,6 +87,7 @@ beforeEach(async () => {
   claude = join(userHome, ".claude");
   root = join(scratch, PROJECT);
   await mkdir(userHome, { recursive: true });
+  await writeFile(join(packageRoot, TRUST_SIGNERS), "");
   await mkdir(join(root, "src"), { recursive: true });
   await writeFile(join(root, "src/a.ts"), "export const a = 1;\n");
   git(root, "init", "-q", "-b", "main");
@@ -104,10 +108,13 @@ afterEach(async () => {
   await rm(scratch, { recursive: true, force: true });
 });
 
-afterAll(restore);
+afterAll(async () => {
+  restore();
+  await rm(packageRoot, { recursive: true, force: true });
+});
 
 const start = async (port = 0): Promise<Served> => {
-  served = await serve(wardenRoot, port, { intervalMs: 200, debounceMs: 20 });
+  served = await serve(packageRoot, port, { intervalMs: 200, debounceMs: 20 });
   await served.daemon.settled();
   return served;
 };
@@ -144,7 +151,7 @@ it("binds 127.0.0.1, writes a heartbeat, removes only its own heartbeat on stop,
   expect((await get("/api/health", `localhost:${s.port}`)).status).toBe(200);
   await stop();
   expect(existsSync(heartbeatFile())).toBe(false);
-  served = await serve(wardenRoot, 0, { intervalMs: 60_000, debounceMs: 20 });
+  served = await serve(packageRoot, 0, { intervalMs: 60_000, debounceMs: 20 });
   await beat({ pid: 1, port: 9 });
   await stop();
   expect(existsSync(heartbeatFile())).toBe(true);
@@ -478,18 +485,27 @@ it("a malformed lock in history stays flagged in every worktree and never stops 
   await until("removing the commit closes the alert in every worktree", () => !openAlerts(wt).some((d) => d.file === bad));
 });
 
-const ownerKey = async (name: string, passphrase = ""): Promise<{ key: string; signers: string }> => {
+const ownerKey = (name: string, passphrase = ""): string => {
   const key = join(scratch, name);
   execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", passphrase, "-C", name, "-f", key]);
-  const signers = join(scratch, `${name}.signers`);
-  await writeFile(signers, `# owner keys\n${name} ${readFileSync(`${key}.pub`, "utf8").split(" ").slice(0, 2).join(" ")}\n`);
-  return { key, signers };
+  return key;
 };
 
-const startSigned = async (trustSigners: string, port = 0): Promise<Served> => {
-  served = await serve(wardenRoot, port, { intervalMs: 200, debounceMs: 20, trustSigners });
-  await served.daemon.settled();
-  return served;
+const listOwners = (dir: string, ...keys: string[]): Promise<void> =>
+  writeFile(join(dir, TRUST_SIGNERS), `# owner keys\n${keys.map((k) => `owner ${readFileSync(`${k}.pub`, "utf8").split(" ").slice(0, 2).join(" ")}\n`).join("")}`);
+
+const withAskpass = async <T>(passphrase: string, run: () => T): Promise<T> => {
+  const askpass = join(scratch, "askpass.sh");
+  await writeFile(askpass, `#!/bin/sh\necho '${passphrase}'\n`);
+  await chmod(askpass, 0o755);
+  process.env.SSH_ASKPASS = askpass;
+  process.env.SSH_ASKPASS_REQUIRE = "force";
+  try {
+    return run();
+  } finally {
+    delete process.env.SSH_ASKPASS;
+    delete process.env.SSH_ASKPASS_REQUIRE;
+  }
 };
 
 const flagOne = async (s: Served, name: string): Promise<string> => {
@@ -503,44 +519,61 @@ const flagOne = async (s: Served, name: string): Promise<string> => {
 
 const untrusted = (s: Served): string[] => openOf(s).filter((d) => d.detail === "untrusted-trust").map((d) => d.file);
 
+interface SavedRepo {
+  unchecked: { commit: string; tree: string; expectedTree?: string }[];
+  flagged: string[];
+  trusted?: unknown[];
+}
+
+const editState = async (edit: (repo: SavedRepo) => void): Promise<void> => {
+  const saved = JSON.parse(readFileSync(stateFile(), "utf8")) as { repos: Record<string, SavedRepo> };
+  edit(saved.repos[realpathSync(join(root, ".git"))] as SavedRepo);
+  await writeFile(stateFile(), JSON.stringify(saved));
+};
+
 it("leaves a commit flagged when an agent hand-writes it into the trusted list of the daemon's state, and reports that list", async () => {
-  const { signers } = await ownerKey("owner");
-  let s = await startSigned(signers);
+  let s = await start();
   const reviewed = await flagOne(s, "t");
   await stop();
-  const repo = realpathSync(join(root, ".git"));
-  const saved = JSON.parse(readFileSync(stateFile(), "utf8")) as { repos: Record<string, Record<string, unknown>> };
-  (saved.repos[repo] as Record<string, unknown>).trusted = [{ commit: reviewed, reason: "Owner authorized", at: new Date().toISOString() }];
-  await writeFile(stateFile(), JSON.stringify(saved));
-  s = await startSigned(signers);
+  await editState((repo) => {
+    repo.trusted = [{ commit: reviewed, reason: "Owner authorized", at: new Date().toISOString() }];
+  });
+  s = await start();
   expect(unchecked(s)).toEqual([reviewed]);
   expect(untrusted(s)).toEqual([`${stateFile()} trusted`]);
   expect(openAlerts(root).map((d) => d.detail).sort()).toEqual(["unchecked-commit", "untrusted-trust"]);
 });
 
 it("clears a commit only for a trust record signed by an owner key for this repository", async () => {
-  const { key, signers } = await ownerKey("owner");
-  const { key: agentKey } = await ownerKey("agent");
-  const s = await startSigned(signers);
+  const key = ownerKey("owner");
+  await listOwners(packageRoot, key);
+  const s = await start();
   const reviewed = await flagOne(s, "t");
   const repo = realpathSync(join(root, ".git"));
   const fields = { repo, commit: reviewed, reason: "independent review PASS", at: new Date().toISOString() };
 
-  const forged = writeTrust(signTrust(agentKey, fields));
+  const forged = writeTrust(signTrust(ownerKey("agent"), fields));
+  await until("the forged record is reported without a manual rescan", () => untrusted(s).includes(forged));
+  expect(unchecked(s)).toEqual([reviewed]);
+
+  writeTrust({ ...signTrust(key, { ...fields, reason: "something else" }), reason: fields.reason });
   await s.daemon.rescan();
   expect(unchecked(s)).toEqual([reviewed]);
   expect(untrusted(s)).toEqual([forged]);
 
-  const otherClone = signTrust(key, { ...fields, repo: join(scratch, "other/.git") });
-  writeTrust({ ...otherClone, repo });
+  writeTrust(signTrust(key, { ...fields, repo: join(scratch, "other/.git") }));
   await s.daemon.rescan();
   expect(unchecked(s)).toEqual([reviewed]);
   expect(untrusted(s)).toEqual([forged]);
-  await rm(forged);
+
+  const unreadable = join(trustDir(), "broken.json");
+  await writeFile(unreadable, "{");
+  await s.daemon.rescan();
+  expect(untrusted(s).sort()).toEqual([unreadable, forged].sort());
+  await rm(unreadable);
 
   writeTrust(signTrust(key, fields));
-  await s.daemon.rescan();
-  expect(unchecked(s)).toEqual([]);
+  await until("the owner's record clears the commit without a manual rescan", () => !unchecked(s).includes(reviewed));
   expect(untrusted(s)).toEqual([]);
 });
 
@@ -548,38 +581,72 @@ it("keeps a commit flagged when an agent deletes it from the daemon's state whil
   let s = await start();
   const hidden = await flagOne(s, "h");
   await stop();
-  const repo = realpathSync(join(root, ".git"));
-  const saved = JSON.parse(readFileSync(stateFile(), "utf8")) as { repos: Record<string, { unchecked: unknown[]; flagged: string[] }> };
-  saved.repos[repo] = { ...(saved.repos[repo] as { unchecked: unknown[]; flagged: string[] }), unchecked: [], flagged: [] };
-  await writeFile(stateFile(), JSON.stringify(saved));
+  await editState((repo) => {
+    repo.unchecked = [];
+    repo.flagged = [];
+  });
   s = await start();
   expect(unchecked(s)).toEqual([hidden]);
 });
 
-it("warden trust refuses a key without a passphrase, and signs a record the daemon honors with one", async () => {
-  const bare = await ownerKey("bare");
-  const head = git(root, "rev-parse", "HEAD").trim();
-  expect(() => runTrust(root, wardenRoot, head, bare.key, "why")).toThrow(`${bare.key} has no passphrase`);
-  const { key, signers } = await ownerKey("owner", "correct horse");
-  const askpass = join(scratch, "askpass.sh");
-  await writeFile(askpass, "#!/bin/sh\necho 'correct horse'\n");
-  await chmod(askpass, 0o755);
-  const fakeRoot = join(scratch, "warden-root");
-  await mkdir(fakeRoot);
-  await writeFile(join(fakeRoot, TRUST_SIGNERS), readFileSync(signers, "utf8"));
-  const s = await startSigned(signers);
-  const reviewed = await flagOne(s, "t");
-  process.env.SSH_ASKPASS = askpass;
-  process.env.SSH_ASKPASS_REQUIRE = "force";
-  try {
-    expect(() => runTrust(root, join(scratch, "empty-root"), reviewed, key, "why")).toThrow("lists no owner key");
-    expect(runTrust(root, fakeRoot, reviewed, key, "independent review PASS")).toBe(0);
-  } finally {
-    delete process.env.SSH_ASKPASS;
-    delete process.env.SSH_ASKPASS_REQUIRE;
-  }
+it("keeps a commit flagged when an agent rewrites its saved tree in the daemon's state while the daemon is stopped", async () => {
+  let s = await start();
+  const forged = await flagOne(s, "f");
+  await stop();
+  await editState((repo) => {
+    for (const c of repo.unchecked) c.expectedTree = c.tree;
+  });
+  s = await start();
+  expect(unchecked(s)).toEqual([forged]);
+});
+
+it("merges Evidence back after a first scan that failed, so a deletion made while the daemon was stopped never clears", async () => {
+  let s = await start();
+  const hidden = await flagOne(s, "h");
+  await stop();
+  await editState((repo) => {
+    repo.unchecked = [];
+    repo.flagged = [];
+  });
+  const blocker = join(trustDir(), "block.json");
+  await mkdir(blocker, { recursive: true });
+  s = await start();
+  expect(openOf(s).some((d) => d.detail === "scan-error")).toBe(true);
+  await rm(blocker, { recursive: true });
   await s.daemon.rescan();
-  expect(unchecked(s)).toEqual([]);
+  expect(unchecked(s)).toEqual([hidden]);
+});
+
+it("warden trust refuses a key without a passphrase, one in ssh-agent, and one trust_signers does not list, and signs a record the daemon honors", async () => {
+  const head = git(root, "rev-parse", "HEAD").trim();
+  const bare = ownerKey("bare");
+  expect(() => runTrust(root, packageRoot, head, bare, "why")).toThrow(`${bare} has no passphrase`);
+  const key = ownerKey("owner", "correct horse");
+  const s = await start();
+  const reviewed = await flagOne(s, "t");
+  const listing = join(scratch, "listing");
+  await mkdir(listing);
+  await listOwners(listing, ownerKey("stranger", "correct horse"));
+  await withAskpass("correct horse", () => {
+    expect(() => runTrust(root, packageRoot, reviewed, key, "why")).toThrow("lists no owner key");
+    expect(() => runTrust(root, listing, reviewed, key, "why")).toThrow("is not an owner key");
+  });
+  const sock = join(scratch, "agent.sock");
+  const agent = spawn("ssh-agent", ["-D", "-a", sock], { stdio: "ignore" });
+  const savedSock = process.env.SSH_AUTH_SOCK;
+  try {
+    await until("ssh-agent listens", () => existsSync(sock));
+    process.env.SSH_AUTH_SOCK = sock;
+    await withAskpass("correct horse", () => execFileSync("ssh-add", ["-q", key], { stdio: "ignore" }));
+    expect(() => runTrust(root, listing, reviewed, key, "why")).toThrow("is loaded in ssh-agent");
+  } finally {
+    agent.kill();
+    if (savedSock === undefined) delete process.env.SSH_AUTH_SOCK;
+    else process.env.SSH_AUTH_SOCK = savedSock;
+  }
+  await listOwners(packageRoot, key);
+  expect(await withAskpass("correct horse", () => runTrust(root, packageRoot, reviewed, key, "independent review PASS"))).toBe(0);
+  await until("the signed record clears the commit", () => !unchecked(s).includes(reviewed));
 });
 
 it("gives a lock that names a release newer than the daemon's the unstampable next action", async () => {
@@ -597,8 +664,9 @@ it("asks the owner to trust a published unstampable commit instead of naming a r
   const remote = join(scratch, "remote.git");
   git(scratch, "init", "-q", "--bare", "-b", "main", remote);
   git(root, "remote", "add", "origin", remote);
-  const { key, signers } = await ownerKey("owner");
-  const s = await startSigned(signers);
+  const key = ownerKey("owner");
+  await listOwners(packageRoot, key);
+  const s = await start();
   await lockedBy("0.1.10");
   commitUnhooked("downgraded and pushed");
   const pushed = git(root, "rev-parse", "HEAD").trim();
@@ -1063,7 +1131,7 @@ it("a check that a passing run's stamp already covers does not refuse for that c
 });
 
 it("a repository registered while the daemon runs is watched without waiting for the next tick", async () => {
-  served = await serve(wardenRoot, 0, { intervalMs: 60_000, debounceMs: 20 });
+  served = await serve(packageRoot, 0, { intervalMs: 60_000, debounceMs: 20 });
   await served.daemon.settled();
   const other = join(scratch, "late");
   await mkdir(join(other, "src"), { recursive: true });

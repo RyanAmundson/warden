@@ -536,8 +536,11 @@ The key is what keeps an agent out, so it must need you:
 3. Add `<you> <public key>` from `~/.ssh/warden_owner.pub` to
    `trust_signers`, and sign the commit that changes it.
 
-`warden trust` refuses a key that has no passphrase and a key that
-`trust_signers` does not list. `ssh-keygen` asks for the passphrase on the
+`warden trust` refuses a key that has no passphrase, a key that `ssh-agent`
+holds, and a key that `trust_signers` does not list. `ssh-keygen -Y sign`
+uses a key from `ssh-agent` without asking for the passphrase, so do not
+name this key as an `IdentityFile` in an `ssh_config` that sets
+`AddKeysToAgent`. `ssh-keygen` asks for the passphrase on the
 terminal, which a process without one cannot answer.
 
 A running daemon discovers a repository as soon as `warden init` or a check

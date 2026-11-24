@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, watch } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { setImmediate as yieldToEvents } from "node:timers/promises";
 import { COMMIT_HOOK, RELEASES } from "../compiler/emit.js";
 import { FIRST_STAMPING, LOCK_PATH, firstLine, olderThan, readLock } from "../compiler/lock.js";
@@ -10,7 +10,7 @@ import { claudeDir, commitHookItem, pluginAction, pluginState } from "./doctor.j
 import { LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, evidenceProjects, readEvidenceFrom, readEvidenceTail, wardenHome, writeAtomic } from "./evidence.js";
 import { formatFeedback } from "./feedback.js";
 import { findTampering } from "./tamper.js";
-import { TRUST_SIGNERS, readTrustFiles, signatureValid } from "./trust.js";
+import { TRUST_SIGNERS, readTrustFiles, signatureValid, trustDir } from "./trust.js";
 export const HEARTBEAT_MS = 10_000;
 export const STALE_MS = 30_000;
 export const SKEW_MS = 5_000;
@@ -189,6 +189,7 @@ const watchSpecs = (root, repo) => [
     { path: gitPath(root, ["rev-parse", "--git-path", "hooks"]), recursive: false },
     { path: join(root, ".claude"), recursive: false, accept: named("settings.json", "settings.local.json") },
     { path: claudeDir(), recursive: false, accept: named("settings.json") },
+    { path: dirname(trustDir()), recursive: true, accept: (name) => name.startsWith(`${basename(trustDir())}/`) },
 ];
 const key = (d) => `${d.root ?? ""}\0${d.file ?? ""}\0${d.detail ?? ""}`;
 export function startWatching(opts) {
@@ -209,8 +210,8 @@ export function startWatching(opts) {
     };
     const running = JSON.parse(readFileSync(join(opts.wardenRoot, "package.json"), "utf8")).version;
     const owner = (w) => [...projects.values()].find((x) => x.repo === w.repo) === w;
-    const trustSigners = opts.trustSigners ?? join(opts.wardenRoot, TRUST_SIGNERS);
-    const verified = new Map();
+    const trustSigners = join(opts.wardenRoot, TRUST_SIGNERS);
+    const verified = new Set();
     const evidenceMergedSinceStart = new Set();
     const trustFound = (w, known) => {
         const signers = existsSync(trustSigners) ? readFileSync(trustSigners, "utf8") : "";
@@ -220,9 +221,9 @@ export function startWatching(opts) {
             if (t.record !== undefined && t.record.repo !== w.repo)
                 continue;
             const cacheKey = `${signers}\0${t.text}`;
-            if (t.record !== undefined && !verified.has(cacheKey))
-                verified.set(cacheKey, signatureValid(trustSigners, t.record));
-            if (t.record !== undefined && verified.get(cacheKey) === true)
+            if (t.record !== undefined && !verified.has(cacheKey) && signatureValid(trustSigners, t.record))
+                verified.add(cacheKey);
+            if (t.record !== undefined && verified.has(cacheKey))
                 trusted.add(t.record.commit);
             else
                 found.push({ file: t.file, detail: "untrusted-trust", next: `delete ${t.file}, because it is not signed for ${w.repo} by a key in ${trustSigners}. To trust a commit, ${trustAction(w.root, t.record?.commit ?? "<commit>")}` });
@@ -263,8 +264,8 @@ export function startWatching(opts) {
         const tips = await repoTips(w.root, trees);
         const ix = indexFor(w.project);
         const known = state.repos[w.repo];
-        const rebuilt = evidenceMergedSinceStart.has(w.repo) ? [] : commitsOf(w.root, [...ix.unchecked]);
-        evidenceMergedSinceStart.add(w.repo);
+        const firstScan = !evidenceMergedSinceStart.has(w.repo);
+        const rebuilt = firstScan ? commitsOf(w.root, [...new Set([...ix.unchecked, ...(known?.unchecked ?? []).map((c) => c.commit)])]) : [];
         const refs = await allTips(w.root, tips);
         const boundary = known?.boundary ?? refs;
         const owned = trustFound(w, known);
@@ -277,7 +278,7 @@ export function startWatching(opts) {
             if (status === "unchecked")
                 fresh.push(c);
         }
-        const pending = [...(known?.unchecked ?? []), ...rebuilt, ...fresh];
+        const pending = [...rebuilt, ...(firstScan ? [] : (known?.unchecked ?? [])), ...fresh];
         const unchecked = [];
         const checked = new Set();
         for (const c of pending) {
@@ -290,6 +291,7 @@ export function startWatching(opts) {
         for (const c of unchecked)
             flagged.add(c.commit);
         state.repos[w.repo] = { tips, unchecked, boundary, flagged: [...flagged], ...(known?.trusted === undefined ? {} : { trusted: known.trusted }) };
+        evidenceMergedSinceStart.add(w.repo);
         const alerts = [...owned.found];
         for (const c of unchecked)
             alerts.push(await uncheckedAlert(w.root, c, base, running, trees));

@@ -25,7 +25,7 @@ const git = (root, args, input) => {
     }
 };
 const names = (text) => text.split("\0").filter((l) => l !== "");
-const commitOf = (root, ref) => {
+export const commitOf = (root, ref) => {
     const result = git(root, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`]);
     return result.ok ? result.out.trim() : undefined;
 };
