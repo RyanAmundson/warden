@@ -6,18 +6,22 @@ let page;
 let project;
 let jump;
 let next;
-// The address of the page on screen, kept apart from the page being opened.
-let shown = `${location.pathname}${location.search}`;
+// The address being opened, and the address of the page on screen. They differ while a switch loads.
+let at;
+let shown;
+let pushed = false;
 const pageOf = (path) => path.replace(/^\/+|\/+$/g, "") || "overview";
 const route = (url) => {
   params = new URLSearchParams(url.search);
   page = pageOf(url.pathname);
   project = params.get("project") ?? undefined;
   jump = url.hash === "#detail";
+  at = `${url.pathname}${url.search}`;
   return { run: params.get("run") ?? undefined, outcome: "all", tier: "", file: "", filter: "", paused: false, packMessage: undefined };
 };
 const root = document.getElementById("app");
 const view = { ...route(location), packDraft: new Map(), fresh: new Set() };
+shown = at;
 const state = { page, project, health: null, projects: [], data: null, error: null, lost: false, frozen: "", frozenAt: null, now: Date.now(), view };
 const seen = new Set();
 let lastBeat = Date.now();
@@ -100,7 +104,7 @@ const arrive = () => {
 
 // Draw the opened page: its address, view settings, and whatever load() set.
 const commit = () => {
-  shown = `${location.pathname}${location.search}`;
+  shown = at;
   state.page = page;
   state.project = project;
   if (next !== undefined) Object.assign(state.view, next);
@@ -159,7 +163,8 @@ const load = async () => {
 
 // Abandon a switch that has not drawn yet: the address and target go back to the page on screen.
 const stay = () => {
-  history.replaceState(null, "", shown);
+  if (pushed) history.back();
+  else if (`${location.pathname}${location.search}` !== shown) history.pushState(null, "", shown);
   route(new URL(shown, location.href));
   project = state.project;
   next = undefined;
@@ -177,16 +182,18 @@ const go = (url, push = true) => {
     }
     view.packDraft.clear();
   }
-  if (push) history[url.href === location.href ? "replaceState" : "pushState"](null, "", url.href);
+  pushed = push && url.href !== location.href;
+  if (push) history[pushed ? "pushState" : "replaceState"](null, "", url.href);
   next = route(url);
   seen.clear();
   clearTimeout(pending);
   load();
 };
 
-// A hash-only change, such as "See run details", stays on the page on screen.
+// A hash-only change, such as "See run details", stays on the page being opened.
+// Any other Back or Forward opens its address, even while a switch is still loading.
 window.addEventListener("popstate", () => {
-  if (`${location.pathname}${location.search}` !== shown) go(new URL(location.href), false);
+  if (`${location.pathname}${location.search}` !== at) go(new URL(location.href), false);
 });
 
 const schedule = () => {

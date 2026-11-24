@@ -47,6 +47,8 @@ const health = { status: "ok", pid: 1, version: "0.1.8", heartbeatAt: "2026-11-1
 
 const boot = async (path: string): Promise<FakeSource> => {
   moveTo(path);
+  history.pushState(null, "", path);
+  vi.mocked(history.pushState).mockClear();
   const file = join(scratch, `app-${++copies}.mjs`);
   writeFileSync(file, source);
   await import(pathToFileURL(file).href);
@@ -67,7 +69,19 @@ beforeEach(() => {
   place.assign = vi.fn();
   place.reload = vi.fn();
   vi.stubGlobal("location", place);
-  vi.stubGlobal("history", { pushState: vi.fn((_s: unknown, _t: string, href: string) => moveTo(href)), replaceState: vi.fn((_s: unknown, _t: string, href: string) => moveTo(href)) });
+  const entries: string[] = [];
+  let at = -1;
+  vi.stubGlobal("history", {
+    pushState: vi.fn((_s: unknown, _t: string, href: string) => {
+      entries.splice(++at, Infinity, href);
+      moveTo(href);
+    }),
+    replaceState: vi.fn((_s: unknown, _t: string, href: string) => {
+      entries[at] = href;
+      moveTo(href);
+    }),
+    back: vi.fn(() => moveTo(entries[--at] ?? "/")),
+  });
   vi.stubGlobal("confirm", vi.fn(() => false));
   fetches = 0;
   heading.focus = vi.fn();
@@ -248,6 +262,46 @@ it("abandons a pending switch when a pack is toggled before it draws", async () 
   await vi.advanceTimersByTimeAsync(0);
   expect(place.pathname).toBe("/layers");
   expect(document.title).toBe("Layers · Warden");
+  expect(history.back).toHaveBeenCalledTimes(1);
+  expect(history.replaceState).not.toHaveBeenCalled();
+});
+
+const press = (href: string): void => {
+  const link = { href: new URL(href, origin).href, target: "", hasAttribute: () => false };
+  on.click?.({ button: 0, preventDefault() {}, target: { closest: (sel: string) => (sel === "a[href]" ? link : null) } });
+};
+
+it("opens the Back address when Back is pressed while a switch is still loading", async () => {
+  bodies["/api/projects"] = warden;
+  bodies["/api/layers"] = layers;
+  await boot("/tamper");
+  press("/layers?project=warden");
+  history.back();
+  on.popstate?.({});
+  await vi.advanceTimersByTimeAsync(0);
+  expect(place.pathname).toBe("/tamper");
+  expect(document.title).toBe("Tamper · Warden");
+});
+
+it("discards the pack draft as soon as a switch is confirmed", async () => {
+  bodies["/api/projects"] = warden;
+  bodies["/api/layers"] = layers;
+  await boot("/layers?project=warden");
+  on.change?.({ target: { dataset: { pack: "custom" }, checked: true } });
+  vi.mocked(confirm).mockReturnValue(true);
+  press("/tamper");
+  press("/determinism");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(confirm).toHaveBeenCalledTimes(1);
+  expect(document.title).toBe("Determinism · Warden");
+});
+
+it("starts a run-detail switch from the top, as a fresh load does", async () => {
+  bodies["/api/projects"] = warden;
+  bodies["/api/runs"] = { project: "warden", runs: [] };
+  await boot("/");
+  await click("/runs?project=warden&run=r-1#detail");
+  expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
 });
 
 it("resets the selected run and filters the way a fresh load does", async () => {
