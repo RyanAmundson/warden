@@ -59,7 +59,7 @@ const LOAD = {
 
 const runIds = (data) => (data.runs?.runs ?? Object.values(data.runs ?? {}).flat()).map((r) => r.run);
 
-const focusKey = (el) => (el?.id ? `#${CSS.escape(el.id)}` : el?.dataset?.outcome ? `[data-outcome="${el.dataset.outcome}"]` : el?.dataset?.action ? `[data-action="${el.dataset.action}"]` : null);
+const focusKey = (el) => (el?.tagName === "H1" ? "h1" : el?.id ? `#${CSS.escape(el.id)}` : el?.dataset?.outcome ? `[data-outcome="${el.dataset.outcome}"]` : el?.dataset?.action ? `[data-action="${el.dataset.action}"]` : null);
 
 const render = () => {
   state.now = Date.now();
@@ -78,7 +78,9 @@ const render = () => {
   document.title = pageTitle(state);
   const el = key ? root.querySelector(key) : null;
   if (el) {
-    el.focus();
+    // A heading takes focus only after a switch; a redraw must keep it there.
+    if (key === "h1") el.tabIndex = -1;
+    el.focus(key === "h1" ? { preventScroll: true } : undefined);
     if (caret !== undefined && caret !== null && "setSelectionRange" in el) el.setSelectionRange(caret, caret);
   }
 };

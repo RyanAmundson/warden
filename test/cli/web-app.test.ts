@@ -34,7 +34,7 @@ let html = "";
 let up = true;
 let on: Record<string, (e: unknown) => unknown> = {};
 let fetches = 0;
-const heading = { tabIndex: 0, focus: vi.fn() };
+const heading = { tagName: "H1", tabIndex: 0, focus: vi.fn() };
 const origin = "http://127.0.0.1:7419";
 const place = { pathname: "/", search: "", hash: "", origin, get href() { return `${origin}${this.pathname}${this.search}${this.hash}`; }, assign: vi.fn(), reload: vi.fn() };
 const moveTo = (href: string): void => {
@@ -97,6 +97,7 @@ beforeEach(() => {
   bodies = { "/api/health": health, "/api/projects": { projects: [] }, "/api/tamper": { open: [], recent: [] }, "/api/determinism": { projects: [] } };
   const root = { set innerHTML(v: string) { html = v; }, get innerHTML() { return html; }, addEventListener(name: string, f: (e: unknown) => unknown) { on[name] = f; }, querySelector(sel: string) { return sel === "h1" ? heading : null; }, querySelectorAll() { return []; } };
   vi.stubGlobal("document", { getElementById: (id: string) => (id === "app" ? root : null), activeElement: null, title: "" });
+  heading.tabIndex = 0;
   vi.stubGlobal("window", { addEventListener(name: string, f: (e: unknown) => unknown) { on[name] = f; }, scrollTo: vi.fn() });
   vi.stubGlobal("CSS", { escape: (s: string) => s });
   vi.stubGlobal("EventSource", FakeSource);
@@ -379,6 +380,18 @@ it("moves focus to the new heading after a switch, not on the first load", async
   expect(heading.focus).not.toHaveBeenCalled();
   await click("/tamper");
   expect(heading.focus).toHaveBeenCalledTimes(1);
+  expect(heading.tabIndex).toBe(-1);
+});
+
+it("keeps focus on the heading when a live update redraws the page", async () => {
+  const es = await boot("/");
+  await click("/tamper");
+  Object.assign(document, { activeElement: heading });
+  heading.tabIndex = 0;
+  heading.focus = vi.fn();
+  es.fire("evidence", JSON.stringify({ project: "warden" }));
+  await vi.advanceTimersByTimeAsync(300);
+  expect(heading.focus).toHaveBeenCalledWith({ preventScroll: true });
   expect(heading.tabIndex).toBe(-1);
 });
 
