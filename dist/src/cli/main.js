@@ -25,6 +25,7 @@ import { reviewOptions, runBrief, runReviewConfirm, runReviewHistory, runReviewP
 import { recordClaudeStalls } from "./session-end.js";
 import { runRuns } from "./runs.js";
 import { runWhere } from "./where.js";
+import { runTrust } from "./trust.js";
 import { liveView, loadView, plainDeterminism, plainLayers, plainView, plainViolations } from "./view.js";
 import { SKILL_HARNESSES } from "../runner/doctor.js";
 import { wardenHome } from "../runner/evidence.js";
@@ -289,6 +290,14 @@ reviewAttributionFlags(review.command("confirm").description("confirm a finding 
     .requiredOption("--practice <id>", "the Practice that failed to catch the finding")
     .action(async (o) => {
     process.exitCode = await runReviewConfirm(root(), findWardenRoot(), { ...o, role: oneOf("review confirm", "role", o.role, ["independent-reviewer", "repository-owner"]) });
+});
+program
+    .command("trust <commit>")
+    .description("as the repository owner, sign that the daemon may stop flagging a commit; asks for your trust key's passphrase")
+    .requiredOption("--key <file>", "your passphrase-protected private key listed in Warden's trust_signers")
+    .requiredOption("--reason <text>", "why you trust the commit")
+    .action((commit, o) => {
+    process.exitCode = runTrust(root(), findWardenRoot(), commit, o.key, o.reason);
 });
 program
     .command("daemon [action]")

@@ -183,7 +183,7 @@ export interface Served {
   close(): Promise<void>;
 }
 
-export async function serve(wardenRoot: string, port: number, opts: { intervalMs?: number; debounceMs?: number } = {}): Promise<Served> {
+export async function serve(wardenRoot: string, port: number, opts: { intervalMs?: number; debounceMs?: number; trustSigners?: string } = {}): Promise<Served> {
   const clients = new Set<ServerResponse>();
   const send = (event: string, data: unknown): void => {
     for (const res of clients) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);

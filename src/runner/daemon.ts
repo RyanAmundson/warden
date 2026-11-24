@@ -10,6 +10,7 @@ import { type PluginState, claudeDir, commitHookItem, pluginAction, pluginState 
 import { type Evidence, LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, evidenceProjects, readEvidenceFrom, readEvidenceTail, wardenHome, writeAtomic } from "./evidence.js";
 import { formatFeedback } from "./feedback.js";
 import { findTampering } from "./tamper.js";
+import { TRUST_SIGNERS, readTrustFiles, signatureValid } from "./trust.js";
 
 export const HEARTBEAT_MS = 10_000;
 
@@ -46,10 +47,10 @@ interface RepoState {
   unchecked: Committed[];
   boundary?: string[];
   flagged?: string[];
-  trusted?: Trusted[];
+  trusted?: UnhonoredTrusted[];
 }
 
-interface Trusted {
+interface UnhonoredTrusted {
   commit: string;
   reason: string;
   at: string;
@@ -123,7 +124,7 @@ export function readState(): State {
   return { roots: value.roots ?? {}, repos: value.repos ?? {} };
 }
 
-const REPO_WIDE = new Set(["hook-unwired", "unchecked-commit"]);
+const REPO_WIDE = new Set(["hook-unwired", "unchecked-commit", "untrusted-trust"]);
 
 const repoWide = (d: Detection): boolean => REPO_WIDE.has(d.detail) || (d.detail === "scan-error" && d.file === HISTORY);
 
@@ -206,18 +207,20 @@ const stampingVersion = (root: string, c: Committed, running: string): string | 
   return version === undefined || !/^\d+\.\d+\.\d+$/.test(version) || olderThan(version, FIRST_STAMPING) || olderThan(running, version) ? undefined : version;
 };
 
-const unstampable = async (root: string, repo: string, c: Committed, running: string, port: number, trees: Worktree[]): Promise<string> => {
+export const trustAction = (root: string, commit: string): string => `ask the repository owner to run warden trust ${commit} --key <their trust key> --reason "<why>" in ${root}, in a terminal, and enter the key's passphrase; an agent cannot do this step`;
+
+const unstampable = async (root: string, c: Committed, running: string, trees: Worktree[]): Promise<string> => {
   const why = `its ${LOCK_PATH} is missing, unreadable, older than Warden ${FIRST_STAMPING}, or newer than this daemon's Warden ${running}, so no release can stamp it`;
   const holders = await holdersOf(root, c.commit, trees);
   const published = holders.filter((h) => h.startsWith("refs/remotes/"));
-  if (published.length > 0) return `ask the repository owner to stop the daemon with warden daemon uninstall, add commit ${c.commit} with a reason to the trusted list of ${repo} in ${stateFile()}, and start it again with warden daemon install --port ${port}, because it is published in ${published.join(", ")} and ${why}`;
+  if (published.length > 0) return `${trustAction(root, c.commit)}, because it is published in ${published.join(", ")} and ${why}`;
   return `remove commit ${c.commit.slice(0, 12)} from ${holders.join(", ")} by resetting or deleting each, because ${why}; then make its change again in a new commit with the hook`;
 };
 
-const uncheckedAlert = async (root: string, repo: string, c: Committed, base: string, running: string, port: number, trees: Worktree[]): Promise<Found> => {
+const uncheckedAlert = async (root: string, c: Committed, base: string, running: string, trees: Worktree[]): Promise<Found> => {
   const short = c.commit.slice(0, 12);
   const version = stampingVersion(root, c, running);
-  if (version === undefined) return { file: c.commit, detail: "unchecked-commit", next: await unstampable(root, repo, c, running, port, trees) };
+  if (version === undefined) return { file: c.commit, detail: "unchecked-commit", next: await unstampable(root, c, running, trees) };
   const warden = version === running ? "warden" : `npx --yes --package=${RELEASES}#v${version} warden`;
   const verify =
     c.parents[0] === undefined
@@ -269,6 +272,7 @@ export interface DaemonOptions {
   onDetection?: (d: Detection) => void;
   onEvidence?: (project: string) => void;
   onError?: (cause: Error) => void;
+  trustSigners?: string;
 }
 
 export interface Watched {
@@ -317,6 +321,24 @@ export function startWatching(opts: DaemonOptions): Daemon {
   };
   const running = (JSON.parse(readFileSync(join(opts.wardenRoot, "package.json"), "utf8")) as { version: string }).version;
   const owner = (w: Watched): boolean => [...projects.values()].find((x) => x.repo === w.repo) === w;
+  const trustSigners = opts.trustSigners ?? join(opts.wardenRoot, TRUST_SIGNERS);
+  const verified = new Map<string, boolean>();
+  const evidenceMergedSinceStart = new Set<string>();
+
+  const trustFound = (w: Watched, known: RepoState | undefined): { trusted: Set<string>; found: Found[] } => {
+    const signers = existsSync(trustSigners) ? readFileSync(trustSigners, "utf8") : "";
+    const trusted = new Set<string>();
+    const found: Found[] = [];
+    for (const t of readTrustFiles()) {
+      if (t.record !== undefined && t.record.repo !== w.repo) continue;
+      const cacheKey = `${signers}\0${t.text}`;
+      if (t.record !== undefined && !verified.has(cacheKey)) verified.set(cacheKey, signatureValid(trustSigners, t.record));
+      if (t.record !== undefined && verified.get(cacheKey) === true) trusted.add(t.record.commit);
+      else found.push({ file: t.file, detail: "untrusted-trust", next: `delete ${t.file}, because it is not signed for ${w.repo} by a key in ${trustSigners}. To trust a commit, ${trustAction(w.root, t.record?.commit ?? "<commit>")}` });
+    }
+    if ((known?.trusted ?? []).length > 0) found.push({ file: `${stateFile()} trusted`, detail: "untrusted-trust", next: `stop the daemon with warden daemon uninstall, delete the trusted list of ${w.repo} in ${stateFile()}, and start it again with warden daemon install --port ${opts.port}; the daemon does not honor that list. To trust a commit, ${trustAction(w.root, "<commit>")}` });
+    return { trusted, found };
+  };
 
   const pluginFound = (w: Watched, own: RootState, ix: Index): Found[] => {
     let plugin: PluginState;
@@ -348,10 +370,12 @@ export function startWatching(opts: DaemonOptions): Daemon {
     const tips = await repoTips(w.root, trees);
     const ix = indexFor(w.project);
     const known = state.repos[w.repo];
-    const rebuilt = known === undefined ? commitsOf(w.root, [...ix.unchecked]) : [];
+    const rebuilt = evidenceMergedSinceStart.has(w.repo) ? [] : commitsOf(w.root, [...ix.unchecked]);
+    evidenceMergedSinceStart.add(w.repo);
     const refs = await allTips(w.root, tips);
     const boundary = known?.boundary ?? refs;
-    const trusted = (c: Committed): boolean => (known?.trusted ?? []).some((t) => t.commit === c.commit);
+    const owned = trustFound(w, known);
+    const trusted = (c: Committed): boolean => owned.trusted.has(c.commit);
     const flagged = new Set([...(known?.flagged ?? []), ...(known?.unchecked ?? []).map((c) => c.commit)]);
     const fresh: Committed[] = [];
     for (const c of await newCommits(w.root, tips, known?.tips ?? tips)) {
@@ -369,8 +393,8 @@ export function startWatching(opts: DaemonOptions): Daemon {
     }
     for (const c of unchecked) flagged.add(c.commit);
     state.repos[w.repo] = { tips, unchecked, boundary, flagged: [...flagged], ...(known?.trusted === undefined ? {} : { trusted: known.trusted }) };
-    const alerts: Found[] = [];
-    for (const c of unchecked) alerts.push(await uncheckedAlert(w.root, w.repo, c, base, running, opts.port, trees));
+    const alerts: Found[] = [...owned.found];
+    for (const c of unchecked) alerts.push(await uncheckedAlert(w.root, c, base, running, trees));
     return alerts;
   };
 

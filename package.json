@@ -39,6 +39,7 @@
     "packs",
     "scripts/watch-main.mjs",
     "web",
-    "allowed_signers"
+    "allowed_signers",
+    "trust_signers"
   ]
 }

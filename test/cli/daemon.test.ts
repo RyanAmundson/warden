@@ -7,7 +7,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { type Served, serve } from "../../src/cli/daemon.js";
-import { STALE_MS, heartbeatFile, heartbeatProblem, openAlerts, stateFile } from "../../src/runner/daemon.js";
+import { STALE_MS, heartbeatFile, heartbeatProblem, openAlerts, stateFile, trustAction } from "../../src/runner/daemon.js";
+import { TRUST_SIGNERS, signTrust, writeTrust } from "../../src/runner/trust.js";
+import { runTrust } from "../../src/cli/trust.js";
 import { FIRST_STAMPING } from "../../src/compiler/lock.js";
 import { type Evidence, appendEvidence, readEvidence } from "../../src/runner/evidence.js";
 
@@ -476,28 +478,108 @@ it("a malformed lock in history stays flagged in every worktree and never stops 
   await until("removing the commit closes the alert in every worktree", () => !openAlerts(wt).some((d) => d.file === bad));
 });
 
-it("clears a commit recorded as unchecked only when the owner lists it as trusted in the daemon's state", async () => {
-  let s = await start();
-  await writeFile(join(root, "src/t.ts"), "export const t = 1;\n");
+const ownerKey = async (name: string, passphrase = ""): Promise<{ key: string; signers: string }> => {
+  const key = join(scratch, name);
+  execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", passphrase, "-C", name, "-f", key]);
+  const signers = join(scratch, `${name}.signers`);
+  await writeFile(signers, `# owner keys\n${name} ${readFileSync(`${key}.pub`, "utf8").split(" ").slice(0, 2).join(" ")}\n`);
+  return { key, signers };
+};
+
+const startSigned = async (trustSigners: string, port = 0): Promise<Served> => {
+  served = await serve(wardenRoot, port, { intervalMs: 200, debounceMs: 20, trustSigners });
+  await served.daemon.settled();
+  return served;
+};
+
+const flagOne = async (s: Served, name: string): Promise<string> => {
+  await writeFile(join(root, `src/${name}.ts`), `export const ${name} = 1;\n`);
   git(root, "add", "-A");
-  commitUnhooked("reviewed elsewhere");
-  const reviewed = git(root, "rev-parse", "HEAD").trim();
-  await until("the commit is flagged", () => unchecked(s).includes(reviewed));
+  commitUnhooked(name);
+  const sha = git(root, "rev-parse", "HEAD").trim();
+  await until("the commit is flagged", () => unchecked(s).includes(sha));
+  return sha;
+};
+
+const untrusted = (s: Served): string[] => openOf(s).filter((d) => d.detail === "untrusted-trust").map((d) => d.file);
+
+it("leaves a commit flagged when an agent hand-writes it into the trusted list of the daemon's state, and reports that list", async () => {
+  const { signers } = await ownerKey("owner");
+  let s = await startSigned(signers);
+  const reviewed = await flagOne(s, "t");
   await stop();
   const repo = realpathSync(join(root, ".git"));
   const saved = JSON.parse(readFileSync(stateFile(), "utf8")) as { repos: Record<string, Record<string, unknown>> };
+  (saved.repos[repo] as Record<string, unknown>).trusted = [{ commit: reviewed, reason: "Owner authorized", at: new Date().toISOString() }];
   await writeFile(stateFile(), JSON.stringify(saved));
-  s = await start();
+  s = await startSigned(signers);
   expect(unchecked(s)).toEqual([reviewed]);
-  await stop();
-  const entry = { commit: reviewed, reason: "independent review PASS", at: new Date().toISOString() };
-  (saved.repos[repo] as Record<string, unknown>).trusted = [entry];
-  await writeFile(stateFile(), JSON.stringify(saved));
-  s = await start();
-  expect(unchecked(s)).toEqual([]);
+  expect(untrusted(s)).toEqual([`${stateFile()} trusted`]);
+  expect(openAlerts(root).map((d) => d.detail).sort()).toEqual(["unchecked-commit", "untrusted-trust"]);
+});
+
+it("clears a commit only for a trust record signed by an owner key for this repository", async () => {
+  const { key, signers } = await ownerKey("owner");
+  const { key: agentKey } = await ownerKey("agent");
+  const s = await startSigned(signers);
+  const reviewed = await flagOne(s, "t");
+  const repo = realpathSync(join(root, ".git"));
+  const fields = { repo, commit: reviewed, reason: "independent review PASS", at: new Date().toISOString() };
+
+  const forged = writeTrust(signTrust(agentKey, fields));
+  await s.daemon.rescan();
+  expect(unchecked(s)).toEqual([reviewed]);
+  expect(untrusted(s)).toEqual([forged]);
+
+  const otherClone = signTrust(key, { ...fields, repo: join(scratch, "other/.git") });
+  writeTrust({ ...otherClone, repo });
+  await s.daemon.rescan();
+  expect(unchecked(s)).toEqual([reviewed]);
+  expect(untrusted(s)).toEqual([forged]);
+  await rm(forged);
+
+  writeTrust(signTrust(key, fields));
   await s.daemon.rescan();
   expect(unchecked(s)).toEqual([]);
-  expect(JSON.parse(readFileSync(stateFile(), "utf8")).repos[repo].trusted).toEqual([entry]);
+  expect(untrusted(s)).toEqual([]);
+});
+
+it("keeps a commit flagged when an agent deletes it from the daemon's state while the daemon is stopped", async () => {
+  let s = await start();
+  const hidden = await flagOne(s, "h");
+  await stop();
+  const repo = realpathSync(join(root, ".git"));
+  const saved = JSON.parse(readFileSync(stateFile(), "utf8")) as { repos: Record<string, { unchecked: unknown[]; flagged: string[] }> };
+  saved.repos[repo] = { ...(saved.repos[repo] as { unchecked: unknown[]; flagged: string[] }), unchecked: [], flagged: [] };
+  await writeFile(stateFile(), JSON.stringify(saved));
+  s = await start();
+  expect(unchecked(s)).toEqual([hidden]);
+});
+
+it("warden trust refuses a key without a passphrase, and signs a record the daemon honors with one", async () => {
+  const bare = await ownerKey("bare");
+  const head = git(root, "rev-parse", "HEAD").trim();
+  expect(() => runTrust(root, wardenRoot, head, bare.key, "why")).toThrow(`${bare.key} has no passphrase`);
+  const { key, signers } = await ownerKey("owner", "correct horse");
+  const askpass = join(scratch, "askpass.sh");
+  await writeFile(askpass, "#!/bin/sh\necho 'correct horse'\n");
+  await chmod(askpass, 0o755);
+  const fakeRoot = join(scratch, "warden-root");
+  await mkdir(fakeRoot);
+  await writeFile(join(fakeRoot, TRUST_SIGNERS), readFileSync(signers, "utf8"));
+  const s = await startSigned(signers);
+  const reviewed = await flagOne(s, "t");
+  process.env.SSH_ASKPASS = askpass;
+  process.env.SSH_ASKPASS_REQUIRE = "force";
+  try {
+    expect(() => runTrust(root, join(scratch, "empty-root"), reviewed, key, "why")).toThrow("lists no owner key");
+    expect(runTrust(root, fakeRoot, reviewed, key, "independent review PASS")).toBe(0);
+  } finally {
+    delete process.env.SSH_ASKPASS;
+    delete process.env.SSH_ASKPASS_REQUIRE;
+  }
+  await s.daemon.rescan();
+  expect(unchecked(s)).toEqual([]);
 });
 
 it("gives a lock that names a release newer than the daemon's the unstampable next action", async () => {
@@ -515,21 +597,18 @@ it("asks the owner to trust a published unstampable commit instead of naming a r
   const remote = join(scratch, "remote.git");
   git(scratch, "init", "-q", "--bare", "-b", "main", remote);
   git(root, "remote", "add", "origin", remote);
-  const s = await start();
+  const { key, signers } = await ownerKey("owner");
+  const s = await startSigned(signers);
   await lockedBy("0.1.10");
   commitUnhooked("downgraded and pushed");
   const pushed = git(root, "rev-parse", "HEAD").trim();
   await until("the commit is flagged", () => unchecked(s).includes(pushed));
   git(root, "push", "-q", "origin", "main");
   await s.daemon.rescan();
-  expect(openAlerts(root).find((d) => d.file === pushed)?.next).toBe(`ask the repository owner to stop the daemon with warden daemon uninstall, add commit ${pushed} with a reason to the trusted list of ${realpathSync(join(root, ".git"))} in ${stateFile()}, and start it again with warden daemon install --port ${s.port}, because it is published in refs/remotes/origin/main and ${why}`);
-  await stop();
-  const saved = JSON.parse(readFileSync(stateFile(), "utf8")) as { repos: Record<string, Record<string, unknown>> };
-  (saved.repos[realpathSync(join(root, ".git"))] as Record<string, unknown>).trusted = [{ commit: pushed, reason: "owner reviewed it", at: new Date().toISOString() }];
-  await writeFile(stateFile(), JSON.stringify(saved));
-  const again = await start(s.port);
-  expect(again.port).toBe(s.port);
-  expect(unchecked(again)).toEqual([]);
+  expect(openAlerts(root).find((d) => d.file === pushed)?.next).toBe(`${trustAction(root, pushed)}, because it is published in refs/remotes/origin/main and ${why}`);
+  writeTrust(signTrust(key, { repo: realpathSync(join(root, ".git")), commit: pushed, reason: "owner reviewed it", at: new Date().toISOString() }));
+  await s.daemon.rescan();
+  expect(unchecked(s)).toEqual([]);
 });
 
 it("flags a commit again when it returns after removal and its Evidence is gone, though the boundary reaches it", async () => {

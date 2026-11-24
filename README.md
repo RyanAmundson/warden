@@ -504,12 +504,42 @@ commits in every worktree of the repository. The daemon skips the worktree
 that `scripts/self-check.sh` creates, which holds a `.warden-self-check`
 marker.
 
-The `trusted` list in a repository's entry in `state.json` is a one-time
-owner decision. Each entry names a full commit id, a reason, and a
-timestamp, and the daemon never judges that commit, even if Evidence
-recorded it as unchecked. Only the owner adds an entry, by editing
-`state.json` while the daemon is stopped. No command, scan, or commit
-content adds one.
+### Trust a commit
+
+Trusting a commit is a one-time owner decision, and an agent running as you
+cannot make it. Run this in a terminal, in a checkout of the repository:
+
+```bash
+warden trust <commit> --key ~/.ssh/warden_owner --reason "<why>"
+```
+
+It signs the repository's Git common directory, the full commit id, the
+reason, and the time with your key under the SSH signature namespace
+`warden-trust`, and writes the record to `$WARDEN_HOME/daemon/trust/`. The
+daemon stops judging that commit at its next scan, even if Evidence recorded
+it as unchecked. A record names one repository, so it does not trust the same
+commit in another clone.
+
+The daemon honors a record only when `ssh-keygen -Y verify` accepts its
+signature from a key in the `trust_signers` file at the root of the installed
+Warden package. Every other record, and any `trusted` list in `state.json`,
+which older releases read, opens an `untrusted-trust` alert that refuses
+commits in every worktree of the repository until the file or list is
+deleted. That alert never clears the commit it names.
+
+The key is what keeps an agent out, so it must need you:
+
+1. Make a key with a passphrase: `ssh-keygen -t ed25519 -f ~/.ssh/warden_owner`.
+2. Never add it to `ssh-agent`, and use a different key for Git signing.
+   An agent can sign with any key that the agent or the disk holds without a
+   passphrase.
+3. Add `<you> <public key>` from `~/.ssh/warden_owner.pub` to
+   `trust_signers`, and sign the commit that changes it.
+
+`warden trust` refuses a key that has no passphrase and a key that
+`trust_signers` does not list. `ssh-keygen` asks for the passphrase on the
+terminal, which a process without one cannot answer.
+
 A running daemon discovers a repository as soon as `warden init` or a check
 writes the repository's first Evidence, without waiting for its next
 10-second tick.
@@ -562,7 +592,12 @@ Detection is tamper-evident, not tamper-proof. The heartbeat, Evidence, and
 `state.json` live under your own user, so a process running as you can forge
 them: a heartbeat that names another live process passes the check, a forged
 Evidence run line can stamp a commit, and an edited `state.json` can let one
-check pass before the daemon's next scan rewrites it.
+check pass before the daemon's next scan rewrites it. Deleting a flagged
+commit from `state.json` while the daemon is stopped does not clear it: at
+start the daemon adds back every commit that Evidence records as unchecked.
+Only a signed trust record trusts a commit. A process running as you can still
+edit `trust_signers` or delete Evidence lines, so keep the package and
+`$WARDEN_HOME` out of agents' reach where you can.
 
 The daemon serves a JSON API on `http://127.0.0.1:7419` (`--port` changes
 it). It answers only requests whose `Host` is `127.0.0.1` or `localhost` on

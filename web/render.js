@@ -38,6 +38,7 @@ const DETAIL_TEXT = {
   "plugin-disabled": "The Warden Claude plugin was enabled here before and is now turned off.",
   "gate-off": "A commit check ran with WARDEN_DAEMON=off, so it skipped the daemon gate.",
   "unchecked-commit": "A commit landed without a passing commit check for its tree.",
+  "untrusted-trust": "A trust entry for a commit is not signed by the owner's trust key.",
   "record-error": "A record no longer loads.",
   removed: ".warden/config.yaml was removed.",
 };
@@ -588,7 +589,7 @@ export const determinismPage = (state) => {
 
 const LOCK_ART = `<svg class="lockart" viewBox="0 0 122 34" preserveAspectRatio="xMinYMid meet" role="img" aria-label="Illustration only: a key that no longer fits its lock"><rect x="1" y="4" width="26" height="24" rx="7" fill="#E1E5EA" stroke="#1C2A3F" stroke-width="0.5"/><circle cx="10" cy="16" r="3.5" fill="#F8F9FA" stroke="#1C2A3F" stroke-width="0.5"/><path d="M27 10 L112 10 L118 16.5 L112 23 L104 23 L100.5 12.75 L95.5 12.75 L88.5 24 L83.5 24 L76.5 16.5 L71.5 16.5 L64.5 14 L59.5 14 L52.5 21.5 L47.5 21.5 L40.5 21.5 L35.5 21.5 L32 24 L27 24 Z" fill="#B3261E" fill-opacity="0.22" stroke="#B3261E" stroke-width="0.5" stroke-dasharray="1.2 0.8"/><path d="M27 10 L112 10 L118 16.5 L112 23 L104 23 L100.5 20.25 L95.5 20.25 L88.5 24 L83.5 24 L76.5 24 L71.5 24 L64.5 14 L59.5 14 L52.5 21.5 L47.5 21.5 L40.5 21.5 L35.5 21.5 L32 24 L27 24 Z" fill="none" stroke="#1C2A3F" stroke-width="0.6"/><path d="M74 16.5 L74 24 M98 12.75 L98 20.25" stroke="#B3261E" stroke-width="1.1"/></svg>`;
 
-const isRepositoryDetection = ({ detail, file }) => detail === "hook-unwired" || detail === "unchecked-commit" || (detail === "scan-error" && file === "git history");
+const isRepositoryDetection = ({ detail, file }) => detail === "hook-unwired" || detail === "unchecked-commit" || detail === "untrusted-trust" || (detail === "scan-error" && file === "git history");
 
 const detectionState = (open, e, reposByRoot) => {
   const repo = e.repo ?? reposByRoot.get(e.root);

@@ -1,0 +1,77 @@
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { wardenHome, writeAtomic } from "./evidence.js";
+export const TRUST_NAMESPACE = "warden-trust";
+export const TRUST_SIGNERS = "trust_signers";
+export const trustDir = () => join(wardenHome(), "daemon", "trust");
+const message = (t) => `${JSON.stringify({ repo: t.repo, commit: t.commit, reason: t.reason, at: t.at })}\n`;
+const keygen = (args, input) => {
+    const r = spawnSync("ssh-keygen", args, { input, encoding: "utf8", stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
+    if (r.error !== undefined)
+        throw new Error(`ssh-keygen could not run, so trust signatures cannot be checked: ${r.error.message}. Next action: install OpenSSH so ssh-keygen is on PATH`);
+    return { status: r.status, stdout: r.stdout };
+};
+const inTemp = (run) => {
+    const dir = mkdtempSync(join(tmpdir(), "warden-trust-"));
+    try {
+        return run(dir);
+    }
+    finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+};
+export const signerLines = (signers) => existsSync(signers) ? readFileSync(signers, "utf8").split("\n").filter((l) => l.trim() !== "" && !l.trim().startsWith("#")) : [];
+export function signatureValid(signers, t) {
+    if (signerLines(signers).length === 0)
+        return false;
+    return inTemp((dir) => {
+        const sig = join(dir, "trust.sig");
+        writeFileSync(sig, t.signature);
+        const found = keygen(["-Y", "find-principals", "-s", sig, "-f", signers]);
+        if (found.status !== 0)
+            return false;
+        return found.stdout.split("\n").filter((p) => p !== "").some((p) => keygen(["-Y", "verify", "-f", signers, "-I", p, "-n", TRUST_NAMESPACE, "-s", sig], message(t)).status === 0);
+    });
+}
+export function signTrust(key, t) {
+    return inTemp((dir) => {
+        const file = join(dir, "trust");
+        writeFileSync(file, message(t));
+        const r = spawnSync("ssh-keygen", ["-q", "-Y", "sign", "-f", key, "-n", TRUST_NAMESPACE, file], { stdio: ["inherit", "ignore", "inherit"] });
+        if (r.error !== undefined || r.status !== 0)
+            throw new Error(`ssh-keygen could not sign with ${key}${r.error === undefined ? "" : `: ${r.error.message}`}. Next action: run warden trust again in a terminal and enter the key's passphrase`);
+        return { ...t, signature: readFileSync(`${file}.sig`, "utf8") };
+    });
+}
+export const trustFile = (t) => join(trustDir(), `${createHash("sha256").update(t.repo).digest("hex").slice(0, 12)}-${t.commit}.json`);
+export const writeTrust = (t) => {
+    const file = trustFile(t);
+    writeAtomic(file, `${JSON.stringify(t, null, 2)}\n`);
+    return file;
+};
+const isTrust = (v) => {
+    const t = v;
+    return typeof t === "object" && t !== null && [t.repo, t.commit, t.reason, t.at, t.signature].every((f) => typeof f === "string");
+};
+export function readTrustFiles() {
+    const dir = trustDir();
+    if (!existsSync(dir))
+        return [];
+    return readdirSync(dir)
+        .filter((name) => name.endsWith(".json"))
+        .map((name) => {
+        const file = join(dir, name);
+        const text = readFileSync(file, "utf8");
+        let value;
+        try {
+            value = JSON.parse(text);
+        }
+        catch {
+            value = undefined;
+        }
+        return isTrust(value) ? { file, text, record: value } : { file, text };
+    });
+}
