@@ -12,6 +12,8 @@ import { formatFeedback } from "./feedback.js";
 import { findTampering } from "./tamper.js";
 import { TRUST_SIGNERS, readTrustFiles, signatureValid, trustDir } from "./trust.js";
 
+export const DEFAULT_PORT = 7419;
+
 export const HEARTBEAT_MS = 10_000;
 
 export const STALE_MS = 30_000;

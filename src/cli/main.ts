@@ -14,7 +14,7 @@ import type { Tier } from "../records/types.js";
 import type { Format } from "../runner/feedback.js";
 import { runBench } from "./bench.js";
 import { runAudit, runCheck } from "./check.js";
-import { DEFAULT_PORT, installDaemon, runDaemon, uninstallDaemon } from "./daemon.js";
+import { installDaemon, runDaemon, uninstallDaemon } from "./daemon.js";
 import { runDispute, runDisputeRuling } from "./dispute.js";
 import { runExplain } from "./explain.js";
 import { runDoctor, runInit } from "./init.js";
@@ -32,6 +32,7 @@ import { MAX_KEYFRAMES, runVideoRecord } from "./video.js";
 import { type Screen, liveView, loadView, plainDeterminism, plainLayers, plainView, plainViolations } from "./view.js";
 import { SKILL_HARNESSES } from "../runner/doctor.js";
 import { wardenHome } from "../runner/evidence.js";
+import { DEFAULT_PORT } from "../runner/daemon.js";
 
 const oneOf = <T extends string>(command: string, name: string, value: string, allowed: readonly T[]): T => {
   if (!(allowed as readonly string[]).includes(value)) throw new Error(`--${name} must be one of ${allowed.join(", ")}. Next action: run warden ${command} --help`);
@@ -235,10 +236,9 @@ program
 const video = program.command("video").description("record a UI change for the owner with the change-video pack");
 video
   .command("record")
-  .description("replay a UI change in agent-browser, record a WebM for the owner, and keep it with this checkout's latest run")
+  .description("replay a UI change in agent-browser, record a WebM for the owner, and keep it with this checkout's latest run, which must have checked HEAD")
   .requiredOption("--url <url>", "the dev server page your change affects")
   .requiredOption("--steps <file>", "a Bash file of the flow your diff changes; see below")
-  .option("--run <id>", "the run to keep the video with, instead of this checkout's latest")
   .addHelpText("after", `
 The steps file runs inside the recording, after the page at --url opens at
 1280 x 800. Call agent-browser through ab, and use wait as the assertions:
@@ -249,9 +249,26 @@ The steps file runs inside the recording, after the page at --url opens at
   ab wait --text 'Saved' --timeout 5000
   ab screenshot "$OUT/02-after.jpg"
 
-Take at most ${MAX_KEYFRAMES} keyframes, as JPEG files in $OUT. Read the keyframes; never read
-the video, which is for the owner. A page error also fails the replay.`)
-  .action(async (o: { url: string; steps: string; run?: string }) => {
+Cover only the flow your diff changes. A page error also fails the replay.
+For another width, run ab set viewport <width> <height> and take one keyframe
+for it.
+
+Cost rules:
+- Never read the video or extract frames from it. It is for the owner.
+- Take at most ${MAX_KEYFRAMES} keyframes, saved as "$OUT/NN-name.jpg"; write nothing
+  else to $OUT. Read each one and compare it with what the change must show.
+- Run the replay once per coherent change, not after every edit.
+- Use agent-browser snapshot -i only to find selectors, scoped to your change.
+- Reuse the dev server that serves this checkout.
+
+When the replay fails, fix the app if it is wrong; fix the steps only when a
+selector or expected text is wrong, and say which one you changed.
+
+Report, one line each: the exit code and any failed assertion; what each
+keyframe shows against what the change requires; the run page link and the
+paths of the video, keyframes, and steps file; and what the replay does not
+cover, such as other widths, empty states, or error states.`)
+  .action(async (o: { url: string; steps: string }) => {
     process.exitCode = await runVideoRecord(root(), findWardenRoot(), o);
   });
 

@@ -1,16 +1,16 @@
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { loadRecords } from "../records/load.js";
-import { readHeartbeat } from "../runner/daemon.js";
+import { DEFAULT_PORT, readHeartbeat } from "../runner/daemon.js";
 import { readEvidence, wardenHome } from "../runner/evidence.js";
-import { DEFAULT_PORT } from "./daemon.js";
 import { runRecords } from "./runs.js";
 export const PACK = "change-video";
 export const VIDEO = "change.webm";
 export const MAX_KEYFRAMES = 5;
 export const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 export const VIDEO_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:webm|jpg)$/;
+const KEYFRAME = /^[A-Za-z0-9][A-Za-z0-9._-]*\.jpg$/;
 export const videosRoot = (project) => join(wardenHome(), "videos", project);
 const list = (dir) => {
     try {
@@ -22,15 +22,10 @@ const list = (dir) => {
         throw cause;
     }
 };
-const keyframesIn = (dir) => list(dir).filter((f) => VIDEO_FILE.test(f) && f.endsWith(".jpg")).sort();
-export function recordings(project) {
-    const found = new Map();
-    for (const run of list(videosRoot(project))) {
-        const dir = join(videosRoot(project), run);
-        if (SAFE_NAME.test(run) && existsSync(join(dir, VIDEO)))
-            found.set(run, { file: VIDEO, keyframes: keyframesIn(dir) });
-    }
-    return found;
+const keyframesIn = (dir) => list(dir).filter((f) => f !== VIDEO).sort();
+export function recordingOf(project, run) {
+    const dir = join(videosRoot(project), run);
+    return SAFE_NAME.test(run) && existsSync(join(dir, VIDEO)) ? { file: VIDEO, keyframes: keyframesIn(dir).filter((f) => KEYFRAME.test(f)) } : undefined;
 }
 export async function runVideoRecord(root, wardenRoot, opts) {
     const set = await loadRecords(root, wardenRoot);
@@ -45,12 +40,10 @@ export async function runVideoRecord(root, wardenRoot, opts) {
     const steps = resolve(opts.steps);
     if (!existsSync(steps))
         throw new Error(`${steps} does not exist. Next action: write the replay steps there; run warden video record --help for the format`);
-    const runs = runRecords(readEvidence(project));
-    const run = opts.run === undefined ? runs.filter((r) => r.root === root).at(-1) : runs.find((r) => r.run === opts.run);
-    if (run?.run === undefined) {
-        throw new Error(opts.run === undefined
-            ? `no Warden run is recorded for ${root}, so the video has no run to belong to. Next action: run warden check --base ${set.config.base}, then run warden video record again`
-            : `${project} has no run ${opts.run}. Next action: pick a run id from warden runs --format json`);
+    const run = runRecords(readEvidence(project)).filter((r) => r.root === root).at(-1);
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+    if (run?.run === undefined || run.commit !== head) {
+        throw new Error(`${run === undefined ? `no Warden run is recorded for ${root}` : `this checkout's latest run checked ${run.commit ?? "an unrecorded commit"}, not HEAD ${head}`}, so the video has no run to belong to. Next action: run warden check --base ${set.config.base}, then run warden video record again`);
     }
     if (!SAFE_NAME.test(run.run))
         throw new Error(`run id ${run.run} cannot name a folder. Next action: run warden check --base ${set.config.base} for a new run, then record again`);
@@ -75,6 +68,11 @@ export async function runVideoRecord(root, wardenRoot, opts) {
             return 1;
         }
         const keyframes = keyframesIn(partial);
+        const other = keyframes.find((f) => !KEYFRAME.test(f));
+        if (other !== undefined) {
+            process.stderr.write(`The steps wrote ${other}, which the run page cannot show. Next action: save keyframes as "$OUT/NN-name.jpg" and write nothing else to $OUT, then run warden video record again\n`);
+            return 1;
+        }
         if (keyframes.length > MAX_KEYFRAMES) {
             process.stderr.write(`The steps took ${keyframes.length} keyframes; the limit is ${MAX_KEYFRAMES}. Next action: drop the screenshots that show nothing new, then run warden video record again\n`);
             return 1;

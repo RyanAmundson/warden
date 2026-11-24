@@ -1376,7 +1376,7 @@ it("install writes the launchd plist under HOME and bootstraps it; uninstall rem
   expect(failed.err).toContain(`Next action: run launchctl bootstrap gui/${uid} ${plist} and fix the error it prints`);
 });
 
-it("records a change video only with the change-video pack, keeps it with the checkout's latest run, and serves it", async () => {
+it("records a change video only with the change-video pack, keeps it with the checkout's latest run of HEAD, and serves it", async () => {
   expect(warden(root, {}, "check", "--base", "main", "src/a.ts").code).toBe(0);
   const bin = join(scratch, "bin");
   await mkdir(bin);
@@ -1414,7 +1414,17 @@ exit 0
   const many = record();
   expect(many.code).toBe(1);
   expect(many.err).toContain("The steps took 6 keyframes; the limit is 5.");
+  await writeFile(steps, `ab screenshot "$OUT/01-after.png"\n`);
+  const png = record();
+  expect(png.code).toBe(1);
+  expect(png.err).toContain("The steps wrote 01-after.png, which the run page cannot show.");
   expect(readdirSync(join(home, "videos/proj", run)).sort()).toEqual(["01-after.jpg", "change.webm"]);
+  await writeFile(join(root, "src/b.ts"), "export const b = 2;\n");
+  git(root, "add", "-A");
+  commitUnhooked("later");
+  const stale = record();
+  expect(stale.code).toBe(2);
+  expect(stale.err).toContain(`this checkout's latest run checked ${git(root, "rev-parse", "HEAD~1").trim()}, not HEAD`);
 
   await start();
   const runs = (await get("/api/runs?project=proj&limit=5")).body as { runs: (Evidence & { video?: unknown })[] };
@@ -1433,10 +1443,24 @@ exit 0
   expect(await raw(`${video}change.webm`, { range: "bytes=5-8" })).toMatchObject({ status: 206, headers: { "content-range": "bytes 5-8/15" }, body: "0123" });
   expect(await raw(`${video}change.webm`, { range: "bytes=-3" })).toMatchObject({ status: 206, body: "789" });
   expect((await raw(`${video}change.webm`, { range: "bytes=99-" })).status).toBe(416);
+  expect((await raw(`${video}change.webm`, { range: "bytes=8-5" })).status).toBe(200);
   expect(await raw(`${video}01-after.jpg`)).toMatchObject({ status: 200, headers: { "content-type": "image/jpeg" }, body: "JPEG" });
   expect((await raw(`${video}..%2Fsteps.webm`)).status).toBe(400);
   expect((await raw(`/api/video?project=proj&run=..&file=change.webm`)).status).toBe(400);
   expect((await raw(`${video}02-none.jpg`)).status).toBe(404);
   expect((await raw(`/api/video?project=nope&run=${run}&file=change.webm`)).status).toBe(404);
   expect((await raw(`${video}change.webm`, { host: "evil.example" })).status).toBe(403);
+  await writeFile(join(home, "videos/proj", run, "long.webm"), Buffer.alloc(8 * 1024 * 1024));
+  const open = (): number => readdirSync("/dev/fd").length;
+  const before = open();
+  for (let i = 0; i < 20; i++) {
+    await new Promise<void>((done, fail) => {
+      const req = request({ host: "127.0.0.1", port: served?.port, path: `${video}long.webm` }, (res) => res.once("data", () => {
+        req.destroy();
+        done();
+      })).on("error", fail);
+      req.end();
+    });
+  }
+  await until("cancelled requests release their files", () => open() <= before + 2);
 });

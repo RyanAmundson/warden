@@ -1,19 +1,18 @@
 import { spawnSync } from "node:child_process";
 import { createReadStream, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { pipeline } from "node:stream";
 import { readFile } from "node:fs/promises";
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from "node:http";
 import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { wardenVersion } from "../compiler/compile.js";
 import { RecordError } from "../records/load.js";
-import { type Daemon, type Detection, HEARTBEAT_MS, STALE_MS, heartbeatFile, readHeartbeat, startWatching } from "../runner/daemon.js";
+import { DEFAULT_PORT, type Daemon, type Detection, HEARTBEAT_MS, STALE_MS, heartbeatFile, readHeartbeat, startWatching } from "../runner/daemon.js";
 import { type Evidence, readEvidence, wardenHome } from "../runner/evidence.js";
 import { PackSettingsError, packSettings, packSettingsBody, savePackSettings } from "./pack-settings.js";
 import { runRecords } from "./runs.js";
-import { SAFE_NAME, VIDEO_FILE, recordings, videosRoot } from "./video.js";
+import { SAFE_NAME, VIDEO_FILE, recordingOf, videosRoot } from "./video.js";
 import { BANDS, bandCounts, loadView, packViolations } from "./view.js";
-
-export const DEFAULT_PORT = 7419;
 
 export const LABEL = "warden.daemon";
 
@@ -124,9 +123,8 @@ export async function route(daemon: Daemon, wardenRoot: string, url: URL): Promi
       const { project } = pick();
       const limit = Number(url.searchParams.get("limit") ?? "20");
       if (!Number.isInteger(limit) || limit < 1) throw new HttpError(400, `limit must be a positive integer, not ${url.searchParams.get("limit")}`, "pass ?limit= with a positive integer");
-      const videos = recordings(project);
       return { project, runs: runRecords(readEvidence(project)).slice(-limit).reverse().map((run) => {
-        const video = run.run === undefined ? undefined : videos.get(run.run);
+        const video = run.run === undefined ? undefined : recordingOf(project, run.run);
         return video === undefined ? run : { ...run, video };
       }) };
     }
@@ -198,19 +196,21 @@ function sendFile(req: IncomingMessage, res: ServerResponse, { file, type }: { f
   const size = statSync(file).size;
   const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? "");
   const head = { "content-type": type, "accept-ranges": "bytes", "cache-control": "no-cache" };
-  if (range === null || (range[1] === "" && range[2] === "")) {
+  const first = range?.[1] ?? "";
+  const last = range?.[2] ?? "";
+  if (range === null || (first === "" && last === "") || (first !== "" && last !== "" && Number(first) > Number(last))) {
     res.writeHead(200, { ...head, "content-length": size });
-    createReadStream(file).on("error", () => res.destroy()).pipe(res);
+    pipeline(createReadStream(file), res, () => {});
     return;
   }
-  const start = range[1] === "" ? Math.max(0, size - Number(range[2])) : Number(range[1]);
-  const end = range[1] === "" || range[2] === "" ? size - 1 : Math.min(Number(range[2]), size - 1);
-  if (start >= size || start > end) {
+  const start = first === "" ? Math.max(0, size - Number(last)) : Number(first);
+  const end = first === "" || last === "" ? size - 1 : Math.min(Number(last), size - 1);
+  if (start >= size) {
     res.writeHead(416, { ...head, "content-range": `bytes */${size}` }).end();
     return;
   }
   res.writeHead(206, { ...head, "content-range": `bytes ${start}-${end}/${size}`, "content-length": end - start + 1 });
-  createReadStream(file, { start, end }).on("error", () => res.destroy()).pipe(res);
+  pipeline(createReadStream(file, { start, end }), res, () => {});
 }
 
 const failure = (cause: Error): HttpError => cause instanceof HttpError ? cause : cause instanceof PackSettingsError ? new HttpError(cause.status, cause.message, "review the pack selection and reload Layers if the checkout changed") : cause instanceof RecordError ? new HttpError(422, cause.message, /Next action: (.*?)\.?$/.exec(cause.message)?.[1] ?? "run warden check in the project and fix what it reports") : new HttpError(500, cause.message, "read the daemon log and fix what it names");
