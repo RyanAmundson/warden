@@ -6,6 +6,8 @@ let page;
 let project;
 let jump;
 let next;
+// The address of the page on screen, kept apart from the page being opened.
+let shown = `${location.pathname}${location.search}`;
 const pageOf = (path) => path.replace(/^\/+|\/+$/g, "") || "overview";
 const route = (url) => {
   params = new URLSearchParams(url.search);
@@ -93,11 +95,12 @@ const arrive = () => {
     heading.tabIndex = -1;
     heading.focus({ preventScroll: true });
   }
-  if (!jump) window.scrollTo(0, 0);
+  window.scrollTo(0, 0);
 };
 
 // Draw the opened page: its address, view settings, and whatever load() set.
 const commit = () => {
+  shown = `${location.pathname}${location.search}`;
   state.page = page;
   state.project = project;
   if (next !== undefined) Object.assign(state.view, next);
@@ -154,18 +157,37 @@ const load = async () => {
   commit();
 };
 
+// Abandon a switch that has not drawn yet: the address and target go back to the page on screen.
+const stay = () => {
+  history.replaceState(null, "", shown);
+  route(new URL(shown, location.href));
+  project = state.project;
+  next = undefined;
+};
+
 // Open a page of this app without reloading, so the event stream stays open.
-// Unsaved pack changes take a real navigation instead, so beforeunload can ask first.
+// Unsaved pack changes are discarded only after the same question beforeunload asks.
 const go = (url, push = true) => {
-  if (state.view.packDraft.size || state.view.packSaving) return push ? location.assign(url.href) : location.reload();
-  if (push) history.pushState(null, "", url.href);
+  const { view } = state;
+  if (view.packDraft.size || view.packSaving) {
+    if (!confirm("Leave this page? Your unsaved pack changes will be lost.")) {
+      // ponytail: Back is undone with a new entry, so Forward history is lost after a cancelled Back.
+      if (!push) history.pushState(null, "", shown);
+      return;
+    }
+    view.packDraft.clear();
+  }
+  if (push) history[url.href === location.href ? "replaceState" : "pushState"](null, "", url.href);
   next = route(url);
   seen.clear();
   clearTimeout(pending);
   load();
 };
 
-window.addEventListener("popstate", () => go(new URL(location.href), false));
+// A hash-only change, such as "See run details", stays on the page on screen.
+window.addEventListener("popstate", () => {
+  if (`${location.pathname}${location.search}` !== shown) go(new URL(location.href), false);
+});
 
 const schedule = () => {
   if (state.view.paused || state.view.packDraft.size || state.view.packSaving) return;
@@ -275,6 +297,7 @@ root.addEventListener("change", (e) => {
     const { view } = state;
     const { root: checkout, revision, packs } = state.data.layers.packSettings;
     if (view.packDraft.size === 0) {
+      if (next !== undefined) stay();
       clearTimeout(pending);
       view.packTarget = { project: state.project, root: checkout, revision };
       loads += 1;

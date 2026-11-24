@@ -33,6 +33,8 @@ class FakeSource {
 let html = "";
 let up = true;
 let on: Record<string, (e: unknown) => unknown> = {};
+let fetches = 0;
+const heading = { tabIndex: 0, focus: vi.fn() };
 const origin = "http://127.0.0.1:7419";
 const place = { pathname: "/", search: "", hash: "", origin, get href() { return `${origin}${this.pathname}${this.search}${this.hash}`; }, assign: vi.fn(), reload: vi.fn() };
 const moveTo = (href: string): void => {
@@ -65,14 +67,18 @@ beforeEach(() => {
   place.assign = vi.fn();
   place.reload = vi.fn();
   vi.stubGlobal("location", place);
-  vi.stubGlobal("history", { pushState: vi.fn((_s: unknown, _t: string, href: string) => moveTo(href)) });
+  vi.stubGlobal("history", { pushState: vi.fn((_s: unknown, _t: string, href: string) => moveTo(href)), replaceState: vi.fn((_s: unknown, _t: string, href: string) => moveTo(href)) });
+  vi.stubGlobal("confirm", vi.fn(() => false));
+  fetches = 0;
+  heading.focus = vi.fn();
   bodies = { "/api/health": health, "/api/projects": { projects: [] }, "/api/tamper": { open: [], recent: [] }, "/api/determinism": { projects: [] } };
-  const root = { set innerHTML(v: string) { html = v; }, get innerHTML() { return html; }, addEventListener(name: string, f: (e: unknown) => unknown) { on[name] = f; }, querySelector() { return null; }, querySelectorAll() { return []; } };
+  const root = { set innerHTML(v: string) { html = v; }, get innerHTML() { return html; }, addEventListener(name: string, f: (e: unknown) => unknown) { on[name] = f; }, querySelector(sel: string) { return sel === "h1" ? heading : null; }, querySelectorAll() { return []; } };
   vi.stubGlobal("document", { getElementById: (id: string) => (id === "app" ? root : null), activeElement: null, title: "" });
   vi.stubGlobal("window", { addEventListener(name: string, f: (e: unknown) => unknown) { on[name] = f; }, scrollTo: vi.fn() });
   vi.stubGlobal("CSS", { escape: (s: string) => s });
   vi.stubGlobal("EventSource", FakeSource);
   vi.stubGlobal("fetch", async (path: string) => {
+    fetches += 1;
     if (!up) throw new TypeError("Failed to fetch");
     const key = path.split("?")[0] as string;
     if (!(key in bodies)) return { ok: false, status: 404, json: async () => ({ error: `no route ${key}`, next: "GET /api/health" }) };
@@ -208,12 +214,82 @@ it("leaves modified clicks and in-page anchors to the browser", async () => {
   expect(history.pushState).not.toHaveBeenCalled();
 });
 
-it("takes a full navigation when pack changes are unsaved, so the browser can warn", async () => {
-  bodies["/api/projects"] = { projects: [{ project: "warden", roots: ["/p/w"], lastRun: null, openAlerts: 0 }] };
-  bodies["/api/layers"] = { project: "warden", bands: [], practices: [], packs: [], packSettings: { root: "/p/w", revision: "r1", packs: [{ id: "custom", on: false }] } };
+const warden = { projects: [{ project: "warden", roots: ["/p/w"], lastRun: null, openAlerts: 0 }] };
+const layers = { project: "warden", bands: [], practices: [], packs: [], packSettings: { root: "/p/w", revision: "r1", packs: [{ id: "custom", on: false }] } };
+
+it("asks before a switch discards unsaved pack changes, and stays when told to", async () => {
+  bodies["/api/projects"] = warden;
+  bodies["/api/layers"] = layers;
   await boot("/layers?project=warden");
   on.change?.({ target: { dataset: { pack: "custom" }, checked: true } });
+  const e = await click("/tamper");
+  expect(e.preventDefault).toHaveBeenCalled();
+  expect(confirm).toHaveBeenCalledTimes(1);
+  expect(document.title).toBe("Layers · Warden");
+  expect(place.pathname).toBe("/layers");
+  moveTo("/tamper");
+  on.popstate?.({});
+  await vi.advanceTimersByTimeAsync(0);
+  expect(history.pushState).toHaveBeenLastCalledWith(null, "", "/layers?project=warden");
+  expect(document.title).toBe("Layers · Warden");
+  vi.mocked(confirm).mockReturnValue(true);
   await click("/tamper");
-  expect(place.assign).toHaveBeenCalledWith(`${origin}/tamper`);
+  expect(document.title).toBe("Tamper · Warden");
+  expect(place.assign).not.toHaveBeenCalled();
+});
+
+it("abandons a pending switch when a pack is toggled before it draws", async () => {
+  bodies["/api/projects"] = warden;
+  bodies["/api/layers"] = layers;
+  await boot("/layers?project=warden");
+  const link = { href: `${origin}/tamper`, target: "", hasAttribute: () => false };
+  on.click?.({ button: 0, preventDefault() {}, target: { closest: (sel: string) => (sel === "a[href]" ? link : null) } });
+  on.change?.({ target: { dataset: { pack: "custom" }, checked: true } });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(place.pathname).toBe("/layers");
+  expect(document.title).toBe("Layers · Warden");
+});
+
+it("resets the selected run and filters the way a fresh load does", async () => {
+  bodies["/api/projects"] = warden;
+  bodies["/api/runs"] = { project: "warden", runs: [] };
+  await boot("/runs?project=warden&run=gone");
+  expect(html).toContain("is not among the last");
+  await click("/runs?project=warden");
+  expect(html).not.toContain("is not among the last");
+});
+
+it("moves focus to the new heading after a switch, not on the first load", async () => {
+  await boot("/");
+  expect(heading.focus).not.toHaveBeenCalled();
+  await click("/tamper");
+  expect(heading.focus).toHaveBeenCalledTimes(1);
+  expect(heading.tabIndex).toBe(-1);
+});
+
+it("switches project from the picker in place", async () => {
+  bodies["/api/projects"] = { projects: [...warden.projects, { project: "other", roots: ["/p/o"], lastRun: null, openAlerts: 0 }] };
+  bodies["/api/runs"] = { project: "warden", runs: [] };
+  await boot("/runs?project=warden");
+  on.change?.({ target: { dataset: { nav: "project" }, value: "other" } });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(history.pushState).toHaveBeenCalledWith(null, "", `${origin}/runs?project=other`);
+  expect(FakeSource.all).toHaveLength(1);
+});
+
+it("leaves the page alone on a hash-only history change", async () => {
+  await boot("/");
+  const before = fetches;
+  moveTo("/#detail");
+  on.popstate?.({});
+  await vi.advanceTimersByTimeAsync(0);
+  expect(fetches).toBe(before);
+  expect(heading.focus).not.toHaveBeenCalled();
+});
+
+it("replaces the history entry when the link names the page already open", async () => {
+  await boot("/tamper");
+  await click("/tamper");
+  expect(history.replaceState).toHaveBeenCalledWith(null, "", `${origin}/tamper`);
   expect(history.pushState).not.toHaveBeenCalled();
 });
