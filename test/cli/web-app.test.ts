@@ -32,13 +32,19 @@ class FakeSource {
 
 let html = "";
 let up = true;
+let on: Record<string, (e: unknown) => unknown> = {};
+const origin = "http://127.0.0.1:7419";
+const place = { pathname: "/", search: "", hash: "", origin, get href() { return `${origin}${this.pathname}${this.search}${this.hash}`; }, assign: vi.fn(), reload: vi.fn() };
+const moveTo = (href: string): void => {
+  const url = new URL(href, origin);
+  Object.assign(place, { pathname: url.pathname, search: url.search, hash: url.hash });
+};
 let bodies: Record<string, unknown> = {};
 
 const health = { status: "ok", pid: 1, version: "0.1.8", heartbeatAt: "2026-11-18T17:00:00Z", heartbeatFile: "/w/daemon/heartbeat.json", intervalMs: 10000, staleAfterMs: 30000, port: 7419 };
 
 const boot = async (path: string): Promise<FakeSource> => {
-  const [pathname, search = ""] = path.split("?");
-  vi.stubGlobal("location", { pathname, search: search === "" ? "" : `?${search}` });
+  moveTo(path);
   const file = join(scratch, `app-${++copies}.mjs`);
   writeFileSync(file, source);
   await import(pathToFileURL(file).href);
@@ -55,10 +61,15 @@ beforeEach(() => {
   html = "";
   up = true;
   FakeSource.all = [];
+  on = {};
+  place.assign = vi.fn();
+  place.reload = vi.fn();
+  vi.stubGlobal("location", place);
+  vi.stubGlobal("history", { pushState: vi.fn((_s: unknown, _t: string, href: string) => moveTo(href)) });
   bodies = { "/api/health": health, "/api/projects": { projects: [] }, "/api/tamper": { open: [], recent: [] }, "/api/determinism": { projects: [] } };
-  const root = { set innerHTML(v: string) { html = v; }, get innerHTML() { return html; }, addEventListener() {}, querySelector() { return null; }, querySelectorAll() { return []; } };
+  const root = { set innerHTML(v: string) { html = v; }, get innerHTML() { return html; }, addEventListener(name: string, f: (e: unknown) => unknown) { on[name] = f; }, querySelector() { return null; }, querySelectorAll() { return []; } };
   vi.stubGlobal("document", { getElementById: (id: string) => (id === "app" ? root : null), activeElement: null, title: "" });
-  vi.stubGlobal("window", { addEventListener() {} });
+  vi.stubGlobal("window", { addEventListener(name: string, f: (e: unknown) => unknown) { on[name] = f; }, scrollTo: vi.fn() });
   vi.stubGlobal("CSS", { escape: (s: string) => s });
   vi.stubGlobal("EventSource", FakeSource);
   vi.stubGlobal("fetch", async (path: string) => {
@@ -161,4 +172,48 @@ it("enters the lost state from a page that could not be drawn", async () => {
   es.fire("error");
   await vi.advanceTimersByTimeAsync(0);
   expect(html).toContain("stopped answering");
+});
+
+const click = async (href: string, keys: { metaKey?: boolean } = {}): Promise<{ preventDefault: ReturnType<typeof vi.fn> }> => {
+  const link = { href: new URL(href, origin).href, target: "", hasAttribute: () => false };
+  const e = { button: 0, ...keys, preventDefault: vi.fn(), target: { closest: (sel: string) => (sel === "a[href]" ? link : null) } };
+  await on.click?.(e);
+  await vi.advanceTimersByTimeAsync(0);
+  return e;
+};
+
+it("switches pages in place, keeping the one event stream open", async () => {
+  bodies["/api/projects"] = { projects: [{ project: "warden", roots: ["/p/w"], lastRun: null, openAlerts: 0 }] };
+  bodies["/api/runs"] = { project: "warden", runs: [] };
+  await boot("/");
+  expect(document.title).toBe("Overview · Warden");
+  const e = await click("/tamper");
+  expect(e.preventDefault).toHaveBeenCalled();
+  expect(history.pushState).toHaveBeenCalledWith(null, "", `${origin}/tamper`);
+  expect(document.title).toBe("Tamper · Warden");
+  expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
+  moveTo("/");
+  on.popstate?.({});
+  await vi.advanceTimersByTimeAsync(0);
+  expect(document.title).toBe("Overview · Warden");
+  expect(FakeSource.all).toHaveLength(1);
+  expect(place.assign).not.toHaveBeenCalled();
+});
+
+it("leaves modified clicks and in-page anchors to the browser", async () => {
+  await boot("/");
+  expect((await click("/tamper", { metaKey: true })).preventDefault).not.toHaveBeenCalled();
+  expect((await click("/#detail")).preventDefault).not.toHaveBeenCalled();
+  expect((await click("/api/health")).preventDefault).not.toHaveBeenCalled();
+  expect(history.pushState).not.toHaveBeenCalled();
+});
+
+it("takes a full navigation when pack changes are unsaved, so the browser can warn", async () => {
+  bodies["/api/projects"] = { projects: [{ project: "warden", roots: ["/p/w"], lastRun: null, openAlerts: 0 }] };
+  bodies["/api/layers"] = { project: "warden", bands: [], practices: [], packs: [], packSettings: { root: "/p/w", revision: "r1", packs: [{ id: "custom", on: false }] } };
+  await boot("/layers?project=warden");
+  on.change?.({ target: { dataset: { pack: "custom" }, checked: true } });
+  await click("/tamper");
+  expect(place.assign).toHaveBeenCalledWith(`${origin}/tamper`);
+  expect(history.pushState).not.toHaveBeenCalled();
 });

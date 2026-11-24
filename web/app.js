@@ -1,15 +1,27 @@
 import { beatText, frozenHtml, pageTitle, renderApp } from "/render.js";
 
-const params = new URLSearchParams(location.search);
-const page = location.pathname.replace(/^\/+|\/+$/g, "") || "overview";
+// The page being opened. load() commits it to state with its data, so the old page stays on screen until then.
+let params;
+let page;
+let project;
+let jump;
+let next;
+const pageOf = (path) => path.replace(/^\/+|\/+$/g, "") || "overview";
+const route = (url) => {
+  params = new URLSearchParams(url.search);
+  page = pageOf(url.pathname);
+  project = params.get("project") ?? undefined;
+  jump = url.hash === "#detail";
+  return { run: params.get("run") ?? undefined, outcome: "all", tier: "", file: "", filter: "", paused: false, packMessage: undefined };
+};
 const root = document.getElementById("app");
-const state = { page, project: params.get("project") ?? undefined, health: null, projects: [], data: null, error: null, lost: false, frozen: "", frozenAt: null, now: Date.now(), view: { run: params.get("run") ?? undefined, outcome: "all", tier: "", file: "", filter: "", paused: false, packDraft: new Map(), fresh: new Set() } };
+const view = { ...route(location), packDraft: new Map(), fresh: new Set() };
+const state = { page, project, health: null, projects: [], data: null, error: null, lost: false, frozen: "", frozenAt: null, now: Date.now(), view };
 const seen = new Set();
 let lastBeat = Date.now();
 let events;
 let pending;
 let loads = 0;
-let jump = location.hash === "#detail";
 
 const api = async (path, options) => {
   const res = await fetch(path, { cache: "no-store", ...options }).catch((cause) => {
@@ -72,6 +84,27 @@ const goLost = () => {
   render();
 };
 
+// After an in-page navigation, show the new page the way a fresh load would: at the top, with focus on its heading.
+const arrive = () => {
+  if (next === undefined) return;
+  next = undefined;
+  const heading = root.querySelector("h1") ?? root.querySelector("main");
+  if (heading) {
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+  }
+  if (!jump) window.scrollTo(0, 0);
+};
+
+// Draw the opened page: its address, view settings, and whatever load() set.
+const commit = () => {
+  state.page = page;
+  state.project = project;
+  if (next !== undefined) Object.assign(state.view, next);
+  render();
+  arrive();
+};
+
 const load = async () => {
   const seq = ++loads;
   try {
@@ -80,19 +113,19 @@ const load = async () => {
     state.health = health;
     state.projects = projects;
     const needsProject = ["runs", "run", "layers", "violations"].includes(page);
-    if (needsProject && state.project !== undefined && projects.length > 0 && !projects.some((p) => p.project === state.project)) {
+    if (needsProject && project !== undefined && projects.length > 0 && !projects.some((p) => p.project === project)) {
       state.data = null;
       state.lost = false;
-      state.error = { status: 404, error: `The daemon watches no project named ${state.project}`, next: "pick a project under Watched projects" };
-      return render();
+      state.error = { status: 404, error: `The daemon watches no project named ${project}`, next: "pick a project under Watched projects" };
+      return commit();
     }
-    if (state.project === undefined || !projects.some((p) => p.project === state.project)) state.project = projects[0]?.project;
-    const loaded = needsProject && state.project === undefined ? {} : await (LOAD[page] ?? LOAD.overview)(projects, state.project);
+    if (project === undefined || !projects.some((p) => p.project === project)) project = projects[0]?.project;
+    const loaded = needsProject && project === undefined ? {} : await (LOAD[page] ?? LOAD.overview)(projects, project);
     if (seq !== loads) return;
     const data = { projects, ...loaded };
     const { view } = state;
     if (view.packDraft.size && !view.packSaving &&
-        (view.packTarget.project !== state.project || view.packTarget.root !== loaded.layers?.packSettings?.root)) {
+        (view.packTarget.project !== project || view.packTarget.root !== loaded.layers?.packSettings?.root)) {
       view.packDraft.clear();
       view.packMessage = "The selected checkout is unavailable. Your unsaved pack changes were discarded.";
     }
@@ -105,7 +138,7 @@ const load = async () => {
     state.streamClosed = false;
     state.loadedAt = Date.now();
     lastBeat = Date.now();
-    render();
+    commit();
     const detail = jump && document.getElementById("detail");
     if (detail) {
       jump = false;
@@ -118,8 +151,21 @@ const load = async () => {
     state.lost = false;
     state.error = cause.status === undefined ? { error: `This page could not load: ${cause.message}`, next: "reload this page" } : { status: cause.status, ...cause.body };
   }
-  render();
+  commit();
 };
+
+// Open a page of this app without reloading, so the event stream stays open.
+// Unsaved pack changes take a real navigation instead, so beforeunload can ask first.
+const go = (url, push = true) => {
+  if (state.view.packDraft.size || state.view.packSaving) return push ? location.assign(url.href) : location.reload();
+  if (push) history.pushState(null, "", url.href);
+  next = route(url);
+  seen.clear();
+  clearTimeout(pending);
+  load();
+};
+
+window.addEventListener("popstate", () => go(new URL(location.href), false));
 
 const schedule = () => {
   if (state.view.paused || state.view.packDraft.size || state.view.packSaving) return;
@@ -183,6 +229,14 @@ root.addEventListener("submit", async (e) => {
 });
 
 root.addEventListener("click", async (e) => {
+  const link = e.target.closest("a[href]");
+  if (link && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && !link.target && !link.hasAttribute("download")) {
+    const url = new URL(link.href);
+    const here = url.pathname === location.pathname && url.search === location.search;
+    if (url.origin !== location.origin || !(pageOf(url.pathname) in LOAD) || (here && url.hash !== "")) return;
+    e.preventDefault();
+    return go(url);
+  }
   const el = e.target.closest("button");
   if (!el) return;
   if (el.dataset.copy !== undefined) {
@@ -215,8 +269,8 @@ root.addEventListener("click", async (e) => {
 
 root.addEventListener("change", (e) => {
   const el = e.target;
-  if (el.dataset.nav === "project") location.href = `/${page}?project=${q(el.value)}`;
-  if (el.dataset.nav === "checkout") location.href = `/layers?project=${q(state.project)}&root=${q(el.value)}`;
+  if (el.dataset.nav === "project") go(new URL(`/${state.page}?project=${q(el.value)}`, location.href));
+  if (el.dataset.nav === "checkout") go(new URL(`/layers?project=${q(state.project)}&root=${q(el.value)}`, location.href));
   if (el.dataset.pack !== undefined) {
     const { view } = state;
     const { root: checkout, revision, packs } = state.data.layers.packSettings;
