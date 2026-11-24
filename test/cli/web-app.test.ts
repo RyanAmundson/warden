@@ -283,6 +283,20 @@ it("opens the Back address when Back is pressed while a switch is still loading"
   expect(document.title).toBe("Tamper · Warden");
 });
 
+it("keeps the Layers address when a pack is toggled before a Back switch draws", async () => {
+  bodies["/api/projects"] = warden;
+  bodies["/api/layers"] = layers;
+  await boot("/tamper");
+  await click("/layers?project=warden");
+  expect(document.title).toBe("Layers · Warden");
+  history.back();
+  on.popstate?.({});
+  on.change?.({ target: { dataset: { pack: "custom" }, checked: true } });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(`${place.pathname}${place.search}`).toBe("/layers?project=warden");
+  expect(document.title).toBe("Layers · Warden");
+});
+
 it("discards the pack draft as soon as a switch is confirmed", async () => {
   bodies["/api/projects"] = warden;
   bodies["/api/layers"] = layers;
