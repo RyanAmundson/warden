@@ -325,6 +325,25 @@ it("keeps the Layers address when a pack is toggled before a Back switch draws",
   expect(document.title).toBe("Layers · Warden");
 });
 
+it("returns from a cancelled two-step Back across a hash entry without reloading", async () => {
+  bodies["/api/projects"] = warden;
+  bodies["/api/layers"] = layers;
+  bodies["/api/runs"] = { project: "warden", runs: [] };
+  await boot("/tamper");
+  await click("/runs?project=warden");
+  history.pushState(null, "", "/runs?project=warden#x");
+  on.popstate?.({});
+  await click("/layers?project=warden");
+  on.change?.({ target: { dataset: { pack: "custom" }, checked: true } });
+  history.go(-2);
+  on.popstate?.({});
+  await vi.advanceTimersByTimeAsync(0);
+  expect(confirm).toHaveBeenCalledTimes(1);
+  expect(history.go).toHaveBeenLastCalledWith(2);
+  expect(`${place.pathname}${place.search}`).toBe("/layers?project=warden");
+  expect(document.title).toBe("Layers · Warden");
+});
+
 it("discards the pack draft as soon as a switch is confirmed", async () => {
   bodies["/api/projects"] = warden;
   bodies["/api/layers"] = layers;

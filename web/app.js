@@ -26,6 +26,7 @@ const view = { ...route(location), packDraft: new Map(), fresh: new Set() };
 shown = at;
 if (typeof history.state?.n !== "number") history.replaceState({ n: 0 }, "", location.href);
 shownAt = position();
+let last = shownAt;
 const state = { page, project, health: null, projects: [], data: null, error: null, lost: false, frozen: "", frozenAt: null, now: Date.now(), view };
 const seen = new Set();
 let lastBeat = Date.now();
@@ -187,6 +188,7 @@ const go = (url, push = true) => {
   }
   if (push && url.href === location.href) history.replaceState(history.state, "", url.href);
   else if (push) history.pushState({ n: position() + 1 }, "", url.href);
+  last = position();
   next = route(url);
   seen.clear();
   clearTimeout(pending);
@@ -195,7 +197,10 @@ const go = (url, push = true) => {
 
 // A hash-only change, such as "See run details", stays on the page being opened.
 // Any other Back or Forward opens its address, even while a switch is still loading.
+// The browser makes a new entry with no state for a "#" link, after the one it left, so it is numbered here.
 window.addEventListener("popstate", () => {
+  if (typeof history.state?.n !== "number") history.replaceState({ n: last + 1 }, "", location.href);
+  last = position();
   if (`${location.pathname}${location.search}` !== at) go(new URL(location.href), false);
 });
 
