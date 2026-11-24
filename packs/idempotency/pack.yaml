@@ -1,0 +1,54 @@
+id: idempotency
+layer: 14
+terms: []
+settings:
+  type: object
+  additionalProperties: false
+  properties:
+    runs:
+      type: integer
+      minimum: 1
+      maximum: 10000
+      default: 50
+    seed:
+      type: integer
+      minimum: 0
+      default: 1
+practices:
+  - id: idempotent-operations
+    statement: Prove each declared operation reaches the same state after a replay or a crash and retry.
+    terms: []
+    paths: []
+    conflictsWith: []
+    guardrails:
+      - id: warden-idempotent-operations
+        kind: model
+        runs: [boundary]
+        budgetMs: 20000
+        version: 1
+        benchmark: fixed-input
+        implementation: 'cmd:exec node "$WARDEN_PACK_DIR/check.js"'
+        mustPass:
+          charge.idempotency.mjs: |
+            export default {
+              setup: () => ({ charges: {}, receipts: [] }),
+              async run(world, { id, amount }, step) {
+                world.charges[id] ??= amount;
+                await step();
+                if (!world.receipts.includes(id)) world.receipts.push(id);
+              },
+              snapshot: (world) => world,
+              inputs: (random) => ({ id: `r${Math.floor(random() * 1000)}`, amount: 1 + Math.floor(random() * 100) }),
+            };
+        mustFail:
+          charge.idempotency.mjs: |
+            export default {
+              setup: () => ({ charges: {}, receipts: [] }),
+              async run(world, { id, amount }, step) {
+                world.charges[id] ??= amount;
+                await step();
+                world.receipts.push(id);
+              },
+              snapshot: (world) => world,
+              inputs: (random) => ({ id: `r${Math.floor(random() * 1000)}`, amount: 1 + Math.floor(random() * 100) }),
+            };

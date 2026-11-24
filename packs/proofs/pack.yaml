@@ -1,0 +1,109 @@
+id: proofs
+layer: 15
+terms: []
+settings:
+  type: object
+  additionalProperties: false
+  properties:
+    project:
+      type: string
+      pattern: '^(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+$'
+      default: proofs
+    runs:
+      type: integer
+      minimum: 1
+      maximum: 100000
+      default: 200
+    seed:
+      type: integer
+      minimum: 0
+      default: 1
+practices:
+  - id: proofs-check
+    statement: Check every Lean proof at the boundary, with no sorry, admit, or added axiom.
+    terms: []
+    paths: []
+    conflictsWith: []
+    guardrails:
+      - id: warden-proofs-check
+        kind: model
+        runs: [boundary]
+        budgetMs: 60000
+        version: 1
+        benchmark: fixed-input
+        implementation: 'cmd:exec node "$WARDEN_PACK_DIR/check.js"'
+        mustPass:
+          proofs/lean-toolchain: "leanprover/lean4:v4.36.0\n"
+          proofs/lakefile.toml: |
+            name = "proofs"
+            defaultTargets = ["Proofs"]
+
+            [[lean_lib]]
+            name = "Proofs"
+          proofs/Proofs.lean: |
+            def clamp (lo hi x : Nat) : Nat := max lo (min hi x)
+
+            -- A clamped value never exceeds the upper bound when the bounds are ordered.
+            theorem clamp_le_hi (lo hi x : Nat) (h : lo ≤ hi) : clamp lo hi x ≤ hi := by
+              unfold clamp
+              omega
+        mustFail:
+          proofs/lean-toolchain: "leanprover/lean4:v4.36.0\n"
+          proofs/lakefile.toml: |
+            name = "proofs"
+            defaultTargets = ["Proofs"]
+
+            [[lean_lib]]
+            name = "Proofs"
+          proofs/Proofs.lean: |
+            def clamp (lo hi x : Nat) : Nat := max lo (min hi x)
+
+            -- Without lo ≤ hi this is false: clamp 5 2 0 = 5.
+            theorem clamp_le_hi (lo hi x : Nat) : clamp lo hi x ≤ hi := by
+              unfold clamp
+              omega
+  - id: code-matches-proved-model
+    statement: Check that the code returns what the proved model returns on generated inputs.
+    terms: []
+    paths: []
+    conflictsWith: []
+    guardrails:
+      - id: warden-proof-conformance
+        kind: model
+        runs: [boundary]
+        budgetMs: 20000
+        version: 1
+        benchmark: fixed-input
+        implementation: 'cmd:exec node "$WARDEN_PACK_DIR/conformance.js"'
+        mustPass:
+          proofs/model.mjs: |
+            import { createInterface } from "node:readline";
+            for await (const line of createInterface({ input: process.stdin })) {
+              const { lo, hi, x } = JSON.parse(line);
+              console.log(JSON.stringify(Math.max(lo, Math.min(hi, x))));
+            }
+          clamp.conformance.mjs: |
+            export default {
+              model: ["node", "model.mjs"],
+              implementation: ({ lo, hi, x }) => (x < lo ? lo : x > hi ? hi : x),
+              inputs: (random) => {
+                const lo = Math.floor(random() * 50);
+                return { lo, hi: lo + Math.floor(random() * 50), x: Math.floor(random() * 120) };
+              },
+            };
+        mustFail:
+          proofs/model.mjs: |
+            import { createInterface } from "node:readline";
+            for await (const line of createInterface({ input: process.stdin })) {
+              const { lo, hi, x } = JSON.parse(line);
+              console.log(JSON.stringify(Math.max(lo, Math.min(hi, x))));
+            }
+          clamp.conformance.mjs: |
+            export default {
+              model: ["node", "model.mjs"],
+              implementation: ({ lo, hi, x }) => (x < lo ? lo : x >= hi ? hi - 1 : x),
+              inputs: (random) => {
+                const lo = Math.floor(random() * 50);
+                return { lo, hi: lo + Math.floor(random() * 50), x: Math.floor(random() * 120) };
+              },
+            };

@@ -55,6 +55,13 @@ function adapterReadiness(root, pack, id) {
                     setup: `Install the project dependencies and verify the configured test command and optional build. Claude on the dashboard PATH: ${onPath("claude") ? "found" : "missing"}. Native Claude review requires an authenticated harness with the selected review plugin.`,
                 };
             }
+            if (pack.id === "proofs") {
+                const lake = onPath("lake");
+                return {
+                    status: lake ? "Verify in runner" : "Needs setup",
+                    setup: `Lake on PATH: ${lake ? "found" : "missing"}. Install Lean with elan, pin the version in the Lean project's lean-toolchain, and give each conformance spec a model command. Run the checks to verify the proofs build.`,
+                };
+            }
             if (pack.id === "folder-json")
                 return { status: "Ready", setup: "Uses Node and Git from the standard Warden setup." };
             return { status: "Verify in runner", setup: "Install the executables and dependencies used by this pack's commands. The dashboard does not run pack commands." };
@@ -64,7 +71,9 @@ function adapterReadiness(root, pack, id) {
     }
 }
 const projectSetup = new Map([
+    ["idempotency", "Add an <operation>.idempotency.js, .mjs, or .ts spec with setup, run, snapshot, and inputs. Call step() between the operation's writes so Warden can test a crash and retry."],
     ["machines", "Add a .machine.json transition table. Add a matching .trace.json when you want Warden to verify recorded transitions."],
+    ["proofs", "Add a Lean 4 Lake project at the project setting, default proofs. Add a <logic>.conformance.js, .mjs, or .ts spec that names the proved model's command and the implementation it checks."],
     ["unit-layout", "Set unitKinds and units in .warden/config.yaml. Add each Unit's declared Markdown document and headings."],
 ]);
 export function packDetails(root, pack) {
