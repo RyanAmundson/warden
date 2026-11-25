@@ -4,13 +4,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A standalone `warden` CLI that compiles normalized rule records into an ESLint pass and Claude Code deny rules, ratchets every Guardrail from a baseline, detects tampering through a lock, and is adopted by Context Manager.
+**Goal:** A standalone `warden` CLI that compiles normalized rule records into an ESLint pass and Claude Code deny rules, ratchets every Guardrail from a baseline, and detects tampering through a lock.
 
 **Architecture:** A new repository `~/Code/warden` holds the schema, compiler, runner, emitters, the `core` pack, and an ESLint plugin. A consuming project keeps everything in `.warden/`. `warden check` runs Warden's own ESLint pass (generated config, inline config off) plus `legacy` command Guardrails on changed files, compares results with the baseline, and records Evidence.
 
 **Tech Stack:** Node 25, TypeScript 5.9 (ESM), `commander` 12, `yaml`, `ajv`, ESLint 9 with `typescript-eslint` 8, Vitest 4.
 
-**Spec:** [`2026-11-18-warden-guardrail-framework-design.md`](2026-11-18-warden-guardrail-framework-design.md). Tracking epic `cm-wkqedr`.
+**Spec:** [`2026-11-18-warden-guardrail-framework-design.md`](2026-11-18-warden-guardrail-framework-design.md).
 
 ## Global Constraints
 
@@ -287,22 +287,3 @@ First-slice finding codes include `duplicate-term`, `duplicate-practice`, `dupli
 - [ ] **Step 5:** Run `npm run typecheck && npm test` once for the whole slice. Expected: both exit 0.
 - [ ] **Step 6:** Commit `warden CLI: init, compile, check, explain, report`, tag `v0.1.0`.
 - [ ] **Step 7: Warden adopts itself.** Run `node dist/src/cli/main.js init` in the Warden repository, commit `.warden/`, and add `scripts/self-check.sh` that installs the previous tag into a temp directory (`npm pack` of `git worktree add <tmp> <previous tag>`) and runs that build's `warden check` on the working copy. Add it as the `pre-commit` hook. Expected: `scripts/self-check.sh` exits 0 on a clean tree and exits 1 after adding `// x` to a source file. From `v0.1.0` on, every release is checked by the one before it.
-
-### Task 8: Context Manager adopts Warden
-
-Runs in a Context Manager linked worktree on a feature branch, under the repository's rules (bead claim, `Approach:` section, independent exact-head review, direct publication). `.claude/settings.json` may be a protected file; if the commit hook refuses it, ask Ryan before proceeding.
-
-**Files:**
-- Modify: `package.json` (dev dependency `warden` from `git+file:///Users/ryan/Code/warden#v0.1.0` until the GitHub repository exists; script `check:warden`), `.claude/settings.json` (deny entries only, written by compile)
-- Create: `.warden/config.yaml`, `.warden/packs/context-manager/pack.yaml`, `.warden/packs/context-manager/practices/legacy-checks.yaml`, `.warden/generated/eslint.config.mjs`, `.warden/lock.json`, `.warden/baseline.json`
-
-**Interfaces:**
-- Consumes: the `warden` CLI.
-- Produces: a `context-manager` pack (layer 10) with one Practice `existing-checks-pass` whose Guardrails are one `legacy` Guardrail per `check:*` npm script (29 today), `implementation: "cmd:npm run <script>"`, `runs: [boundary]`, `budgetMs` set to that script's measured time rounded up to the next 10 seconds.
-
-- [ ] **Step 1:** Run `npx warden init` in the worktree. Expected: exit 0; `.warden/baseline.json` lists the existing comment and suppression counts.
-- [ ] **Step 2:** Write the `context-manager` pack. Measure each script once with `/usr/bin/time` to set budgets; a script that fails on clean `main` is recorded in the bead, not baselined away.
-- [ ] **Step 3:** Run `npx warden compile`. Expected: exit 0, no findings.
-- [ ] **Step 4:** Add a comment to one changed file and run `npx warden check`. Expected: exit 1 naming that file. Remove it and run again. Expected: exit 0.
-- [ ] **Step 5:** Run `npx warden report > .reports/warden-report-2026-11-18.txt` and attach it to the bead.
-- [ ] **Step 6:** Commit `Context Manager adopts Warden: core pack ratchets comments and suppressions, existing checks register as legacy Guardrails (cm-wkqedr)` with the `Approach:` section, then follow the repository's review and publication steps.

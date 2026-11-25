@@ -46,7 +46,7 @@ Practices, statements, and rule options (exact):
 | `one-responsibility-per-file` | A file holds one responsibility: at most 300 lines and one class. | `eslint:max-lines` `[{ max: 300, skipBlankLines: true, skipComments: true }]`; `eslint:max-classes-per-file` `[1]` |
 | `no-unused-code` | Code declares nothing it does not use: no unused local, no useless constructor, and no unused private member. | `eslint:no-unused-vars` `[{ args: "none", ignoreRestSiblings: true }]`; `eslint:no-useless-constructor`; `eslint:no-unused-private-class-members` |
 
-Practice `composition-and-narrow-interfaces` moved to `cm-wkqedr.27` during execution: the architecture pack owns `no-restricted-syntax`.
+Practice `composition-and-narrow-interfaces` moved to the second release during execution: the architecture pack owns `no-restricted-syntax`.
 
 Each `mustFail` breaks only its own Guardrail's limit by one. Each `mustPass` is the compliant rewrite and must pass all nine plus `core`.
 
@@ -76,4 +76,4 @@ The pack-picker tests in `test/cli/cli.test.ts` assume `core` is the only bundle
 - [ ] **Step 1:** In a scratch repo with `WARDEN_HOME` set to a scratch folder, install Warden from this branch, run `warden packs`, and confirm a `principles  bundled  3 practices  lint=9` row.
 - [ ] **Step 2:** Run `warden init --packs core,principles`. Expected: exit 0.
 - [ ] **Step 3:** For each of the nine Guardrails, commit-check one passing file and one failing file with `warden check <file> --rule <id>`. Expected: exit 0 then exit 1, with the failure naming the Practice.
-- [ ] **Step 4:** Record the commands and exit codes in bead `cm-wkqedr.5`.
+- [ ] **Step 4:** Record the commands and exit codes.

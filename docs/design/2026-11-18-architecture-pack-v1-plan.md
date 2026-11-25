@@ -1,8 +1,7 @@
 # Architecture pack, version 1: build plan
 
 Spec: `docs/design/2026-11-18-warden-architecture-pack-design.md` (approved by
-Ryan, November 18, 2026). Tracking bead: `cm-wkqedr.24`. Engine needs for the
-rest of the spec: `cm-wkqedr.25`.
+Ryan, November 18, 2026).
 
 ## Scope
 
@@ -14,7 +13,7 @@ ratchet can baseline:
 - ARCH-7 (one direction) and ARCH-9 (syntactic proxy) merged into one practice,
   **sources only emit**, as one ESLint core-rule Guardrail.
 
-Every other ARCH practice waits on `cm-wkqedr.25`:
+Every other ARCH practice waits on these engine changes:
 
 - cmd results count project-wide, and `writeBaseline` refuses a project-wide
   failure.
@@ -29,7 +28,7 @@ Every other ARCH practice waits on `cm-wkqedr.25`:
 - No comments in any `.ts` file (Warden checks itself with `no-comments`).
 - Tests set `WARDEN_HOME` to a temp directory and run with
   `npx vitest run <file> --maxWorkers=2`.
-- Never use `--no-verify`. Commit subjects end with `(cm-wkqedr.24)`.
+- Never use `--no-verify`.
 - Practice and Guardrail ids start with `architecture-`, because ids are
   unique across all packs.
 - Terms carry no `bans`. A ban applies to every pack's practice statements.
@@ -169,7 +168,7 @@ Then add a section **Built in version 1** at the end of
 - Name the three Guardrails and their practices.
 - Say the merged practice covers ARCH-7 in one direction only.
 - Say it covers ARCH-9 by the declared return type, not the inferred one.
-- Say every other ARCH practice waits on `cm-wkqedr.25`.
+- Say every other ARCH practice waits on the engine changes listed in Scope.
 
 ## Release (controller, not a task)
 
@@ -178,4 +177,4 @@ Then add a section **Built in version 1** at the end of
    `warden init --packs core,architecture`.
 3. Show that `warden check` passes with a world read inside `sources/`.
 4. Show that it fails with a world read outside `sources/`.
-5. Record the commands and output in `cm-wkqedr.24`.
+5. Record the commands and their output.

@@ -1,18 +1,12 @@
 # Warden architecture pack: groups, ports, adapters, sources, and sinks
 
-Status: approved by Ryan, November 18, 2026. Tracking task:
-`cm-wkqedr.13`, under the Warden epic `cm-wkqedr`.
+Status: approved by Ryan, November 18, 2026.
 
 Builds on:
 
 - The Warden design spec,
   [`2026-11-18-warden-guardrail-framework-design.md`](2026-11-18-warden-guardrail-framework-design.md),
   including its collection-folders pack.
-- Ryan's Histra decisions in Context Manager Next `docs/ARCHITECTURE.md`
-  (branch `claude/context-manager-restructure-190639`), November 7 and 10,
-  2026.
-- Context Manager's `docs/architecture/file-structure.md` and
-  `docs/architecture/core-boundaries.md` (rules B1 to B10) on `origin/main`.
 - Ryan's vocabulary: Source and sink, Adapter inversion, Co-location,
   Contract, Separability, Lean but swappable.
 
@@ -24,7 +18,7 @@ theoretically could be pulled out and replaced without digging through a
 bunch of different modules," using "ports and adapters" and "sinks and
 sources."
 
-This restates decisions Ryan already made for Histra:
+This restates architecture decisions Ryan has already made:
 
 - "I prefer logical groups around functionality rather than type."
 - Units meet only through their contract, and only the composition root wires
@@ -33,10 +27,8 @@ This restates decisions Ryan already made for Histra:
   considered data sources."
 - A replacement is admitted only if it passes the role's conformance tests.
 
-Histra enforced most of these by review only. On November 10, 2026, it
-removed its lint bans ("No lint rule encodes an architecture rule"). Warden
-exists to make rules like these fail deterministically, so this pack replaces
-that decision.
+Warden exists to make rules like these fail deterministically, instead of
+leaving them to review.
 
 **The core idea (Ryan, November 18, 2026).** A judgment such as "is this a
 port or an adapter?" becomes static when each Term declares checkable
@@ -52,19 +44,18 @@ meaning, and Guardrails check the match.
   its path, with no record to look up.
 - Every obligation a role carries is checked by a static Guardrail. What can't
   be checked is named, given a static proxy where one exists, and offered to
-  the decision-model adapter (`cm-wkqedr.12`).
-- An existing codebase, such as Context Manager, adopts the pack through the
-  ratchet without a big-bang move.
+  the decision-model adapter.
+- An existing codebase adopts the pack through the ratchet without a big-bang
+  move.
 
 ## Non-goals
 
 - Designing the decision-model adapter. This doc lists only what the pack asks
   of it.
-- Changing Warden source. Another session owns Warden's code (`cm-wkqedr.11`).
-  This doc names the Warden changes the pack needs, and their owners build
-  them.
-- Moving Context Manager's files. The ratchet records the current state, and
-  later tasks move files.
+- Changing Warden source. Another session owns Warden's code. This doc names
+  the Warden changes the pack needs, and their owners build them.
+- Moving an existing codebase's files. The ratchet records the current state,
+  and later tasks move files.
 
 ## Anti-goals
 
@@ -140,7 +131,7 @@ declared group collection. Examples use `[services]/git-service`.
 
 - **Paths:** every source file.
 - **Guardrail:** `eslint:warden/group-boundaries`, kind `lint`, runs at edit,
-  commit, and boundary. It generalizes Context Manager's B10. It resolves each
+  commit, and boundary. It resolves each
   import to a file and fails when the target is inside a group, the importer
   is outside that group, and the target is not that group's port. A
   composition root may also import an implementation's `create.ts` (see
@@ -156,8 +147,8 @@ declared group collection. Examples use `[services]/git-service`.
   runtime statement, including a re-export of an implementation's `create`,
   and on any import that is not `import type` from another group's port, the
   group's own models, or a declared library.
-- **Why types only:** Histra's rule is that units import each other's contract
-  "as types" and "factories are wired only by `lifecycle`." If a port
+- **Why types only:** units import each other's port as types, and only the
+  composition root wires factories. If a port
   re-exported one implementation, swapping it would mean editing the port, not
   only the composition root.
 - **Must fail:** `git-service.ts` contains `export { create } from
@@ -204,7 +195,7 @@ from a composition root and no other non-port import.
   the test does not import `git-service.conformance`.
 - **Must pass:** `create.test.ts` contains `runGitConformance(create)`.
 
-This is Histra's "replacement by conformance," applied to every group.
+This applies replacement by conformance to every group.
 
 ### ARCH-6. Only sources reach the world
 
@@ -217,12 +208,6 @@ This is Histra's "replacement by conformance," applied to every group.
   ESLint rule back only one Guardrail, and ARCH-8 needs the same kind of check;
   and in a flat config, two entries for one rule on overlapping paths replace
   each other.
-- **Plugins:** Context Manager's project pack forbids `sources/` under
-  `plugins/`, so a plugin never uses a timer or a network read directly.
-  CANON 44 already says everything that changes over time reaches a plugin as
-  a subscription, so a plugin gets the clock from a host source. Whether the
-  host offers a clock source today is a Context Manager contract question,
-  recorded as a follow-up, not part of this pack.
 - **Must fail:** `[services]/git-service/format.ts` imports `node:fs`.
 - **Must pass:** `[services]/git-service/sources/status-watcher.ts` imports
   `node:fs`.
@@ -242,7 +227,7 @@ This is Histra's "replacement by conformance," applied to every group.
 - **Paths:** every source file except `**/sinks/**`, composition roots, and
   test files.
 - **Guardrail:** `eslint:warden/store-writes-only-in-sinks`, kind `lint`. It
-  fails on an import of a declared sink module (for Context Manager, the RxDB
+  fails on an import of a declared sink module (for example, the RxDB
   write surface). It is a custom rule for the reasons given in ARCH-6.
 - **Must fail:** `sources/status-watcher.ts` imports the store's write API.
 - **Must pass:** `sinks/status-collection.ts` imports it.
@@ -283,9 +268,7 @@ This is Histra's "replacement by conformance," applied to every group.
 - **Guardrail:** `graph:warden/acyclic-groups`, kind `lint`. It builds the
   group-to-group graph and fails on a cycle. An edge from group X to group Y
   is any import, from any non-test file in X, that resolves to a file in Y.
-  Test files and composition roots add no edges. Histra's
-  lifecycle already refuses a cycle in `needs` at run time; this finds it
-  before run time.
+  Test files and composition roots add no edges.
 - **Must fail:** `git-service.ts` imports `process-service.ts`, which imports
   `git-service.ts`.
 - **Must pass:** the shared type moves to a third group, or into one of the
@@ -305,7 +288,7 @@ match its name?** A `git` group whose source also parses pull request comments
 passes every Practice above.
 
 The static proxies narrow it: the port export limit, the fan-out limit, and
-ARCH-10. The rest is offered to the decision-model adapter (`cm-wkqedr.12`) as
+ARCH-10. The rest is offered to the decision-model adapter as
 `model` kind Guardrails. They are optional, and a `review` kind Guardrail
 covers them until that adapter exists.
 
@@ -315,9 +298,8 @@ covers them until that adapter exists.
 | The port names a capability, not an implementation | port file, Term definition | verdict, probability, the offending names |
 | A misplaced file's owner | file path, its imports and importers, candidate group Terms | suggested group, probability |
 
-These three checks and their interface are recorded in `cm-wkqedr.12`. The
-adapter's own design (kind, threshold, cache, budget, tamper rules) stays in
-that task.
+The adapter's own design (kind, threshold, cache, budget, tamper rules)
+belongs to that adapter, not to this pack.
 
 ## Configuration
 
@@ -339,69 +321,33 @@ architecture:
   sinkModules: ["rxdb"]
 ```
 
-- The port file pattern is configurable because projects already differ:
-  Context Manager uses `<name>/<name>.ts` (B10) and `plugin.ts` (CANON 37), and
-  Histra uses `contract.ts`.
+- The port file pattern is configurable because projects differ: one may use
+  `<name>/<name>.ts`, another `plugin.ts` or `contract.ts`.
 - Each group is a Warden Unit. Warden generates its Unit record (id from the
   folder name, kind from its collection, document `CONTRACT.md`), so the core
   pack's Unit rules apply to it with no hand-written record.
-- The project pack may tighten. Context Manager's pack, for example, forbids a
-  `sources/` folder under `plugins/` entirely, because CANON 42 says no plugin
-  reads the world. It may not loosen.
+- The project pack may tighten, for example by forbidding a `sources/` folder
+  under `plugins/` entirely. It may not loosen.
+- Project concepts, such as plugins and their host, stay in the project pack.
+  This pack holds only the general part (ports, flow direction, and the world
+  boundary), which the project pack builds on.
 
 ### With the collection-folders pack
 
 - A group collection is a collection, so its items are directories. This pack
   requires that only for group collections.
-- Context Manager's `file-structure.md` lets other collections hold files
-  (`[models]/app.ts`), while the collection-folders pack says a collection
+- Some projects let other collections hold files (such as
+  `[models]/app.ts`), while the collection-folders pack says a collection
   holds only directories. That open question belongs to the collection-folders
   pack. This pack doesn't depend on its answer.
 - Technical-kind collections (ARCH-11) are collections that the collection-folders
   pack checks for shape. This pack checks only who imports their items.
 
-## Rollout and ratchet in Context Manager
-
-Measured on `origin/main` at `74d4bc7f48`, November 18, 2026:
-
-- 12 groups in `[services]`, and all 12 have a root port file. ARCH-1 starts
-  close to clean, because B10 already enforces it with a shrink-only exception
-  list.
-- 2 of the 12 port files export runtime code (a `grep` for exported
-  functions, constants, classes, and variables), so ARCH-2 baselines about 2
-  files.
-- No `adapters/` folder exists, so ARCH-4 has no subjects yet.
-- No group has a conformance file, so ARCH-5 baselines 12 entries.
-- About 414 non-test files import `fs`, `fs/promises`, `child_process`, `net`,
-  `http`, or `https` (a `git grep` of those six names). ARCH-6 starts with a
-  large baseline. The ratchet only lets it shrink.
-
-Order:
-
-1. **Legacy first.** As the Warden spec's adoption plan already says, CANON
-   invariants and B1 to B10 run as `legacy` `cmd` Guardrails in the
-   `context-manager` pack. Nothing changes in the lint.
-2. **Pack on, scoped.** Enable the architecture pack on `[services]` only.
-   `warden init` writes the baseline. New violations fail; existing ones are
-   listed in the burn-down.
-3. **Retire duplicates.** When ARCH-1 covers the same paths as B10, and B10's
-   probes in `test/plugin-conformance/boundaryRules.test.ts` pass as ARCH-1's
-   must-fail examples, delete B10 and its exception list from
-   `eslint.architecture.mjs`. Do the same for B9 when ARCH-6 and ARCH-8 cover
-   plugins.
-4. **Widen.** Add `plugins` and the technical-kind collections, one at a time,
-   each with its own baseline.
-
-CANON invariants 36 to 44 stay in the project pack: they are about plugins and
-the host, which is a project concept. This pack holds only the general part
-(ports, flow direction, and the world boundary), which the project pack builds
-on.
-
 ## What Warden needs, and who builds it
 
 | Need | Why | Owner |
 |---|---|---|
-| `mustFail` and `mustPass` accept a fixture directory as well as a string | Import rules need two or more files to fail. | Warden schema (`cm-wkqedr.11` or its successor) |
+| `mustFail` and `mustPass` accept a fixture directory as well as a string | Import rules need two or more files to fail. | Warden schema |
 | The `fs` adapter | ARCH-5 and ARCH-10. It is already proposed by the collection-folders pack. | Warden adapters |
 | A `graph` adapter that builds the import graph once with the TypeScript compiler API | ARCH-11 and ARCH-12. Warden already depends on TypeScript for the `tsc` adapter, so this adds no new dependency. A `cmd` wrapper around dependency-cruiser was considered; it adds a dependency and a second module resolver that can disagree with `tsc`. | Warden adapters |
 | Typed ESLint rules (`warden/implements-port`, `warden/source-returns-observable`) | ARCH-3 and ARCH-9 need type information. | Warden ESLint plugin |
@@ -410,7 +356,7 @@ on.
 
 **What the build covers.** The pack's plan covers the whole stack, in order:
 the Warden changes above go first, through Warden's owner, then the pack's
-records and fixture trees, then the Context Manager rollout. The custom rules
+records and fixture trees. The custom rules
 live in Warden's ESLint plugin, beside `no-comments`. The `principles` and
 `collection-folders` packs don't exist yet. This pack needs neither to start:
 it uses neither pack's Guardrails, and the fan-out and length proxies wait for
@@ -442,15 +388,15 @@ says which one's Terms the other may use.
 These are the author's calls, not Ryan's decisions:
 
 - A port holds types only, and an implementation's factory lives in
-  `create.ts`. This follows Histra's "as types" rule. In Context Manager, the
-  2 port files that export runtime code are baselined.
+  `create.ts`. An existing codebase baselines port files that export runtime
+  code.
 - Every group has a conformance suite, even with one implementation. That
-  makes Histra's "replacement by conformance" apply to every group, not only
-  core roles. In Context Manager, all 12 services are baselined.
+  makes replacement by conformance apply to every group. An existing codebase
+  baselines groups that have no suite.
 - `adapters/` appears only with a second implementation.
-- The role folder names (`sources/`, `sinks/`, `adapters/`) are fixed.
-  Context Manager's `data-source-service` keeps its `git/` and `ingestion/`
-  folders in the baseline until it moves.
+- The role folder names (`sources/`, `sinks/`, `adapters/`) are fixed. A group
+  that uses other folder names for these roles stays in the baseline until it
+  moves.
 - The architecture pack is layer 1, below `principles`.
 - The `graph` adapter uses the TypeScript compiler API, not
   dependency-cruiser.

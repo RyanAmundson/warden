@@ -1,7 +1,7 @@
 # Warden style and language packs: typescript, rxjs-declarative, signals, and declarative-ui
 
 Status: approved by Ryan, November 19, 2026 ("Accept all (Recommended)": every open question takes its recommendation). Not built yet.
-Under the Warden epic `cm-wkqedr`; no task is filed for it yet.
+No task is filed for it yet.
 
 Builds on:
 
@@ -43,9 +43,9 @@ between forms stays legal, and compile refuses two forms on one path.
 ## Non-goals
 
 - Angular template rules. `declarative-ui` covers React views only, because
-  Context Manager is React. See [declarative-ui Q2](#open-questions-for-ryan-3).
-- Context Manager's own rules, such as "views read RxDB, never IPC". They are
-  project concepts and belong in the `context-manager` pack.
+  its measured consumer is React. See [declarative-ui Q2](#open-questions-for-ryan-3).
+- A project's own rules. They are project concepts and belong in that
+  project's own pack.
 - Building any engine change. This document names them; Warden's owner builds
   them.
 
@@ -57,23 +57,23 @@ Warden's own `eslint` 9.39.5, `typescript-eslint` 8.73.0, and `typescript`
 `overrideConfigFile: true` and inline configuration off, the way Warden's
 ESLint adapter runs (`src/adapters/eslint.ts:151-164`).
 
-| Consumer | Revision | Files |
-|---|---|---|
-| Context Manager, primary checkout | `80fcfbe590` when the runs started; `main` moved to `b86d9b4d73` during them | 5,680 tracked `.ts`/`.tsx` files, less `.d.ts` and build output |
-| Context Manager Angular port (`~/Code/context-manager-angular`), the only Angular 20 signals codebase found under `~/Code` | `ed700b3` | 328 |
+| Consumer | Files |
+|---|---|
+| A React and TypeScript codebase, called "the React codebase" below | 5,680 tracked `.ts`/`.tsx` files, less `.d.ts` and build output |
+| An Angular 20 signals codebase, the only one the search found, called "the Angular codebase" below | 328 |
 
 - Each candidate Guardrail ran as its own namespaced copy of a core rule, as
   Warden does, in one ESLint pass: 19 s for all 5,680 files and 15 rules.
 - Two consecutive runs differed by a few hits (8,172 against 8,178
-  assertions), because other sessions change the primary checkout. Treat
-  every count as accurate to about 0.1%.
+  assertions), because other sessions changed the React codebase's checkout
+  during the runs. Treat every count as accurate to about 0.1%.
 - "Non-test" means a path with no `.test.`, `.spec.`, or `.stories.` part and
   no `test/`, `tests/`, `__tests__/`, or `e2e/` folder.
 - `tsc` counts compare a run of each program with its own tsconfig against a
-  run that adds the flags. The renderer program is `tsconfig.json`; the
-  Electron program is `tsconfig.electron.json`, which already had 309 errors
-  under TypeScript 5.9.3 (Context Manager's gate uses `typescript-native` and
-  `tsconfig.electron.production.json`), so its counts are new errors only.
+  run that adds the flags. The React codebase has two programs: the renderer
+  program, `tsconfig.json`, and an Electron main-process program with its own
+  tsconfig, which already had 309 errors under TypeScript 5.9.3, so its counts
+  are new errors only.
 - Typed rules ran on a sample: every third of the 348 literal, non-test file
   entries in `tsconfig.json`'s `include`, so 116 files, in 12.7 s.
 - The graph at `graphify-out/graph.json` does not exist in either checkout,
@@ -89,12 +89,12 @@ record sets.
 |---|---|---|---|---|
 | E1 | A `conflictsWith` that names a Practice in a pack the project has not enabled fails compile with `undefined-conflict`, because `checkConsistency` sees only enabled packs. | `src/compiler/consistency.ts:80-85`; `readRecordSet` keeps only listed packs (`src/records/load.ts:153-165`). Run: `rxjs-declarative` alone gives `undefined-conflict`. | Any project that enables one of the two conflicting packs. | Resolve `conflictsWith` against every bundled and local pack. Report `undefined-conflict` only when no pack defines the id; skip the overlap check when the other pack is off. |
 | E2 | The overlap test compares the literal text before the first `*`. It misses real overlaps and invents false ones. | `src/compiler/consistency.ts:27-37`. Runs: `src/{ui,core}/**` against `src/ui/**` gives no finding; `!src/ui/**` against `src/ui/**` reports an overlap; two packs with empty `paths`, which apply everywhere (`src/records/paths.ts:23`), give no finding. | The promise that "compile must refuse overlapping paths." | For Practices with a `conflictsWith`, require each pack entry's paths to be plain folder scopes, `<literal folder>/**`, and refuse any other shape, including an empty list, with a next action. Two plain scopes overlap exactly when one folder contains the other, so the test is exact for present and future files. |
-| E3 | Node's `matchesGlob` reads `[plugins]` as a character class and does not honor `\[`; ESLint's matcher does honor `\[`, and Context Manager's own config uses it. Warden hands one glob to both. | Run: `matchesGlob("[plugins]/a/b.ts", "\\[plugins\\]/**")` is `false`; `"[[]plugins]/**"` is `true`. Context Manager `eslint.config.js:565` uses `\\[plugins\\]`. | Scoping any pack to a bracketed collection, which is every Context Manager scope. | Compile refuses a backslash in a pack glob and names the `[[]name]` form. Not verified: that ESLint's matcher also accepts `[[]name]`. |
-| E4 | The `tsc` adapter checks one whole program, the project's root `tsconfig.json`, and ignores Practice and pack paths. | `src/adapters/tsc.ts:43` (`extends: "../../tsconfig.json"`); `run` never filters by path. Context Manager's Electron program (`tsconfig.electron.json`, 1,055 `include` entries, no `extends`) is never checked. | Any `type` Guardrail on Context Manager's main process; any per-path `tsc` scope. | A pack setting or config field that names the tsconfig files to extend, one emitted tsconfig and one worker run each. Path scoping of `tsc` stays out of scope: compiler flags are per program. |
+| E3 | Node's `matchesGlob` reads `[plugins]` as a character class and does not honor `\[`; ESLint's matcher does honor `\[`, and the React codebase's ESLint config uses it. Warden hands one glob to both. | Run: `matchesGlob("[plugins]/a/b.ts", "\\[plugins\\]/**")` is `false`; `"[[]plugins]/**"` is `true`. The React codebase's ESLint config uses `\\[plugins\\]`. | Scoping any pack to a bracketed collection, which is every scope in the React codebase. | Compile refuses a backslash in a pack glob and names the `[[]name]` form. Not verified: that ESLint's matcher also accepts `[[]name]`. |
+| E4 | The `tsc` adapter checks one whole program, the project's root `tsconfig.json`, and ignores Practice and pack paths. | `src/adapters/tsc.ts:43` (`extends: "../../tsconfig.json"`); `run` never filters by path. A second program, such as the React codebase's Electron program (1,055 `include` entries, no `extends`), is never checked. | Any `type` Guardrail on a second program, such as an Electron main process; any per-path `tsc` scope. | A pack setting or config field that names the tsconfig files to extend, one emitted tsconfig and one worker run each. Path scoping of `tsc` stays out of scope: compiler flags are per program. |
 | E5 | `tsc` flags are attributed by diagnostic code. `noUncheckedIndexedAccess` has no entry and reuses `strictNullChecks` codes 2532 and 18048; `useUnknownInCatchVariables` (18046) has none; codes 1000 to 1999 count as parse errors, so `verbatimModuleSyntax` (1484, 1485) cannot be a Guardrail. | `src/adapters/tsc.ts:14-28` and `:118`. | `typescript-unchecked-index`. | Attribute by a second program run without the flag, or by position, the way `noUnusedParameters` is split today (`src/adapters/tsc-worker.ts:17-31`). |
 | E6 | No typed linting. The parser runs without `project` or `projectService`. | `src/adapters/eslint.ts:156`. | Promise and exhaustiveness rules; typed versions of the name-based rules below. | Give the ESLint pass `parserOptions.projectService` for Guardrails of kind `type`, in their own pass at `commit` with a `tsc`-sized budget. The sample above cost 12.7 s for 116 files, over the 5 s `edit` budget. |
 | E7 | Only ESLint core rules, `warden/*`, and rules a Warden pack ships can run. `@typescript-eslint/*` and third-party plugins cannot. | `src/adapters/eslint.ts:131`, `:139-150`. | `typescript-eslint` rules (already a Warden dependency, `package.json`), `eslint-plugin-react-hooks`, `eslint-plugin-rxjs-x`. | Load `typescript-eslint`'s plugin by namespace. Third-party plugins are a decision for Ryan (see the open questions). |
-| E8 | A `review` Guardrail cannot be a record. Every kind except `instruction` needs an adapter and runnable examples. | `src/compiler/examples.ts:72-75` and `:91-92`. | The "left to review" rows of every pack. | The decision-model adapter (`cm-wkqedr.12`), or a `review` adapter. Until then those rows stay in this document, as the principles pack did. |
+| E8 | A `review` Guardrail cannot be a record. Every kind except `instruction` needs an adapter and runnable examples. | `src/compiler/examples.ts:72-75` and `:91-92`. | The "left to review" rows of every pack. | The decision-model adapter, or a `review` adapter. Until then those rows stay in this document, as the principles pack did. |
 | E9 | The help-versus-harm signals do not exist. Evidence has no `resolved`, `disputed`, `escaped`, or `hollow` kind, and there is no `warden dispute` command. | `src/runner/evidence.ts:8`; commands in `src/cli/main.ts`. | Every [Telemetry](#telemetry-help-versus-harm) row's "helped" and "upheld disputes" columns. | Build the planned kinds, and one new kind, `displaced`, defined below. |
 
 A Practice's `paths` are alternatives, not conditions (`src/records/paths.ts:3-7`),
@@ -169,10 +169,10 @@ pending [Q1](#open-questions-for-ryan). TS-1 is per program (E4).
 
 - **Statement:** The compiler checks null, implicit `any`, implicit returns,
   overrides, optional properties, and indexed access.
-- **Compliant:** Context Manager `tsconfig.json:13` sets `"strict": true`, so
-  `strictNullChecks` and `noImplicitAny` already pass in the renderer.
-- **Violating:** with `noPropertyAccessFromIndexSignature`,
-  `.storybook/AutomationRecoveryAcceptance.tsx:23` fails TS4111.
+- **Compliant:** the React codebase's `tsconfig.json` sets `"strict": true`,
+  so `strictNullChecks` and `noImplicitAny` already pass in the renderer.
+- **Violating:** with `noPropertyAccessFromIndexSignature`, a Storybook file in
+  the React codebase fails TS4111.
 - **Guardrails,** each kind `type`, `runs: [commit]`, `budgetMs: 60000` (the
   `principles-unused-parameters` value):
 
@@ -193,12 +193,11 @@ pending [Q1](#open-questions-for-ryan). TS-1 is per program (E4).
 #### TS-2. `typescript-no-escape-hatches`: Code uses no escape-hatch
 
 - **Statement:** Code uses no escape-hatch.
-- **Compliant:** Context Manager `[apps]/checks/CheckRunner.ts:145` uses
+- **Compliant:** a check runner in the React codebase uses
   `as const satisfies ReadonlyArray<…>`, which checks the value instead of
   asserting it.
-- **Violating:** `[apps]/desktop/database/db/db.ts:76`
-  (`ReadOnlyRxCollection<any>`) and `[apps]/cli/commands/call.ts:88`
-  (`channel!`).
+- **Violating:** a database module (`ReadOnlyRxCollection<any>`) and a CLI
+  command (`channel!`) in the React codebase.
 - **Guardrails,** each kind `lint`, `runs: [edit, commit]`, `budgetMs: 5000`,
   a copy of core `no-restricted-syntax`. They use selectors, not
   `@typescript-eslint/no-explicit-any` and its siblings, because the selectors
@@ -218,7 +217,7 @@ pending [Q1](#open-questions-for-ryan). TS-1 is per program (E4).
 - **Statement:** No floating-promise, and no Promise where the caller expects
   no result.
 - **Compliant:** in the 116-file sample, no `no-floating-promises` hit.
-- **Violating:** `[services]/logs-service/src-pluginLogger.ts:49` passes the
+- **Violating:** a plugin logger in the React codebase passes the
   Promise-returning `flush` to `pending.delete`, a `no-misused-promises` hit.
 - **Guardrails,** kind `type`, `runs: [commit]`, `budgetMs: 60000`, v2 after
   E6 and E7: `eslint:@typescript-eslint/no-floating-promises` and
@@ -230,7 +229,7 @@ pending [Q1](#open-questions-for-ryan). TS-1 is per program (E4).
 
 - **Statement:** A `switch` over a union type has a case for every member.
 - **Compliant / violating:** 0 hits in the 116-file sample; no `assertNever`
-  helper exists in Context Manager.
+  helper exists in the React codebase.
 - **Guardrail,** kind `type`, `runs: [commit]`, `budgetMs: 60000`, v2 after E6
   and E7: `eslint:@typescript-eslint/switch-exhaustiveness-check` with
   `{ considerDefaultExhaustiveForUnions: false, requireDefaultForNonUnion: false }`.
@@ -238,7 +237,7 @@ pending [Q1](#open-questions-for-ryan). TS-1 is per program (E4).
 - **Must fail:** `type K = "a" | "b"; export const f = (k: K): number => { switch (k) { case "a": return 1; default: return 0; } };`
 - **Must pass:** the same with `case "b": return 0;` and no `default`.
 
-### What it flags in Context Manager today
+### What it flags in the React codebase
 
 | Guardrail | Non-test hits (files) | All hits (files) |
 |---|---|---|
@@ -255,7 +254,7 @@ pending [Q1](#open-questions-for-ryan). TS-1 is per program (E4).
 | `typescript-exhaustive-switch` | 0 in the 116-file sample | |
 
 The Electron counts are what E4 would let Warden see; today's adapter checks
-the renderer program only. The baseline absorbs all of these at adoption.
+the renderer program only. A project's baseline absorbs these at adoption.
 
 ### Layer, dependencies, and conflicts
 
@@ -325,9 +324,9 @@ The project's pack entry scopes the pack to folders (E2), for example
 - **Statement:** State that changes over time is an observable, never a
   signal.
 - **`conflictsWith`:** `[signals-state-is-signal]`.
-- **Compliant:** all of Context Manager: 0 signal imports.
-- **Violating:** the Angular port, `src/app/[stores]/location.store.ts:1`
-  imports `signal` and `computed` from `@angular/core`.
+- **Compliant:** all of the React codebase: 0 signal imports.
+- **Violating:** a store in the Angular codebase imports `signal` and
+  `computed` from `@angular/core`.
 - **Guardrail** `rxjs-no-signal-imports`, kind `lint`, `runs: [edit, commit]`,
   `budgetMs: 5000`: core `no-restricted-imports` with
   `{ paths: [{ name: "@angular/core", importNames: ["signal", "computed", "effect", "linkedSignal"] }], patterns: ["@preact/signals*"] }`.
@@ -342,12 +341,11 @@ The project's pack entry scopes the pack to folders (E2), for example
 
 - **Statement:** A subject is never exported and never a public class
   property; code outside its owner reads an observable.
-- **Compliant:** `[apps]/desktop/plugin-host/slots/appSlots.ts:639` holds
+- **Compliant:** a slot registry in the React codebase holds
   `new BehaviorSubject(0)` in a local `const`.
-- **Violating:** `[plugins]/frame/renderer/dialogs/dialogs.ts:21`
-  (`export const openDialogs = new BehaviorSubject…`) and
-  `[services]/data-source-service/sources/source-registry.ts:132`
-  (`readonly state = new BehaviorSubject…`).
+- **Violating:** a dialog module
+  (`export const openDialogs = new BehaviorSubject…`) and a source registry
+  class (`readonly state = new BehaviorSubject…`) in the React codebase.
 - **Guardrail** `rxjs-no-exposed-subjects`, kind `lint`, `runs: [edit, commit]`,
   `budgetMs: 5000`: core `no-restricted-syntax` with
   `["ExportNamedDeclaration > VariableDeclaration > VariableDeclarator > NewExpression[callee.name=/Subject$/]", "PropertyDefinition:not([accessibility='private']):not([accessibility='protected']):not([key.type='PrivateIdentifier']) > NewExpression[callee.name=/Subject$/]"]`.
@@ -363,9 +361,9 @@ The project's pack entry scopes the pack to folders (E2), for example
 
 - **Statement:** The subscription that `subscribe` returns is always kept,
   so the code can end it.
-- **Compliant:** `[apps]/desktop/plugin-host/slots/FrameRoot.tsx:70-71` keeps
+- **Compliant:** a root component in the React codebase keeps
   `const subscription` and returns `subscription.unsubscribe()`.
-- **Violating:** `[apps]/desktop/main/mainProcessRegistration.ts:651`
+- **Violating:** a main-process registration module in the React codebase
   discards the result of `combineLatest([...]).subscribe(...)`.
 - **Guardrail** `rxjs-kept-subscriptions`, kind `lint`, `runs: [edit, commit]`,
   `budgetMs: 5000`: core `no-restricted-syntax` with
@@ -380,10 +378,8 @@ The project's pack entry scopes the pack to folders (E2), for example
 
 - **Statement:** Code never calls `subscribe` inside a `subscribe` callback;
   it composes with an operator such as `switchMap`.
-- **Compliant:** `[apps]/desktop/database/useRxQuery/useRxQuery.ts:201` uses
-  `switchMap`.
-- **Violating:**
-  `[services]/plugin-service/installed-bundles/start-installed-bundles.ts:842`
+- **Compliant:** the React codebase's live-query hook uses `switchMap`.
+- **Violating:** a module in the React codebase that starts installed bundles
   subscribes inside an outer `subscribe` callback.
 - **Guardrail** `rxjs-nested-subscribe`, kind `lint`, `runs: [edit, commit]`,
   `budgetMs: 5000`: core `no-restricted-syntax` with
@@ -395,11 +391,10 @@ The project's pack entry scopes the pack to folders (E2), for example
 
 - **Statement:** A `subscribe` callback never calls `next` on a subject;
   derived values come from an operator.
-- **Compliant:** `useRxQuery.ts:201-230` derives with `switchMap`.
-- **Violating:** `[plugins]/frame/renderer/dialogs/dialogs.ts:57`
-  (`openDialogs.next(...)` inside a `subscribe` callback), and
-  `start-installed-bundles.ts:835-841` (`onRuns.next`, `running.next`, and
-  `boundSources.next` inside one).
+- **Compliant:** the same live-query hook derives with `switchMap`.
+- **Violating:** the dialog module (`openDialogs.next(...)` inside a
+  `subscribe` callback), and the bundle-starting module (`onRuns.next`,
+  `running.next`, and `boundSources.next` inside one).
 - **Guardrail** `rxjs-relay`, kind `lint`, `runs: [edit, commit]`,
   `budgetMs: 5000`: a rule the pack ships, `eslint:rxjs-declarative/no-relay`,
   in `packs/rxjs-declarative/eslint.js`. It uses scope analysis to fail only
@@ -410,7 +405,7 @@ The project's pack entry scopes the pack to folders (E2), for example
 - **Must fail:** `import { of, Subject } from "rxjs"; const out = new Subject<number>(); export const s = of(1).subscribe((v) => out.next(v));`
 - **Must pass:** `import { Observable, type Subscriber } from "rxjs"; export const copy = (src: Observable<number>): Observable<number> => new Observable<number>((subscriber: Subscriber<number>) => { const s = src.subscribe((v: number) => subscriber.next(v)); return () => s.unsubscribe(); });`
 
-### What it flags in Context Manager today
+### What it flags in the React codebase
 
 | Guardrail | Non-test hits (files) | All hits (files) |
 |---|---|---|
@@ -420,9 +415,9 @@ The project's pack entry scopes the pack to folders (E2), for example
 | `rxjs-nested-subscribe` | 3 (3) | 13 (5) |
 | `rxjs-relay` | 5 (3), measured with a selector approximation that skips receivers named `subscriber`, `observer`, `sub`, `o`, or `s` | 6 (4) |
 
-In the Angular port, `rxjs-no-signal-imports` flags 36 imports in 29 files:
-the port mixes both forms on the same paths, which is exactly what the
-conflict check exists to stop.
+In the Angular codebase, `rxjs-no-signal-imports` flags 36 imports in 29
+files: the codebase mixes both forms on the same paths, which is exactly
+what the conflict check exists to stop.
 
 ### Layer, dependencies, and conflicts
 
@@ -433,8 +428,8 @@ which needs E1 and E2 before compile can refuse an overlap honestly.
 
 - Each operator chain is a few small named pieces (Reactive composition).
 - A view reads a live query and stays subscribed rather than taking one value
-  with `firstValueFrom` (20 non-test files use it, mostly for commands, where
-  one value is right). See Q2.
+  with `firstValueFrom` (20 non-test files in the React codebase use it,
+  mostly for commands, where one value is right). See Q2.
 
 ### Telemetry, help versus harm
 
@@ -468,10 +463,10 @@ which needs E1 and E2 before compile can refuse an overlap honestly.
 The same subscription model, in signal form. State is a signal, derived state
 is computed, and an observable enters only through a bridge.
 
-The first real consumer is not Context Manager, which has no signals: the
-search found none in its 5,680 files. The only signals codebase under
-`~/Code` is the Angular port, so this pack is grounded there, and it targets
-Angular's `@angular/core` signals. See Q1.
+The first real consumer is not the React codebase, which has no signals: the
+search found none in its 5,680 files. The only signals codebase found is the
+Angular codebase, so this pack is grounded there, and it targets Angular's
+`@angular/core` signals. See Q1.
 
 | Term | Definition | Bans |
 |---|---|---|
@@ -489,9 +484,9 @@ Paths for every Practice: the same non-test negated glob as `rxjs-declarative`.
 - **Statement:** State that changes over time is a signal; code makes no RxJS
   subject.
 - **`conflictsWith`:** `[rxjs-state-is-observable]`.
-- **Compliant:** the Angular port: 0 subject imports.
-- **Violating:** Context Manager, if it enabled this pack:
-  `[apps]/desktop/plugin-host/slots/appSlots.ts:2` imports `BehaviorSubject`.
+- **Compliant:** the Angular codebase: 0 subject imports.
+- **Violating:** the React codebase, if it enabled this pack: its slot
+  registry imports `BehaviorSubject`.
 - **Guardrail** `signals-no-subjects`, kind `lint`, `runs: [edit, commit]`,
   `budgetMs: 5000`: core `no-restricted-imports` with
   `{ paths: [{ name: "rxjs", importNames: ["Subject", "BehaviorSubject", "ReplaySubject", "AsyncSubject"] }] }`.
@@ -507,9 +502,9 @@ Paths for every Practice: the same non-test negated glob as `rxjs-declarative`.
 
 - **Statement:** A `signal` is never exported and never a public class
   property; others read a `computed-signal` or `asReadonly()`.
-- **Compliant:** the port, `src/app/[stores]/location.store.ts:80`
+- **Compliant:** a store in the Angular codebase
   (`readonly repoName = computed(...)`).
-- **Violating:** the port, `src/app/[stores]/location.store.ts:58`
+- **Violating:** the same store
   (`readonly repoPath = signal<string | null>(null)`).
 - **Guardrail** `signals-no-exposed-writable`, kind `lint`,
   `runs: [edit, commit]`, `budgetMs: 5000`: core `no-restricted-syntax` with
@@ -523,7 +518,8 @@ Paths for every Practice: the same non-test negated glob as `rxjs-declarative`.
 
 - **Statement:** A `signal-effect` never sets or updates a `signal`; derived
   state is a `computed-signal`.
-- **Compliant / violating:** the port calls `effect()` nowhere, so 0 hits.
+- **Compliant / violating:** the Angular codebase calls `effect()` nowhere, so
+  0 hits.
 - **Guardrail** `signals-effect-writes`, kind `lint`, `runs: [edit, commit]`,
   `budgetMs: 5000`: a pack rule, `eslint:signals/effect-writes`. It fails on
   `.set(` or `.update(` inside a call to the `effect` imported from
@@ -536,20 +532,19 @@ Paths for every Practice: the same non-test negated glob as `rxjs-declarative`.
 
 - **Statement:** A `subscribe` callback never sets a `signal`; an observable
   becomes a signal only through a `signal-bridge`.
-- **Compliant:** none yet in the port: `toSignal` appears nowhere.
-- **Violating:** the port, `src/rx/collection-stream.ts:136`
+- **Compliant:** none yet in the Angular codebase: `toSignal` appears nowhere.
+- **Violating:** a collection stream module in the Angular codebase
   (`.subscribe((vm) => state.set(vm))`).
 - **Guardrail** `signals-subscribe-sets`, kind `lint`, `runs: [edit, commit]`,
   `budgetMs: 5000`: a pack rule, `eslint:signals/subscribe-sets`, with the
   same receiver check as SIG-3. The selector form measured 3 non-test hits in
-  Context Manager, all false: `[plugins]/dispatch/main/launchPointSlot.ts:104`
-  is `Map.set`.
+  the React codebase, all false positives on `Map.set`.
 - **Must fail:** `import { signal } from "@angular/core"; import { of } from "rxjs"; const s = signal(0); export const sub = of(1).subscribe((v) => s.set(v));`
 - **Must pass:** `import { toSignal } from "@angular/core/rxjs-interop"; import { of } from "rxjs"; export const s = toSignal(of(1));`
 
 ### What it flags today
 
-| Guardrail | Angular port, non-test (files) | Context Manager, non-test (files), if enabled |
+| Guardrail | Angular codebase, non-test (files) | React codebase, non-test (files), if enabled |
 |---|---|---|
 | `signals-no-subjects` | 0 | 33 (27) |
 | `signals-no-exposed-writable` | 15 (3) | 0 |
@@ -578,11 +573,11 @@ views.
 
 ### Open questions for Ryan
 
-1. **Q1. Build `signals` now, with the Angular port as its consumer, or wait
+1. **Q1. Build `signals` now, with the Angular codebase as its consumer, or wait
    for a consumer that adopts Warden?** Options: (a) build SIG-1 only now, so
    the conflict with RX-1 is real and tested, and the rest when a consumer
    adopts Warden; (b) build all four now; (c) wait. **Recommendation: (a).**
-   Context Manager has no signals, and the conflict machinery (E1, E2) needs
+   The React codebase has no signals, and the conflict machinery (E1, E2) needs
    two real Practices to test against.
 2. **Q2. Which signal libraries?** Options: (a) Angular only; (b) Angular and
    Preact. **Recommendation: (a).** Angular is the only signals code found.
@@ -616,13 +611,10 @@ The pack entry scopes it to renderer folders. Where a `bridge-hook` lives is
 
 - **Statement:** A `view` reads changing state through a `bridge-hook`; a
   `react-effect` never calls `subscribe`.
-- **Compliant:**
-  `[plugins]/frame/settings/[components]/GlobalConfigModal/Sdk19Configure.tsx:115`
-  (`useObservableValue(read$, LOADING)`), which wraps `observable-hooks` in
-  `[apps]/desktop/[hooks]/useObservableValue/useObservableValue.ts:19`.
-- **Violating:** `[apps]/desktop/plugin-host/slots/FrameRoot.tsx:70` and
-  `[plugins]/frame/renderer/dock/useDockGroups.tsx:29`, each subscribing in a
-  `useEffect` and copying values into view-state.
+- **Compliant:** a settings dialog in the React codebase calls
+  `useObservableValue(read$, LOADING)`, a hook that wraps `observable-hooks`.
+- **Violating:** a root component and a dock hook in the React codebase,
+  each subscribing in a `useEffect` and copying values into view-state.
 - **Guardrail** `declarative-ui-subscribe-in-effect`, kind `lint`,
   `runs: [edit, commit]`, `budgetMs: 5000`: core `no-restricted-syntax` with
   `["CallExpression[callee.name=/^use(Layout)?Effect$/] CallExpression[callee.property.name='subscribe']"]`.
@@ -635,10 +627,10 @@ The pack entry scopes it to renderer folders. Where a `bridge-hook` lives is
 
 - **Statement:** A `react-effect` never sets `view-state` directly in its
   body; a value derived from inputs is computed while rendering.
-- **Compliant:** `FrameRoot.tsx:74` derives `const root = readRoot(slots, read)`
-  while rendering.
-- **Violating:** `[apps]/desktop/[lib]/markdown/MarkdownPresentation.tsx:42`
-  calls `setErrors([])` at the top of an effect.
+- **Compliant:** the same root component derives
+  `const root = readRoot(slots, read)` while rendering.
+- **Violating:** a markdown component in the React codebase calls
+  `setErrors([])` at the top of an effect.
 - **Guardrail** `declarative-ui-set-in-effect`, kind `lint`,
   `runs: [edit, commit]`, `budgetMs: 5000`: core `no-restricted-syntax` with
   `["CallExpression[callee.name=/^use(Layout)?Effect$/] > :function > BlockStatement > ExpressionStatement > CallExpression[callee.name=/^set(?!Timeout|Interval|Immediate)[A-Z]/]", "CallExpression[callee.name=/^use(Layout)?Effect$/] > :function > CallExpression[callee.name=/^set(?!Timeout|Interval|Immediate)[A-Z]/]"]`.
@@ -651,8 +643,8 @@ The pack entry scopes it to renderer folders. Where a `bridge-hook` lives is
 
 - **Statement:** A `view` never queries the document and never writes markup
   or classes on an element directly.
-- **Compliant:** `MarkdownPresentation.tsx:71` sets `className` by rendering.
-- **Violating:** `MarkdownPresentation.tsx:40` writes `content.innerHTML = html`.
+- **Compliant:** the markdown component sets `className` by rendering.
+- **Violating:** the same component writes `content.innerHTML = html`.
 - **Guardrail** `declarative-ui-dom-writes`, kind `lint`,
   `runs: [edit, commit]`, `budgetMs: 5000`: core `no-restricted-syntax` with
   `["MemberExpression[object.name='document'][property.name=/^(querySelector|querySelectorAll|getElementById|getElementsByClassName|getElementsByTagName)$/]", "AssignmentExpression > MemberExpression.left[property.name=/^(innerHTML|outerHTML)$/]", "CallExpression[callee.object.property.name='classList'][callee.property.name=/^(add|remove|toggle|replace)$/]"]`.
@@ -664,20 +656,18 @@ The pack entry scopes it to renderer folders. Where a `bridge-hook` lives is
 
 - **Statement:** A `view` calls hooks unconditionally, and every
   `react-effect` lists what it reads.
-- **Violating:**
-  `[plugins]/frame/settings/[components]/PluginConfigure/PluginConfigureTab.tsx:414`
-  calls `useSettings()` inside a nested component factory (`rules-of-hooks`).
+- **Violating:** a plugin settings tab in the React codebase calls
+  `useSettings()` inside a nested component factory (`rules-of-hooks`).
 - **Guardrails,** kind `lint`, v2 after E7 and Q3:
   `eslint:react-hooks/rules-of-hooks` and `eslint:react-hooks/exhaustive-deps`.
-  Context Manager's own `eslint.config.js` already runs both, and turns them
-  off for one scope (`eslint.config.js:616-617`), which is the bypass Warden
-  exists to close.
+  The React codebase's own ESLint config already runs both, and turns them
+  off for one scope, which is the bypass Warden exists to close.
 
-### What it flags in Context Manager today
+### What it flags in the React codebase
 
 | Guardrail | Non-test hits (files) | All hits (files) |
 |---|---|---|
-| `declarative-ui-subscribe-in-effect` | 22 (17), including the bridge `[apps]/desktop/database/useRxQuery/useRxQuery.ts:308` and `:485`, which leave the count when the bridge moves to `bridges/` | 27 (22) |
+| `declarative-ui-subscribe-in-effect` | 22 (17), including two in the codebase's live-query bridge hook, which leave the count when the bridge moves to `bridges/` | 27 (22) |
 | `declarative-ui-set-in-effect` | 65 (46) | 78 (57) |
 | `declarative-ui-dom-writes` | 16 (10) | 172 (76) |
 | `react-hooks/rules-of-hooks` | 1 (1) | 27 (15) |
@@ -713,7 +703,7 @@ project on signals can enable it without RxJS. Conflicts with none.
    (b) by a pack setting that lists bridge files; (c) only library bridges,
    so a project writes none. **Recommendation: (a).** The path carries the
    claim, as the architecture pack decided, and no second list drifts.
-   Context Manager's `useRxQuery` would move to a `bridges/` folder.
+   The React codebase's live-query hook would move to a `bridges/` folder.
 2. **Q2. React only?** Options: (a) React only, and the pack says so;
    (b) add Angular template rules later in the same pack; (c) a separate
    Angular pack later. **Recommendation: (a), then (c)** when an Angular
@@ -723,7 +713,7 @@ project on signals can enable it without RxJS. Conflicts with none.
    the lock covers their version; (b) leave hook rules to each project's own
    ESLint config; (c) port the two rules into the pack. **Recommendation:
    (a)**, with `eslint-plugin-react-hooks` as its first entry. Project config
-   can turn the rules off, as Context Manager does today.
+   can turn the rules off, as the React codebase does today.
 
 ---
 
@@ -798,7 +788,8 @@ UI-4, and `typescript-index-signature-access`, which will never be built.
 ### Deferred engine gaps
 
 - **E4, more than one `tsc` program.** TS-1 checks only the root
-  `tsconfig.json` program. Context Manager's Electron program waits.
+  `tsconfig.json` program. A second program, such as an Electron main
+  process, waits.
 - **The rest of E5.** Attribution for `noUncheckedIndexedAccess`,
   `useUnknownInCatchVariables`, and `verbatimModuleSyntax` waits with
   `typescript-unchecked-index`.

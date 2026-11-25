@@ -1,6 +1,6 @@
 # Warden: a guardrail framework for agent-run repositories
 
-Status: approved by Ryan, November 18, 2026, with the boundary and signing key left open. Tracking epic: `cm-wkqedr`.
+Status: approved by Ryan, November 18, 2026, with the boundary and signing key left open.
 
 ## Intent
 
@@ -15,8 +15,7 @@ prose cannot stop:
 
 Warden is a development environment that makes those moves fail
 deterministically, explains every failure, and learns which of its own rules
-earn their place. It is a standalone, reusable tool. Context Manager is its
-first consumer, not its home.
+earn their place. It is a standalone, reusable tool.
 
 ## Goals
 
@@ -42,10 +41,8 @@ first consumer, not its home.
 - A new rule language. Records are YAML checked by a JSON Schema; guardrail
   logic is ordinary code.
 - Replacing ESLint, TypeScript, or git hooks. Warden configures them.
-- Rewriting Context Manager's existing check scripts in the first version.
+- Rewriting a project's existing check scripts in the first version.
   They are registered as guardrails as they are.
-- Generating `docs/CANON.md`. CANON stays authoritative and hand-maintained;
-  records link to its invariant numbers.
 
 ## Anti-goals
 
@@ -213,8 +210,8 @@ only directories, no loose files. Any other directory is an object: it holds
 files or folders. Collections nest like JSON, except that a collection never
 directly contains another collection. Ryan noted some deviations exist.
 
-Context Manager marks a collection with a bracketed name (`[services]`,
-`[components]`, `[models]`), as `docs/architecture/file-structure.md` states.
+A collection is marked with a bracketed name (`[services]`, `[components]`,
+`[models]`).
 
 | Practice | Guardrail (adapter `fs`) |
 |---|---|
@@ -223,11 +220,10 @@ Context Manager marks a collection with a bracketed name (`[services]`,
 | A collection's items are one type. | Every child of a collection has the item layout its collection declares (required files and folders), checked like a Unit kind's layout. |
 | Collection names follow one form. | Lowercase, kebab-case, plural, in brackets. |
 
-Measured in Context Manager on November 18, 2026: 173 tracked files sit
-directly inside a bracketed directory (38 under the root `[models]`), and one
-collection directly nests another (`[primitives]/[utils]`). The ratchet
-baselines these. Open question for Ryan: whether a collection may hold
-single-file items, as `[models]` does today, which is one of the deviations.
+Measured in one codebase on November 18, 2026: 173 tracked files sit
+directly inside a bracketed directory, and one collection directly nests
+another. The ratchet baselines these. Open question for Ryan: whether a
+collection may hold single-file items, which is one of the deviations.
 
 The `fs` adapter is a new adapter: it emits nothing and runs over the
 directory tree.
@@ -238,7 +234,7 @@ Packs stack. A consuming project lists the packs it uses and the paths each
 one covers.
 
 ```
-project pack           context-manager: plugin boundaries, CANON invariants
+project pack           my-app: the project's module boundaries and domain invariants
 style packs            rxjs-declarative, signals, declarative-ui (per path scope)
 language packs         typescript
 core pack              no comments, no suppressions, configuration only tightens,
@@ -288,7 +284,7 @@ adapter, and every adapter has the same three jobs:
 
 A Guardrail's `implementation` names its adapter and the tool's own rule:
 `eslint:no-debugger`, `eslint:warden/no-comments`, `tsc:strictNullChecks`,
-`cmd:npm run check:canon`. An `options` field passes the tool's rule options
+`cmd:npm run check:docs`. An `options` field passes the tool's rule options
 through unchanged. A `cmd` command runs with `WARDEN_PACK_DIR` set to the
 folder of the Guardrail's pack, so a pack can ship a script and run it as
 `cmd:node "$WARDEN_PACK_DIR/check.js"`; failures and next actions print the
@@ -513,8 +509,8 @@ Comments are banned because they give an agent a place to justify not doing
 the right thing. The legitimate outlet is `warden dispute`, which Ryan or a
 reviewer rules on. Two existing conflicts:
 
-- Context Manager has about 90,000 comment lines across 5,516 TypeScript
-  files (measured November 18, 2026).
+- A 5,516-file TypeScript codebase had about 90,000 comment lines (measured
+  November 18, 2026).
 - Ryan's global `AGENTS.md` requires `ponytail:` comments that name a
   simplification's ceiling. That rule moves into Warden as a record type or is
   retired; it cannot remain a comment.
@@ -578,23 +574,6 @@ git tag, and keeps everything Warden-related in one folder:
 Generated files sit where their tools expect them (`eslint.config.js` at the
 root) and carry the Warden header.
 
-## Applying it to Context Manager
-
-1. **Inventory.** Register every existing `check:*` script and custom lint as
-   a Guardrail record with its kind and strength, pointing at the script as
-   its implementation. This produces the first coverage report.
-2. **Practices from CANON.** Each of CANON's numbered invariants becomes a Practice
-   in the `context-manager` pack that cites its invariant number. The ones
-   marked "No gate yet" fail compilation until they get a Guardrail or are
-   explicitly marked `review` kind.
-3. **Terms.** CANON's Concept Ledger and `docs/glossary.md` vocabularies become
-   Terms.
-4. **Units.** The system map (`docs/plans/migration/system-map.md`) already
-   assigns every unit its home, and each unit has a `CONTRACT.md`. Each becomes
-   a Unit record whose document is its `CONTRACT.md`.
-5. **Core pack on.** `no-suppressions`, `config-only-tightens`, and
-   `generated-matches-source` first; `no-comments` per the open decision.
-
 ## First slice (walking skeleton)
 
 - Repository, schema, compiler with validate, consistency, emit, and lock.
@@ -602,7 +581,6 @@ root) and carry the Warden header.
   `config-only-tightens`, `generated-matches-source`.
 - Emitters for ESLint and Claude Code deny rules.
 - `warden check`, `warden explain`, `warden report`.
-- Context Manager's inventory step.
 
 The learning layer, style packs, model and runtime kinds, and the remaining
 emitters follow.
@@ -623,13 +601,13 @@ An independent builder read this design and asked six questions. Answers:
    `allowed_signers` file at the package root, which the lock hashes like a
    bundled pack file. `warden check` verifies this with git's signature
    verification. A missing or empty list fails every `.warden/` change. Warden
-   covers `.warden/` only; the existing `Ryan-Approved:` and protected-paths
+   covers `.warden/` only; a project's existing approval and protected-paths
    mechanism keeps the files it covers until they migrate.
 3. **Existing scripts register as `legacy` Guardrails.** A `legacy` Guardrail
    carries runnable `mustFail` and `mustPass` examples like every other
    Guardrail, so compile proves it. The report lists each `legacy` Guardrail,
    so the gap stays visible, and a `legacy` Guardrail cannot be added after
-   the inventory.
+   the project's first inventory of existing scripts.
 4. **`config-only-tightens` is checked both ways.** At compile time across
    packs, and at check time against the lock on the base branch, so a change
    cannot loosen what `main` already enforces.
@@ -655,8 +633,8 @@ An independent builder read this design and asked six questions. Answers:
 
 ## Calls made in this design (Ryan to check)
 
-- Name `warden` and CLI `warden`, chosen to avoid the repo's existing
-  `branchGuard`, `lockGuard`, and `scopeGuard`.
+- Name `warden` and CLI `warden`, chosen to avoid clashing with existing
+  `*Guard` names.
 - YAML records with a JSON Schema; TypeScript CLI on `commander`.
 - No warnings, only errors.
 - Install from a git tag rather than publishing to npm.

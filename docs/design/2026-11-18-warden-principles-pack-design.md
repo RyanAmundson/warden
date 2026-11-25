@@ -1,8 +1,7 @@
 # Warden principles pack: KISS, single responsibility, composition, and YAGNI proxies
 
-Status: approved by Ryan, November 18, 2026. Tracking task:
-`cm-wkqedr.5`, under the Warden epic `cm-wkqedr`. Second release:
-`cm-wkqedr.27`, which waits on the engine task `cm-wkqedr.26`.
+Status: approved by Ryan, November 18, 2026. The second release waits on an
+engine task.
 
 Builds on the
 [Principles pack section](2026-11-18-warden-guardrail-framework-design.md#principles-pack)
@@ -21,7 +20,7 @@ today.
   cross-file proxies (duplicate code blocks for DRY, interfaces with one
   implementation and unused exports for YAGNI, one name exported from two
   files for SSOT) ship next, as tested scripts the pack carries. They need
-  the engine change `cm-wkqedr.26`, because a `cmd` Guardrail can't locate a
+  an engine change, because a `cmd` Guardrail can't locate a
   script inside its pack today.
 - **Moderate limits:** complexity 10, nesting depth 3, function 50 lines,
   4 parameters, file 300 lines, 7 interface members, 1 class per file.
@@ -29,8 +28,8 @@ today.
   may add its own framework bases later. This check and the interface-size
   check moved to the second release after approval: both need
   `no-restricted-syntax`, which the architecture pack owns, and Warden lets
-  one ESLint rule back only one Guardrail across all packs (coordinator
-  ruling in `cm-wkqedr.1`). Sharing a rule is engine task `cm-wkqedr.25`.
+  one ESLint rule back only one Guardrail across all packs (a coordinator
+  ruling). Sharing a rule is a separate engine task.
 
 ## Approaches considered
 
@@ -50,11 +49,11 @@ today.
 ## Non-goals
 
 - Open/closed and dependency inversion. The architecture pack
-  (`cm-wkqedr.24`) owns registries and import direction.
+  owns registries and import direction.
 - A `review` kind entry for what no proxy measures. No `review` adapter
   exists, and `warden compile` rejects a Guardrail it cannot run. The "left
   to review" column of the spec stays in the spec until the decision-model
-  adapter (`cm-wkqedr.12`) lands.
+  adapter lands.
 - Import fan-out per Unit. No core ESLint rule measures it.
 
 ## The Practices
@@ -80,10 +79,10 @@ Every Guardrail: kind `lint`, `runs: [edit, commit]`, `budgetMs: 5000`
 
 That is three Practices and nine Guardrails in this release.
 
-## Measured on Context Manager
+## Measured on a sample codebase
 
 All ten candidate rules ran in one ESLint pass over a sample of 483 files, every
-eleventh tracked TypeScript file, November 18, 2026. The rules added about 80 ms of rule time
+eleventh tracked TypeScript file of a large TypeScript codebase, November 18, 2026. The rules added about 80 ms of rule time
 in total; the 1.9 s wall time was mostly parsing, which Warden's single pass
 already pays.
 
@@ -120,13 +119,13 @@ The baseline absorbs these at adoption, so the ratchet never blocks work.
   architecture pack requires each port to have one implementation at first,
   so that proxy's statement must exclude a `port`.
 
-## Second release (`cm-wkqedr.27`)
+## Second release
 
 Cross-file checks as tree checks shipped in the pack, each an `fs` or
 `graph` Guardrail of kind `lint` at `boundary`:
 
 - Duplicate blocks of 8 or more significant lines (DRY). A spike measured
-  1.4 s across all of Context Manager and found 679 duplicates.
+  1.4 s across that whole codebase and found 679 duplicates.
 - Interfaces with one implementation, except a `port`, and unused exports
   (YAGNI).
 - One name exported from two files (SSOT).
@@ -213,7 +212,7 @@ Cross-file checks as tree checks shipped in the pack, each an `fs` or
   locals stay with the ESLint Guardrail `principles-unused-locals`, so the
   pack adds no `tsc:noUnusedLocals` Guardrail.
 - `composition-and-narrow-interfaces` is not built yet. Its engine
-  dependency, `cm-wkqedr.25`, is closed.
+  dependency, letting Guardrails share an ESLint rule, is closed.
 
 ## Left to the builder
 

@@ -243,23 +243,23 @@ const layers = { project: "warden", bands: [], practices: [], packs: [], packSet
 
 it("shows published audit coverage and keeps checkout-only pages usable for watched projects", async () => {
   bodies["/api/projects"] = { projects: [
-    { project: "context-manager", roots: [], lastRun: null, openAlerts: 0, mode: "audit", auditOnly: { project: "context-manager", root: "/p/cm", ref: "refs/remotes/origin/main" } },
+    { project: "example-project", roots: [], lastRun: null, openAlerts: 0, mode: "audit", auditOnly: { project: "example-project", root: "/p/ex", ref: "refs/remotes/origin/main" } },
     ...warden.projects,
   ] };
-  bodies["/api/runs"] = { project: "context-manager", runs: [] };
+  bodies["/api/runs"] = { project: "example-project", runs: [] };
   bodies["/api/layers"] = layers;
-  await boot("/?project=context-manager");
+  await boot("/?project=example-project");
   expect(html).toContain("1 project watched · 1 published audit");
   expect(html).toContain("Automatic audit · origin/main");
   expect(html).toContain("0 watched checkouts");
   expect(html).toContain("The daemon is watching its hooks and records");
   for (const page of ["layers", "violations"]) {
     const before = fetches;
-    await click(`/${page}?project=context-manager`);
+    await click(`/${page}?project=example-project`);
     expect(fetches - before).toBe(2);
     expect(html).toContain("Watched checkout required");
-    expect(html).toContain('href="/failures?project=context-manager">Current failures');
-    expect(html).toContain('href="/runs?project=context-manager">Run history');
+    expect(html).toContain('href="/failures?project=example-project">Current failures');
+    expect(html).toContain('href="/runs?project=example-project">Run history');
   }
   await click("/layers?project=warden");
   expect(html).toContain("Layers · warden");

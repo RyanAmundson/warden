@@ -1,9 +1,5 @@
 # Collection-folders pack
 
-Bead: cm-wkqedr.10. Source design: the "Collection-folders pack" section of
-Context Manager's `docs/superpowers/specs/2026-11-18-warden-guardrail-framework-design.md`
-(commit 49b788d).
-
 A collection is a folder with a bracketed name, such as `[services]`. It is an
 array: it holds item folders of one kind. Every other folder is an object.
 
@@ -20,8 +16,7 @@ Each failure names one file, says what is wrong there, and gives one "Do this" l
 
 ## Decisions (Ryan, November 18, 2026)
 
-- A collection holds only folders. Single-file items, as in Context Manager's
-  root `[models]`, are deviations.
+- A collection holds only folders. Single-file items are deviations.
 - "Items are one type" uses a same-shape check: every item has the same
   top-level entries as the most common item shape in its collection. The design
   asked for a declared item layout per collection; a pack cannot know a
@@ -60,16 +55,3 @@ existing deviations file by file:
   new violation there.
 - The checks read the config's pack paths, so Next.js dynamic route folders
   such as `[id]` look like collections. Leave them out of the pack's paths.
-
-## Measured in Context Manager (November 18, 2026)
-
-Tracked and untracked, not ignored, files:
-
-| Guardrail | Violations |
-|---|---|
-| holds only folders | 204 loose files |
-| do not nest | 1: `[libs]/ui-kit/src/[primitives]/[utils]` |
-| plural kebab-case | 5 folders: `[lib]`, `[delivery]`, `[timeline]` |
-| one shape | 80 items in 8 of 68 collections; 30 tied collections skipped |
-
-The whole scan of 6,875 files takes about 0.2 seconds per Guardrail.

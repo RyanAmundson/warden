@@ -44,7 +44,7 @@ const blockRun: Evidence = {
 };
 
 const model = (evidence: Evidence[]): ViewModel => ({
-  project: "context-manager",
+  project: "example-project",
   base: "origin/main",
   version: "9.8.7",
   packs: ["core"],
@@ -84,7 +84,7 @@ const fits = (lines: string[]): void => {
 it("renders a passing run at 80 columns", () => {
   const lines = render(model([...steps("r1", "14:01:40"), passRun]), size, 0);
   fits(lines);
-  expect(lines[0]).toBe(" WARDEN  context-manager · v9.8.7       q quit  r rerun  l layers  v viol  d det");
+  expect(lines[0]).toBe(" WARDEN  example-project · v9.8.7       q quit  r rerun  l layers  v viol  d det");
   expect(lines[1]).toBe("─".repeat(80));
   expect(lines[2]).toBe(" NOW  commit check · 3 files · triggered by git commit · 13 ms");
   expect(lines[3]).toMatch(/^ {3}✓ 1 rules intact {6}lock matches, 0 tampered files +2\.0 ms$/);
@@ -490,7 +490,7 @@ const bar = (line: string): string => line.match(/[█▓▏]+/)?.[0] ?? "";
 it("renders the violations screen at 120 columns: a bar per pack and Guardrail, right-aligned counts, and the legend", () => {
   const lines = renderViolations(violated(), { cols: 120, rows: 40 });
   for (const l of lines) expect(l.length, l).toBeLessThanOrEqual(120);
-  expect(lines[0]).toMatch(/^ WARDEN {2}context-manager · base origin\/main · v9\.8\.7 +q quit {2}r rerun {2}v back {2}d determinism$/);
+  expect(lines[0]).toMatch(/^ WARDEN {2}example-project · base origin\/main · v9\.8\.7 +q quit {2}r rerun {2}v back {2}d determinism$/);
   expect(lines[1]).toBe("─".repeat(120));
   expect(lines[2]).toMatch(/^ VIOLATIONS BY PACK +baselined +new +last run$/);
   const row = (label: string): string => lines.find((l) => l.startsWith(` ${label} `)) as string;
@@ -618,7 +618,7 @@ const threeProjects = (): ViewModel => ({
   ...model([]),
   projects: [
     { project: "warden", run: ranWith({}) },
-    { project: "context-manager", run: ranWith({ lint: 9, type: 2, model: 1, review: 1, instruction: 1 }) },
+    { project: "example-project", run: ranWith({ lint: 9, type: 2, model: 1, review: 1, instruction: 1 }) },
     { project: "trq-berry", run: ranWith({ runtime: 1200, model: 300, legacy: 4 }) },
   ],
 });
@@ -626,9 +626,9 @@ const threeProjects = (): ViewModel => ({
 it("renders the determinism screen at 120 columns: the current project first and marked, a stacked bar, right-aligned counts, and the share", () => {
   const lines = renderDeterminism(threeProjects(), { cols: 120, rows: 40 });
   for (const l of lines) expect(l.length, l).toBeLessThanOrEqual(120);
-  expect(lines[0]).toMatch(/^ WARDEN {2}context-manager · base origin\/main · v9\.8\.7 +q quit {2}r rerun {2}d back$/);
+  expect(lines[0]).toMatch(/^ WARDEN {2}example-project · base origin\/main · v9\.8\.7 +q quit {2}r rerun {2}d back$/);
   expect(lines[2]).toMatch(/^ DETERMINISM BY PROJECT +deterministic {2}judgment {2}prose {2}det\. share$/);
-  expect(lines[3]).toMatch(/^ ▸ context-manager █+▒+░+ +11 +2 +1 +79%$/);
+  expect(lines[3]).toMatch(/^ ▸ example-project █+▒+░+ +11 +2 +1 +79%$/);
   expect(lines[4]).toMatch(/^ {3}trq-berry +█+▒+░ +1,200 +300 +4 +80%$/);
   expect(lines[5]).toMatch(/^ {3}warden +▏ +0 +0 +0 +–$/);
   expect(lines.filter((l) => l.endsWith("%") || l.endsWith("–")).map((l) => l.length)).toEqual([120, 120, 120]);
@@ -642,7 +642,7 @@ it("at 60 columns the determinism screen drops the share column first, and bars 
   for (const l of lines) expect(l.length, l).toBeLessThanOrEqual(60);
   expect(lines[2]).toMatch(/^ DETERMINISM BY PROJECT +deterministic {2}judgment {2}prose$/);
   expect(lines.join("\n")).not.toContain("%");
-  expect(lines[3]).toMatch(/^ ▸ context-manager █+▒+░+ +11 +2 +1$/);
+  expect(lines[3]).toMatch(/^ ▸ example-project █+▒+░+ +11 +2 +1$/);
   expect(bar(lines[4] as string).length + (lines[4]?.match(/[▒░]+/g) ?? []).join("").length).toBeGreaterThanOrEqual(8);
 });
 
@@ -655,25 +655,25 @@ it("a record without kinds counts its recorded failures as unknown kind, in a co
   const narrow = renderDeterminism({ ...threeProjects(), projects: [...threeProjects().projects, { project: "older", run: old }] }, { cols: 60, rows: 24 });
   for (const l of narrow) expect(l.length, l).toBeLessThanOrEqual(60);
   expect(narrow[2]).toMatch(/^ DETERMINISM +deterministic {2}judgment {2}prose {2}unknown$/);
-  expect(narrow[3]).toMatch(/^ ▸ contex… █+▒+░+ +11 +2 +1 +0$/);
+  expect(narrow[3]).toMatch(/^ ▸ exampl… █+▒+░+ +11 +2 +1 +0$/);
   expect(renderDeterminism(threeProjects(), { cols: 120, rows: 40 }).join("\n")).not.toContain("unknown");
 });
 
 it("with an empty evidence folder the determinism screen says the current project has no completed run, with one next action", () => {
-  const lines = renderDeterminism({ ...model([]), projects: [{ project: "context-manager" }] }, { cols: 80, rows: 24 });
-  expect(lines[3]).toBe(" ▸ context-manager no completed run yet");
+  const lines = renderDeterminism({ ...model([]), projects: [{ project: "example-project" }] }, { cols: 80, rows: 24 });
+  expect(lines[3]).toBe(" ▸ example-project no completed run yet");
   expect(lines.at(-1)).toBe(" No project has a completed run. Next action: press r to run warden check");
 });
 
 it("no judgment or prose failure anywhere says so", () => {
-  const lines = renderDeterminism({ ...model([]), projects: [{ project: "context-manager", run: ranWith({ lint: 3 }) }] }, { cols: 80, rows: 24 });
+  const lines = renderDeterminism({ ...model([]), projects: [{ project: "example-project", run: ranWith({ lint: 3 }) }] }, { cols: 80, rows: 24 });
   expect(lines.at(-1)).toBe(" No project has a judgment or prose failure in its last completed run.");
 });
 
 it("a short terminal keeps the current project and says how many projects are hidden and how to see them", () => {
   const lines = renderDeterminism(threeProjects(), { cols: 120, rows: 8 });
   expect(lines.length).toBeLessThanOrEqual(8);
-  expect(lines[3]).toMatch(/^ ▸ context-manager /);
+  expect(lines[3]).toMatch(/^ ▸ example-project /);
   expect(lines).toContain(" 2 projects hidden. Next action: run warden --determinism | cat");
 });
 
@@ -712,7 +712,7 @@ it("at 50 and 40 columns with the unknown column showing, project names keep the
     const lines = renderDeterminism(withOlder(), { cols, rows: 24 });
     for (const l of lines) expect(l.length, l).toBeLessThanOrEqual(cols);
     expect(lines[2]).toMatch(/^ DETERMINISM +deter {2}judgm {2}prose {2}unkno$/);
-    expect(lines[3]).toMatch(/^ ▸ conte\S* +[█▒░]+ +11 +2 +1 +0$/);
+    expect(lines[3]).toMatch(/^ ▸ examp\S* +[█▒░]+ +11 +2 +1 +0$/);
     expect(lines).toContainEqual(expect.stringMatching(/^ {3}trq-b\S* +[█▒░]+ +1,200 +300 +4 +0$/));
     expect(lines).toContainEqual(expect.stringMatching(/^ {3}older +· +0 +0 +0 +1$/));
     expect(lines.join("\n")).toContain("· unknown");
@@ -725,14 +725,14 @@ it("a bar too narrow for every band keeps the band with the most failures", () =
 });
 
 it("the share never reads 100% while any judgment or prose failure exists", () => {
-  const lines = renderDeterminism({ ...model([]), projects: [{ project: "context-manager", run: ranWith({ lint: 1234567, model: 304 }) }, { project: "b", run: ranWith({ lint: 5 }) }] }, { cols: 120, rows: 24 });
+  const lines = renderDeterminism({ ...model([]), projects: [{ project: "example-project", run: ranWith({ lint: 1234567, model: 304 }) }, { project: "b", run: ranWith({ lint: 5 }) }] }, { cols: 120, rows: 24 });
   expect(lines[3]).toMatch(/ 99%$/);
   expect(lines[4]).toMatch(/ 100%$/);
 });
 
 it("a very short terminal still shows the current project above the hidden-projects line", () => {
   const lines = renderDeterminism(withOlder(), { cols: 120, rows: 6 });
-  expect(lines).toContainEqual(expect.stringMatching(/^ ▸ context-manager /));
+  expect(lines).toContainEqual(expect.stringMatching(/^ ▸ example-project /));
   expect(lines).toContain(" 3 projects hidden. Next action: run warden --determinism | cat");
 });
 
@@ -740,7 +740,7 @@ it("at 40x10 the hidden-projects line wraps so its whole next action shows, and 
   const lines = renderDeterminism({ ...withOlder(), projects: [...withOlder().projects, { project: "fresh" }] }, { cols: 40, rows: 10 });
   expect(lines.length).toBeLessThanOrEqual(10);
   for (const l of lines) expect(l.length, l).toBeLessThanOrEqual(40);
-  expect(lines[3]).toMatch(/^ ▸ conte/);
+  expect(lines[3]).toMatch(/^ ▸ examp/);
   expect(lines.join(" ").replace(/ +/g, " ")).toContain(" 4 projects hidden. Next action: run warden --determinism | cat");
 });
 
@@ -792,12 +792,12 @@ it("plain output outside a terminal never tells the reader to press r", () => {
 
 it("the runs header at 80 columns keeps q quit, r rerun, and labelled screen keys, dropping base before them", () => {
   const first = render(model([]), { cols: 80, rows: 30 }, 0)[0] as string;
-  for (const part of ["context-manager", "q quit", "r rerun", "l layers"]) expect(first).toContain(part);
+  for (const part of ["example-project", "q quit", "r rerun", "l layers"]) expect(first).toContain(part);
   expect(first).not.toContain("base");
   const wide = render(model([]), { cols: 120, rows: 30 }, 0)[0] as string;
   expect(wide).toContain("base origin/main · v9.8.7");
   expect(render(model([]), { cols: 50, rows: 30 }, 0)[0]).toContain("q quit");
-  expect(renderLayers(model([]), { cols: 80, rows: 30 })[0]).toContain("context-manager");
+  expect(renderLayers(model([]), { cols: 80, rows: 30 })[0]).toContain("example-project");
 });
 
 it("the layers and violations screens at 30 columns draw no line wider than 30", () => {
@@ -873,7 +873,7 @@ it("every screen header keeps q quit and r rerun, then the same project parts, a
 });
 
 it("every screen header at 30 columns shows q quit and r rerun, with the project dropped before them", () => {
-  for (const project of ["context-manager", LONG]) {
+  for (const project of ["example-project", LONG]) {
     for (const line of headers(project, 30)) {
       expect(line.length, line).toBeLessThanOrEqual(30);
       expect(line, line).toMatch(/q quit {2}r rerun( {2}([vd] back|l runs))?$/);
@@ -881,7 +881,7 @@ it("every screen header at 30 columns shows q quit and r rerun, with the project
   }
 });
 
-const NAMES = ["x", "context-manager", LONG, "日本語プロジェクト名前", "🚀🚀🚀🚀🚀-launch-pad-🚀🚀"];
+const NAMES = ["x", "example-project", LONG, "日本語プロジェクト名前", "🚀🚀🚀🚀🚀-launch-pad-🚀🚀"];
 
 it("columns counts East Asian wide and fullwidth characters as two columns", () => {
   expect(columns("abc")).toBe(3);
@@ -924,7 +924,7 @@ it("the screen navigation keys outrank the version in every header", () => {
 
 it("at 25 and 30 columns every header keeps q quit, r rerun, and its back key", () => {
   for (const [i, back] of [[1, "l runs"], [2, "v back"], [3, "d back"]] as const) {
-    for (const cols of [25, 30]) expect(headers("context-manager", cols)[i], String(cols)).toMatch(new RegExp(`q quit {2}r rerun {2}${back}$`));
+    for (const cols of [25, 30]) expect(headers("example-project", cols)[i], String(cols)).toMatch(new RegExp(`q quit {2}r rerun {2}${back}$`));
   }
 });
 
@@ -953,7 +953,7 @@ it("at 40 columns the runs header measures emoji names by what a terminal draws"
 });
 
 it("each screen drops header parts in order: base, then version, then the name, and the three back-key screens drop the name together", () => {
-  for (const project of ["context-manager", LONG]) {
+  for (const project of ["example-project", LONG]) {
     for (let cols = 20; cols <= 130; cols++) {
       for (const l of headers(project, cols)) {
         if (l.includes("base")) expect(l, `${project} ${cols}`).toContain(" · v9.8.7");
@@ -961,7 +961,7 @@ it("each screen drops header parts in order: base, then version, then the name, 
       }
     }
   }
-  const forty = headers("context-manager", 40);
-  expect(forty[0]).toContain("context-manager");
-  for (const l of forty.slice(1)) expect(l).not.toContain("context-manager");
+  const forty = headers("example-project", 40);
+  expect(forty[0]).toContain("example-project");
+  for (const l of forty.slice(1)) expect(l).not.toContain("example-project");
 });

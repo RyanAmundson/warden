@@ -843,11 +843,11 @@ describe("commandSources", () => {
       await mkdir(join(dir, "bin"));
       await mkdir(join(dir, "tools"));
       await mkdir(join(dir, "node_modules/.bin"), { recursive: true });
-      await writeFile(join(dir, "bin/check-canon"), "exit 1\n", { mode: 0o755 });
+      await writeFile(join(dir, "bin/check-docs"), "exit 1\n", { mode: 0o755 });
       await writeFile(join(dir, "tools/linked.js"), "l\n", { mode: 0o755 });
       await symlink(join(dir, "tools/linked.js"), join(dir, "node_modules/.bin/linked"));
       vi.stubEnv("PATH", `${join(dir, "bin")}:${process.env.PATH ?? ""}`);
-      expect(Object.keys(commandSources(dir, "check-canon && linked && test -e x && sh -c true", [], {})).sort()).toEqual(["./bin/check-canon", "./tools/linked.js"]);
+      expect(Object.keys(commandSources(dir, "check-docs && linked && test -e x && sh -c true", [], {})).sort()).toEqual(["./bin/check-docs", "./tools/linked.js"]);
     } finally {
       vi.unstubAllEnvs();
       await rm(dir, { recursive: true, force: true });

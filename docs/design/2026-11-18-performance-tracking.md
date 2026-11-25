@@ -1,7 +1,7 @@
 # Warden performance tracking: pack totals, input size, and scaling verdicts
 
-Status: approved by Ryan, 2026-11-18 ("Approve design"). Bead: `cm-wkqedr.16`, under `cm-wkqedr`.
-Depends on `cm-wkqedr.17`, the ESLint timing fix. Destination:
+Status: approved by Ryan, 2026-11-18 ("Approve design"). Depends on the
+ESLint timing fix. Destination:
 `~/Code/warden/docs/design/2026-11-18-performance-tracking.md`, landed by the
 Warden first-slice coordinator, who is the only writer in that repository.
 
@@ -53,9 +53,9 @@ caught earlier, before the project grows into the budget.
 
 ## Design
 
-### 1. Timing model, built on `cm-wkqedr.17`
+### 1. Timing model, built on the ESLint timing fix
 
-The model assumes the fix in `cm-wkqedr.17` has landed: ESLint batch times are
+The model assumes the ESLint timing fix has landed: ESLint batch times are
 summed, and the shared ESLint pass is charged once. This design adds the
 following on top of that fix.
 
@@ -71,7 +71,7 @@ following on top of that fix.
   and later `graph` and `fs`), so their `ms` is already that Guardrail's own
   time.
 
-`cm-wkqedr.17` had not landed when this was written. This work starts after
+The ESLint timing fix had not landed when this was written. This work starts after
 it lands. If it charges the shared pass differently, this section follows its
 model, and the brief is updated to match before work starts.
 

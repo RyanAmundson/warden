@@ -15,7 +15,7 @@ const { renderApp, frozenHtml }: { renderApp: (state: unknown) => string; frozen
 
 const at = (minutes: number): string => new Date(Date.UTC(2026, 10, 18, 17, 0) + minutes * 60000).toISOString();
 
-const run = (over: Record<string, unknown> = {}) => ({ at: at(30), run: "r-pass", tier: "edit", trigger: "agent-edit", outcome: "ran", result: "pass", exit: 0, ms: 900, steps: { "rules-intact": 170, "tools-ready": 1, rules: 500, verdict: 50 }, files: 3, bytes: 4200, guardrails: 2, rules: { "warden-no-comments": 0.3 }, cachedRules: [], ratchet: [43634, 43634], root: "/p/cm", ...over });
+const run = (over: Record<string, unknown> = {}) => ({ at: at(30), run: "r-pass", tier: "edit", trigger: "agent-edit", outcome: "ran", result: "pass", exit: 0, ms: 900, steps: { "rules-intact": 170, "tools-ready": 1, rules: 500, verdict: 50 }, files: 3, bytes: 4200, guardrails: 2, rules: { "warden-no-comments": 0.3 }, cachedRules: [], ratchet: [43634, 43634], root: "/p/ex", ...over });
 
 const ERROR_NEXT = "run warden compile, stage .warden, and commit";
 
@@ -25,12 +25,12 @@ const BLOCK_NEXT = "remove the suppression at src/cli/view.ts:212, then commit a
 
 const blockRun = run({ run: "r-block", at: at(20), tier: "commit", trigger: "git-commit", result: "fail", exit: 1, failures: [{ file: "src/cli/view.ts", line: 212, guardrail: "warden-no-suppressions", practice: "no-suppressions", doThis: "delete the eslint-disable comment on line 212" }], next: BLOCK_NEXT });
 
-const cmRuns = [errorRun("r-err2", 40), errorRun("r-err1", 35), run(), blockRun];
+const exRuns = [errorRun("r-err2", 40), errorRun("r-err1", 35), run(), blockRun];
 
 const health = { status: "ok", pid: 1, version: "0.1.8", startedAt: at(0), heartbeatAt: at(40), heartbeatFile: "/tmp/wh/daemon/heartbeat.json", intervalMs: 10000, staleAfterMs: 30000, port: 7419, projects: 2, openAlerts: 1 };
 
 const projects = [
-  { project: "context-manager", roots: ["/p/cm"], lastRun: cmRuns[0], openAlerts: 0 },
+  { project: "example-project", roots: ["/p/ex"], lastRun: exRuns[0], openAlerts: 0 },
   { project: "warden", roots: ["/p/w", "/p/w2"], lastRun: run({ run: "w-1", root: "/p/w" }), openAlerts: 1 },
 ];
 
@@ -49,11 +49,11 @@ const layers = {
   packs: [{ id: "core", source: "bundled", on: true, rules: 2 }, { id: "principles", source: "bundled", on: false, rules: 9 }],
 };
 
-const violations = { project: "context-manager", packs: [{ pack: "core", baselined: 30100, new: 2, lastRun: { at: at(30), trigger: "agent-edit", run: "r-pass" }, guardrails: [{ guardrail: "warden-no-comments", baselined: 29909, new: 2 }, { guardrail: "warden-no-suppressions", baselined: 191, new: null }] }] };
+const violations = { project: "example-project", packs: [{ pack: "core", baselined: 30100, new: 2, lastRun: { at: at(30), trigger: "agent-edit", run: "r-pass" }, guardrails: [{ guardrail: "warden-no-comments", baselined: 29909, new: 2 }, { guardrail: "warden-no-suppressions", baselined: 191, new: null }] }] };
 
-const determinism = { projects: [{ project: "context-manager", run: "r-pass", at: at(30), counts: { deterministic: 2, judgment: 1, prose: 0, unknown: 0 } }, { project: "warden", run: null, at: null, counts: null }] };
+const determinism = { projects: [{ project: "example-project", run: "r-pass", at: at(30), counts: { deterministic: 2, judgment: 1, prose: 0, unknown: 0 } }, { project: "warden", run: null, at: null, counts: null }] };
 
-const state = (page: string, data: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ page, project: "context-manager", health, projects, data: { projects, ...data }, view: { fresh: new Set() }, now: Date.parse(at(40)), ...extra });
+const state = (page: string, data: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ page, project: "example-project", health, projects, data: { projects, ...data }, view: { fresh: new Set() }, now: Date.parse(at(40)), ...extra });
 
 const checks = (html: string): [string, string, string, string][] => [...html.matchAll(/<li class="check-(pass|fail|skip)"><svg[^]*?<\/svg><span class="mono wrap">([^<]*)<\/span><span class="wrap [a-z]+">([^<]*)<\/span><span class="r">([^<]*)<\/span><\/li>/g)].map((m) => m.slice(1) as [string, string, string, string]);
 
@@ -62,7 +62,7 @@ const nextActions = (html: string): string[] => [...html.matchAll(/<div class="n
 describe("dashboard evidence", () => {
   const receipt = (run: string, fields: Partial<Evidence> = {}): Evidence => ({
     at: at(20), kind: "cost", guardrail: "run", run, tier: "edit", trigger: "agent-edit",
-    root: "/p/cm", outcome: "ran", result: "fail", ...fields,
+    root: "/p/ex", outcome: "ran", result: "fail", ...fields,
   });
   const fired = (run: string, file: string): Evidence => ({
     at: at(20), kind: "fired", run, file, guardrail: "rule", policy: "policy", status: "fail",
@@ -72,7 +72,7 @@ describe("dashboard evidence", () => {
     const older = receipt("old");
     const latest = receipt("latest", { at: at(21) });
     const resolution: Evidence = {
-      at: at(22), kind: "resolved", run: "passing", sourceRun: "old", root: "/p/cm",
+      at: at(22), kind: "resolved", run: "passing", sourceRun: "old", root: "/p/ex",
       tier: "edit", guardrail: "rule", file: "open.ts", policy: "policy",
     };
     const evidence = [
@@ -83,7 +83,7 @@ describe("dashboard evidence", () => {
       resolution,
       { ...resolution, sourceRun: "latest", file: "fixed.ts" },
     ];
-    expect(projectFailures(evidence, ["/p/cm"])).toEqual({
+    expect(projectFailures(evidence, ["/p/ex"])).toEqual({
       checked: true,
       findings: [{ file: "open.ts", guardrail: "rule", source: expect.objectContaining({ run: "latest" }) }],
       problems: [],
@@ -100,13 +100,13 @@ describe("dashboard evidence", () => {
       receipt("old-error", { outcome: "error", at: at(22), trigger: "manual" }),
       error,
     ];
-    const result = projectFailures(evidence, ["/p/cm"]);
+    const result = projectFailures(evidence, ["/p/ex"]);
     expect(result.findings).toEqual([expect.objectContaining({ file: "active.ts", source: expect.objectContaining({ run: "boundary" }) })]);
     expect(result.problems).toEqual([error]);
-    const html = renderApp(state("failures", { failures: { project: "context-manager", ...result, alerts: [] } }));
-    expect(html).toContain("Current failures · context-manager");
-    expect(html).toContain('href="/run?project=context-manager&amp;run=boundary"');
-    expect(html).toContain('href="/run?project=context-manager&amp;run=error"');
+    const html = renderApp(state("failures", { failures: { project: "example-project", ...result, alerts: [] } }));
+    expect(html).toContain("Current failures · example-project");
+    expect(html).toContain('href="/run?project=example-project&amp;run=boundary"');
+    expect(html).toContain('href="/run?project=example-project&amp;run=error"');
     expect(html).not.toContain("fixed.ts");
   });
 
@@ -115,13 +115,13 @@ describe("dashboard evidence", () => {
       { ...fired("whole-project", "src/module.ts"), policy: undefined },
       receipt("whole-project", { tier: "boundary" }),
     ];
-    const report = projectFailures(evidence, ["/p/cm"]);
+    const report = projectFailures(evidence, ["/p/ex"]);
     expect(report.findings).toEqual([expect.objectContaining({ unverified: true, file: "src/module.ts" })]);
-    const html = renderApp(state("failures", { failures: { project: "context-manager", ...report, alerts: [] } }));
+    const html = renderApp(state("failures", { failures: { project: "example-project", ...report, alerts: [] } }));
     expect(html).toContain("Findings with unverified status");
     expect(html).toContain("src/module.ts");
-    const coverage: Evidence = { at: at(22), kind: "coverage", root: "/p/cm", run: "covered", tier: "boundary", members: ["rule"] };
-    expect(projectFailures([...evidence, coverage], ["/p/cm"]).findings).toEqual([]);
+    const coverage: Evidence = { at: at(22), kind: "coverage", root: "/p/ex", run: "covered", tier: "boundary", members: ["rule"] };
+    expect(projectFailures([...evidence, coverage], ["/p/ex"]).findings).toEqual([]);
   });
 
   it("opens an older retained run and recovers guardrail and file pairs beyond the receipt sample", () => {
@@ -140,11 +140,11 @@ describe("dashboard evidence", () => {
 
 describe("pages render from API responses", () => {
   it("renders the overview with alerts, project cards, and the live stream", () => {
-    const html = renderApp(state("overview", { tamper, runs: { "context-manager": cmRuns, warden: [run({ run: "w-1" })] } }));
+    const html = renderApp(state("overview", { tamper, runs: { "example-project": exRuns, warden: [run({ run: "w-1" })] } }));
     expect(html).toContain('<h1 class="h1">Overview</h1>');
     expect(html).toContain("2 projects watched");
     expect(html).toContain("1 open detection: source-drift");
-    expect(html).toContain(`href="/run?project=context-manager&amp;run=r-err2"`);
+    expect(html).toContain(`href="/run?project=example-project&amp;run=r-err2"`);
     expect(html).toContain("Error · rules intact");
     expect(html).toContain("…/p/w</span> and 1 other checkout");
     expect(html).toContain("43,634");
@@ -154,32 +154,32 @@ describe("pages render from API responses", () => {
   });
 
   it("filters the overview stream to one project", () => {
-    const html = renderApp(state("overview", { tamper, runs: { "context-manager": cmRuns, warden: [run({ run: "w-1", trigger: "manual" })] } }, { view: { filter: "warden", fresh: new Set() } }));
+    const html = renderApp(state("overview", { tamper, runs: { "example-project": exRuns, warden: [run({ run: "w-1", trigger: "manual" })] } }, { view: { filter: "warden", fresh: new Set() } }));
     expect(html).toContain("manual run");
     expect(html).not.toContain("<td>agent edit</td>");
   });
 
   it("links the full-width history to failures and filters to not passing", () => {
-    const all = renderApp(state("runs", { runs: { project: "context-manager", runs: cmRuns } }, { view: { run: "r-block", outcome: "all", fresh: new Set() } }));
-    expect(all).toContain("Runs · context-manager");
+    const all = renderApp(state("runs", { runs: { project: "example-project", runs: exRuns } }, { view: { run: "r-block", outcome: "all", fresh: new Set() } }));
+    expect(all).toContain("Runs · example-project");
     expect(all).toContain("4 recent runs · 3 not passing");
     expect(all).toContain(">Blocked</span>");
     expect(all).toContain('title="src/cli/view.ts:212">view.ts:212');
-    expect(all).toContain('href="/failures?project=context-manager">Current failures');
+    expect(all).toContain('href="/failures?project=example-project">Current failures');
     expect(all).toContain(`<td class="mono clip" title="${ERROR_NEXT}">${ERROR_NEXT}</td>`);
-    const not = renderApp(state("runs", { runs: { project: "context-manager", runs: cmRuns } }, { view: { outcome: "not", fresh: new Set() } }));
+    const not = renderApp(state("runs", { runs: { project: "example-project", runs: exRuns } }, { view: { outcome: "not", fresh: new Set() } }));
     expect(not).toContain("Not passing · newest first");
     expect(not).not.toContain('run=r-pass"');
   });
 
   it("shows which ref is automatically audited even after a later manual run", () => {
     const audit = run({ run: "r-main", trigger: "main audit", ref: "refs/remotes/origin/main" });
-    const watched = [{ ...projects[0], lastRun: cmRuns[0], lastMainAudit: audit }, { ...projects[1], repositories: [{ repo: "/p/w/.git", roots: ["/p/w", "/p/w2"], openAlerts: 0 }, { repo: "/p/copy/.git", roots: ["/p/copy"], openAlerts: 1 }] }];
-    const html = renderApp(state("overview", { projects: watched, tamper, runs: { "context-manager": [...cmRuns, audit], warden: [] } }, { projects: watched }));
+    const watched = [{ ...projects[0], lastRun: exRuns[0], lastMainAudit: audit }, { ...projects[1], repositories: [{ repo: "/p/w/.git", roots: ["/p/w", "/p/w2"], openAlerts: 0 }, { repo: "/p/copy/.git", roots: ["/p/copy"], openAlerts: 1 }] }];
+    const html = renderApp(state("overview", { projects: watched, tamper, runs: { "example-project": [...exRuns, audit], warden: [] } }, { projects: watched }));
     expect(html).toContain('class="watch-audit">Automatic audit · origin/main');
     expect(html).toContain('title="refs/remotes/origin/main">Automatic audit · origin/main');
-    expect(html).toContain('href="/run?project=context-manager&amp;run=r-main">Edit audit');
-    expect(html).toContain('href="/run?project=context-manager&amp;run=r-main"');
+    expect(html).toContain('href="/run?project=example-project&amp;run=r-main">Edit audit');
+    expect(html).toContain('href="/run?project=example-project&amp;run=r-main"');
     expect(html).toContain("1 of 2 repositories have open detections");
   });
 
@@ -189,27 +189,27 @@ describe("pages render from API responses", () => {
     const boundary = run({ ...shared, tier: "boundary", run: "main-boundary" });
     const manual = run({ run: "manual", trigger: "manual", at: at(50) });
     const watched = [{ ...projects[0], lastRun: manual, lastMainAudit: boundary, mainAuditRuns: [edit, boundary] }];
-    const html = renderApp(state("overview", { projects: watched, tamper, runs: { "context-manager": [manual, boundary, edit] } }, { projects: watched }));
+    const html = renderApp(state("overview", { projects: watched, tamper, runs: { "example-project": [manual, boundary, edit] } }, { projects: watched }));
     expect(html).toContain('>edit · Advisory findings</span>');
     expect(html).toContain('>boundary · Pass</span>');
-    expect(html).toContain('href="/run?project=context-manager&amp;run=main-edit">Edit audit</a> <span class="tag err">Advisory findings</span>');
-    expect(html).toContain('href="/run?project=context-manager&amp;run=main-boundary">Boundary audit</a> <span class="tag pass">Pass</span>');
+    expect(html).toContain('href="/run?project=example-project&amp;run=main-edit">Edit audit</a> <span class="tag err">Advisory findings</span>');
+    expect(html).toContain('href="/run?project=example-project&amp;run=main-boundary">Boundary audit</a> <span class="tag pass">Pass</span>');
   });
 
   it("shows advisory findings and the exact main audit receipt in both run views", () => {
     const audit = run({
       run: "r-audit", tier: "boundary", trigger: "main audit", ref: "refs/remotes/origin/main", result: "fail", exit: 0,
-      root: "/worktrees/context-manager-main-audit", commit: "0123456789abcdef0123456789abcdef01234567", scope: "full", packs: ["core", "delivery"],
+      root: "/worktrees/example-project-main-audit", commit: "0123456789abcdef0123456789abcdef01234567", scope: "full", packs: ["core", "delivery"],
       file: "build/core-plugin-bundles.ts", files: 1, ms: 2875, rules: { "warden-no-comments": 0.3, "delivery-boundary": 135.2 }, cachedRules: ["warden-no-suppressions"],
       failures: [{ file: "build/core-plugin-bundles.ts", line: 1, guardrail: "delivery-boundary", practice: "delivery-check" }],
     });
-    const overview = renderApp(state("runs", { runs: { project: "context-manager", runs: [audit] } }));
+    const overview = renderApp(state("runs", { runs: { project: "example-project", runs: [audit] } }));
     expect(overview).toContain("Advisory findings");
     {
-      const html = renderApp(state("run", { runs: { project: "context-manager", runs: [audit] } }, { view: { run: "r-audit" } }));
+      const html = renderApp(state("run", { runs: { project: "example-project", runs: [audit] } }, { view: { run: "r-audit" } }));
       expect(html).toContain("Advisory findings");
       expect(html).toContain("main branch update · 2,875 ms · exit 0");
-      expect(html).toContain("/worktrees/context-manager-main-audit");
+      expect(html).toContain("/worktrees/example-project-main-audit");
       expect(html).toContain("0123456789abcdef0123456789abcdef01234567");
       expect(html).toContain("refs/remotes/origin/main");
       expect(html).toContain("Full tier");
@@ -227,7 +227,7 @@ describe("pages render from API responses", () => {
   it("distinguishes an incomplete audit from refusal and leaves unknown receipt fields blank", () => {
     const incomplete = run({ run: "r-incomplete", trigger: "main audit", result: "fail", exit: 1, rules: undefined, cachedRules: undefined, scope: undefined, commit: undefined });
     const refused = run({ run: "r-refused", trigger: "audit", outcome: "refused", result: "fail", exit: 1, alert: "lock-drift" });
-    const runs = { project: "context-manager", runs: [incomplete, refused] };
+    const runs = { project: "example-project", runs: [incomplete, refused] };
     const list = renderApp(state("runs", { runs }));
     expect(list).toContain("Incomplete audit");
     expect(list).toContain(">Refused</span>");
@@ -242,14 +242,14 @@ describe("pages render from API responses", () => {
 
   it("shows a historical continuous audit finding without implying that it blocked an edit", () => {
     const previous = run({ trigger: "continuous audit", result: "fail", failures: [{ file: "build/delivery.ts", line: 1 }] });
-    const html = renderApp(state("runs", { runs: { project: "context-manager", runs: [previous] } }));
+    const html = renderApp(state("runs", { runs: { project: "example-project", runs: [previous] } }));
     expect(html).toContain("continuous audit");
     expect(html).toContain("Advisory findings");
     expect(html).toContain('title="build/delivery.ts:1">delivery.ts:1');
   });
 
   it("renders the error-run state with one next action and the streak", () => {
-    const html = renderApp(state("run", { runs: { project: "context-manager", runs: cmRuns } }, { view: { run: "r-err2", fresh: new Set() } }));
+    const html = renderApp(state("run", { runs: { project: "example-project", runs: exRuns } }, { view: { run: "r-err2", fresh: new Set() } }));
     expect(html).toContain("Error at rules intact");
     expect(html).toContain("stopped at step 1 of 4");
     expect(html).toContain("not reached");
@@ -259,9 +259,9 @@ describe("pages render from API responses", () => {
 
   it("plays a run's change video with its keyframes, and shows nothing extra for a run without one", () => {
     const recorded = run({ run: "r-video", video: { file: "change.webm", keyframes: ["01-before.jpg", "02-after.jpg"] } });
-    const page = (id: string) => renderApp(state("run", { runs: { project: "context-manager", runs: [recorded, ...cmRuns] } }, { view: { run: id, fresh: new Set() } }));
+    const page = (id: string) => renderApp(state("run", { runs: { project: "example-project", runs: [recorded, ...exRuns] } }, { view: { run: id, fresh: new Set() } }));
     const html = page("r-video");
-    const src = (file: string) => `/api/video?project=context-manager&amp;run=r-video&amp;file=${file}`;
+    const src = (file: string) => `/api/video?project=example-project&amp;run=r-video&amp;file=${file}`;
     expect(html).toContain(`<video controls preload="metadata" width="1280" height="800" src="${src("change.webm")}"></video>`);
     expect(html).toContain("Recorded by the agent that made the change · 2 keyframes");
     expect([...html.matchAll(/<img src="([^"]+)" alt="([^"]+)"/g)].map((m) => [m[1], m[2]])).toEqual([[src("01-before.jpg"), "Keyframe 01-before.jpg"], [src("02-after.jpg"), "Keyframe 02-after.jpg"]]);
@@ -282,8 +282,8 @@ describe("pages render from API responses", () => {
   });
 
   it("renders violations by pack with counts and the ratchet", () => {
-    const html = renderApp(state("violations", { violations, layers, runs: { project: "context-manager", runs: cmRuns } }));
-    expect(html).toContain("Violations · context-manager");
+    const html = renderApp(state("violations", { violations, layers, runs: { project: "example-project", runs: exRuns } }));
+    expect(html).toContain("Violations · example-project");
     expect(html).toContain("30,100");
     expect(html).toContain("43,634 → 43,634");
     expect(html).toContain("blocking until fixed");
@@ -291,11 +291,11 @@ describe("pages render from API responses", () => {
   });
 
   it("renders determinism shares and stops", () => {
-    const html = renderApp(state("determinism", { determinism, runs: { "context-manager": cmRuns, warden: [] } }));
+    const html = renderApp(state("determinism", { determinism, runs: { "example-project": exRuns, warden: [] } }));
     expect(html).toContain("67%");
     expect(html).toContain("No run has reached rules yet");
     expect(html).toContain("Stops before any rule ran");
-    expect(html).toMatch(/context-manager<\/td><td class="r">0<\/td><td class="r">0<\/td><td class="r">2<\/td>/);
+    expect(html).toMatch(/example-project<\/td><td class="r">0<\/td><td class="r">0<\/td><td class="r">2<\/td>/);
   });
 
   it("renders the tamper state with exactly one next action", () => {
@@ -340,24 +340,24 @@ describe("pages render from API responses", () => {
 
   it("renders the refused outcome with its next action", () => {
     const refused = run({ run: "r-ref", at: at(45), tier: "commit", trigger: "git-commit", outcome: "refused", result: undefined, exit: 1, steps: { "rules-intact": 2 }, next: "start the daemon: warden daemon install", ratchet: undefined, rules: undefined });
-    const html = renderApp(state("run", { runs: { project: "context-manager", runs: [refused, ...cmRuns] } }, { view: { run: "r-ref", fresh: new Set() } }));
+    const html = renderApp(state("run", { runs: { project: "example-project", runs: [refused, ...exRuns] } }, { view: { run: "r-ref", fresh: new Set() } }));
     expect(html).toContain("Refused at rules intact");
     expect(nextActions(html)).toEqual(["start the daemon: warden daemon install"]);
-    const stops = renderApp(state("determinism", { determinism, runs: { "context-manager": [refused, ...cmRuns], warden: [] } }));
-    expect(stops).toMatch(/context-manager<\/td><td class="r">0<\/td><td class="r">1<\/td><td class="r">2<\/td>/);
+    const stops = renderApp(state("determinism", { determinism, runs: { "example-project": [refused, ...exRuns], warden: [] } }));
+    expect(stops).toMatch(/example-project<\/td><td class="r">0<\/td><td class="r">1<\/td><td class="r">2<\/td>/);
   });
 
   it("renders the sparse-checkout next action of a commit run whose failing file is not on disk", () => {
     const next = "run git sparse-checkout add --skip-checks -- 'packs/core' to bring packs/core/a.ts onto disk, then change the code at the lines above to match \"Do this\"";
     const sparse = run({ run: "r-sparse", at: at(45), tier: "commit", trigger: "git-commit", result: "fail", exit: 1, treeOid: "abc", failures: [{ file: "packs/core/a.ts", line: 3, guardrail: "warden-no-comments", practice: "no-comments" }], next });
-    const html = renderApp(state("run", { runs: { project: "context-manager", runs: [sparse, ...cmRuns] } }, { view: { run: "r-sparse", fresh: new Set() } }));
+    const html = renderApp(state("run", { runs: { project: "example-project", runs: [sparse, ...exRuns] } }, { view: { run: "r-sparse", fresh: new Set() } }));
     expect(html).toContain("Check blocked");
     expect(nextActions(html).map((n) => n.replaceAll("&#39;", "'").replaceAll("&quot;", '"'))).toEqual([next]);
   });
 
   it("renders a run that stopped before its first step", () => {
     const early = run({ run: "r-early", outcome: "error", result: undefined, exit: 2, steps: {}, next: "run warden check --base main", ratchet: undefined, rules: undefined });
-    const html = renderApp(state("run", { runs: { project: "context-manager", runs: [early] } }, { view: { run: "r-early", fresh: new Set() } }));
+    const html = renderApp(state("run", { runs: { project: "example-project", runs: [early] } }, { view: { run: "r-early", fresh: new Set() } }));
     expect(html).toContain("Error before the first step");
     expect(checks(html)).toEqual([
       ["skip", "No open alerts", "not reached", ""],
@@ -382,8 +382,8 @@ describe("pages render from API responses", () => {
   });
 
   it("says so when a linked run is not among the fetched runs", () => {
-    const html = renderApp(state("run", { runs: { project: "context-manager", runs: cmRuns } }, { view: { run: "r-old", fresh: new Set() } }));
-    expect(html).toContain('Warden has no retained record for run <span class="mono">r-old</span> in context-manager.');
+    const html = renderApp(state("run", { runs: { project: "example-project", runs: exRuns } }, { view: { run: "r-old", fresh: new Set() } }));
+    expect(html).toContain('Warden has no retained record for run <span class="mono">r-old</span> in example-project.');
     expect(html).not.toContain("Error at rules intact");
   });
 
@@ -430,21 +430,21 @@ describe("pages render from API responses", () => {
 });
 
 describe("an unwired project and audit mode", () => {
-  const hook = { project: "context-manager", root: "/p/cm", file: ".warden/generated/hooks/pre-commit", detail: "hook-unwired", next: "make .git/hooks/pre-commit run Warden" };
-  const unchecked = { project: "context-manager", root: "/p/cm", file: "4fbbfa67b769", detail: "unchecked-commit", next: "check commit 4fbbfa67b769" };
+  const hook = { project: "example-project", root: "/p/ex", file: ".warden/generated/hooks/pre-commit", detail: "hook-unwired", next: "make .git/hooks/pre-commit run Warden" };
+  const unchecked = { project: "example-project", root: "/p/ex", file: "4fbbfa67b769", detail: "unchecked-commit", next: "check commit 4fbbfa67b769" };
   const unwiredRun = run({ run: "r-unwired", at: at(39), alert: "hook-unwired", next: hook.next, rules: { "warden-no-comments": 0.3 }, cachedRules: ["warden-no-suppressions"] });
   const wired = [{ ...projects[0], lastRun: unwiredRun, openAlerts: 3, mode: "enforce", unwired: [hook] }, projects[1]];
   const at2 = (page: string, data: Record<string, unknown>, view: Record<string, unknown> = {}) => ({ ...state(page, data, { view: { fresh: new Set(), ...view } }), projects: wired, data: { projects: wired, ...data } });
 
   it("shows an unwired project as its own setup error, apart from tamper alerts and rule results", () => {
-    const overview = renderApp(at2("overview", { tamper: { open: [hook, unchecked], recent: [] }, runs: { "context-manager": [unwiredRun], warden: [] } }));
-    expect(overview).toContain("Warden is unwired in context-manager");
+    const overview = renderApp(at2("overview", { tamper: { open: [hook, unchecked], recent: [] }, runs: { "example-project": [unwiredRun], warden: [] } }));
+    expect(overview).toContain("Warden is unwired in example-project");
     expect(overview).toContain("Git must invoke Warden’s generated pre-commit hook through the configured Git hooks path. Commits land without a Warden check. While this alert is open, Warden refuses checks that would otherwise pass. This is a setup problem, not a rule failure. Fix it first, then review the remaining open alerts on the Tamper page.");
     expect(overview).toContain("unchecked-commit on");
     expect(overview).not.toContain("hook-unwired on");
     expect(overview).toContain('>Warden unwired</small>');
     expect(overview).toContain('<span class="tag mode enforce"');
-    const page = renderApp(at2("run", { runs: { project: "context-manager", runs: [unwiredRun] } }, { run: "r-unwired" }));
+    const page = renderApp(at2("run", { runs: { project: "example-project", runs: [unwiredRun] } }, { run: "r-unwired" }));
     expect(page).toContain("Git pre-commit hook is not wired to Warden");
     expect(checks(page)).toEqual([
       ["fail", "No open alerts", "Warden is unwired. Git must invoke Warden’s generated pre-commit hook through the configured Git hooks path.", ""],
@@ -458,11 +458,11 @@ describe("an unwired project and audit mode", () => {
 
   it("labels audit-mode failures as recorded and not blocking", () => {
     const failed = run({ run: "r-audit-mode", result: "fail", exit: 0, mode: "audit", failedRules: ["warden-no-comments"], failures: [{ file: "b.ts", line: 1, guardrail: "warden-no-comments", practice: "no-comments" }] });
-    const list = renderApp(at2("runs", { runs: { project: "context-manager", runs: [failed] } }));
+    const list = renderApp(at2("runs", { runs: { project: "example-project", runs: [failed] } }));
     expect(list).toContain("Failed · not blocked");
     expect(list).not.toContain(">Blocked</span>");
     expect(list).toContain("Enforcing: Failures block agent edits and commits.");
-    const page = renderApp(at2("run", { runs: { project: "context-manager", runs: [failed] } }, { run: "r-audit-mode" }));
+    const page = renderApp(at2("run", { runs: { project: "example-project", runs: [failed] } }, { run: "r-audit-mode" }));
     expect(page).toContain("Audit mode. Warden recorded this run and did not block.");
     expect(page).toContain("Rules failed in audit mode");
     expect(checks(page)).toContainEqual(["fail", "warden-no-comments", "failed · 1 finding shown below", "&lt;1 ms"]);
@@ -474,11 +474,11 @@ describe("runs blocked by an open alert", () => {
 
   it("shows a run blocked by an alert as blocked in the runs table and the run page, with the alert's next action", () => {
     const runs = [alertRun, run()];
-    const list = renderApp(state("runs", { runs: { project: "context-manager", runs } }, { view: { run: "r-alert", outcome: "not", fresh: new Set() } }));
+    const list = renderApp(state("runs", { runs: { project: "example-project", runs } }, { view: { run: "r-alert", outcome: "not", fresh: new Set() } }));
     expect(list).toContain("1 not passing");
     expect(list).toContain("Blocked by alert");
-    expect(list).toContain('href="/run?project=context-manager&amp;run=r-alert"');
-    const page = renderApp(state("run", { runs: { project: "context-manager", runs } }, { view: { run: "r-alert", fresh: new Set() } }));
+    expect(list).toContain('href="/run?project=example-project&amp;run=r-alert"');
+    const page = renderApp(state("run", { runs: { project: "example-project", runs } }, { view: { run: "r-alert", fresh: new Set() } }));
     expect(page).toContain("Blocked by an open tamper alert");
     expect(page).toContain("open tamper alert: source-drift");
     expect(page).not.toContain(">Pass<");
@@ -487,7 +487,7 @@ describe("runs blocked by an open alert", () => {
 
   it("names the Git hook that raised the alert and explains an agent edit’s zero exit", () => {
     const hookRun = { ...alertRun, tier: "edit", trigger: "agent-edit", exit: 0, alert: "hook-unwired" };
-    const page = renderApp(state("run", { runs: { project: "context-manager", runs: [hookRun] } }));
+    const page = renderApp(state("run", { runs: { project: "example-project", runs: [hookRun] } }));
     expect(page).toContain("Git pre-commit hook is not wired to Warden");
     expect(page).toContain("The run’s rules passed. Warden reported a block to the agent hook and exited with status 0.");
     expect(page).not.toContain("open tamper alert: hook-unwired");
@@ -501,21 +501,21 @@ describe("runs blocked by an open alert", () => {
 
 describe("UI QA fixes", () => {
   it("links the timestamp to the run page and keeps the history full width", () => {
-    const html = renderApp(state("runs", { runs: { project: "context-manager", runs: cmRuns } }));
-    expect(html).toContain('href="/run?project=context-manager&amp;run=r-block" aria-label="Open git commit run at ');
+    const html = renderApp(state("runs", { runs: { project: "example-project", runs: exRuns } }));
+    expect(html).toContain('href="/run?project=example-project&amp;run=r-block" aria-label="Open git commit run at ');
     expect(html).toContain('<section class="mod run-list"');
     expect(html).not.toContain('id="detail"');
   });
 
   it("marks the current watched project in the sidebar, and the stylesheet styles it", async () => {
-    const html = renderApp(state("runs", { runs: { project: "context-manager", runs: cmRuns } }));
-    expect(html).toMatch(/aria-current="true"><span>context-manager<\/span>/);
+    const html = renderApp(state("runs", { runs: { project: "example-project", runs: exRuns } }));
+    expect(html).toMatch(/aria-current="true"><span>example-project<\/span>/);
     const css = await readFile(join(wardenRoot, "web/app.css"), "utf8");
     expect(css).toContain(".nav a[aria-current]{");
   });
 
   it("shows a dash for the last pass of a project with no runs", () => {
-    const html = renderApp(state("overview", { tamper: { open: [], recent: [] }, runs: { "context-manager": [], warden: [run({ run: "w-1" })] } }));
+    const html = renderApp(state("overview", { tamper: { open: [], recent: [] }, runs: { "example-project": [], warden: [run({ run: "w-1" })] } }));
     expect(html).not.toContain("in the last 0 runs");
     expect(html).toMatch(/Last pass<\/div><div>–<\/div>/);
   });
@@ -547,16 +547,16 @@ describe("review and UI QA round 2", () => {
   };
 
   it("shows only the banner's next action while the daemon is lost, over a real failing page", () => {
-    const overview = lost("overview", { tamper, runs: { "context-manager": cmRuns, warden: [] } });
-    expect(renderApp(state("overview", { tamper, runs: { "context-manager": cmRuns, warden: [] } }))).toContain(`<code>${ERROR_NEXT}</code>`);
-    expect(overview).toContain("context-manager");
+    const overview = lost("overview", { tamper, runs: { "example-project": exRuns, warden: [] } });
+    expect(renderApp(state("overview", { tamper, runs: { "example-project": exRuns, warden: [] } }))).toContain(`<code>${ERROR_NEXT}</code>`);
+    expect(overview).toContain("example-project");
     expect(nextActions(overview)).toEqual(["run warden daemon install"]);
     expect(overview).not.toContain("Next action:");
     expect(overview.match(/next action/gi)).toHaveLength(1);
-    const runPage = lost("run", { runs: { project: "context-manager", runs: cmRuns } }, { view: { run: "r-block", fresh: new Set() } });
+    const runPage = lost("run", { runs: { project: "example-project", runs: exRuns } }, { view: { run: "r-block", fresh: new Set() } });
     expect(runPage).toContain("Check blocked");
     expect(nextActions(runPage)).toEqual(["run warden daemon install"]);
-    const list = lost("runs", { runs: { project: "context-manager", runs: cmRuns } }, { view: { run: "r-block" } });
+    const list = lost("runs", { runs: { project: "example-project", runs: exRuns } }, { view: { run: "r-block" } });
     expect(nextActions(list)).toEqual(["run warden daemon install"]);
     expect(list).not.toContain(BLOCK_NEXT);
     expect(list).not.toContain(ERROR_NEXT);
@@ -564,7 +564,7 @@ describe("review and UI QA round 2", () => {
   });
 
   it("shows each overview run's next action once", () => {
-    const html = renderApp(state("overview", { tamper: { open: [], recent: [] }, runs: { "context-manager": cmRuns, warden: [] } }));
+    const html = renderApp(state("overview", { tamper: { open: [], recent: [] }, runs: { "example-project": exRuns, warden: [] } }));
     expect(nextActions(html)).toEqual([ERROR_NEXT]);
     expect(html).not.toContain(`Next action: <span class="mono">${ERROR_NEXT}`);
   });
@@ -594,7 +594,7 @@ describe("review and UI QA round 2", () => {
     expect(css).toContain("td.path{overflow-wrap:anywhere");
     expect(css).toContain(".bandt td{white-space:normal;overflow-wrap:anywhere");
     expect(css).toContain(".bandt td.r{white-space:nowrap}");
-    const html = renderApp(state("run", { runs: { project: "context-manager", runs: cmRuns } }, { view: { run: "r-block", fresh: new Set() } }));
+    const html = renderApp(state("run", { runs: { project: "example-project", runs: exRuns } }, { view: { run: "r-block", fresh: new Set() } }));
     expect(css).toMatch(/\.finding-row\{[^}]*overflow-wrap:anywhere/);
     expect(html).toContain('<div class="finding-location"><div class="mono">src/cli/view.ts:212</div>');
   });
@@ -605,7 +605,7 @@ describe("review and UI QA round 2", () => {
   });
 
   it("puts every overview alert tag in a fixed-width slot", async () => {
-    const html = renderApp(state("overview", { tamper, runs: { "context-manager": cmRuns, warden: [] } }));
+    const html = renderApp(state("overview", { tamper, runs: { "example-project": exRuns, warden: [] } }));
     const rows = html.match(/<div class="alert[^"]*">/g) ?? [];
     expect(rows.length).toBeGreaterThan(1);
     expect(html.match(/<div class="alert[^"]*"><span class="slot"><span class="tag /g)).toHaveLength(rows.length);
@@ -613,7 +613,7 @@ describe("review and UI QA round 2", () => {
   });
 
   it("names the time the data loaded, not the time of the last draw", () => {
-    const html = renderApp(state("overview", { tamper, runs: { "context-manager": cmRuns, warden: [] } }, { loadedAt: Date.parse(at(10)) }));
+    const html = renderApp(state("overview", { tamper, runs: { "example-project": exRuns, warden: [] } }, { loadedAt: Date.parse(at(10)) }));
     expect(html).toContain(`updated ${new Date(Date.parse(at(10))).toTimeString().slice(0, 8)}`);
   });
 

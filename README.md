@@ -622,8 +622,8 @@ These commits go unjudged:
 - commits in a worktree whose branch has no commit yet;
 - commits in a clone on this machine where no `warden init` or check has
   run, because the daemon discovers a repository only from Warden's Evidence.
-  Origin-side enforcement, tracked as cm-wkqedr.52, covers what a
-  per-machine daemon cannot see.
+  Origin-side enforcement, not built yet, would cover what a per-machine
+  daemon cannot see.
 
 A commit counts as another machine's only when a remote-tracking ref of a
 configured remote reached it by fetch, pull, or clone, as that ref's reflog

@@ -1111,10 +1111,10 @@ describe("a cmd Guardrail's project scripts are locked", () => {
   it("a project script a bare command finds on PATH is locked", async () => {
     vi.stubEnv("PATH", `${join(root, "bin")}:${process.env.PATH ?? ""}`);
     await mkdir(join(root, "bin"));
-    await writeFile(join(root, "bin/check-canon"), "exit 1\n", { mode: 0o755 });
-    const { code } = await lockedThenEdited("test ! -e broken || check-canon", {}, ["bin/check-canon", "true\n"]);
+    await writeFile(join(root, "bin/check-docs"), "exit 1\n", { mode: 0o755 });
+    const { code } = await lockedThenEdited("test ! -e broken || check-docs", {}, ["bin/check-docs", "true\n"]);
     expect(code).toBe(1);
-    expect(await tampered()).toContainEqual({ file: "./bin/check-canon", detail: "source-drift" });
+    expect(await tampered()).toContainEqual({ file: "./bin/check-docs", detail: "source-drift" });
   });
 
   for (const command of ["nice ./scripts/c.sh", "timeout 5 ./scripts/c.sh"]) {

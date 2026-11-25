@@ -21,9 +21,8 @@ vitest 4. No new dependency.
 
 **Spec:** [`2026-11-18-warden-guardrail-framework-design.md`](2026-11-18-warden-guardrail-framework-design.md),
 section "Capabilities: skills and tools", approved by Ryan on November 18,
-2026. Bead `cm-wkqedr.4` and its notes (Ryan, November 19, 2026). Source
-process: `context-manager/.superpowers/sdd/2026-11-18-warden-first-slice/`
-`review-triage.md`, `builder-checklist.md`, and `pre-review-gate.sh`.
+2026, and Ryan's notes of November 19, 2026. Source process: the first-slice
+files `review-triage.md`, `builder-checklist.md`, and `pre-review-gate.sh`.
 
 ## Rulings for Ryan to check
 
@@ -92,7 +91,7 @@ Every task ends with these, after its own steps:
 - `npx tsc --noEmit` exits 0.
 - `npx eslint <changed files>` exits 0.
 - `npm run build:dist`, then stage `dist/` with the source.
-- Commit with subject `<what is true now> (cm-wkqedr.4)`. Never `--no-verify`.
+- Commit with subject `<what is true now>`. Never `--no-verify`.
 
 ## Review Focus
 
@@ -181,7 +180,7 @@ Same command. Expected: PASS.
 
 - [ ] **Step 5: Run the closing steps and commit**
 
-`Capability records load from packs, and compile refuses duplicate ids, shared purposes, and undefined Practices or Terms (cm-wkqedr.4)`
+`Capability records load from packs, and compile refuses duplicate ids, shared purposes, and undefined Practices or Terms`
 
 ---
 
@@ -277,7 +276,7 @@ Same command, after `npm run build:dist` (the command check runs `bin/warden.js`
 
 - [ ] **Step 5: Run the closing steps and commit**
 
-`Compile emits a hash-locked SKILL.md for each skill Capability, refuses commands that are not warden subcommands, and doctor checks the .claude/skills link (cm-wkqedr.4)`
+`Compile emits a hash-locked SKILL.md for each skill Capability, refuses commands that are not warden subcommands, and doctor checks the .claude/skills link`
 
 ---
 
@@ -337,7 +336,7 @@ Same command. Expected: PASS, with every existing test in those files still pass
 
 - [ ] **Step 5: Run the closing steps and commit**
 
-`cmd Guardrails see the check's base and their pack settings, examples run in a git repository, and the baseline no longer runs cmd Guardrails (cm-wkqedr.4)`
+`cmd Guardrails see the check's base and their pack settings, examples run in a git repository, and the baseline no longer runs cmd Guardrails`
 
 ---
 
@@ -426,7 +425,7 @@ Same command. Expected: PASS.
 
 - [ ] **Step 5: Run the closing steps and commit**
 
-`Review findings are classified into eight kinds and triaged to one verdict and one next action (cm-wkqedr.4)`
+`Review findings are classified into eight kinds and triaged to one verdict and one next action`
 
 ---
 
@@ -534,7 +533,7 @@ Same command. Expected: PASS.
 
 - [ ] **Step 5: Run the closing steps and commit**
 
-`The superpowers review adapter compiles a review rule to the full Agent invocation and normalizes its report to findings, proved both ways by a conformance harness (cm-wkqedr.4)`
+`The superpowers review adapter compiles a review rule to the full Agent invocation and normalizes its report to findings, proved both ways by a conformance harness`
 
 ---
 
@@ -609,7 +608,7 @@ Same command. Expected: PASS.
 
 - [ ] **Step 5: Run the closing steps and commit**
 
-`warden review brief prints the reviewer's full invocation, and warden review triage routes its report by kind to one next action (cm-wkqedr.4)`
+`warden review brief prints the reviewer's full invocation, and warden review triage routes its report by kind to one next action`
 
 ---
 
@@ -695,11 +694,11 @@ and confirm Warden's own check still passes with `review` not enabled (Ruling 22
 
 - [ ] **Step 5: Run the closing steps and commit**
 
-`The review pack runs the pre-review gate as a Warden Guardrail with one next action per failure, and its change-review Capability compiles to a skill that runs the gate, the brief, and the triage (cm-wkqedr.4)`
+`The review pack runs the pre-review gate as a Warden Guardrail with one next action per failure, and its change-review Capability compiles to a skill that runs the gate, the brief, and the triage`
 
 ---
 
 ## After the slice
 
 - Release Warden, then enable `review` in Warden's own `.warden/config.yaml` with `build: { command: "npm run -s build:dist", output: "dist/src" }`, and link `.claude/skills/change-review`. This replaces `pre-review-gate.sh` and the hand triage in the next build.
-- File one task per deferred item above under `cm-wkqedr.4`.
+- File one task per deferred item above.

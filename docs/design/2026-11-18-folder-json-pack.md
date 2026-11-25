@@ -1,6 +1,6 @@
 # Folder-json pack
 
-Bead: cm-wkqedr.31. An opt-in pack that requires the
+An opt-in pack that requires the
 [collection-folders pack](2026-11-18-collection-folders-pack.md).
 
 Below a collection, folders are shaped like JSON. A file is a property, a
@@ -22,8 +22,8 @@ one next action.
 - The rule is Ryan's (November 18, 2026). He agreed that it is a separate
   opt-in pack that requires collection-folders, which stays limited to
   bracketed folders.
-- The one file in a non-leaf folder is allowed, not required. The bead left
-  this open for Ryan; a folder with subfolders and no files passes.
+- The one file in a non-leaf folder is allowed, not required. This was left
+  open for Ryan; a folder with subfolders and no files passes.
 
 ## Calls made here, for Ryan to check
 
@@ -49,9 +49,3 @@ a failure is project-wide and cannot be baselined, the configured paths are
 ignored, and at most 19 folders show before the count line.
 - The script sets `process.exitCode` instead of calling `process.exit`, so a
   listing larger than a pipe buffer still reaches its count and next action.
-
-## Measured in Context Manager (November 18, 2026)
-
-Tracked and untracked, not ignored, files (6,922 tracked): 121 folders below a
-collection have subfolders and more than one file. The scan takes about 0.3
-seconds.
