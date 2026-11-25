@@ -123,7 +123,7 @@ export async function route(daemon: Daemon, wardenRoot: string, url: URL): Promi
           mainAuditRuns: ["edit", "boundary"].flatMap((tier) => revisionRuns.filter((run) => run.tier === tier).slice(-1)),
           openAlerts: p.repositories.reduce((sum, r) => sum + r.openAlerts, 0),
           mode: modeOf(runs),
-          unwired: openAlerts(daemon, p.project).filter((d) => UNWIRED.has(d.detail)),
+          unwired: [...new Map(openAlerts(daemon, p.project).filter((d) => UNWIRED.has(d.detail)).map((d) => [`${d.repo}\0${d.detail}\0${d.file}`, d])).values()],
         };
       }) };
     case "/api/runs": {

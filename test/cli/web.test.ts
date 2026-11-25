@@ -362,7 +362,7 @@ describe("an unwired project and audit mode", () => {
   it("shows an unwired project as its own setup error, apart from tamper alerts and rule results", () => {
     const overview = renderApp(at2("overview", { tamper: { open: [hook, unchecked], recent: [] }, runs: { "context-manager": [unwiredRun], warden: [] } }));
     expect(overview).toContain("Warden is unwired in context-manager");
-    expect(overview).toContain("The commit hook does not run Warden. Commits land without a Warden check. While this alert is open, Warden refuses checks that would otherwise pass. This is a setup problem, not a rule failure. Fix it first, then review the other 2 open alerts on the Tamper page.");
+    expect(overview).toContain("The commit hook does not run Warden. Commits land without a Warden check. While this alert is open, Warden refuses checks that would otherwise pass. This is a setup problem, not a rule failure. Fix it first, then review the remaining open alerts on the Tamper page.");
     expect(overview).toContain("unchecked-commit on");
     expect(overview).not.toContain("hook-unwired on");
     expect(overview).toContain('>Warden unwired</small>');

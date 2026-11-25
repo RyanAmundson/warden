@@ -257,9 +257,8 @@ export const unwiredBanner = (p) => {
   const first = p?.unwired?.[0];
   if (first === undefined) return "";
   const id = `uw-${p.project.replace(/[^a-z0-9]/gi, "-")}`;
-  const rest = (p.openAlerts ?? 0) - p.unwired.length;
   const effect = `${UNWIRED_EFFECT[first.detail] ?? ""} ${p.mode === "audit" ? "In audit mode, this alert does not block work." : "While this alert is open, Warden refuses checks that would otherwise pass."}`;
-  return `<section class="banner red unwired" role="alert" aria-labelledby="${id}"><div class="top">${tag({ cls: "tamper", text: "Warden unwired", icon: true })}<h2 id="${id}">Warden is unwired in ${esc(p.project)}</h2></div><p>${esc(DETAIL_TEXT[first.detail] ?? first.detail)} ${esc(effect.trim())} This is a setup problem, not a rule failure.${rest > 0 ? ` Fix it first, then review the other ${esc(plural(rest, "open alert"))} on the Tamper page.` : ""}</p>${nextBox(first.next)}</section>`;
+  return `<section class="banner red unwired" role="alert" aria-labelledby="${id}"><div class="top">${tag({ cls: "tamper", text: "Warden unwired", icon: true })}<h2 id="${id}">Warden is unwired in ${esc(p.project)}</h2></div><p>${esc(DETAIL_TEXT[first.detail] ?? first.detail)} ${esc(effect.trim())} This is a setup problem, not a rule failure.${p.openAlerts > p.unwired.length ? " Fix it first, then review the remaining open alerts on the Tamper page." : ""}</p>${nextBox(first.next)}</section>`;
 };
 
 const selectedProject = (state) => state.projects?.find((p) => p.project === state.project);
