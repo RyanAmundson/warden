@@ -487,7 +487,10 @@ export async function holdersOf(root, sha, trees) {
 }
 export const isAncestor = (root, ancestor, of) => git(root, ["merge-base", "--is-ancestor", ancestor, of]).ok;
 export async function reachable(root, shas, tips) {
-    const present = shas.filter((sha) => hasCommit(root, sha));
+    if (shas.length === 0)
+        return new Set();
+    const present = (await gitLines(root, ["cat-file", "--batch-check=%(objectname) %(objecttype)"], shas.map((sha) => `${sha}^{commit}\n`).join("")))
+        .flatMap((line) => line.endsWith(" commit") ? [line.slice(0, -" commit".length)] : []);
     if (present.length === 0)
         return new Set();
     const outside = new Set(await gitLines(root, ["rev-list", "--ignore-missing", "--stdin"], [...present.map((sha) => `${sha}\n`), ...tips.map((t) => `^${t}\n`)].join("")));
