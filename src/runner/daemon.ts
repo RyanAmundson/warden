@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { type FSWatcher, existsSync, mkdirSync, readFileSync, rmSync, watch } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { type FSWatcher, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, watch } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { setImmediate as yieldToEvents } from "node:timers/promises";
 import { COMMIT_HOOK, RELEASES } from "../compiler/emit.js";
 import { FIRST_STAMPING, LOCK_PATH, firstLine, olderThan, readLock } from "../compiler/lock.js";
@@ -151,9 +151,35 @@ export function openAlerts(root: string, audit = false): Detection[] {
   });
 }
 
-export function discoverRoots(): string[] {
-  const roots = evidenceProjects().flatMap((p) => readEvidenceTail(p, LOOP_TAIL_BYTES).flatMap((e) => (e.root === undefined ? [] : [e.root])));
+export function discoverRoots(auditOnly: ReadonlyMap<string, AuditOnlyProject> = new Map()): string[] {
+  const roots = evidenceProjects().filter((project) => !auditOnly.has(project))
+    .flatMap((p) => readEvidenceTail(p, LOOP_TAIL_BYTES).flatMap((e) => (e.root === undefined ? [] : [e.root])));
   return [...new Set(roots)].filter((r) => existsSync(join(r, ".warden/config.yaml")));
+}
+
+export interface AuditOnlyProject {
+  project: string;
+  root: string;
+  ref: string;
+}
+
+function readAuditOnly(): Map<string, AuditOnlyProject> {
+  const file = join(wardenHome(), "daemon", "audit-only.json");
+  const text = readOptional(file);
+  const entries: unknown = text === undefined ? [] : parsed(text);
+  if (!Array.isArray(entries)) throw new RecordError(file, "", "must contain an array of audit-only project registrations.");
+  const projects = new Map<string, AuditOnlyProject>();
+  for (const entry of entries) {
+    if (entry === null || typeof entry !== "object" ||
+      typeof entry.project !== "string" || !/^[a-z0-9][a-z0-9-]*$/.test(entry.project) ||
+      typeof entry.root !== "string" || !isAbsolute(entry.root) ||
+      typeof entry.ref !== "string" || !entry.ref.startsWith("refs/remotes/") ||
+      projects.has(entry.project)) {
+      throw new RecordError(file, "", "each registration needs a unique project ID, an absolute checkout path, and a remote-tracking ref.");
+    }
+    projects.set(entry.project, { project: entry.project, root: realpathSync(entry.root), ref: entry.ref });
+  }
+  return projects;
 }
 
 const nextOf = (message: string): string | undefined => {
@@ -292,6 +318,7 @@ export interface Watched {
 
 export interface Daemon {
   projects: Map<string, Watched>;
+  auditOnly: ReadonlyMap<string, AuditOnlyProject>;
   startedAt: string;
   heartbeat(): Heartbeat;
   discover(): Promise<void>;
@@ -304,6 +331,8 @@ const key = (d: { root?: string; file?: string; detail?: string }): string => `$
 
 export function startWatching(opts: DaemonOptions): Daemon {
   const projects = new Map<string, Watched>();
+  const auditOnly = readAuditOnly();
+  const excludedRepos = new Set([...auditOnly.values()].map(({ root }) => commonDir(root)));
   const indexes = new Map<string, Index>();
   const state = readState();
   const startedAt = now();
@@ -313,6 +342,18 @@ export function startWatching(opts: DaemonOptions): Daemon {
   const discoveries = new Map<string, Promise<void>>();
   const report = (cause: unknown): void => (opts.onError ?? ((e) => process.stderr.write(`${e.message}\n`)))(cause instanceof Error ? cause : new Error(String(cause)));
   const saveState = (): void => writeAtomic(stateFile(), `${JSON.stringify(state)}\n`);
+  let stateChanged = false;
+  for (const [root, saved] of Object.entries(state.roots)) {
+    if (!saved.open.some(({ repo }) => excludedRepos.has(repo))) continue;
+    delete state.roots[root];
+    stateChanged = true;
+  }
+  for (const repo of excludedRepos) {
+    if (!(repo in state.repos)) continue;
+    delete state.repos[repo];
+    stateChanged = true;
+  }
+  if (stateChanged) saveState();
   const indexFor = (project: string): Index => {
     const ix = refresh(indexes.get(project) ?? emptyIndex(), project);
     indexes.set(project, ix);
@@ -529,7 +570,10 @@ export function startWatching(opts: DaemonOptions): Daemon {
     if (projects.has(root)) return;
     const saved = state.roots[root]?.open ?? [];
     const repo = commonDir(root);
-    const w: Watched = { root, project: projectOf(root), repo, specs: watchSpecs(root, repo), open: new Map(saved.map((d) => [key(d), d])), watchers: new Map(), changes: new Set(), filesChanged: true, recordFound: [] };
+    if (excludedRepos.has(repo)) return;
+    const project = projectOf(root);
+    if (auditOnly.has(project)) return;
+    const w: Watched = { root, project, repo, specs: watchSpecs(root, repo), open: new Map(saved.map((d) => [key(d), d])), watchers: new Map(), changes: new Set(), filesChanged: true, recordFound: [] };
     projects.set(root, w);
     void scan(w);
   };
@@ -556,7 +600,7 @@ export function startWatching(opts: DaemonOptions): Daemon {
   const discover = (): Promise<void> => {
     if (stopped) return Promise.resolve();
     const remembered = Object.keys(state.roots).filter((r) => existsSync(join(r, ".warden/config.yaml")));
-    watchRoots([...discoverRoots(), ...remembered]);
+    watchRoots([...discoverRoots(auditOnly), ...remembered]);
     const repositories = new Set([...projects.values()].map((w) => w.repo));
     return Promise.all([...repositories].map((repo) => {
       const pending = discoveries.get(repo);
@@ -607,6 +651,7 @@ export function startWatching(opts: DaemonOptions): Daemon {
     if (file === null || !file.endsWith(".jsonl") || file.endsWith(".1.jsonl")) return;
     const project = file.slice(0, -".jsonl".length);
     opts.onEvidence?.(project);
+    if (auditOnly.has(project)) return;
     const known = [...projects.values()].filter((w) => w.project === project);
     for (const w of known) schedule(w);
     if (known.length === 0) discoverInBackground();
@@ -624,6 +669,7 @@ export function startWatching(opts: DaemonOptions): Daemon {
   }, opts.intervalMs ?? HEARTBEAT_MS);
   return {
     projects,
+    auditOnly,
     startedAt,
     heartbeat,
     discover,

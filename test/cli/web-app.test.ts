@@ -188,8 +188,8 @@ it("names an unknown project instead of showing another one", async () => {
   bodies["/api/projects"] = { projects: [{ project: "warden", roots: ["/p/w"], lastRun: null, openAlerts: 0 }] };
   bodies["/api/runs"] = { project: "warden", runs: [] };
   await boot("/run?project=gone&run=r-1");
-  expect(html).toContain("The daemon watches no project named gone");
-  expect(html).toContain("<code>pick a project under Watched projects</code>");
+  expect(html).toContain("The daemon has no project named gone");
+  expect(html).toContain("<code>pick a project in the sidebar</code>");
   expect(html).not.toContain("among the last");
 });
 
@@ -240,6 +240,31 @@ it("leaves modified clicks and in-page anchors to the browser", async () => {
 
 const warden = { projects: [{ project: "warden", roots: ["/p/w"], lastRun: null, openAlerts: 0 }] };
 const layers = { project: "warden", bands: [], practices: [], packs: [], packSettings: { root: "/p/w", revision: "r1", packs: [{ id: "custom", on: false }] } };
+
+it("shows published audit coverage and keeps checkout-only pages usable for watched projects", async () => {
+  bodies["/api/projects"] = { projects: [
+    { project: "context-manager", roots: [], lastRun: null, openAlerts: 0, mode: "audit", auditOnly: { project: "context-manager", root: "/p/cm", ref: "refs/remotes/origin/main" } },
+    ...warden.projects,
+  ] };
+  bodies["/api/runs"] = { project: "context-manager", runs: [] };
+  bodies["/api/layers"] = layers;
+  await boot("/?project=context-manager");
+  expect(html).toContain("1 project watched · 1 published audit");
+  expect(html).toContain("Automatic audit · origin/main");
+  expect(html).toContain("0 watched checkouts");
+  expect(html).toContain("The daemon is watching its hooks and records");
+  for (const page of ["layers", "violations"]) {
+    const before = fetches;
+    await click(`/${page}?project=context-manager`);
+    expect(fetches - before).toBe(2);
+    expect(html).toContain("Watched checkout required");
+    expect(html).toContain('href="/failures?project=context-manager">Current failures');
+    expect(html).toContain('href="/runs?project=context-manager">Run history');
+  }
+  await click("/layers?project=warden");
+  expect(html).toContain("Layers · warden");
+  expect(html).not.toContain("Watched checkout required");
+});
 
 it("asks before a switch discards unsaved pack changes, and stays when told to", async () => {
   bodies["/api/projects"] = warden;

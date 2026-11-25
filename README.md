@@ -487,6 +487,23 @@ completed run. Failed runs retry after one minute or when the ref advances.
 The watcher relies on your existing Git fetch process to update remote-tracking
 refs. Each receipt records the source root, ref, commit, base, and enabled packs.
 
+For a published branch without Warden enrollment, pass `--policy-commit SHA`
+and an approved policy list. The watcher restores the pinned commit's policy
+into its temporary checkout. Use `--initial-base SHA` when creating a
+checkpoint to start the comparison from an earlier published commit.
+
+To show a published audit in the dashboard without watching any checkout of
+its repository, add an entry to `daemon/audit-only.json` under
+`WARDEN_HOME` and restart the daemon. The file is a JSON array. Each entry
+identifies the project, its absolute checkout path, and its remote-tracking ref.
+
+```json
+[{"project":"sample","root":"/path/to/repo","ref":"refs/remotes/origin/main"}]
+```
+
+The daemon displays receipts for the registered ref and skips checkout discovery
+for the repository. Run the published-ref watcher separately.
+
 To restrict execution to approved policy versions, append the path to a
 JSON file containing an array of objects with `config` and `lock` SHA-256
 digests. Append `--once` to check the current ref and exit. Use a separate

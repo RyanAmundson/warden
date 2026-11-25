@@ -42,21 +42,30 @@ const projectsOf = (daemon) => {
         repositories.set(w.repo, entry);
         byName.set(w.project, repositories);
     }
-    return [...byName].map(([project, repos]) => {
+    const watched = [...byName].map(([project, repos]) => {
         const repositories = [...repos.values()];
         return { project, roots: repositories.flatMap((r) => r.roots), repositories };
-    }).sort((a, b) => a.project.localeCompare(b.project));
+    });
+    for (const auditOnly of daemon.auditOnly.values())
+        watched.push({ project: auditOnly.project, roots: [], repositories: [], auditOnly });
+    return watched.sort((a, b) => a.project.localeCompare(b.project));
 };
 const lastRan = (evidence) => runRecords(evidence).filter((e) => e.outcome === "ran").at(-1);
 const openAlerts = (daemon, project, repo) => [...daemon.projects.values()]
     .filter((w) => (project === undefined || w.project === project) && (repo === undefined || w.repo === repo))
     .flatMap((w) => [...w.open.values()]);
+const projectEvidence = ({ project, auditOnly }) => {
+    const evidence = readEvidence(project);
+    return auditOnly === undefined ? evidence : evidence.filter((run) => run.trigger === "main audit" && run.root === auditOnly.root && run.ref === auditOnly.ref);
+};
 const modeOf = (runs) => {
     const last = runs.filter((run) => run.trigger !== "audit" && run.trigger !== "main audit" && run.steps?.["tools-ready"] !== undefined).at(-1);
     return last === undefined ? null : last.mode ?? "enforce";
 };
 const bandsOf = (run) => Object.fromEntries([...BANDS.map((b) => b.name.toLowerCase()), "unknown"].map((name, i) => [name, bandCounts(run)[i] ?? 0]));
 function projectCheckout(daemon, entry, url) {
+    if (entry.auditOnly !== undefined)
+        throw new HttpError(409, "This project audits a published ref and has no watched checkouts.", "open GET /api/runs or GET /api/failures for the published audit");
     const selected = url.searchParams.get("root");
     if (selected !== null && !entry.roots.includes(selected)) {
         throw new PackSettingsError(404, "This checkout is not watched for the selected project.");
@@ -93,8 +102,10 @@ export async function route(daemon, wardenRoot, url) {
         }
         case "/api/projects":
             return { projects: projects.map((p) => {
-                    const runs = runRecords(readEvidence(p.project));
-                    const mainRuns = runs.filter((run) => run.trigger === "main audit" && run.root !== undefined && p.roots.includes(run.root));
+                    const runs = runRecords(projectEvidence(p));
+                    const mainRuns = p.auditOnly === undefined
+                        ? runs.filter((run) => run.trigger === "main audit" && run.root !== undefined && p.roots.includes(run.root))
+                        : runs;
                     const latest = mainRuns.at(-1);
                     const revisionRuns = mainRuns.filter((run) => run.commit === latest?.commit && run.ref === latest?.ref && run.root === latest?.root);
                     return {
@@ -103,16 +114,17 @@ export async function route(daemon, wardenRoot, url) {
                         lastMainAudit: latest ?? null,
                         mainAuditRuns: ["edit", "boundary"].flatMap((tier) => revisionRuns.filter((run) => run.tier === tier).slice(-1)),
                         openAlerts: p.repositories.reduce((sum, r) => sum + r.openAlerts, 0),
-                        mode: modeOf(runs),
+                        mode: p.auditOnly === undefined ? modeOf(runs) : "audit",
                         unwired: [...new Map(openAlerts(daemon, p.project).filter((d) => UNWIRED.has(d.detail)).map((d) => [`${d.repo}\0${d.detail}\0${d.file}`, d])).values()],
                     };
                 }) };
         case "/api/runs": {
-            const { project } = pick();
+            const entry = pick();
+            const { project } = entry;
             const limit = Number(url.searchParams.get("limit") ?? "20");
             if (!Number.isInteger(limit) || limit < 1)
                 throw new HttpError(400, `limit must be a positive integer, not ${url.searchParams.get("limit")}`, "pass ?limit= with a positive integer");
-            const evidence = readEvidence(project);
+            const evidence = projectEvidence(entry);
             const id = url.searchParams.get("run");
             const detail = id === null ? undefined : runEvidence(evidence, id, limit);
             const runs = id === null ? runRecords(evidence).slice(-limit).reverse() : (detail?.runs ?? []);
@@ -122,8 +134,9 @@ export async function route(daemon, wardenRoot, url) {
                 }) };
         }
         case "/api/failures": {
-            const { project, roots } = pick();
-            return { project, ...projectFailures(readEvidence(project), roots), alerts: openAlerts(daemon, project) };
+            const entry = pick();
+            const { project, roots, auditOnly } = entry;
+            return { project, ...projectFailures(projectEvidence(entry), auditOnly === undefined ? roots : [auditOnly.root]), alerts: openAlerts(daemon, project) };
         }
         case "/api/layers": {
             const entry = pick();
@@ -151,8 +164,9 @@ export async function route(daemon, wardenRoot, url) {
         }
         case "/api/determinism":
             return {
-                projects: projects.map(({ project }) => {
-                    const run = lastRan(readEvidence(project));
+                projects: projects.map((entry) => {
+                    const { project } = entry;
+                    const run = lastRan(projectEvidence(entry));
                     return { project, run: run?.run ?? null, at: run?.at ?? null, counts: run === undefined ? null : bandsOf(run) };
                 }),
             };

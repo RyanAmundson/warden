@@ -1,10 +1,10 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { promisify } from "node:util";
+import { parseArgs, promisify } from "node:util";
 import { appendEvidence, RUN_TOTAL, wardenHome, writeAtomic } from "../dist/src/runner/evidence.js";
 import { parseConfig } from "../dist/src/records/load.js";
 
@@ -72,7 +72,7 @@ async function auditTier({ root, project, ref, commit, base, tier, checkout, exe
   return exit === 0 && summary !== undefined && completed(summary);
 }
 
-async function auditMain({ root, project, ref, executable, approvedPolicies, once, signal }) {
+async function auditMain({ root, project, ref, executable, approvedPolicies, policyCommit, initialBase, once, signal }) {
   const commit = await commitAt(root, ref, signal);
   const path = join(wardenHome(), "main-audits", sha256([root, project, ref].join("\0")) + ".json");
   let checkpoint = { tiers: {} };
@@ -101,14 +101,26 @@ async function auditMain({ root, project, ref, executable, approvedPolicies, onc
     return state?.completed !== commit && (once || state?.commit !== commit || Date.now() - state.at >= retryMs);
   });
   if (pending.length === 0) return true;
+  if (checkpoint.base === undefined && initialBase !== undefined) {
+    await git(root, ["merge-base", "--is-ancestor", initialBase, commit], signal);
+  }
   checkpoint.head = commit;
-  checkpoint.base ??= await commitAt(root, commit + "^", signal);
+  checkpoint.base ??= await commitAt(root, initialBase ?? commit + "^", signal);
   writeAtomic(path, JSON.stringify(checkpoint) + "\n");
   const scratch = await mkdtemp(join(tmpdir(), "warden-main-audit-"));
   try {
     const checkout = join(scratch, "checkout");
     await git(scratch, ["clone", "--quiet", "--shared", "--single-branch", "--no-tags", "--no-checkout", "--", root, checkout], signal);
     await git(checkout, ["checkout", "--quiet", "--detach", commit], signal);
+    if (policyCommit !== undefined) {
+      try {
+        await lstat(join(checkout, ".warden"));
+        throw new Error(`Cannot install the pinned audit policy because ${commit} already contains .warden.`);
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+      await git(checkout, ["restore", `--source=${policyCommit}`, "--worktree", "--", ".warden"], signal);
+    }
     const [config, lockText] = await Promise.all([
       readFile(join(checkout, ".warden/config.yaml"), "utf8"),
       readFile(join(checkout, ".warden/lock.json"), "utf8"),
@@ -146,15 +158,22 @@ async function auditMain({ root, project, ref, executable, approvedPolicies, onc
 }
 
 async function main() {
-  const args = process.argv.slice(2);
-  const once = args.at(-1) === "--once";
-  if (once) args.pop();
+  const { positionals: args, values } = parseArgs({ allowPositionals: true, options: {
+    once: { type: "boolean" },
+    "policy-commit": { type: "string" },
+    "initial-base": { type: "string" },
+  } });
+  const { once, "policy-commit": policyCommit, "initial-base": initialBase } = values;
   const [root, project, ref, executable, policyFile] = args;
   if (!root || !project || !ref || !executable || !isAbsolute(executable) ||
       !/^[a-z0-9][a-z0-9-]*$/.test(project) || !ref.startsWith("refs/") ||
       args.length > 5) {
-    throw new Error("Usage: node scripts/watch-main.mjs <repo> <project> <full-ref> <warden-executable> [approved-policies.json] [--once]");
+    throw new Error("Usage: node scripts/watch-main.mjs <repo> <project> <full-ref> <warden-executable> [approved-policies.json] [--policy-commit <sha>] [--initial-base <sha>] [--once]");
   }
+  if (policyCommit !== undefined && (!commitSha.test(policyCommit) || policyFile === undefined)) {
+    throw new Error("--policy-commit requires a full commit SHA and an approved policy list.");
+  }
+  if (initialBase !== undefined && !commitSha.test(initialBase)) throw new Error("--initial-base requires a full commit SHA.");
   const controller = new AbortController();
   process.once("SIGTERM", () => controller.abort());
   process.once("SIGINT", () => controller.abort());
@@ -163,7 +182,7 @@ async function main() {
       approvedPolicies.some((policy) => !/^[0-9a-f]{64}$/.test(policy?.config) || !/^[0-9a-f]{64}$/.test(policy?.lock)))) {
     throw new Error("The approved policy list must contain pairs of config and lock SHA-256 digests.");
   }
-  const options = { root: await realpath(root), project, ref, executable, approvedPolicies, once, signal: controller.signal };
+  const options = { root: await realpath(root), project, ref, executable, approvedPolicies, policyCommit, initialBase, once, signal: controller.signal };
   let lastError;
   do {
     try {

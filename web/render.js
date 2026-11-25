@@ -1,6 +1,7 @@
 export const PAGES = { overview: "Overview", runs: "Runs", failures: "Current failures", layers: "Layers", violations: "Violations", determinism: "Determinism", tamper: "Tamper" };
 
 const PROJECT_PAGES = new Set(["runs", "run", "failures", "layers", "violations"]);
+export const checkoutPageUnavailable = (page, project) => project?.auditOnly && (page === "layers" || page === "violations");
 
 export const STEPS = [
   { id: "rules-intact", label: "rules intact", color: "#24364F" },
@@ -221,7 +222,7 @@ const sidebar = (state) => {
 <div class="brand">${BRAND}<span>WARDEN</span></div>
 <div class="daemon${lost ? " lost" : ""}"><b><i aria-hidden="true"></i>${lost ? "Daemon not answering" : "Daemon live"}</b><span id="beat">${esc(beatText(health, now))}</span></div>
 <div class="navs"><ul class="nav">${nav}</ul>
-<div><div class="lbl">Watched projects</div><ul class="nav">${watched === "" ? '<li class="empty-item">None yet</li>' : watched}</ul></div></div>
+<div><div class="lbl">${projects.some((p) => p.auditOnly) ? "Projects" : "Watched projects"}</div><ul class="nav">${watched === "" ? '<li class="empty-item">None yet</li>' : watched}</ul></div></div>
 <div class="foot">Warden ${esc(health?.version ?? "")} · evidence in ${esc(homeOf(health?.heartbeatFile))}</div>
 </nav>`;
 };
@@ -297,14 +298,16 @@ const projectCard = (p, runs) => {
   const ratchet = runs.find((r) => r.ratchet !== undefined)?.ratchet;
   const s = projectStatus(p);
   const id = `ov-${p.project.replace(/[^a-z0-9]/gi, "-")}`;
-  const roots = `<span title="${esc(p.roots.join("\n"))}">…/${esc(pathTail(p.roots[0] ?? ""))}</span>${p.roots.length > 1 ? ` and ${plural(p.roots.length - 1, "other checkout")}` : ""}`;
+  const roots = p.auditOnly ? "" : `<span class="muted mono"><span title="${esc(p.roots.join("\n"))}">…/${esc(pathTail(p.roots[0] ?? ""))}</span>${p.roots.length > 1 ? ` and ${plural(p.roots.length - 1, "other checkout")}` : ""}</span>`;
+  const auditRef = p.auditOnly ?? audits[0];
+  const coverage = p.auditOnly ? "0 watched checkouts" : "The daemon is watching its hooks and records";
   const repositories = p.repositories ?? [];
   const affected = repositories.filter((repository) => repository.openAlerts > 0).length;
   const repoCount = repositories.length > 1 ? `<span class="muted">${num(affected)} of ${num(repositories.length)} repositories have open detections</span>` : "";
   const end = run && notPassing(run) && run.next ? nextBox(run.next) : `<div class="calm">${run === null || run === undefined ? "No check has run here yet." : run.outcome === "empty" ? "The last run found no changes." : passed(run) ? "The last run passed." : "The last run recorded no next action."}</div>`;
   return `<section class="mod card" aria-labelledby="${id}">
-<div class="modh"><div><h2 class="h2" id="${id}">${esc(p.project)} ${modeTag(p.mode)}</h2><span class="muted mono">${roots}</span>${audits.length > 0 ? `<span class="muted" title="${esc(audits[0].ref)}">Automatic audit · ${auditRefLabel(audits[0])}</span><ul class="audit-results">${auditResults.join("")}</ul>` : ""}</div>${tag(s)}</div>
-<div class="keyrow">${projectKey(p.project, p.openAlerts > 0)}<div>${p.unwired?.length > 0 ? `<span class="bad">Warden is unwired</span><span class="muted">${esc(DETAIL_TEXT[p.unwired[0].detail] ?? p.unwired[0].detail)}</span><a href="${href("tamper")}">See open alerts</a>` : p.openAlerts > 0 ? `<span class="bad">${plural(p.openAlerts, "open tamper detection")}</span>${repoCount}<a href="${href("tamper")}">See what changed</a>` : '<span class="ok">No open tamper detections</span><span class="muted">The daemon is watching its hooks and records</span>'}</div></div>
+<div class="modh"><div><h2 class="h2" id="${id}">${esc(p.project)} ${modeTag(p.mode)}</h2>${roots}${auditRef ? `<span class="muted wrap" title="${esc(auditRef.ref)}">Automatic audit · ${auditRefLabel(auditRef)}</span>` : ""}${auditResults.length ? `<ul class="audit-results">${auditResults.join("")}</ul>` : ""}</div>${tag(s)}</div>
+<div class="keyrow">${projectKey(p.project, p.openAlerts > 0)}<div>${p.unwired?.length > 0 ? `<span class="bad">Warden is unwired</span><span class="muted">${esc(DETAIL_TEXT[p.unwired[0].detail] ?? p.unwired[0].detail)}</span><a href="${href("tamper")}">See open alerts</a>` : p.openAlerts > 0 ? `<span class="bad">${plural(p.openAlerts, "open tamper detection")}</span>${repoCount}<a href="${href("tamper")}">See what changed</a>` : `<span class="ok">No open tamper detections</span><span class="muted">${coverage}</span>`}</div></div>
 <div class="stats"><div><div class="lbl">Last run</div><div>${run ? `${esc(clock(run.at))} · ${esc(run.tier ?? "")}` : "–"}</div></div><div><div class="lbl">Last pass</div><div>${lastPass ? `${esc(clock(lastPass.at))} · ${esc(lastPass.tier ?? "")}` : (runs.length === 0 ? "–" : `none in the last ${plural(runs.length, "run")}`)}</div></div><div><div class="lbl">Open alerts</div><div>${num(p.openAlerts)}</div></div><div><div class="lbl">Ratchet left</div><div>${ratchet ? num(ratchet[1]) : "–"}</div></div></div>
 ${end}
 <div class="project-links"><a href="${href("failures", { project: p.project })}">Current failures</a><a href="${href("runs", { project: p.project })}">Run history</a></div>
@@ -342,9 +345,11 @@ export const overviewPage = (state) => {
   const all = data.projects.flatMap((p) => (data.runs[p.project] ?? []).map((r) => ({ ...r, project: p.project })));
   const stream = all.filter((r) => !view.filter || r.project === view.filter).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 25);
   const now = new Date(state.loadedAt ?? state.now ?? Date.now());
+  const auditOnlyCount = data.projects.filter((p) => p.auditOnly).length;
+  const coverage = `${plural(data.projects.length - auditOnlyCount, "project")} watched${auditOnlyCount ? ` · ${plural(auditOnlyCount, "published audit")}` : ""}`;
   const controls = `<label class="lbl" for="ov-proj">Project</label><select id="ov-proj" data-action="filter"><option value="">All projects</option>${data.projects.map((p) => `<option value="${esc(p.project)}"${view.filter === p.project ? " selected" : ""}>${esc(p.project)}</option>`).join("")}</select><button class="btn" type="button" data-action="pause" aria-pressed="${view.paused ? "true" : "false"}">${view.paused ? "Resume live" : "Pause live"}</button>`;
   const cols = ["timeLink", "project", "trigger", "tier", "changed", "outcome", "bar", "ms", "ratchet"];
-  return `${header("Overview", `${plural(data.projects.length, "project")} watched · updated ${esc(clock(now.toISOString()))} · ${esc(now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }))}${view.paused ? " · live updates paused" : ""}`, controls)}
+  return `${header("Overview", `${coverage} · updated ${esc(clock(now.toISOString()))} · ${esc(now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }))}${view.paused ? " · live updates paused" : ""}`, controls)}
 ${data.projects.map(unwiredBanner).join("")}
 ${alertsSection(data)}
 <div class="cards">${data.projects.map((p) => projectCard(p, data.runs[p.project] ?? [])).join("")}</div>
@@ -736,6 +741,11 @@ export const pageTitle = (state) => `${state.page === "run" ? "Run" : (PAGES[sta
 export const mainHtml = (state) => {
   if (state.error) return apiError(state.error);
   if (!state.data) return '<p class="muted">Loading…</p>';
+  const selected = selectedProject(state);
+  if (checkoutPageUnavailable(state.page, selected)) {
+    return `${header(`${PAGES[state.page]} · ${esc(selected.project)}`, `Automatic audit · ${auditRefLabel(selected.auditOnly)}`, projectPicker(state, "checkout-page-project"))}
+<section class="mod" aria-labelledby="checkout-page-unavailable"><div class="modh"><h2 class="h2" id="checkout-page-unavailable">Watched checkout required</h2></div><p class="pad muted">This project has a published audit and 0 watched checkouts.</p><div class="project-links"><a href="${href("failures", { project: selected.project })}">Current failures</a><a href="${href("runs", { project: selected.project })}">Run history</a></div></section>`;
+  }
   return (RENDER[state.page] ?? overviewPage)(state);
 };
 

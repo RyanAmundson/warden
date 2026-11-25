@@ -55,7 +55,7 @@ if (process.env.WARDEN_TEST_FAILED_TIER === tier) {
   process.exit(17);
 }
 const evidence = process.env.WARDEN_HOME + "/evidence";
-if (execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim()) process.exit(24);
+if (execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], { encoding: "utf8" }).trim()) process.exit(24);
 mkdirSync(evidence, { recursive: true });
 writeFileSync(evidence + "/sample.jsonl", JSON.stringify({
   kind: "cost", guardrail: "run", at: new Date().toISOString(), tier, base, outcome: "ran", exit: 0,
@@ -114,6 +114,27 @@ test("requires the approved policy pair before launching checks", () => {
     { tier: "edit", exit: 0, base, commit: approved },
     { tier: "boundary", exit: 0, base, commit: approved },
   ]);
+});
+
+test("restores an approved pinned policy only inside the audit checkout", () => {
+  const { commit, git, path, receipts, root, run, source } = fixture();
+  const policy = commit("policy");
+  git("rm", "-qr", ".warden");
+  const base = commit("unenrolled");
+  const published = commit("published without policy");
+  git("update-ref", ref, published);
+  writeFileSync(source, "dirty local checkout");
+  const allowlist = join(root, "policies.json");
+  writeFileSync(allowlist, JSON.stringify([{ config: sha256(config), lock: sha256(lock) }]));
+  expect(() => run([allowlist])).toThrow();
+  expect(existsSync(path)).toBe(false);
+  run([allowlist, "--policy-commit", policy, "--initial-base", base]);
+  expect(receipts()).toMatchObject([
+    { tier: "edit", exit: 0, base, commit: published, detail: "published without policy" },
+    { tier: "boundary", exit: 0, base, commit: published, detail: "published without policy" },
+  ]);
+  expect(existsSync(join(root, ".warden"))).toBe(false);
+  expect(readFileSync(source, "utf8")).toBe("dirty local checkout");
 });
 
 test("makes an executable failure visible for both tiers", () => {

@@ -1,4 +1,4 @@
-import { beatText, frozenHtml, pageTitle, renderApp } from "/render.js";
+import { beatText, checkoutPageUnavailable, frozenHtml, pageTitle, renderApp } from "/render.js";
 
 // The page being opened. load() commits it to state with its data, so the old page stays on screen until then.
 let params;
@@ -134,11 +134,13 @@ const load = async () => {
     if (needsProject && project !== undefined && projects.length > 0 && !projects.some((p) => p.project === project)) {
       state.data = null;
       state.lost = false;
-      state.error = { status: 404, error: `The daemon watches no project named ${project}`, next: "pick a project under Watched projects" };
+      state.error = { status: 404, error: `The daemon has no project named ${project}`, next: "pick a project in the sidebar" };
       return commit();
     }
     if (project === undefined || !projects.some((p) => p.project === project)) project = projects[0]?.project;
-    const loaded = needsProject && project === undefined ? {} : await (LOAD[page] ?? LOAD.overview)(projects, project);
+    const selected = projects.find((p) => p.project === project);
+    const unavailable = (needsProject && project === undefined) || checkoutPageUnavailable(page, selected);
+    const loaded = unavailable ? {} : await (LOAD[page] ?? LOAD.overview)(projects, project);
     if (seq !== loads) return;
     const data = { projects, ...loaded };
     const { view } = state;

@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, watch } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, watch } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { setImmediate as yieldToEvents } from "node:timers/promises";
 import { COMMIT_HOOK, RELEASES } from "../compiler/emit.js";
 import { FIRST_STAMPING, LOCK_PATH, firstLine, olderThan, readLock } from "../compiler/lock.js";
@@ -106,9 +106,29 @@ export function openAlerts(root, audit = false) {
         return commit === undefined || !stamped(root, indexOf(d.project), commit);
     });
 }
-export function discoverRoots() {
-    const roots = evidenceProjects().flatMap((p) => readEvidenceTail(p, LOOP_TAIL_BYTES).flatMap((e) => (e.root === undefined ? [] : [e.root])));
+export function discoverRoots(auditOnly = new Map()) {
+    const roots = evidenceProjects().filter((project) => !auditOnly.has(project))
+        .flatMap((p) => readEvidenceTail(p, LOOP_TAIL_BYTES).flatMap((e) => (e.root === undefined ? [] : [e.root])));
     return [...new Set(roots)].filter((r) => existsSync(join(r, ".warden/config.yaml")));
+}
+function readAuditOnly() {
+    const file = join(wardenHome(), "daemon", "audit-only.json");
+    const text = readOptional(file);
+    const entries = text === undefined ? [] : parsed(text);
+    if (!Array.isArray(entries))
+        throw new RecordError(file, "", "must contain an array of audit-only project registrations.");
+    const projects = new Map();
+    for (const entry of entries) {
+        if (entry === null || typeof entry !== "object" ||
+            typeof entry.project !== "string" || !/^[a-z0-9][a-z0-9-]*$/.test(entry.project) ||
+            typeof entry.root !== "string" || !isAbsolute(entry.root) ||
+            typeof entry.ref !== "string" || !entry.ref.startsWith("refs/remotes/") ||
+            projects.has(entry.project)) {
+            throw new RecordError(file, "", "each registration needs a unique project ID, an absolute checkout path, and a remote-tracking ref.");
+        }
+        projects.set(entry.project, { project: entry.project, root: realpathSync(entry.root), ref: entry.ref });
+    }
+    return projects;
 }
 const nextOf = (message) => {
     const at = message.indexOf("Next action: ");
@@ -189,6 +209,8 @@ const watchSpecs = (root, repo) => [
 const key = (d) => `${d.root ?? ""}\0${d.file ?? ""}\0${d.detail ?? ""}`;
 export function startWatching(opts) {
     const projects = new Map();
+    const auditOnly = readAuditOnly();
+    const excludedRepos = new Set([...auditOnly.values()].map(({ root }) => commonDir(root)));
     const indexes = new Map();
     const state = readState();
     const startedAt = now();
@@ -198,6 +220,21 @@ export function startWatching(opts) {
     const discoveries = new Map();
     const report = (cause) => (opts.onError ?? ((e) => process.stderr.write(`${e.message}\n`)))(cause instanceof Error ? cause : new Error(String(cause)));
     const saveState = () => writeAtomic(stateFile(), `${JSON.stringify(state)}\n`);
+    let stateChanged = false;
+    for (const [root, saved] of Object.entries(state.roots)) {
+        if (!saved.open.some(({ repo }) => excludedRepos.has(repo)))
+            continue;
+        delete state.roots[root];
+        stateChanged = true;
+    }
+    for (const repo of excludedRepos) {
+        if (!(repo in state.repos))
+            continue;
+        delete state.repos[repo];
+        stateChanged = true;
+    }
+    if (stateChanged)
+        saveState();
     const indexFor = (project) => {
         const ix = refresh(indexes.get(project) ?? emptyIndex(), project);
         indexes.set(project, ix);
@@ -434,7 +471,12 @@ export function startWatching(opts) {
             return;
         const saved = state.roots[root]?.open ?? [];
         const repo = commonDir(root);
-        const w = { root, project: projectOf(root), repo, specs: watchSpecs(root, repo), open: new Map(saved.map((d) => [key(d), d])), watchers: new Map(), changes: new Set(), filesChanged: true, recordFound: [] };
+        if (excludedRepos.has(repo))
+            return;
+        const project = projectOf(root);
+        if (auditOnly.has(project))
+            return;
+        const w = { root, project, repo, specs: watchSpecs(root, repo), open: new Map(saved.map((d) => [key(d), d])), watchers: new Map(), changes: new Set(), filesChanged: true, recordFound: [] };
         projects.set(root, w);
         void scan(w);
     };
@@ -465,7 +507,7 @@ export function startWatching(opts) {
         if (stopped)
             return Promise.resolve();
         const remembered = Object.keys(state.roots).filter((r) => existsSync(join(r, ".warden/config.yaml")));
-        watchRoots([...discoverRoots(), ...remembered]);
+        watchRoots([...discoverRoots(auditOnly), ...remembered]);
         const repositories = new Set([...projects.values()].map((w) => w.repo));
         return Promise.all([...repositories].map((repo) => {
             const pending = discoveries.get(repo);
@@ -522,6 +564,8 @@ export function startWatching(opts) {
             return;
         const project = file.slice(0, -".jsonl".length);
         opts.onEvidence?.(project);
+        if (auditOnly.has(project))
+            return;
         const known = [...projects.values()].filter((w) => w.project === project);
         for (const w of known)
             schedule(w);
@@ -542,6 +586,7 @@ export function startWatching(opts) {
     }, opts.intervalMs ?? HEARTBEAT_MS);
     return {
         projects,
+        auditOnly,
         startedAt,
         heartbeat,
         discover,
