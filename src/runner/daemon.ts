@@ -5,7 +5,7 @@ import { setImmediate as yieldToEvents } from "node:timers/promises";
 import { COMMIT_HOOK, RELEASES } from "../compiler/emit.js";
 import { FIRST_STAMPING, LOCK_PATH, firstLine, olderThan, readLock } from "../compiler/lock.js";
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
-import { type Committed, type Worktree, COMMIT_LOOKUP_BATCH, allTips, commitsOf, commonDir, covers, holdersOf, lockVersionAt, newCommits, reachableFrom, reachable, repoTips, restoreAction, worktrees } from "./changed.js";
+import { type Committed, type Worktree, COMMIT_LOOKUP_BATCH, allTips, commitsOf, commonDir, covers, holdersOf, lockVersionAt, newCommits, reachable, repoTips, restoreAction, worktrees } from "./changed.js";
 import { type PluginState, claudeDir, commitHookItem, pluginAction, pluginState } from "./doctor.js";
 import { type Evidence, LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, evidenceProjects, readEvidenceFrom, readEvidenceTail, wardenHome, writeAtomic } from "./evidence.js";
 import { formatFeedback } from "./feedback.js";
@@ -382,19 +382,17 @@ export function startWatching(opts: DaemonOptions): Daemon {
     const trusted = (c: Committed): boolean => owned.trusted.has(c.commit);
     const flagged = new Set([...(known?.flagged ?? []), ...(known?.unchecked ?? []).map((c) => c.commit)]);
     const fresh: Committed[] = [];
-    for (const c of await newCommits(w.root, tips, known?.tips ?? tips)) {
-      const status = trusted(c) ? "trusted" : !ix.unchecked.has(c.commit) && !flagged.has(c.commit) && await reachableFrom(w.root, c.commit, boundary) ? "in-boundary" : stamped(w.root, ix, c) ? "checked" : "unchecked";
+    const arrived = await newCommits(w.root, tips, known?.tips ?? tips);
+    const inBoundary = await reachable(w.root, arrived.filter((c) => !trusted(c) && !ix.unchecked.has(c.commit) && !flagged.has(c.commit)).map((c) => c.commit), boundary);
+    for (const c of arrived) {
+      const status = trusted(c) ? "trusted" : inBoundary.has(c.commit) ? "in-boundary" : stamped(w.root, ix, c) ? "checked" : "unchecked";
       appendEvidence(w.project, { at: now(), kind: "commit", trigger: "daemon", root: w.root, commit: c.commit, tree: c.tree, status });
       if (status === "unchecked") fresh.push(c);
     }
     const pending = [...rebuilt, ...(firstScan ? [] : (known?.unchecked ?? [])), ...fresh];
-    const unchecked: Committed[] = [];
-    const checked = new Set<string>();
-    for (const c of pending) {
-      if (checked.has(c.commit)) continue;
-      checked.add(c.commit);
-      if (!trusted(c) && !stamped(w.root, ix, c) && await reachable(w.root, c.commit, refs)) unchecked.push(c);
-    }
+    const candidates = [...new Map(pending.map((c) => [c.commit, c])).values()].filter((c) => !trusted(c) && !stamped(w.root, ix, c));
+    const live = await reachable(w.root, candidates.map((c) => c.commit), refs);
+    const unchecked = candidates.filter((c) => live.has(c.commit));
     for (const c of unchecked) flagged.add(c.commit);
     state.repos[w.repo] = { tips, unchecked, boundary, flagged: [...flagged], ...(known?.trusted === undefined ? {} : { trusted: known.trusted }) };
     evidenceMergedSinceStart.add(w.repo);

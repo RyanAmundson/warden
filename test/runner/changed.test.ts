@@ -20,9 +20,10 @@ it("keeps history checks accurate when tips stay put, advance, or disappear", as
 
     expect(await newCommits(root, [tip], [tip, start])).toEqual([]);
     expect((await newCommits(root, [tip], [start, missing])).map((entry) => entry.commit)).toEqual([tip]);
-    expect(await reachable(root, start, [missing, tree, tip])).toBe(true);
-    expect(await reachable(root, tip, [start, missing, tree])).toBe(false);
-    expect(await reachable(root, missing, [tip])).toBe(false);
+    expect(await reachable(root, [start], [missing, tree, tip])).toEqual(new Set([start]));
+    expect(await reachable(root, [tip], [start, missing, tree])).toEqual(new Set());
+    expect(await reachable(root, [missing], [tip])).toEqual(new Set());
+    expect(await reachable(root, [start, tip, missing], [start])).toEqual(new Set([start]));
 
     git("remote", "add", "origin", ".");
     for (const [branch, commit] of [["fetched", start], ["local-update", tip]] as const) {

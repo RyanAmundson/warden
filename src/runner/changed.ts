@@ -544,8 +544,6 @@ export const lockVersionAt = (root: string, commit: string): string | undefined 
   }
 };
 
-export const reachableFrom = async (root: string, sha: string, tips: string[]): Promise<boolean> =>
-  (await gitLines(root, ["rev-list", "-1", "--ignore-missing", "--stdin", sha], tips.map((t) => `^${t}\n`).join(""))).length === 0;
 
 export async function holdersOf(root: string, sha: string, trees: Worktree[]): Promise<string[]> {
   const refs: string[] = [];
@@ -564,7 +562,12 @@ export async function holdersOf(root: string, sha: string, trees: Worktree[]): P
 
 export const isAncestor = (root: string, ancestor: string, of: string): boolean => git(root, ["merge-base", "--is-ancestor", ancestor, of]).ok;
 
-export const reachable = async (root: string, sha: string, tips: string[]): Promise<boolean> => hasCommit(root, sha) && await reachableFrom(root, sha, tips);
+export async function reachable(root: string, shas: string[], tips: string[]): Promise<Set<string>> {
+  const present = shas.filter((sha) => hasCommit(root, sha));
+  if (present.length === 0) return new Set();
+  const outside = new Set(await gitLines(root, ["rev-list", "--ignore-missing", "--stdin"], [...present.map((sha) => `${sha}\n`), ...tips.map((t) => `^${t}\n`)].join("")));
+  return new Set(present.filter((sha) => !outside.has(sha)));
+}
 
 export function restoreAction(root: string, path: string): string {
   if (git(root, ["cat-file", "-e", `HEAD:${path}`]).ok) return `run git checkout HEAD -- .warden in ${root}`;
