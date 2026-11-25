@@ -30,7 +30,7 @@ import { MAX_KEYFRAMES, runVideoRecord } from "./video.js";
 import { liveView, loadView, plainDeterminism, plainLayers, plainView, plainViolations } from "./view.js";
 import { SKILL_HARNESSES } from "../runner/doctor.js";
 import { wardenHome } from "../runner/evidence.js";
-import { DEFAULT_PORT } from "../runner/daemon.js";
+import { DEFAULT_PORT, isAuditOnlyCheckout } from "../runner/daemon.js";
 const oneOf = (command, name, value, allowed) => {
     if (!allowed.includes(value))
         throw new Error(`--${name} must be one of ${allowed.join(", ")}. Next action: run warden ${command} --help`);
@@ -98,8 +98,12 @@ program
     .option("--base <ref>", "the branch this work merges into")
     .option("--trigger <trigger>", "what started this check: git-commit or manual", "manual")
     .action(async (paths, o) => {
+    const checkout = root();
+    const trigger = oneOf("check", "trigger", o.trigger, ["git-commit", "manual"]);
+    if ((o.hook !== undefined || trigger === "git-commit") && isAuditOnlyCheckout(checkout))
+        return;
     reportVerdict(await runCheck({
-        root: root(),
+        root: checkout,
         wardenRoot: findWardenRoot(),
         paths: paths.length > 0 ? paths.map((p) => resolve(p)) : undefined,
         rule: o.rule,
@@ -108,7 +112,7 @@ program
         format: oneOf("check", "format", o.format, ["text", "agent", "json"]),
         hook: o.hook === undefined ? undefined : oneOf("check", "hook", o.hook, ["claude"]),
         hookInput: o.hook === undefined ? undefined : readFileSync(0, "utf8"),
-        trigger: oneOf("check", "trigger", o.trigger, ["git-commit", "manual"]),
+        trigger,
     }));
 });
 program
@@ -134,13 +138,21 @@ program
     .description("check a harness PreToolUse request against Warden's editing, commit, and command policies; read input on stdin")
     .option("--compiled-replacements", "require the compiled Capability command policy for shell requests")
     .action((options) => {
-    const finding = guardFinding(root(), readFileSync(0, "utf8"), options.compiledReplacements === true);
+    const checkout = root();
+    if (isAuditOnlyCheckout(checkout))
+        return;
+    const finding = guardFinding(checkout, readFileSync(0, "utf8"), options.compiledReplacements === true);
     if (finding !== undefined)
         process.stdout.write(agentNote("PreToolUse", finding));
 });
 program
     .command("session-end", { hidden: true })
-    .action(() => recordClaudeStalls(root(), readFileSync(0, "utf8")));
+    .action(() => {
+    const checkout = root();
+    if (isAuditOnlyCheckout(checkout))
+        return;
+    recordClaudeStalls(checkout, readFileSync(0, "utf8"));
+});
 program
     .command("bench")
     .description("measure how each Guardrail's time grows with input size, and fail on a superlinear one")

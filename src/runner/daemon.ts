@@ -177,9 +177,23 @@ function readAuditOnly(): Map<string, AuditOnlyProject> {
       projects.has(entry.project)) {
       throw new RecordError(file, "", "each registration needs a unique project ID, an absolute checkout path, and a remote-tracking ref.");
     }
-    projects.set(entry.project, { project: entry.project, root: realpathSync(entry.root), ref: entry.ref });
+    projects.set(entry.project, { project: entry.project, root: entry.root, ref: entry.ref });
   }
   return projects;
+}
+
+export function isAuditOnlyCheckout(root: string): boolean {
+  const projects = readAuditOnly();
+  if (projects.size === 0) return false;
+  const repo = commonDir(root);
+  for (const project of projects.values()) {
+    try {
+      if (commonDir(realpathSync(project.root)) === repo) return true;
+    } catch (error) {
+      process.stderr.write(`Warden could not resolve the published audit checkout at ${project.root}: ${String(error)}\n`);
+    }
+  }
+  return false;
 }
 
 const nextOf = (message: string): string | undefined => {
@@ -332,6 +346,7 @@ const key = (d: { root?: string; file?: string; detail?: string }): string => `$
 export function startWatching(opts: DaemonOptions): Daemon {
   const projects = new Map<string, Watched>();
   const auditOnly = readAuditOnly();
+  for (const project of auditOnly.values()) project.root = realpathSync(project.root);
   const excludedRepos = new Set([...auditOnly.values()].map(({ root }) => commonDir(root)));
   const indexes = new Map<string, Index>();
   const state = readState();

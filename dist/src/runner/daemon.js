@@ -126,9 +126,25 @@ function readAuditOnly() {
             projects.has(entry.project)) {
             throw new RecordError(file, "", "each registration needs a unique project ID, an absolute checkout path, and a remote-tracking ref.");
         }
-        projects.set(entry.project, { project: entry.project, root: realpathSync(entry.root), ref: entry.ref });
+        projects.set(entry.project, { project: entry.project, root: entry.root, ref: entry.ref });
     }
     return projects;
+}
+export function isAuditOnlyCheckout(root) {
+    const projects = readAuditOnly();
+    if (projects.size === 0)
+        return false;
+    const repo = commonDir(root);
+    for (const project of projects.values()) {
+        try {
+            if (commonDir(realpathSync(project.root)) === repo)
+                return true;
+        }
+        catch (error) {
+            process.stderr.write(`Warden could not resolve the published audit checkout at ${project.root}: ${String(error)}\n`);
+        }
+    }
+    return false;
 }
 const nextOf = (message) => {
     const at = message.indexOf("Next action: ");
@@ -210,6 +226,8 @@ const key = (d) => `${d.root ?? ""}\0${d.file ?? ""}\0${d.detail ?? ""}`;
 export function startWatching(opts) {
     const projects = new Map();
     const auditOnly = readAuditOnly();
+    for (const project of auditOnly.values())
+        project.root = realpathSync(project.root);
     const excludedRepos = new Set([...auditOnly.values()].map(({ root }) => commonDir(root)));
     const indexes = new Map();
     const state = readState();

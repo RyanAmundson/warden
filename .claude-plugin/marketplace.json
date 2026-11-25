@@ -8,7 +8,7 @@
     {
       "name": "warden",
       "source": "./",
-      "description": "Warden's Claude Code hooks: the edit check, and refusals for .warden/ edits and commits that skip the pre-commit hook"
+      "description": "Advisory Warden checks for edits, Git commits, and registered commands in Claude Code"
     }
   ]
 }

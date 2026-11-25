@@ -11,8 +11,8 @@ const bin = join(root, "fixture-bin");
 const fakeBin = join(root, "fake-bin");
 const SYSTEM_PATH = "/usr/bin:/bin";
 const git = (...args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", ...args], { cwd: root });
-const run = (executable: string, args: string[], opts: { input?: string; path?: string; env?: Record<string, string | undefined> } = {}) =>
-  spawnSync(executable, args, { cwd: root, encoding: "utf8", input: opts.input ?? "", env: { ...process.env, ...opts.env, PATH: opts.path ?? `${bin}:${process.env.PATH}` } });
+const run = (executable: string, args: string[], opts: { cwd?: string; input?: string; path?: string; env?: Record<string, string | undefined> } = {}) =>
+  spawnSync(executable, args, { cwd: opts.cwd ?? root, encoding: "utf8", input: opts.input ?? "", env: { ...process.env, ...opts.env, PATH: opts.path ?? `${bin}:${process.env.PATH}` } });
 const cli = (args: string[], opts: Parameters<typeof run>[2] = {}) => run(process.execPath, [join(warden, "bin/warden.js"), ...args], opts);
 const hook = (mode: string, input: object, path?: string) => run("sh", [join(warden, "hooks/warden.sh"), mode], { input: JSON.stringify(input), ...(path === undefined ? {} : { path }) });
 const edit = (file: string) => ({ hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: { file_path: join(root, file) } });
@@ -151,6 +151,52 @@ exit 10
 });
 
 describe("the CLI", { timeout: 120_000 }, () => {
+  it("skips automatic hooks in every linked checkout of a published-audit repository", () => {
+    const home = mkdtempSync(join(tmpdir(), "warden-published-audit-"));
+    const linked = join(home, "linked");
+    mkdirSync(join(home, "daemon"));
+    writeFileSync(join(home, "daemon/audit-only.json"), JSON.stringify([
+      { project: "fixture", root, ref: "refs/remotes/origin/main" },
+    ]));
+    try {
+      git("worktree", "add", "--detach", linked);
+      for (const cwd of [root, linked]) {
+        const options = { cwd, env: { WARDEN_HOME: home }, input: "invalid JSON" };
+        for (const args of [
+          ["guard"], ["session-end"], ["check", "--hook", "claude"],
+          ["check", "--trigger", "git-commit", "--base", "no-such-ref"],
+        ]) {
+          const result = cli(args, options);
+          expect([result.status, result.stdout, result.stderr], args.join(" ")).toEqual([0, "", ""]);
+        }
+        expect(cli(["audit", "--tier", "invalid"], options).stderr).toContain("--tier must be one of");
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("reports an unavailable audit checkout and still runs an unrelated hook", () => {
+    const home = mkdtempSync(join(tmpdir(), "warden-missing-audit-checkout-"));
+    mkdirSync(join(home, "daemon"));
+    writeFileSync(join(home, "daemon/audit-only.json"), JSON.stringify([
+      { project: "fixture", root: join(home, "missing"), ref: "refs/remotes/origin/main" },
+    ]));
+    try {
+      const result = cli(["guard"], {
+        env: { WARDEN_HOME: home },
+        input: JSON.stringify(edit(".warden/config.yaml")),
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("Warden could not resolve the published audit checkout");
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        hookSpecificOutput: { additionalContext: expect.stringContaining("Next action") },
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("check and audit exit 0 when the lock was written by an older Warden", () => {
     const lock = join(root, ".warden/lock.json");
     const original = readFileSync(lock, "utf8");
