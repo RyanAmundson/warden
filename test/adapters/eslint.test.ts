@@ -53,6 +53,29 @@ describe("eslint adapter", () => {
     ]);
   });
 
+  it("lints Claude workflow bodies at their original lines and keeps normal module syntax checks", async () => {
+    const g = guardrail("no-debugger", "eslint:no-debugger");
+    const set = setFor(g);
+    set.config.packs[0]!.paths = ["**/*.mjs"];
+    const root = await mkdtemp(join(tmpdir(), "warden-claude-workflow-"));
+    try {
+      await mkdir(join(root, ".claude/workflows"), { recursive: true });
+      await Promise.all([
+        writeFile(join(root, ".claude/workflows/flow.mjs"), 'export const meta = { name: "flow" };\nawait Promise.resolve();\ndebugger;\nreturn { ok: true };\n'),
+        writeFile(join(root, ".claude/workflows/broken.mjs"), 'export const meta = { name: "broken" };\nconst value: number = 1;\n'),
+        writeFile(join(root, "normal.mjs"), "return { ok: true };\n"),
+      ]);
+      await conformance(eslintAdapter, root, [g], set,
+        [".claude/workflows/flow.mjs", ".claude/workflows/broken.mjs", "normal.mjs"], [
+          { guardrail: "no-debugger", file: ".claude/workflows/flow.mjs", line: 3, endLine: 3, message: "Unexpected 'debugger' statement." },
+          { guardrail: PARSE_ERROR, file: ".claude/workflows/broken.mjs", line: 2, message: "Parsing error: Unexpected token :" },
+          { guardrail: PARSE_ERROR, file: "normal.mjs", line: 1, message: "Parsing error: 'return' outside of function" },
+        ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("eslint conformance: inline disables are ignored", async () => {
     const g = guardrail("no-debugger", "eslint:no-debugger");
     await conformance(eslintAdapter, resolve(fixtures, "debugger"), [g], setFor(g), ["src/a.ts"], [

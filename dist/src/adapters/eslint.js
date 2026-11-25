@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { join, relative } from "node:path";
 import { sha256 } from "../compiler/lock.js";
 import { RecordError } from "../records/load.js";
@@ -122,6 +123,13 @@ const doThisFor = (doThis) => (doThis === undefined ? {} : { doThis });
 const shippedRule = (g) => isPluginRule(targetOf(g)) && !targetOf(g).startsWith("warden/");
 const makeLinter = async (gs, entries, ctx) => {
     const [{ ESLint: Linting }, { default: tseslint }, { plugin }, { builtinRules }] = await Promise.all([import("eslint"), import("typescript-eslint"), import("../../eslint-plugin/index.js"), import("eslint/use-at-your-own-risk")]);
+    const require = createRequire(import.meta.url);
+    const espree = createRequire(require.resolve("eslint/package.json"))("espree");
+    const workflowParser = {
+        parse(source, options) {
+            return espree.parse(source, { ...options, ecmaFeatures: { ...options.ecmaFeatures, globalReturn: true } });
+        },
+    };
     const plugins = { warden: plugin };
     for (const g of gs) {
         const target = targetOf(g);
@@ -152,6 +160,7 @@ const makeLinter = async (gs, entries, ctx) => {
         overrideConfig: [
             { plugins },
             { files: ["**/*.{ts,tsx,mts,cts}"], languageOptions: { parser: tseslint.parser } },
+            { files: [".claude/workflows/**/*.mjs"], languageOptions: { parser: workflowParser } },
             { linterOptions: { noInlineConfig: true } },
             { ignores: ["!**/node_modules/"] },
             ...entries,

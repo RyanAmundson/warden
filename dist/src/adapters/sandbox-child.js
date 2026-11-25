@@ -229,6 +229,12 @@ const tree = async ({ entry, input }, reply) => {
 };
 const lint = async ({ root, entries, config, texts }) => {
     const [{ Linter }, { default: tseslint }] = await Promise.all([import("eslint"), import("typescript-eslint")]);
+    const espree = createRequire(require.resolve("eslint/package.json"))("espree");
+    const workflowParser = {
+        parse(source, options) {
+            return espree.parse(source, { ...options, ecmaFeatures: { ...options.ecmaFeatures, globalReturn: true } });
+        },
+    };
     const plugins = {};
     for (const e of entries)
         (plugins[e.namespace] ??= { meta: { name: e.namespace }, rules: {} }).rules[e.name] = await load(e);
@@ -236,6 +242,7 @@ const lint = async ({ root, entries, config, texts }) => {
     const configs = [
         { plugins },
         { files: ["**/*.{ts,tsx,mts,cts}"], languageOptions: { parser: tseslint.parser } },
+        { files: [".claude/workflows/**/*.mjs"], languageOptions: { parser: workflowParser } },
         { linterOptions: { noInlineConfig: true } },
         { ignores: ["!**/node_modules/"] },
         ...config,

@@ -4,6 +4,7 @@ import net, { Server, Socket } from "node:net";
 import os from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import type { Linter as ESLintTypes } from "eslint";
 
 interface Entry {
   file: string;
@@ -252,12 +253,19 @@ const tree = async ({ entry, input }: TreeJob, reply: (value: unknown) => void):
 
 const lint = async ({ root, entries, config, texts }: LintJob): Promise<unknown> => {
   const [{ Linter }, { default: tseslint }] = await Promise.all([import("eslint"), import("typescript-eslint")]);
+  const espree = createRequire(require.resolve("eslint/package.json"))("espree") as { parse(source: string, options: ESLintTypes.ParserOptions): unknown };
+  const workflowParser: ESLintTypes.Parser = {
+    parse(source: string, options: ESLintTypes.ParserOptions) {
+      return espree.parse(source, { ...options, ecmaFeatures: { ...options.ecmaFeatures, globalReturn: true } });
+    },
+  };
   const plugins: Record<string, { meta: { name: string }; rules: Record<string, unknown> }> = {};
   for (const e of entries) (plugins[e.namespace] ??= { meta: { name: e.namespace }, rules: {} }).rules[e.name] = await load(e);
   const linter = new Linter({ cwd: root });
   const configs = [
     { plugins },
     { files: ["**/*.{ts,tsx,mts,cts}"], languageOptions: { parser: tseslint.parser } },
+    { files: [".claude/workflows/**/*.mjs"], languageOptions: { parser: workflowParser } },
     { linterOptions: { noInlineConfig: true } },
     { ignores: ["!**/node_modules/"] },
     ...config,

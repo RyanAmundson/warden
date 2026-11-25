@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { join, relative } from "node:path";
 import type { ESLint, Linter, Rule } from "eslint";
 import { sha256 } from "../compiler/lock.js";
@@ -139,6 +140,13 @@ interface Linted {
 
 const makeLinter = async (gs: Guardrail[], entries: Linter.Config[], ctx: RunContext): Promise<{ eslint: ESLint; inputShas: Map<string, string> }> => {
   const [{ ESLint: Linting }, { default: tseslint }, { plugin }, { builtinRules }] = await Promise.all([import("eslint"), import("typescript-eslint"), import("../../eslint-plugin/index.js"), import("eslint/use-at-your-own-risk")]);
+  const require = createRequire(import.meta.url);
+  const espree = createRequire(require.resolve("eslint/package.json"))("espree") as { parse(source: string, options: Linter.ParserOptions): unknown };
+  const workflowParser: Linter.Parser = {
+    parse(source: string, options: Linter.ParserOptions) {
+      return espree.parse(source, { ...options, ecmaFeatures: { ...options.ecmaFeatures, globalReturn: true } });
+    },
+  };
   const plugins: Record<string, ESLint.Plugin> = { warden: plugin };
   for (const g of gs) {
     const target = targetOf(g);
@@ -168,6 +176,7 @@ const makeLinter = async (gs: Guardrail[], entries: Linter.Config[], ctx: RunCon
     overrideConfig: [
       { plugins },
       { files: ["**/*.{ts,tsx,mts,cts}"], languageOptions: { parser: tseslint.parser } },
+      { files: [".claude/workflows/**/*.mjs"], languageOptions: { parser: workflowParser } },
       { linterOptions: { noInlineConfig: true } },
       { ignores: ["!**/node_modules/"] },
       ...entries,
