@@ -973,7 +973,7 @@ describe("unknown adapter at check time", () => {
     const { code, err } = await check();
     expect(code).toBe(2);
     expect(err).toBe(
-      `${file} /guardrails/extra-no-debugger/implementation: Guardrail extra-no-debugger names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd, fs, graph. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...>, fs:<...>, graph:<...> in ${file}, then run warden compile.\n`,
+      `${file} /guardrails/extra-no-debugger/implementation: Guardrail extra-no-debugger names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd, fs, graph, system-one, tool. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...>, fs:<...>, graph:<...>, system-one:<...>, tool:<...> in ${file}, then run warden compile.\n`,
     );
     await write(".warden/packs/extra/pack.yaml", (await read(".warden/packs/extra/pack.yaml")).replace("eslnt:", "eslint:"));
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
@@ -1285,6 +1285,8 @@ describe("a whole-tree Guardrail", () => {
 
   it("accepts the bundled principles default when an older lock omitted contractExports", async () => {
     const withPrinciples = config(["core", "local", "principles"]);
+    const tsconfigThePrinciplesTscGuardrailLocks = "tsconfig.json";
+    await write(tsconfigThePrinciplesTscGuardrailLocks, "{}\n");
     await write(".warden/config.yaml", withPrinciples);
     const set = await loadRecords(root, wardenRoot);
     const current = await expectedOutputs(set, root, wardenRoot);
@@ -1599,28 +1601,30 @@ describe("bundled tool versions in the lock", () => {
 
 describe("doctor at check", () => {
   const withTool = async (): Promise<string> => {
+    const dataToolCompileAccepts = "ruff";
     const bin = await mkdtemp(join(tmpdir(), "warden-bin-"));
-    await writeFile(join(bin, "mytool"), "#!/bin/sh\ntest ! -e broken\n");
-    await chmod(join(bin, "mytool"), 0o755);
-    vi.stubEnv("PATH", `${bin}:${process.env.PATH ?? ""}`);
+    await writeFile(join(bin, dataToolCompileAccepts), "#!/bin/sh\ntest ! -e broken\n");
+    await chmod(join(bin, dataToolCompileAccepts), 0o755);
+    const pathWithoutInstalledTool = (process.env.PATH ?? "").split(":").filter((dir) => dir !== "" && !existsSync(join(dir, dataToolCompileAccepts)));
+    vi.stubEnv("PATH", [bin, ...pathWithoutInstalledTool].join(":"));
     return bin;
   };
 
   it("a cmd Guardrail whose command does not resolve exits 2 with the doctor's one next action", async () => {
     const bin = await withTool();
-    await addLegacy("boundary", "mytool", 5000);
+    await addLegacy("boundary", "ruff", 5000);
     await rm(bin, { recursive: true, force: true });
     const { code, out, err } = await check();
     expect(code).toBe(2);
     expect(out).toBe("");
-    expect(err).toContain("FAIL  cmd legacy-script: mytool  mytool is not on PATH");
+    expect(err).toContain("FAIL  cmd legacy-script: ruff  ruff is not on PATH");
     expect(err.match(/Next action:/g)).toHaveLength(1);
-    expect(err).toContain("Next action: install mytool so it is on PATH, then run warden doctor");
+    expect(err).toContain("Next action: install ruff so it is on PATH, then run warden doctor");
   });
 
   it("a repeat edit-tier check with the same lock and package.json skips the doctor, and a package.json change runs it again", async () => {
     const bin = await withTool();
-    await addLegacy("boundary", "mytool", 5000);
+    await addLegacy("boundary", "ruff", 5000);
     expect((await check({ tier: "edit" })).code).toBe(0);
     await rm(bin, { recursive: true, force: true });
     expect((await check({ tier: "edit" })).code).toBe(0);
@@ -1630,7 +1634,7 @@ describe("doctor at check", () => {
 
   it("the commit tier runs the doctor even when the cache holds a pass", async () => {
     const bin = await withTool();
-    await addLegacy("boundary", "mytool", 5000);
+    await addLegacy("boundary", "ruff", 5000);
     expect((await check({ tier: "edit" })).code).toBe(0);
     await rm(bin, { recursive: true, force: true });
     expect((await check()).code).toBe(2);
