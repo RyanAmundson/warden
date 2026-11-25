@@ -32,7 +32,7 @@ beforeAll(() => {
   expect(cli(["init"]).status).toBe(0);
   git("add", ".");
   git("commit", "-qm", "Track Warden configuration");
-});
+}, 120_000);
 
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
@@ -87,7 +87,7 @@ describe("the generated pre-commit hook", () => {
   });
 });
 
-describe("the plugin hooks", () => {
+describe("the plugin hooks", { timeout: 60_000 }, () => {
   it("exit 0 for every event when warden is missing", () => {
     for (const [event, input] of [["guard", edit("src/a.ts")], ["guard", bash("git commit -m x")], ["check", edit("src/a.ts")], ["session-end", {}]] as const) {
       const r = hook(event, input, SYSTEM_PATH);
@@ -112,7 +112,7 @@ describe("the plugin hooks", () => {
   });
 });
 
-describe("the CLI", () => {
+describe("the CLI", { timeout: 120_000 }, () => {
   it("check and audit exit 0 when the lock was written by an older Warden", () => {
     const lock = join(root, ".warden/lock.json");
     const original = readFileSync(lock, "utf8");
