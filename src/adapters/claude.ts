@@ -173,7 +173,7 @@ const replacementRefusal = (root: string, source: string, required: boolean): st
   return `${rule.command} is replaced by Capability ${rule.capability}. Next action: ${next}`;
 };
 
-export function refusal(root: string, input: string, requireReplacements = false): string | undefined {
+export function guardFinding(root: string, input: string, requireReplacements = false): string | undefined {
   const parsed = parseInput(input);
   if (parsed.tool_name === "Bash") {
     const command = parsed.tool_input?.command;
@@ -189,3 +189,6 @@ export function refusal(root: string, input: string, requireReplacements = false
   if (file === undefined) return undefined;
   return `${file} is a Warden record, and only a person changes Warden's records. Next action: tell the user what to change in ${file}, so they edit it and run warden compile.`;
 }
+
+export const agentNote = (event: "PreToolUse" | "PostToolUse", text: string): string =>
+  `${JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: text } })}\n`;

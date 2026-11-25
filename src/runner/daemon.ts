@@ -5,7 +5,7 @@ import { setImmediate as yieldToEvents } from "node:timers/promises";
 import { COMMIT_HOOK, RELEASES } from "../compiler/emit.js";
 import { FIRST_STAMPING, LOCK_PATH, firstLine, olderThan, readLock } from "../compiler/lock.js";
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
-import { type Committed, type Worktree, COMMIT_LOOKUP_BATCH, allTips, commitsOf, commonDir, covers, holdersOf, lockVersionAt, newCommits, reachable, repoTips, restoreAction, worktrees } from "./changed.js";
+import { type Committed, type Worktree, COMMIT_LOOKUP_BATCH, allTips, commitsOf, commonDir, covers, lockVersionAt, newCommits, reachable, repoTips, restoreAction, worktrees } from "./changed.js";
 import { type PluginState, claudeDir, commitHookItem, pluginAction, pluginState } from "./doctor.js";
 import { type Evidence, LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, evidenceProjects, readEvidenceFrom, readEvidenceTail, wardenHome, writeAtomic } from "./evidence.js";
 import { formatFeedback } from "./feedback.js";
@@ -213,24 +213,19 @@ const stampingVersion = (root: string, c: Committed, running: string): string | 
 
 export const trustAction = (root: string, commit: string): string => `ask the repository owner to run warden trust ${commit} --key <their trust key> --reason "<why>" in ${root}, in a terminal, and enter the key's passphrase; an agent cannot do this step`;
 
-const unstampable = async (root: string, c: Committed, running: string, trees: Worktree[]): Promise<string> => {
-  const why = `its ${LOCK_PATH} is missing, unreadable, older than Warden ${FIRST_STAMPING}, or newer than this daemon's Warden ${running}, so no release can stamp it`;
-  const holders = await holdersOf(root, c.commit, trees);
-  const published = holders.filter((h) => h.startsWith("refs/remotes/"));
-  if (published.length > 0) return `${trustAction(root, c.commit)}, because it is published in ${published.join(", ")} and ${why}`;
-  return `remove commit ${c.commit.slice(0, 12)} from ${holders.join(", ")} by resetting or deleting each, because ${why}; then make its change again in a new commit with the hook`;
-};
+const unstampable = (root: string, c: Committed, running: string): string =>
+  `fix any findings in a new commit, and to close this alert ${trustAction(root, c.commit)}, because its ${LOCK_PATH} is missing, unreadable, older than Warden ${FIRST_STAMPING}, or newer than this daemon's Warden ${running}, so no release can stamp it`;
 
-const uncheckedAlert = async (root: string, c: Committed, base: string, running: string, trees: Worktree[]): Promise<Found> => {
+const uncheckedAlert = (root: string, c: Committed, base: string, running: string): Found => {
   const short = c.commit.slice(0, 12);
   const version = stampingVersion(root, c, running);
-  if (version === undefined) return { file: c.commit, detail: "unchecked-commit", next: await unstampable(root, c, running, trees) };
+  if (version === undefined) return { file: c.commit, detail: "unchecked-commit", next: unstampable(root, c, running) };
   const warden = version === running ? "warden" : `npx --yes --package=${RELEASES}#v${version} warden`;
   const verify =
     c.parents[0] === undefined
       ? `run git switch -c warden-check-${short} ${base}, then git read-tree -u --reset ${short}, then ${warden} check --base ${base}`
       : `in a checkout of commit ${short} with nothing staged, run ${warden} check --base ${short}^`;
-  const recover = `If the check finds a Guardrail violation, ask the repository owner to save the intended changes separately and remove ${short} from every ref and worktree that reaches it. After the daemon clears the alert, restore the intended changes, fix the findings, and commit through the hook`;
+  const recover = `If the check finds a Guardrail violation, fix it in a new commit. Warden never blocks work, so this alert only reports`;
   return { file: c.commit, detail: "unchecked-commit", next: `${verify}. ${recover}` };
 };
 
@@ -397,7 +392,7 @@ export function startWatching(opts: DaemonOptions): Daemon {
     state.repos[w.repo] = { tips, unchecked, boundary, flagged: [...flagged], ...(known?.trusted === undefined ? {} : { trusted: known.trusted }) };
     evidenceMergedSinceStart.add(w.repo);
     const alerts: Found[] = [...owned.found];
-    for (const c of unchecked) alerts.push(await uncheckedAlert(w.root, c, base, running, trees));
+    for (const c of unchecked) alerts.push(uncheckedAlert(w.root, c, base, running));
     return alerts;
   };
 

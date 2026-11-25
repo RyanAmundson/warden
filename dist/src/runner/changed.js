@@ -119,7 +119,7 @@ export function hasPathCommitIndex(root) {
         return false;
     const file = resolve(root, index);
     const gitDir = must(root, ["rev-parse", "--absolute-git-dir"]).trim();
-    const selected = join(gitDir, `next-index-${process.ppid}.lock`);
+    const selected = join(gitDir, `next-index-${process.env.WARDEN_GIT_PID ?? process.ppid}.lock`);
     return file === selected && lstatSync(selected, { throwIfNoEntry: false })?.isFile() === true;
 }
 export const stagedFiles = (root) => names(must(root, ["diff", "-z", "--name-only", "--relative", "--cached", "HEAD"]));
@@ -461,23 +461,6 @@ export const lockVersionAt = (root, commit) => {
         return undefined;
     }
 };
-export async function holdersOf(root, sha, trees) {
-    const refs = [];
-    const error = await gitRecords(root, ["for-each-ref", "--contains", sha, "--format=%(refname)"], "\n", (ref) => refs.push(ref));
-    if (error !== undefined)
-        throw new Error(`git for-each-ref --contains ${sha} failed: ${error}`);
-    const checked = new Map();
-    for (const { path, detached, head } of trees) {
-        if (detached !== true || head === undefined)
-            continue;
-        if (!checked.has(head)) {
-            checked.set(head, (await gitRecords(root, ["merge-base", "--is-ancestor", sha, head], "\n", () => { })) === undefined);
-        }
-        if (checked.get(head))
-            refs.push(`the detached HEAD of worktree ${path}`);
-    }
-    return refs;
-}
 export const isAncestor = (root, ancestor, of) => git(root, ["merge-base", "--is-ancestor", ancestor, of]).ok;
 export async function reachable(root, shas, tips) {
     if (shas.length === 0)

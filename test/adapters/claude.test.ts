@@ -2,7 +2,7 @@ import { mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { hookTriggers, refusal, shellCommands, skipsCommitHook } from "../../src/adapters/claude.js";
+import { guardFinding, hookTriggers, shellCommands, skipsCommitHook } from "../../src/adapters/claude.js";
 
 const skips = (command: string): (string | undefined)[] => shellCommands(command).map(skipsCommitHook).filter((f) => f !== undefined);
 
@@ -43,7 +43,7 @@ describe("the commit flag parser", () => {
   });
 });
 
-describe("refusal", () => {
+describe("guardFinding", () => {
   let root: string;
   beforeAll(async () => {
     root = await realpath(await mkdtemp(join(tmpdir(), "warden-guard-")));
@@ -52,21 +52,21 @@ describe("refusal", () => {
 
   it("refuses Edit, Write, and MultiEdit under .warden and nothing else", () => {
     for (const tool of ["Edit", "Write", "MultiEdit"]) {
-      expect(refusal(root, JSON.stringify({ tool_name: tool, tool_input: { file_path: join(root, ".warden/lock.json") } }))).toMatch(/^\.warden\/lock\.json is a Warden record.*Next action: /);
+      expect(guardFinding(root, JSON.stringify({ tool_name: tool, tool_input: { file_path: join(root, ".warden/lock.json") } }))).toMatch(/^\.warden\/lock\.json is a Warden record.*Next action: /);
     }
-    expect(refusal(root, JSON.stringify({ tool_name: "Edit", tool_input: { file_path: join(root, "src/.warden.ts") } }))).toBeUndefined();
-    expect(refusal(root, JSON.stringify({ tool_name: "Read", tool_input: { file_path: join(root, ".warden/lock.json") } }))).toBeUndefined();
+    expect(guardFinding(root, JSON.stringify({ tool_name: "Edit", tool_input: { file_path: join(root, "src/.warden.ts") } }))).toBeUndefined();
+    expect(guardFinding(root, JSON.stringify({ tool_name: "Read", tool_input: { file_path: join(root, ".warden/lock.json") } }))).toBeUndefined();
   });
 
   it("refuses a new file under .warden reached through a symlinked parent", async () => {
     const link = join(await mkdtemp(join(tmpdir(), "warden-link-")), "project");
     await symlink(root, link);
     const input = JSON.stringify({ tool_name: "Write", tool_input: { file_path: join(link, ".warden/new/rules.yaml") } });
-    expect(refusal(await realpath(root), input)).toContain(".warden/new/rules.yaml is a Warden record");
+    expect(guardFinding(await realpath(root), input)).toContain(".warden/new/rules.yaml is a Warden record");
   });
 
   it("names exactly one next action for a refused commit", () => {
-    const reason = refusal(root, JSON.stringify({ tool_name: "Bash", tool_input: { command: "git commit -an -m x" } })) as string;
+    const reason = guardFinding(root, JSON.stringify({ tool_name: "Bash", tool_input: { command: "git commit -an -m x" } })) as string;
     expect(reason.match(/Next action/g)).toHaveLength(1);
     expect(reason).toContain("with -a in place of -an");
   });
@@ -75,12 +75,12 @@ describe("refusal", () => {
     const command = ["*** Begin Patch", "*** Add File: a.ts", "+x", "*** Update File: b.ts", "*** Move to: c.ts", "*** Delete File: d.ts", "*** End Patch"].join("\n");
     expect(hookTriggers(root, JSON.stringify({ tool_name: "apply_patch", tool_input: { command } }))).toEqual(["a.ts", "b.ts", "c.ts", "d.ts"]);
     const moved = ["*** Begin Patch", "*** Update File: src/a.ts", "*** Move to: .warden/a.ts", "*** End Patch"].join("\n");
-    expect(refusal(root, JSON.stringify({ tool_name: "apply_patch", tool_input: { command: moved } }))).toContain(".warden/a.ts is a Warden record");
+    expect(guardFinding(root, JSON.stringify({ tool_name: "apply_patch", tool_input: { command: moved } }))).toContain(".warden/a.ts is a Warden record");
     expect(() => hookTriggers(root, JSON.stringify({ tool_name: "apply_patch", tool_input: { command: "*** Begin Patch\n*** End Patch" } }))).toThrow("names no file to patch. Next action: update Codex");
   });
 
   it("refuses input that is not a hook payload", () => {
-    expect(() => refusal(root, "not json")).toThrow("is not JSON. Next action: update Claude Code, then retry the tool call");
-    expect(() => refusal(root, JSON.stringify({ tool_name: "Bash", tool_input: {} }))).toThrow("is missing");
+    expect(() => guardFinding(root, "not json")).toThrow("is not JSON. Next action: update Claude Code, then retry the tool call");
+    expect(() => guardFinding(root, JSON.stringify({ tool_name: "Bash", tool_input: {} }))).toThrow("is missing");
   });
 });

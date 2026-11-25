@@ -9,6 +9,7 @@ import { type Served, serve } from "../../src/cli/daemon.js";
 import { stateFile } from "../../src/runner/daemon.js";
 import { LOCK_PATH, type Lock, sha256 } from "../../src/compiler/lock.js";
 import { type Evidence, appendEvidence, readEvidence } from "../../src/runner/evidence.js";
+import { verdictOf } from "../verdict.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
 const main = join(wardenRoot, "dist/src/cli/main.js");
@@ -37,8 +38,7 @@ const commitUnhooked = (message: string): void => {
 };
 
 const warden = (cwd: string, env: Record<string, string | undefined>, ...args: string[]): { code: number | null; out: string; err: string } => {
-  const r = spawnSync("node", [main, ...args], { cwd, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home, HOME: userHome, CLAUDE_CONFIG_DIR: claude, ...env } });
-  return { code: r.status, out: r.stdout, err: r.stderr };
+  return verdictOf(args, spawnSync("node", [main, ...args], { cwd, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home, HOME: userHome, CLAUDE_CONFIG_DIR: claude, ...env } }));
 };
 
 const until = async (what: string, test: () => boolean): Promise<void> => {

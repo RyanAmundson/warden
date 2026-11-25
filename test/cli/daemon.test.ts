@@ -12,6 +12,7 @@ import { TRUST_SIGNERS, signTrust, trustDir, writeTrust } from "../../src/runner
 import { runTrust } from "../../src/cli/trust.js";
 import { FIRST_STAMPING } from "../../src/compiler/lock.js";
 import { type Evidence, appendEvidence, readEvidence } from "../../src/runner/evidence.js";
+import { verdictOf } from "../verdict.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
 const main = join(wardenRoot, "dist/src/cli/main.js");
@@ -41,8 +42,7 @@ const commitUnhooked = (message: string): void => {
 };
 
 const warden = (cwd: string, env: Record<string, string | undefined>, ...args: string[]): { code: number | null; out: string; err: string } => {
-  const r = spawnSync("node", [main, ...args], { cwd, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home, HOME: userHome, CLAUDE_CONFIG_DIR: claude, ...env } });
-  return { code: r.status, out: r.stdout, err: r.stderr };
+  return verdictOf(args, spawnSync("node", [main, ...args], { cwd, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home, HOME: userHome, CLAUDE_CONFIG_DIR: claude, ...env } }));
 };
 
 const until = async (what: string, test: () => boolean): Promise<void> => {
@@ -173,7 +173,7 @@ it("records hook and .warden changes as tamper Evidence once, with one next acti
   const s = await start();
   git(root, "config", "core.hooksPath", "elsewhere");
   await until("the hooksPath change is recorded", () => tampered().some((e) => e.detail === "hook-unwired"));
-  expect(tampered().find((e) => e.detail === "hook-unwired")?.next).toBe("make elsewhere/pre-commit an executable script that runs .warden/generated/hooks/pre-commit and exits with its status");
+  expect(tampered().find((e) => e.detail === "hook-unwired")?.next).toBe("make elsewhere/pre-commit an executable script that runs .warden/generated/hooks/pre-commit");
   git(root, "config", "core.hooksPath", ".warden/generated/hooks");
   await writeFile(join(root, ".warden/generated/hooks/pre-commit"), "#!/bin/sh\nexit 0\n");
   await until("the hook edit is recorded", () => tampered().some((e) => e.detail === "generated-drift"));
@@ -201,7 +201,7 @@ it("records each commit, flags one that no full check stamped, and closes the al
   const alert = tampered().find((e) => e.file === skipped);
   const short = skipped.slice(0, 12);
   expect(alert?.next).toContain(`in a checkout of commit ${short} with nothing staged, run warden check --base ${short}^`);
-  expect(alert?.next).toContain(`If the check finds a Guardrail violation, ask the repository owner to save the intended changes separately and remove ${short} from every ref and worktree that reaches it. After the daemon clears the alert, restore the intended changes, fix the findings, and commit through the hook`);
+  expect(alert?.next).toContain(`If the check finds a Guardrail violation, fix it in a new commit. Warden never blocks work, so this alert only reports`);
   const empty = warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", "main");
   expect(empty).toMatchObject({ code: 1, err: expect.stringContaining(`unchecked-commit ${skipped}`) });
   await s.daemon.rescan();
@@ -380,7 +380,7 @@ const lockedBy = async (version: string): Promise<void> => {
 const running = (JSON.parse(readFileSync(join(wardenRoot, "package.json"), "utf8")) as { version: string }).version;
 const why = `its .warden/lock.json is missing, unreadable, older than Warden ${FIRST_STAMPING}, or newer than this daemon's Warden ${running}, so no release can stamp it`;
 
-const unstampable = (sha: string, holders: string[]): string => `remove commit ${sha.slice(0, 12)} from ${holders.join(", ")} by resetting or deleting each, because ${why}; then make its change again in a new commit with the hook`;
+const unstampable = (sha: string): string => `fix any findings in a new commit, and to close this alert ${trustAction(root, sha)}, because ${why}`;
 
 it("flags a merge whose first parent predates Warden", async () => {
   const s = await start();
@@ -422,7 +422,7 @@ const soleHolder = async (hold: (sha: string) => string, release: () => void): P
   const holder = hold(down);
   git(root, "reset", "-q", "--hard", "HEAD^");
   await s.daemon.rescan();
-  expect(openAlerts(root).find((d) => d.file === down)?.next).toBe(unstampable(down, [holder]));
+  expect(openAlerts(root).find((d) => d.file === down)?.next).toBe(unstampable(down));
   release();
   await s.daemon.rescan();
   expect(unchecked(s)).not.toContain(down);
@@ -432,7 +432,7 @@ it("flags a commit that downgrades its lock, names its branch, and closes once t
   const s = await start();
   const down = await downgrade();
   await until("the downgrade is flagged", () => unchecked(s).includes(down));
-  expect(openAlerts(root).find((d) => d.file === down)?.next).toBe(unstampable(down, ["refs/heads/main"]));
+  expect(openAlerts(root).find((d) => d.file === down)?.next).toBe(unstampable(down));
   git(root, "reset", "-q", "--hard", "HEAD^");
   await until("removing the commit closes the alert", () => !unchecked(s).includes(down));
 });
@@ -479,7 +479,7 @@ it("a malformed lock in history stays flagged in every worktree and never stops 
   commitUnhooked("malformed lock");
   const bad = git(root, "rev-parse", "HEAD").trim();
   await until("the malformed commit is flagged", () => openAlerts(wt).some((d) => d.file === bad));
-  expect(openAlerts(wt).find((d) => d.file === bad)?.next).toBe(unstampable(bad, ["refs/heads/main"]));
+  expect(openAlerts(wt).find((d) => d.file === bad)?.next).toBe(unstampable(bad));
   expect(openOf(s).filter((d) => d.detail === "scan-error" && d.file === "git history")).toEqual([]);
   git(root, "reset", "-q", "--hard", "HEAD^");
   await until("removing the commit closes the alert in every worktree", () => !openAlerts(wt).some((d) => d.file === bad));
@@ -655,7 +655,7 @@ it("gives a lock that names a release newer than the daemon's the unstampable ne
   commitUnhooked("compiled by a release that does not exist");
   const forged = git(root, "rev-parse", "HEAD").trim();
   await until("the commit is flagged", () => unchecked(s).includes(forged));
-  expect(openAlerts(root).find((d) => d.file === forged)?.next).toBe(unstampable(forged, ["refs/heads/main"]));
+  expect(openAlerts(root).find((d) => d.file === forged)?.next).toBe(unstampable(forged));
   git(root, "reset", "-q", "--hard", "HEAD^");
   await until("removing the commit closes the alert", () => !unchecked(s).includes(forged));
 });
@@ -673,7 +673,7 @@ it("asks the owner to trust a published unstampable commit instead of naming a r
   await until("the commit is flagged", () => unchecked(s).includes(pushed));
   git(root, "push", "-q", "origin", "main");
   await s.daemon.rescan();
-  expect(openAlerts(root).find((d) => d.file === pushed)?.next).toBe(`${trustAction(root, pushed)}, because it is published in refs/remotes/origin/main and ${why}`);
+  expect(openAlerts(root).find((d) => d.file === pushed)?.next).toBe(unstampable(pushed));
   writeTrust(signTrust(key, { repo: realpathSync(join(root, ".git")), commit: pushed, reason: "owner reviewed it", at: new Date().toISOString() }));
   await s.daemon.rescan();
   expect(unchecked(s)).toEqual([]);
@@ -1253,23 +1253,23 @@ it("a startup failure after the port binds exits 2 with one next action", async 
   expect(r.err).toMatch(/^the daemon could not start: .*\. Next action: fix what that names under .*, then run warden daemon\n$/);
 });
 
-it("a commit-tier check refuses and records a missing, stale, future, dead, or malformed heartbeat", async () => {
+it("a commit-tier check reports, exits 0, and still runs with a missing, stale, future, dead, or malformed heartbeat", async () => {
   const check = (): { code: number | null; err: string } => warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", "main");
   const missing = check();
-  expect(missing).toMatchObject({ code: 1, err: `Warden's daemon is not running: ${heartbeatFile()} is missing. Next action: start the daemon: warden daemon install\n` });
+  expect(missing).toMatchObject({ code: 0, err: expect.stringContaining(`Warden's daemon is not running: ${heartbeatFile()} is missing. Next action: start the daemon: warden daemon install\n`) });
   await beat({ at: new Date(Date.now() - STALE_MS - 5000).toISOString() });
-  expect(check()).toMatchObject({ code: 1, err: expect.stringMatching(/heartbeat is 3\d s old; it is stale after 30 s\. Next action: start the daemon: warden daemon install\n$/) });
+  expect(check()).toMatchObject({ code: 0, err: expect.stringMatching(/heartbeat is 3\d s old; it is stale after 30 s\. Next action: start the daemon: warden daemon install\n/) });
   await beat({ at: "2099-01-01T00:00:00Z" });
-  expect(check()).toMatchObject({ code: 1, err: expect.stringContaining("in the future, so the daemon did not write it. Next action: start the daemon") });
+  expect(check()).toMatchObject({ code: 0, err: expect.stringContaining("in the future, so the daemon did not write it. Next action: start the daemon") });
   const dead = spawnSync("true").pid as number;
   await beat({ pid: dead });
-  expect(check()).toMatchObject({ code: 1, err: expect.stringContaining(`names process ${dead}, which is not a running daemon. Next action: start the daemon`) });
+  expect(check()).toMatchObject({ code: 0, err: expect.stringContaining(`names process ${dead}, which is not a running daemon. Next action: start the daemon`) });
   await mkdir(join(home, "daemon"), { recursive: true });
   await writeFile(heartbeatFile(), "null");
-  expect(check()).toMatchObject({ code: 1, err: `${heartbeatFile()} does not hold a heartbeat. Next action: start the daemon: warden daemon install\n` });
+  expect(check()).toMatchObject({ code: 0, err: expect.stringContaining(`${heartbeatFile()} does not hold a heartbeat. Next action: start the daemon: warden daemon install\n`) });
   await beat({ pid: 1 });
-  expect(check()).toMatchObject({ code: 1, err: expect.stringContaining("names process 1, which is not a running daemon") });
-  expect(readEvidence(PROJECT).filter((e) => e.outcome === "refused").map((e) => [e.exit, e.next])).toEqual(Array(6).fill([1, "start the daemon: warden daemon install"]));
+  expect(check()).toMatchObject({ code: 0, err: expect.stringContaining("names process 1, which is not a running daemon") });
+  expect(readEvidence(PROJECT).filter((e) => e.outcome === "refused")).toEqual([]);
   await beat({});
   expect(check().code).toBe(0);
   expect(warden(root, { WARDEN_DAEMON: undefined }, "check", "--tier", "edit", "--base", "main").code).toBe(0);

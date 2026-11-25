@@ -159,7 +159,7 @@ export const commitHookItem = (root) => {
     if (chained && !(existsSync(preCommit) && readFileSync(preCommit, "utf8").includes(COMMIT_HOOK))) {
         if (hooksUnused(root))
             return { name, problem: "git runs no Warden commit check", fix: `run git config core.hooksPath ${HOOKS_DIR}` };
-        return { name, problem: `git runs hooks from ${dirname(shown)}, and its pre-commit does not run Warden's`, fix: `make ${shown} an executable script that runs ${COMMIT_HOOK} and exits with its status` };
+        return { name, problem: `git runs hooks from ${dirname(shown)}, and its pre-commit does not run Warden's`, fix: `make ${shown} an executable script that runs ${COMMIT_HOOK}` };
     }
     if (!executable(join(root, COMMIT_HOOK)))
         return { name, problem: "is not executable, so git skips it", fix: `run chmod +x ${COMMIT_HOOK}` };

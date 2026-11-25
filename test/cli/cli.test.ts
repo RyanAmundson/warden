@@ -4,6 +4,7 @@ import { chmod, cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile }
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { verdictOf, withVerdict } from "../verdict.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
 const main = join(wardenRoot, "dist/src/cli/main.js");
@@ -24,8 +25,7 @@ const git = (...args: string[]): void => {
 const warden = (...args: string[]): { code: number | null; out: string; err: string } => wardenIn(root, "", ...args);
 
 const wardenIn = (cwd: string, input: string, ...args: string[]): { code: number | null; out: string; err: string } => {
-  const r = spawnSync("node", [main, ...args], { cwd, input, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home } });
-  return { code: r.status, out: r.stdout, err: r.stderr };
+  return verdictOf(args, spawnSync("node", [main, ...args], { cwd, input, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home } }));
 };
 
 beforeAll(async () => {
@@ -443,8 +443,8 @@ describe("warden CLI", () => {
     git("commit", "-q", "-m", "adopt");
     await writeFile(join(root, "src/b.ts"), "// new\nexport const b = 1;\n");
     const input = JSON.stringify({ tool_input: { file_path: join(root, "src/b.ts") } });
-    const { reason } = JSON.parse(wardenIn(root, input, "check", "--base", "main", "--format", "agent", "--hook", "claude").out) as { reason: string };
-    expect(reason).toContain("FAIL src/b.ts:1");
+    const { hookSpecificOutput } = JSON.parse(wardenIn(root, input, "check", "--base", "main", "--format", "agent", "--hook", "claude").out) as { hookSpecificOutput: { additionalContext: string } };
+    expect(hookSpecificOutput.additionalContext).toContain("FAIL src/b.ts:1");
     const bad = wardenIn(root, "not json", "check", "--base", "main", "--format", "agent", "--hook", "claude");
     expect(bad.code).toBe(2);
     expect(bad.err).toContain("hook input");
@@ -713,7 +713,7 @@ describe("warden CLI", () => {
       for (const entry of readdirSync(join(wardenRoot, "node_modules")).filter((e) => e !== "typescript-eslint")) {
         await symlink(join(wardenRoot, "node_modules", entry), join(copy, "node_modules", entry));
       }
-      const run = (...args: string[]) => spawnSync("node", [join(copy, "dist/src/cli/main.js"), ...args], { cwd: root, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home } });
+      const run = (...args: string[]) => withVerdict(args, spawnSync("node", [join(copy, "dist/src/cli/main.js"), ...args], { cwd: root, encoding: "utf8", env: { ...process.env, WARDEN_HOME: home } }));
       const checked = run("check", "--base", "main");
       expect(checked.status).toBe(2);
       expect(checked.stderr).toContain("Warden's bundled typescript-eslint does not load: Cannot find module");
@@ -862,28 +862,29 @@ describe("the commit-tier git hook", () => {
     expect(execFileSync("sh", ["-c", "test -x .warden/generated/hooks/pre-commit && echo yes"], { cwd: root, encoding: "utf8" })).toBe("yes\n");
   });
 
-  it("a commit runs Warden's commit check and is refused when a Guardrail fails", async () => {
+  it("a commit runs Warden's commit check, reports a failing Guardrail, and still commits", async () => {
     init();
     await writeFile(join(bin, "warden"), `#!/bin/sh\nexec "${process.execPath}" "${main}" "$@"\n`, { mode: 0o755 });
     git("add", "-A");
     git("commit", "-q", "-m", "adopt");
     await writeFile(join(root, "src/b.ts"), "// new\nexport const b = 1;\n");
     git("add", "-A");
-    const refused = commit(tools());
-    expect(refused.code).toBe(1);
-    expect(refused.err).toContain("FAIL src/b.ts:1");
+    const reported = commit(tools());
+    expect(reported.code).toBe(0);
+    expect(reported.out + reported.err).toContain("FAIL src/b.ts:1");
+    expect(reported.err).toContain("Warden reported problems (verdict 1)");
     await writeFile(join(root, "src/b.ts"), "export const b = 1;\n");
     git("add", "-A");
-    expect(commit(tools()).code).toBe(0);
+    expect(commit(tools())).toMatchObject({ code: 0, err: "" });
   });
 
-  it("a commit with no warden on PATH is refused with the install command as its one next action", () => {
+  it("a commit with no warden on PATH goes through and names the install command as its one next action", () => {
     init();
     git("add", "-A");
     const r = commit(tools());
-    expect(r.code).not.toBe(0);
+    expect(r.code).toBe(0);
     const version = (JSON.parse(readFileSync(join(wardenRoot, "package.json"), "utf8")) as { version: string }).version;
-    expect(r.err).toContain(`Next action: run npm install -g git+https://github.com/RyanAmundson/warden.git#v${version}, then commit again.`);
+    expect(r.err).toContain(`Next action: run npm install -g git+https://github.com/RyanAmundson/warden.git#v${version}.`);
     expect(r.err.match(/Next action/g)).toHaveLength(1);
   });
 
@@ -892,9 +893,9 @@ describe("the commit-tier git hook", () => {
     git("config", "core.hooksPath", "hooks");
     const r = warden("init");
     expect(r.code).toBe(2);
-    expect(r.out).toContain("Next action: make hooks/pre-commit an executable script that runs .warden/generated/hooks/pre-commit and exits with its status, then run warden doctor\n");
+    expect(r.out).toContain("Next action: make hooks/pre-commit an executable script that runs .warden/generated/hooks/pre-commit, then run warden doctor\n");
     expect(execFileSync("git", ["config", "core.hooksPath"], { cwd: root, encoding: "utf8" }).trim()).toBe("hooks");
-    await writeFile(join(root, "hooks/pre-commit"), "#!/bin/sh\n.warden/generated/hooks/pre-commit || exit $?\n", { mode: 0o755 });
+    await writeFile(join(root, "hooks/pre-commit"), "#!/bin/sh\n.warden/generated/hooks/pre-commit || true\n", { mode: 0o755 });
     expect(warden("doctor").code).toBe(0);
   });
 
@@ -929,8 +930,13 @@ describe("the Claude Code plugin hook", () => {
 
   const edit = (file: string): unknown => ({ tool_name: "Edit", tool_input: { file_path: join(root, file) } });
   const bash = (command: string): unknown => ({ tool_name: "Bash", tool_input: { command } });
-  const denied = (r: { out: string }): string | undefined =>
-    r.out === "" ? undefined : (JSON.parse(r.out) as { hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string } }).hookSpecificOutput.permissionDecisionReason;
+  const reported = (r: { code: number | null; out: string }): string | undefined => {
+    expect(r.code).toBe(0);
+    if (r.out === "") return undefined;
+    const { hookSpecificOutput } = JSON.parse(r.out) as { hookSpecificOutput: Record<string, string> };
+    expect(hookSpecificOutput.permissionDecision).toBeUndefined();
+    return hookSpecificOutput.additionalContext;
+  };
 
   it("does nothing in a project with no .warden/config.yaml, even without warden on PATH", () => {
     for (const event of ["guard", "check"]) expect(hook(event, bash("git commit -n -m x"), system)).toEqual({ code: 0, out: "", err: "" });
@@ -949,38 +955,38 @@ describe("the Claude Code plugin hook", () => {
   it.each([
     ["missing", undefined],
     ["older", "0.0.1"],
-  ])("with warden %s, blocks edits and commits with the install command and lets the install run", async (_case, version) => {
+  ])("with warden %s, reports the install command and lets every call run", async (_case, version) => {
     init();
     if (version !== undefined) await versionShim(version);
     const path = version === undefined ? system : `${shims}:${system}`;
     const install = `npm install -g git+https://github.com/RyanAmundson/warden.git#v${pluginVersion()}`;
     for (const [event, input] of [["guard", edit("src/a.ts")], ["guard", bash("git add -A && git commit -m x")], ["check", edit("src/a.ts")]] as const) {
       const r = hook(event, input, path);
-      expect(r.code).toBe(2);
+      expect(r).toMatchObject({ code: 0, out: "" });
       expect(r.err).toContain(`Next action: run ${install}.`);
       expect(r.err.match(/Next action/g)).toHaveLength(1);
     }
-    expect(hook("guard", bash(install), path)).toEqual({ code: 0, out: "", err: "" });
+    expect(hook("guard", bash(install), path)).toMatchObject({ code: 0, out: "" });
   });
 
-  it("with warden on an older Node, passes warden's refusal through and does not blame the install", async () => {
+  it("with warden on an older Node, reports warden's problem and does not blame the install", async () => {
     init();
     const preload = join(shims, "fake.cjs");
     await writeFile(preload, "Object.defineProperty(process, 'versions', { value: { ...process.versions, node: '22.11.0' } });\n");
     await writeFile(join(shims, "warden"), `#!/bin/sh\necho "(node:1) ExperimentalWarning: noise" >&2\nNODE_OPTIONS="--require ${preload}" exec "${process.execPath}" "${main}" "$@"\n`, { mode: 0o755 });
     for (const [event, input] of [["guard", edit("src/a.ts")], ["guard", bash("git commit -m x")], ["check", edit("src/a.ts")]] as const) {
       const r = hook(event, input);
-      expect(r.code).toBe(2);
-      expect(r.err).toBe("Warden needs Node 25 or newer; this is Node 22.11.0. Next action: install Node 25 or newer, then run warden again\n");
+      expect(r).toMatchObject({ code: 0, out: "" });
+      expect(r.err).toBe("Warden did not run. Warden needs Node 25 or newer; this is Node 22.11.0. Next action: install Node 25 or newer, then run warden again\n");
     }
-    expect(hook("guard", bash("npm test"))).toEqual({ code: 0, out: "", err: "" });
+    expect(hook("guard", bash("npm test"))).toMatchObject({ code: 0, out: "" });
   });
 
   it("with warden on PATH failing for another reason, shows that error and does not say warden is missing", async () => {
     init();
     await writeFile(join(shims, "warden"), `#!/bin/sh\necho "Error: Cannot find module x" >&2\nexit 1\n`, { mode: 0o755 });
     const r = hook("guard", edit("src/a.ts"));
-    expect(r.code).toBe(2);
+    expect(r.code).toBe(0);
     expect(r.err).toContain("Error: Cannot find module x");
     expect(r.err).toContain("exit status 1");
     expect(r.err).not.toContain("not on PATH");
@@ -989,35 +995,34 @@ describe("the Claude Code plugin hook", () => {
 
   it("with warden matching or newer than the plugin, hands the call to warden", async () => {
     init();
-    expect(denied(hook("guard", bash("git commit -n")))).toContain("-n skips the pre-commit hook");
+    expect(reported(hook("guard", bash("git commit -n")))).toContain("-n skips the pre-commit hook");
     await versionShim("99.0.0");
-    expect(denied(hook("guard", bash("git commit -n")))).toContain("-n skips the pre-commit hook");
+    expect(reported(hook("guard", bash("git commit -n")))).toContain("-n skips the pre-commit hook");
     expect(hook("guard", bash("npm test"))).toEqual({ code: 0, out: "", err: "" });
   });
 
-  it("refuses an edit under .warden and allows one elsewhere", () => {
+  it("reports an edit under .warden and lets every edit run", () => {
     init();
-    expect(denied(hook("guard", edit(".warden/config.yaml")))).toContain("Next action: tell the user what to change in .warden/config.yaml");
-    expect(denied(hook("guard", { tool_name: "Write", tool_input: { file_path: join(root, ".warden/new.yaml") } }))).toContain(".warden/new.yaml");
+    expect(reported(hook("guard", edit(".warden/config.yaml")))).toContain("Next action: tell the user what to change in .warden/config.yaml");
+    expect(reported(hook("guard", { tool_name: "Write", tool_input: { file_path: join(root, ".warden/new.yaml") } }))).toContain(".warden/new.yaml");
     expect(hook("guard", edit("src/a.ts"))).toEqual({ code: 0, out: "", err: "" });
   });
 
-  it("refuses a git commit that skips the pre-commit hook and allows one whose message only mentions -n", () => {
+  it("reports a git commit that skips the pre-commit hook and not one whose message only mentions -n", () => {
     init();
-    expect(denied(hook("guard", bash("git add -A && git commit -an")))).toContain("Next action: run the git commit again with -a in place of -an.");
-    expect(denied(hook("guard", bash("git commit --no-verify -m x")))).toContain("Next action: run the git commit again without --no-verify.");
+    expect(reported(hook("guard", bash("git add -A && git commit -an")))).toContain("Next action: run the git commit again with -a in place of -an.");
+    expect(reported(hook("guard", bash("git commit --no-verify -m x")))).toContain("Next action: run the git commit again without --no-verify.");
     expect(hook("guard", bash('git commit -m "skip -n here"'))).toEqual({ code: 0, out: "", err: "" });
   });
 
-  it("returns the edit check's block decision after an edit", async () => {
+  it("returns the edit check's findings as context after an edit", async () => {
     init();
     git("add", "-A");
     git("commit", "-q", "-m", "adopt");
     await writeFile(join(root, "src/b.ts"), "// new\nexport const b = 1;\n");
     const r = hook("check", edit("src/b.ts"));
     expect(r.code, r.err).toBe(0);
-    expect(JSON.parse(r.out)).toMatchObject({ decision: "block" });
-    expect((JSON.parse(r.out) as { reason: string }).reason).toContain("FAIL src/b.ts:1");
+    expect(reported(r)).toContain("FAIL src/b.ts:1");
     await writeFile(join(root, "src/b.ts"), "export const b = 1;\n");
     expect(hook("check", edit("src/b.ts"))).toEqual({ code: 0, out: "", err: "" });
   });
@@ -1038,25 +1043,26 @@ describe("the Claude Code plugin hook", () => {
     expect(existsSync(join(wardenRoot, manifest.hooks))).toBe(true);
   });
 
-  it("the Codex hooks refuse a patch under .warden, and block after a patch that breaks a Guardrail", async () => {
+  it("the Codex hooks report a patch under .warden, and report after a patch that breaks a Guardrail", async () => {
     init();
     git("add", "-A");
     git("commit", "-q", "-m", "adopt");
-    expect(denied(codex("PreToolUse", patch("*** Update File: src/a.ts", "*** Add File: .warden/x.yaml", "+x")))).toContain(".warden/x.yaml is a Warden record");
+    expect(reported(codex("PreToolUse", patch("*** Update File: src/a.ts", "*** Add File: .warden/x.yaml", "+x")))).toContain(".warden/x.yaml is a Warden record");
     expect(codex("PreToolUse", patch("*** Update File: src/a.ts"))).toEqual({ code: 0, out: "", err: "" });
-    expect(denied(codex("PreToolUse", bash("git commit -n")))).toContain("-n skips the pre-commit hook");
+    expect(reported(codex("PreToolUse", bash("git commit -n")))).toContain("-n skips the pre-commit hook");
     await writeFile(join(root, "src/b.ts"), "// new\nexport const b = 1;\n");
     const r = codex("PostToolUse", patch("*** Add File: src/b.ts", "+// new", "+export const b = 1;"));
     expect(r.code, r.err).toBe(0);
-    expect((JSON.parse(r.out) as { decision: string; reason: string }).reason).toContain("FAIL src/b.ts:1");
+    expect(reported(r)).toContain("FAIL src/b.ts:1");
   });
 
-  it("turns a warden crash into a block with one next action", async () => {
+  it("reports a warden crash with one next action and lets the call run", async () => {
     init();
     await writeFile(join(shims, "warden"), `#!/bin/sh\n[ "$1" = --version ] && echo ${pluginVersion()} && exit 0\nexit 7\n`, { mode: 0o755 });
     const r = hook("guard", edit("src/a.ts"));
-    expect(r.code).toBe(2);
-    expect(r.err).toContain("warden exited 7. Next action: run warden doctor");
+    expect(r.code).toBe(0);
+    expect(r.err).toContain("warden exited 7.");
+    expect(r.err).toContain("Next action: run warden doctor");
   });
 });
 

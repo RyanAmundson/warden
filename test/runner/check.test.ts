@@ -376,13 +376,14 @@ describe("runCheck", () => {
     expect((await evidence()).some((e) => e.kind === "cost" && typeof e.ms === "number")).toBe(true);
   });
 
-  it("hook format blocks with reason", async () => {
+  it("hook format hands its findings to the agent as context, never a block", async () => {
     await write("b.ts", "// two\nconst b = 1;\n");
     const failing = await check({ format: "agent", hook: "claude" });
     expect(failing.code).toBe(0);
-    const parsed = JSON.parse(failing.out) as { decision: string; reason: string };
-    expect(parsed.decision).toBe("block");
-    expect(parsed.reason).toContain("Next action:");
+    const parsed = JSON.parse(failing.out) as { hookSpecificOutput: { hookEventName: string; additionalContext: string }; decision?: string };
+    expect(parsed.decision).toBeUndefined();
+    expect(parsed.hookSpecificOutput.hookEventName).toBe("PostToolUse");
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("Next action:");
     await write("b.ts", "const b = 1;\n");
     const passing = await check({ format: "agent", hook: "claude" });
     expect(passing).toEqual({ code: 0, out: "", err: "" });
@@ -1688,13 +1689,13 @@ describe("final review: loop breaker", () => {
     await write("b.ts", "// two\nconst b = 1;\n");
     await write("c.ts", "const c = 1;\n");
     const runs = [await hook("c.ts"), await hook("c.ts"), await hook("c.ts")];
-    expect(runs.map((r) => (JSON.parse(r.out) as { reason: string }).reason).some((r) => r.includes("Same failure"))).toBe(false);
+    expect(runs.map((r) => (JSON.parse(r.out) as { hookSpecificOutput: { additionalContext: string } }).hookSpecificOutput.additionalContext).some((r) => r.includes("Same failure"))).toBe(false);
   });
 
   it("hook runs after edits to the failing file trip the loop breaker", async () => {
     await write("b.ts", "// two\nconst b = 1;\n");
     const runs = [await hook("b.ts"), await hook("b.ts"), await hook("b.ts")];
-    expect((JSON.parse(runs[2]?.out ?? "") as { reason: string }).reason).toContain("Next action: stop editing this file");
+    expect((JSON.parse(runs[2]?.out ?? "") as { hookSpecificOutput: { additionalContext: string } }).hookSpecificOutput.additionalContext).toContain("Next action: stop editing this file");
   });
 });
 
@@ -1810,7 +1811,7 @@ describe("residual fixes", () => {
   it("the edit hook takes its base from the lock, not from the editable config", async () => {
     await write("b.ts", "// two\nconst b = 1;\n");
     const input = JSON.stringify({ tool_input: { file_path: join(root, "b.ts") } });
-    expect(JSON.parse((await check({ base: undefined, format: "agent", hook: "claude", hookInput: input })).out).decision).toBe("block");
+    expect(JSON.parse((await check({ base: undefined, format: "agent", hook: "claude", hookInput: input })).out).hookSpecificOutput.additionalContext).toContain("Next action:");
     await write(".warden/config.yaml", config(["core", "local"]).replace("base: main", "base: nowhere"));
     const { code, err } = await check({ base: undefined, format: "agent", hook: "claude", hookInput: input });
     expect(code).toBe(0);
@@ -2162,10 +2163,12 @@ describe("performance: run records and input size", () => {
     expect(runs[0]?.result).toBeUndefined();
   });
 
-  it("a check that crashes writes an error record and fails its open step, then rethrows", async () => {
+  it("a check that crashes writes an error record, fails its open step, and reports verdict 2 instead of throwing", async () => {
     vi.spyOn(eslintAdapter, "run").mockRejectedValue(new Error("eslint exploded"));
     await write("b.ts", "const b = 1;\n");
-    await expect(check({ paths: ["b.ts"] })).rejects.toThrow("eslint exploded");
+    const crashed = await check({ paths: ["b.ts"] });
+    expect(crashed.code).toBe(2);
+    expect(crashed.err).toContain("eslint exploded");
     const runs = (await costs()).filter((e) => e.guardrail === "run");
     expect(runs).toEqual([expect.objectContaining({ outcome: "error", exit: 2, next: "run warden check again; it stopped with: eslint exploded" })]);
     const steps = (await evidence()).filter((e) => e.kind === "step");
@@ -2682,7 +2685,8 @@ describe("signed .warden changes", () => {
 
   const hookCommit = async (message: string): Promise<string> => {
     const r = spawnSync("git", ["commit", "-m", message], { cwd: root, env: await commitEnv(), encoding: "utf8" });
-    expect(r.status).not.toBe(0);
+    expect(r.status, `${r.stdout}${r.stderr}`).toBe(0);
+    expect(r.stderr).toContain("Warden reported problems (verdict 1)");
     return `${r.stdout}${r.stderr}`;
   };
 
@@ -2735,8 +2739,8 @@ describe("signed .warden changes", () => {
     git("add", "-A");
     git("commit", "-q", "-m", "notes unsigned");
     git("rm", "-q", ".warden/b.txt");
-    await follow(await hookCommit("undo b"));
-    expect((await check({}, false)).code).toBe(0);
+    expect(await hookCommit("undo b")).toContain("to restore the .warden/ files");
+    await fixes(false);
   });
 
   it("a staged deletion outside .warden stays staged while the restore commits", async () => {
@@ -2841,6 +2845,7 @@ describe("signed .warden changes", () => {
       spawnSync("sh", ["-c", action], { cwd: root, env: await commitEnv(), encoding: "utf8" });
       expect((await readdir(dir)).sort()).toEqual(["-rf x", "file"]);
       expect(await readFile(join(dir, "file"), "utf8")).toBe("precious\n");
+      await rm(join(root, ".warden/sub"));
       await fixes(false);
       expect((await readdir(dir)).sort()).toEqual(["-rf x", "file"]);
     } finally {
@@ -3016,7 +3021,7 @@ describe("signed .warden changes", () => {
     expect((await readdir(join(root, ".warden"))).filter((n) => names.includes(`.warden/${n}`))).toEqual([]);
   });
 
-  it("the hook still refuses a plain partial commit whose unstaged files would fail a commit-tier guardrail", async () => {
+  it("the hook reports a plain partial commit whose unstaged files would fail a commit-tier guardrail, and commits", async () => {
     git("checkout", "-q", "main");
     await addLegacy("commit", 'test ! -e broken && test "$(cat x.ts 2>/dev/null)" = "$(cat y.ts 2>/dev/null)"', 5000);
     await write("x.ts", "export const v = 1;\n");
@@ -3028,21 +3033,21 @@ describe("signed .warden changes", () => {
     await write("y.ts", "export const v = 2;\n");
     git("add", "x.ts");
     const head = git("rev-parse", "HEAD").trim();
-    const refused = await hookCommit("partial");
-    expect(refused).toContain("UNSTAGED y.ts");
-    expect(git("rev-parse", "HEAD").trim()).toBe(head);
+    const reported = await hookCommit("partial");
+    expect(reported).toContain("UNSTAGED y.ts");
+    expect(git("rev-parse", "HEAD~1").trim()).toBe(head);
   });
 
-  it("Warden's pre-commit hook still refuses a staged unsigned .warden change over an unsigned commit", async () => {
+  it("Warden's pre-commit hook reports a staged unsigned .warden change over an unsigned commit, and commits", async () => {
     await write(".warden/notes.txt", "evil\n");
     git("commit", "-q", "-am", "c1 unsigned");
     const head = git("rev-parse", "HEAD").trim();
     await write(".warden/notes.txt", "evil2\n");
     git("add", "-A");
     const r = spawnSync("git", ["commit", "-m", "c2"], { cwd: root, env: await commitEnv(), encoding: "utf8" });
-    expect(r.status).not.toBe(0);
+    expect(r.status).toBe(0);
     expect(`${r.stdout}${r.stderr}`).toContain("TAMPERED .warden/notes.txt  unsigned");
-    expect(git("rev-parse", "HEAD").trim()).toBe(head);
+    expect(git("rev-parse", "HEAD~1").trim()).toBe(head);
   });
 
   it("a graft cannot hide an unsigned deletion", async () => {

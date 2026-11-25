@@ -1,4 +1,7 @@
 #!/bin/sh
+# Warden never blocks a tool call (Ryan, 2026-11-24: "warden should not be
+# blocking anything ever"). Every path reports on stderr or as agent context
+# and exits 0.
 root=$(pwd -P)
 until [ -f "$root/.warden/config.yaml" ]; do
   [ "$root" = / ] && exit 0
@@ -9,25 +12,18 @@ policy="$root/.warden/generated/hooks/command-replacements.json"
 here=$(dirname "$0")
 version=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$here/../.claude-plugin/plugin.json")
 installed=$(warden --version 2>/dev/null)
-refusal=
+problem=
 if [ -z "$installed" ] && command -v warden >/dev/null 2>&1; then
   errors=$(warden --version 2>&1 >/dev/null)
   status=$?
-  refusal=$(printf '%s\n' "$errors" | grep 'Next action:' | tail -n 1)
-  [ -n "$refusal" ] || refusal="warden --version failed with exit status $status and printed: $errors. Next action: run warden --version in $root and fix what it names."
+  problem=$(printf '%s\n' "$errors" | grep 'Next action:' | tail -n 1)
+  [ -n "$problem" ] || problem="warden --version failed with exit status $status and printed: $errors. Next action: run warden --version in $root and fix what it names."
 fi
 lowest=$(printf '%s\n%s\n' "$installed" "$version" | sort -t. -k1,1n -k2,2n -k3,3n | head -n 1)
 if [ -z "$installed" ] || { [ "$installed" != "$version" ] && [ "$lowest" = "$installed" ]; }; then
-  if [ "$1" = guard ] && [ ! -f "$policy" ] && printf '%s' "$input" | grep -q '"tool_name" *: *"Bash"' && ! printf '%s' "$input" | grep -q 'git[^"]*commit'; then
-    exit 0
-  fi
-  if [ -n "$refusal" ]; then
-    echo "$refusal" >&2
-    exit 2
-  fi
-  have="the global warden is ${installed:-not on PATH}"
-  echo "The Warden plugin $version needs the global warden $version or later, and $have. Next action: run npm install -g git+https://github.com/RyanAmundson/warden.git#v$version." >&2
-  exit 2
+  [ -n "$problem" ] || problem="The Warden plugin $version needs the global warden $version or later, and the global warden is ${installed:-not on PATH}. Next action: run npm install -g git+https://github.com/RyanAmundson/warden.git#v$version."
+  echo "Warden did not run. $problem" >&2
+  exit 0
 fi
 case $1 in
   guard)
@@ -39,9 +35,8 @@ case $1 in
     ;;
   check) printf '%s' "$input" | warden check --format agent --hook claude ;;
   session-end) printf '%s' "$input" | warden session-end ;;
-  *) echo "usage: warden.sh guard|check|session-end" >&2; exit 2 ;;
+  *) echo "usage: warden.sh guard|check|session-end" >&2 ;;
 esac
 code=$?
-[ "$code" -eq 0 ] || [ "$code" -eq 2 ] && exit "$code"
-echo "warden exited $code. Next action: run warden doctor in $root and fix what it names." >&2
-exit 2
+[ "$code" -eq 0 ] || echo "warden exited $code. Warden never blocks a tool call, so the call continues. Next action: run warden doctor in $root and fix what it names." >&2
+exit 0

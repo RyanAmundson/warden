@@ -10,6 +10,7 @@ import { runExamples } from "../src/compiler/examples.js";
 import { loadRecords } from "../src/records/load.js";
 import { skillPath } from "../src/compiler/skills.js";
 import { LOCK_PATH } from "../src/compiler/lock.js";
+import { withVerdict } from "./verdict.js";
 
 const warden = resolve(import.meta.dirname, "..");
 const gate = join(warden, "packs/review/gate.js");
@@ -71,9 +72,9 @@ it("emits the generated review skill and passes the boundary gate through the CL
   git("add", ".warden");
   git("commit", "-qm", "configure review");
   change();
-  const check = (status?: string) => spawnSync(process.execPath, [cli, "check", "--rule", "review-gate", "--tier", "boundary", "--base", "main"], {
+  const check = (status?: string) => withVerdict(["check"], spawnSync(process.execPath, [cli, "check", "--rule", "review-gate", "--tier", "boundary", "--base", "main"], {
     cwd: root, encoding: "utf8", env: { ...process.env, WARDEN_TEST_EXIT: status },
-  });
+  }));
   put("test/ops.test.mjs", "if (process.env.WARDEN_TEST_EXIT) process.exit(Number(process.env.WARDEN_TEST_EXIT));");
   const operational = check("2");
   expect(operational.status, operational.stdout + operational.stderr).toBe(2);

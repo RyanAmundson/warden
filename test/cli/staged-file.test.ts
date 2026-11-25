@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { expect, it } from "vitest";
+import { withVerdict } from "../verdict.js";
 
 it("reports a staged file moved out of the worktree as unstaged", async () => {
   const fixture = await mkdtemp(join(tmpdir(), "warden-staged-file-"));
@@ -11,7 +12,7 @@ it("reports a staged file moved out of the worktree as unstaged", async () => {
   const git = (...args: string[]): void => {
     execFileSync("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: root });
   };
-  const run = (...args: string[]) => spawnSync(process.execPath, [cli, ...args], { cwd: root, encoding: "utf8" });
+  const run = (...args: string[]) => withVerdict(args, spawnSync(process.execPath, [cli, ...args], { cwd: root, encoding: "utf8" }));
   const check = () => run("check", "--tier", "commit", "--base", "main");
   const path = "src/[services]/metrics-service/metrics-service.ts";
   const source = join(root, path);

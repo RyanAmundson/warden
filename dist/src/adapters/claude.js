@@ -187,7 +187,7 @@ const replacementRefusal = (root, source, required) => {
     appendEvidence(project, { at: new Date().toISOString(), kind: "tampered", root, detail: `capability-replacement:${rule.capability}`, next });
     return `${rule.command} is replaced by Capability ${rule.capability}. Next action: ${next}`;
 };
-export function refusal(root, input, requireReplacements = false) {
+export function guardFinding(root, input, requireReplacements = false) {
     const parsed = parseInput(input);
     if (parsed.tool_name === "Bash") {
         const command = parsed.tool_input?.command;
@@ -207,3 +207,4 @@ export function refusal(root, input, requireReplacements = false) {
         return undefined;
     return `${file} is a Warden record, and only a person changes Warden's records. Next action: tell the user what to change in ${file}, so they edit it and run warden compile.`;
 }
+export const agentNote = (event, text) => `${JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: text } })}\n`;

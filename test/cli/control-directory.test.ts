@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, it } from "vitest";
+import { withVerdict } from "../verdict.js";
 
 it("identifies a linked control directory and accepts the restored directory", async () => {
   const root = await mkdtemp(join(tmpdir(), "warden-control-directory-"));
@@ -12,7 +13,7 @@ it("identifies a linked control directory and accepts the restored directory", a
   const git = (...args: string[]): void => {
     execFileSync("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: root });
   };
-  const run = (...args: string[]) => spawnSync(process.execPath, [cli, ...args], { cwd: root, encoding: "utf8" });
+  const run = (...args: string[]) => withVerdict(args, spawnSync(process.execPath, [cli, ...args], { cwd: root, encoding: "utf8" }));
   const check = () => run("check", "--tier", "boundary", "--base", "main");
 
   try {

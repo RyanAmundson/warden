@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { parse } from "yaml";
+import { withVerdict } from "../verdict.js";
 
 const cli = resolve(import.meta.dirname, "../../bin/warden.js");
 const typescriptPack = resolve(import.meta.dirname, "../../packs/typescript/pack.yaml");
@@ -47,7 +48,7 @@ const doc = "# Unit\n\nPurpose\n-------\n\n<!--\n## Commented\n-->\n\n<div>\n## 
 const git = (...args: string[]): void => {
   execFileSync("git", ["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: root });
 };
-const run = (...args: string[]) => spawnSync(process.execPath, [cli, ...args], { cwd: root, encoding: "utf8" });
+const run = (...args: string[]) => withVerdict(args, spawnSync(process.execPath, [cli, ...args], { cwd: root, encoding: "utf8" }));
 
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "warden-unit-layout-"));

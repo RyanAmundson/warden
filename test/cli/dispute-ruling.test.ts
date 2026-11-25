@@ -8,6 +8,7 @@ import { expectedOutputs } from "../../src/compiler/compile.js";
 import { LOCK_PATH } from "../../src/compiler/lock.js";
 import { loadRecords } from "../../src/records/load.js";
 import { appendEvidence, evidenceFile, readEvidence, ROTATE_BYTES, wardenHome } from "../../src/runner/evidence.js";
+import { withVerdict } from "../verdict.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
 
@@ -19,7 +20,7 @@ it("records one attributed dispute ruling without clearing the underlying findin
   const git = (cwd: string, ...args: string[]) => execFileSync("git", [
     "-c", "commit.gpgsign=false", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", ...args,
   ], { cwd, stdio: "pipe" });
-  const warden = (cwd: string, ...args: string[]) => spawnSync(process.execPath, [join(wardenRoot, "bin/warden.js"), ...args], { cwd, encoding: "utf8" });
+  const warden = (cwd: string, ...args: string[]) => withVerdict(args, spawnSync(process.execPath, [join(wardenRoot, "bin/warden.js"), ...args], { cwd, encoding: "utf8" }));
   const check = () => warden(root, "check", file, "--tier", "edit", "--base", "main");
   const attribution = ["--role", "independent-reviewer", "--actor", "Review fixture", "--reason", "The example needs clarification", "--evidence", "review-note.md"];
   try {

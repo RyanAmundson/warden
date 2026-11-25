@@ -26,10 +26,12 @@ export const RELEASES = "git+https://github.com/RyanAmundson/warden.git";
 const quoted = (word) => `'${word.replaceAll("'", "'\\''")}'`;
 export const commitHook = (version, base) => [
     "#!/bin/sh",
+    "# Warden never blocks a commit. It reports and exits 0.",
     "if ! command -v warden >/dev/null 2>&1; then",
-    `  echo "Warden's commit check needs the global warden command, and it is not on PATH. Next action: run npm install -g ${RELEASES}#v${version}, then commit again." >&2`,
-    "  exit 2",
+    `  echo "Warden did not check this commit: the global warden command is not on PATH. Next action: run npm install -g ${RELEASES}#v${version}." >&2`,
+    "  exit 0",
     "fi",
-    `exec warden check --base ${quoted(base)} --trigger git-commit`,
+    `WARDEN_GIT_PID=$PPID warden check --base ${quoted(base)} --trigger git-commit || echo "Warden's commit check exited $?. Warden never blocks a commit, so the commit continues." >&2`,
+    "exit 0",
     "",
 ].join("\n");

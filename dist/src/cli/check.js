@@ -3,7 +3,7 @@ import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { GENERATED_TSCONFIG, TSC_CONFIG_SOURCE } from "../adapters/tsc-config.js";
-import { claudeSession, hookTriggers } from "../adapters/claude.js";
+import { agentNote, claudeSession, hookTriggers } from "../adapters/claude.js";
 import { PARSE_ERROR } from "../adapters/types.js";
 import { wardenVersion } from "../compiler/compile.js";
 import { LOCK_FORMAT, LOCK_PATH, bundledTools, canonicalJson, olderThan, readLock, sha256 } from "../compiler/lock.js";
@@ -209,7 +209,7 @@ const report = (failures, set, opts, notes, audit = false, advisory = false) => 
     const failed = failedOf(failures, notes);
     if (opts.hook === "claude") {
         if (failed && !advisory)
-            process.stdout.write(`${JSON.stringify({ decision: "block", reason: formatFeedback(failures, set, "agent", notes) })}\n`);
+            process.stdout.write(agentNote("PostToolUse", formatFeedback(failures, set, "agent", notes)));
         return 0;
     }
     if (audit && opts.format === "text")
@@ -226,10 +226,10 @@ const report = (failures, set, opts, notes, audit = false, advisory = false) => 
     return (audit ? incomplete : failed) ? 1 : 0;
 };
 const alertMessage = (alert) => `Warden's daemon holds an open tamper alert for this repository: ${alert.detail} ${alert.file} in ${alert.root}. Next action: ${alert.next}`;
-const refuseForAlert = (alert, opts) => {
+const reportAlert = (alert, opts) => {
     const message = alertMessage(alert);
     if (opts.hook === "claude") {
-        process.stdout.write(`${JSON.stringify({ decision: "block", reason: message })}\n`);
+        process.stdout.write(agentNote("PostToolUse", message));
         return 0;
     }
     process.stderr.write(`${message}\n`);
@@ -346,14 +346,8 @@ const check = async (opts, live, audit) => {
             appendEvidence(project, { at, kind: "gate-off", run, tier, trigger: live.trigger, root, ...(opts.base === undefined ? {} : { base: opts.base }) });
         else {
             const problem = heartbeatProblem();
-            if (problem !== undefined && advisory)
-                process.stderr.write(`${problem}\n${AUDIT_MODE}\n`);
-            else if (problem !== undefined) {
+            if (problem !== undefined)
                 process.stderr.write(`${problem}\n`);
-                const commit = headCommit(root);
-                appendEvidence(project, { at, kind: "cost", guardrail: RUN_TOTAL, run, tier, trigger: live.trigger, root, outcome: "refused", exit: 1, ms: performance.now() - live.started, steps: {}, files: 0, bytes: 0, next: nextOf(problem), ...(commit === undefined ? {} : { commit }) });
-                return 1;
-            }
         }
     }
     const base = comparison.name;
@@ -612,11 +606,11 @@ const check = async (opts, live, audit) => {
     const coveredHere = (d) => d.detail === "unchecked-commit" && tree !== undefined && commitsOf(root, [d.file]).some((c) => covers(root, { tree, mergeBase: live.base?.mergeBase }, c));
     const open = alerts.filter((d) => !coveredHere(d));
     const alert = advisory || audit || !failed ? open[0] : undefined;
-    const blocks = alert !== undefined && !advisory;
+    const fails = alert !== undefined && !advisory;
     if (advisory && opts.hook !== "claude")
         for (const d of open)
             process.stderr.write(`${alertMessage(d)}\n`);
-    const code = blocks ? refuseForAlert(alert, opts) : report(failures, set, opts, notes, audit, advisory);
+    const code = fails ? reportAlert(alert, opts) : report(failures, set, opts, notes, audit, advisory);
     if (audit)
         closeStep(live, failed || code !== 0 ? "fail" : "done");
     const empty = scanned.length === 0 && ran.ran.length === 0 && blobRun.length === 0;
@@ -672,7 +666,7 @@ async function runCheckMode(opts, audit) {
             return 0;
         }
         if (!known)
-            throw cause;
+            process.stderr.write(`${cause.stack ?? String(cause)}\n`);
         return 2;
     }
 }

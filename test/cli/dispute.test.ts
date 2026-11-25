@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { readEvidence } from "../../src/runner/evidence.js";
+import { withVerdict } from "../verdict.js";
 
 const cli = resolve(import.meta.dirname, "../../bin/warden.js");
 const fixture = resolve(import.meta.dirname, "../fixtures/project-valid");
@@ -11,7 +12,7 @@ const id = "warden-no-comments";
 let root: string;
 
 const git = (...args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", ...args], { cwd: root });
-const warden = (...args: string[]) => spawnSync(process.execPath, [cli, ...args], { cwd: root, encoding: "utf8" });
+const warden = (...args: string[]) => withVerdict(args, spawnSync(process.execPath, [cli, ...args], { cwd: root, encoding: "utf8" }));
 const file = "src/-feature with space.ts";
 
 beforeEach(async () => {

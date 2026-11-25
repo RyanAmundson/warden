@@ -3,6 +3,7 @@ import { chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "nod
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, it } from "vitest";
+import { withVerdict } from "../verdict.js";
 
 const warden = resolve(import.meta.dirname, "../..");
 
@@ -13,7 +14,7 @@ it("blocks new npm and standalone tools until an enabled Capability registers th
   const installed = join(temp, "warden");
   const cli = join(installed, "bin/warden.js");
   const git = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" } });
-  const run = (...args: string[]) => spawnSync(process.execPath, [cli, ...args], { cwd: root, encoding: "utf8", env: { ...process.env, WARDEN_HOME: join(temp, "warden-home") } });
+  const run = (...args: string[]) => withVerdict(args, spawnSync(process.execPath, [cli, ...args], { cwd: root, encoding: "utf8", env: { ...process.env, WARDEN_HOME: join(temp, "warden-home") } }));
   const write = (path: string, content: unknown) => writeFile(join(root, path), JSON.stringify(content));
   const check = () => run("check", "--rule", "no-unregistered-tools", "--tier", "boundary", "--base", "main", "--format", "json");
 

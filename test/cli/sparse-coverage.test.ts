@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, it } from "vitest";
 import { readEvidence } from "../../src/runner/evidence.js";
+import { withVerdict } from "../verdict.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
 
@@ -13,9 +14,9 @@ it("records partial coverage for changed paths outside a sparse checkout", async
     "-c", "commit.gpgsign=false", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", ...args,
   ], { cwd: root, encoding: "utf8", stdio: "pipe" }).trim();
   const warden = (...args: string[]) => {
-    const result = spawnSync(process.execPath, [join(wardenRoot, "bin/warden.js"), ...args], {
+    const result = withVerdict(args, spawnSync(process.execPath, [join(wardenRoot, "bin/warden.js"), ...args], {
       cwd: root, env: { ...process.env, WARDEN_DAEMON: "off" }, encoding: "utf8",
-    });
+    }));
     expect(result.status, result.stdout + result.stderr).toBe(0);
   };
   const lastRun = () => readEvidence("fixture").filter((e) => e.kind === "cost" && e.guardrail === "run" && e.root === root).at(-1);

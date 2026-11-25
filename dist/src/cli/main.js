@@ -5,7 +5,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command, CommanderError } from "commander";
-import { refusal } from "../adapters/claude.js";
+import { agentNote, guardFinding } from "../adapters/claude.js";
 import { compile, wardenVersion } from "../compiler/compile.js";
 import { thenRemoveExampleProjects } from "../compiler/examples.js";
 import { COMMAND_PROBE, UNKNOWN_COMMAND } from "../compiler/skills.js";
@@ -35,6 +35,12 @@ const oneOf = (command, name, value, allowed) => {
     if (!allowed.includes(value))
         throw new Error(`--${name} must be one of ${allowed.join(", ")}. Next action: run warden ${command} --help`);
     return value;
+};
+const NEVER_BLOCK = new Set(["check", "audit", "guard", "session-end"]);
+const reportVerdict = (verdict) => {
+    if (verdict !== 0)
+        process.stderr.write(`Warden reported problems (verdict ${verdict}) and exits 0, because Warden never blocks work.\n`);
+    process.exitCode = 0;
 };
 const outputClosed = new AbortController();
 for (const stream of [process.stdout, process.stderr]) {
@@ -92,7 +98,7 @@ program
     .option("--base <ref>", "the branch this work merges into")
     .option("--trigger <trigger>", "what started this check: git-commit or manual", "manual")
     .action(async (paths, o) => {
-    process.exitCode = await runCheck({
+    reportVerdict(await runCheck({
         root: root(),
         wardenRoot: findWardenRoot(),
         paths: paths.length > 0 ? paths.map((p) => resolve(p)) : undefined,
@@ -103,7 +109,7 @@ program
         hook: o.hook === undefined ? undefined : oneOf("check", "hook", o.hook, ["claude"]),
         hookInput: o.hook === undefined ? undefined : readFileSync(0, "utf8"),
         trigger: oneOf("check", "trigger", o.trigger, ["git-commit", "manual"]),
-    });
+    }));
 });
 program
     .command("audit [paths...]")
@@ -113,7 +119,7 @@ program
     .option("--format <format>", "text or json", "text")
     .option("--base <ref>", "the branch this work merges into")
     .action(async (paths, o) => {
-    process.exitCode = await runAudit({
+    reportVerdict(await runAudit({
         root: root(),
         wardenRoot: findWardenRoot(),
         paths: paths.length > 0 ? paths.map((p) => resolve(p)) : undefined,
@@ -121,16 +127,16 @@ program
         base: o.base,
         tier: oneOf("audit", "tier", o.tier, ["edit", "boundary"]),
         format: oneOf("audit", "format", o.format, ["text", "json"]),
-    });
+    }));
 });
 program
     .command("guard")
     .description("check a harness PreToolUse request against Warden's editing, commit, and command policies; read input on stdin")
     .option("--compiled-replacements", "require the compiled Capability command policy for shell requests")
     .action((options) => {
-    const reason = refusal(root(), readFileSync(0, "utf8"), options.compiledReplacements === true);
-    if (reason !== undefined)
-        process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } })}\n`);
+    const finding = guardFinding(root(), readFileSync(0, "utf8"), options.compiledReplacements === true);
+    if (finding !== undefined)
+        process.stdout.write(agentNote("PreToolUse", finding));
 });
 program
     .command("session-end", { hidden: true })
@@ -413,11 +419,19 @@ await thenRemoveExampleProjects(async () => {
     await program.parseAsync(process.argv);
 }, (cause) => {
     if (cause instanceof CommanderError) {
-        process.exitCode = cause.exitCode === 0 ? 0 : 2;
+        if (cause.exitCode === 0)
+            process.exitCode = 0;
+        else if (NEVER_BLOCK.has(process.argv[2] ?? ""))
+            reportVerdict(2);
+        else
+            process.exitCode = 2;
     }
     else {
         const location = cause instanceof RecordError ? [cause.file, cause.pointer].filter(Boolean).join(" ") : "";
         process.stderr.write(`${location === "" ? "" : `${location}: `}${cause.message}\n`);
-        process.exitCode = 2;
+        if (NEVER_BLOCK.has(process.argv[2] ?? ""))
+            reportVerdict(2);
+        else
+            process.exitCode = 2;
     }
 });

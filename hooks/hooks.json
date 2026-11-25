@@ -3,7 +3,7 @@
     "PreToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit|Bash",
-        "hooks": [{ "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/warden.sh", "guard"], "onFailure": "block" }]
+        "hooks": [{ "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/warden.sh", "guard"] }]
       }
     ],
     "SessionEnd": [
@@ -14,7 +14,7 @@
     "PostToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit",
-        "hooks": [{ "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/warden.sh", "check"], "onFailure": "block" }]
+        "hooks": [{ "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/warden.sh", "check"] }]
       }
     ]
   }

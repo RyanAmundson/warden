@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, it } from "vitest";
+import { withVerdict } from "../verdict.js";
 
 const cli = resolve(import.meta.dirname, "../../bin/warden.js");
 
@@ -93,7 +94,7 @@ ${rules.join("")}`);
     expect(git("status", "--porcelain")).toBe("");
 
     await setReport("seconds");
-    const blocked = spawnSync(process.execPath, [cli, "check", "--tier", "boundary", "--base", "main", "--format", "json"], { cwd: root, env, encoding: "utf8" });
+    const blocked = withVerdict(["check"], spawnSync(process.execPath, [cli, "check", "--tier", "boundary", "--base", "main", "--format", "json"], { cwd: root, env, encoding: "utf8" }));
     expect(blocked.status, blocked.stderr + blocked.stdout).toBe(1);
     expect(JSON.parse(blocked.stdout).failures).toHaveLength(2);
     expect(proposals()).toEqual([]);

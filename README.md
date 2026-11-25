@@ -4,6 +4,25 @@ Warden is a guardrail compiler. It turns a project's records in `.warden/`
 into tool configs, a lock, and checks that run at each edit, commit, and
 boundary. Warden stores configuration and generated controls under `.warden/`.
 
+## Warden never blocks
+
+Ryan Amundson, 2026-11-24: "warden should not be blocking anything ever".
+
+Warden reports; it never refuses. This is the contract every path follows:
+
+- `warden check`, `warden audit`, `warden guard`, and `warden session-end`
+  exit 0, including on findings, tamper alerts, an outdated lock, a stopped
+  daemon, and errors. The check's verdict goes to stderr, to the run record's
+  `exit` field, and to the dashboard.
+- The generated pre-commit hook exits 0, even when `warden` is missing or
+  exits nonzero, so every commit goes through.
+- The Claude Code and Codex hooks exit 0. They hand findings to the agent as
+  `additionalContext` and never return a deny or block decision.
+- No next action asks anyone to reset, delete, or rewrite Git history.
+
+Where this README says that a check refuses or fails, it means the verdict
+that Warden reports. `test/never-blocks.test.ts` enforces the contract.
+
 ## Install
 
 Install Node.js 25 or later and Git. Install Warden from a release tag:
@@ -32,7 +51,7 @@ project's `.claude/settings.json`. The plugin replaces them. After you
 install a newer `warden`:
 
 1. Run `warden compile`, stage `.warden`, and commit. Until then,
-   `warden check` stops with that one next action.
+   `warden check` reports that one next action instead of running rules.
 2. Remove the old project-local Warden entries from `.claude/settings.json`:
    the `PostToolUse` hook that runs `npx --no -- warden check`, and the
    `permissions.deny` entries `Edit(.warden/**)`, `Write(.warden/**)`,
@@ -123,8 +142,8 @@ the response schema and the model-discovery endpoint.
 ## Resolve a conflict in .warden/baseline.json
 
 Every commit-tier check rewrites `.warden/baseline.json`, so parallel branches
-can conflict on it. A person resolves the conflict, because the plugin refuses
-agent edits under `.warden`:
+can conflict on it. A person resolves the conflict, because only a person
+edits `.warden`:
 
 1. For each Guardrail and file that both sides list, keep the lower count.
 2. Keep an entry that either side removed removed.
@@ -226,19 +245,16 @@ In a project that has one:
 
 - After an Edit, Write, or MultiEdit, the hook runs
   `warden check --format agent --hook claude` at the edit tier and passes its
-  block decision to Claude.
-- Before a tool call, the hook runs `warden guard`. It refuses an Edit, Write,
+  findings to Claude as additional context.
+- Before a tool call, the hook runs `warden guard`. It reports an Edit, Write,
   or MultiEdit under `.warden/`, and a `git commit` that carries `-n`, a short
-  flag cluster that holds `n` such as `-an`, or `--no-verify`.
+  flag cluster that holds `n` such as `-an`, or `--no-verify`, as additional
+  context. The tool call goes through.
 - If `warden` is not on `PATH`, or is older than the plugin's `version`, the
-  hook blocks Edit, Write, MultiEdit, and `git commit` with one next action:
-  the `npm install -g` command for the plugin's release. Other Bash calls go
-  through, so that install can run.
-- If `warden` exits with a code other than 0 or 2, the hook blocks the tool
-  call and names one next action.
-
-The hooks set `onFailure` to `block`, which requires Claude Code v2.1.295 or
-later.
+  hook prints the `npm install -g` command for the plugin's release on stderr
+  and skips Warden.
+- If `warden` exits with a nonzero code, the hook says so on stderr. Every
+  hook exits 0.
 
 ## Codex plugin
 
@@ -253,13 +269,13 @@ codex plugin add warden@warden
 
 Codex asks you to review the plugin's hooks before they run. Once trusted:
 
-- Before an `apply_patch` or a shell command, the hook refuses a patch that
+- Before an `apply_patch` or a shell command, the hook reports a patch that
   adds, updates, deletes, or moves a file under `.warden/`, and a `git commit`
-  that skips the pre-commit hook.
-- After an `apply_patch`, the hook runs the edit check and returns its block
-  decision to Codex.
-- A missing or older global `warden` blocks patches and commits with the
-  install command, as in Claude Code.
+  that skips the pre-commit hook, as additional context.
+- After an `apply_patch`, the hook runs the edit check and returns its
+  findings to Codex as additional context.
+- A missing or older global `warden` prints the install command on stderr,
+  as in Claude Code, and the patch or commit goes through.
 
 ## Unit records
 
@@ -344,8 +360,10 @@ Warden skips checks with `unitExample` in projects that omit `units`.
 
 `warden compile` writes `.warden/generated/hooks/pre-commit`, an executable
 hook that runs `warden check --base <base> --trigger git-commit`. The lock
-records it, so an edit to it is tampering. If `warden` is not on `PATH`, the
-hook refuses the commit with the install command as its one next action.
+records it, so an edit to it is tampering. The hook always exits 0. If
+`warden` is not on `PATH`, it prints the install command and the commit goes
+through unchecked. If `warden check` exits nonzero, it says so and the commit
+goes through.
 
 `warden init` points git at it with `git config core.hooksPath
 .warden/generated/hooks` when git runs no other hooks. The setting lives in
@@ -355,8 +373,8 @@ next action:
 
 - In a fresh clone, run `git config core.hooksPath .warden/generated/hooks`.
 - Where the project already has hooks, make its `pre-commit` hook run
-  `.warden/generated/hooks/pre-commit` and exit with its status, for example
-  with the line `.warden/generated/hooks/pre-commit || exit $?`.
+  `.warden/generated/hooks/pre-commit` and ignore its status, for example
+  with the line `.warden/generated/hooks/pre-commit || true`.
 
 Use `warden where <term>` to find the Capability whose `serves` field names
 that Term. Warden prints its ID, kind, and purpose. Use
@@ -418,23 +436,22 @@ corresponding repository skill links and get the command to create them.
 
 ## Audit mode
 
-To adopt Warden without blocking work, add `mode: audit` to
-`.warden/config.yaml` and run `warden compile`. Audit mode never blocks. Edit
-and commit checks run every rule and exit 0. Agent edits get no block decision.
-Rule failures and tampering are recorded as Evidence. Every open daemon alert, a
-stopped daemon, and any error are printed. The dashboard shows each run as not
-blocked.
+Warden blocks nothing in either mode; see [Warden never blocks](#warden-never-blocks).
+The mode decides the verdict a check records. Add `mode: audit` to
+`.warden/config.yaml` and run `warden compile`. In audit mode, rule failures,
+tampering, daemon alerts, a stopped daemon, and errors record verdict 0, the
+dashboard shows each run as an audit result, and agents get no edit feedback.
 
 Warden decides the mode from the lock at the merge base of your branch and the
 base branch, so a branch must contain the commit that switched to audit mode.
-A branch made before the switch keeps enforcing until you merge the base branch
-into it. Warden also keeps enforcing while the daemon reports the switching
-commit as unchecked. Check that commit, or have the repository owner sign it
-with `warden trust`.
+A branch made before the switch records enforce verdicts until you merge the
+base branch into it. Warden also records enforce verdicts while the daemon
+reports the switching commit as unchecked. Check that commit, or have the
+repository owner sign it with `warden trust`.
 
-Switching an enforcing project to audit mode is loosening, so the check blocks
+Switching an enforcing project to audit mode is loosening, so the check reports
 that change until it lands on the base branch. The default, `mode: enforce`,
-blocks on failures.
+records failures with a failing verdict.
 
 ## Advisory checks
 
@@ -447,9 +464,8 @@ recorded in the committed lock.
 warden audit --tier boundary --rule warden-unit-layout --format json
 ```
 
-An audit exits successfully when it finishes evaluating the requested rules,
-including when it reports findings. Policy drift, unfinished checks, and
-daemon alerts about policy integrity cause a nonzero exit. An audit leaves
+An audit exits 0. Policy drift, unfinished checks, and daemon alerts about
+policy integrity record a failing verdict. An audit leaves
 the baseline, Git index, and commit approval records intact. The daemon
 continues to record commit-hook and unchecked-commit alerts for enforcement
 through `warden check`.
@@ -508,8 +524,8 @@ HEAD when its policy, source hashes, and generated paths match the running
 compiler. It checks generated files against the committed manifest. Run checks
 with the Warden release pinned by the lock to evaluate the Guardrails.
 
-While the daemon holds an open alert for a repository, `warden check` fails
-at every tier with that alert's next action. The alert closes when the daemon
+While the daemon holds an open alert for a repository, `warden check` reports
+that alert's next action at every tier and exits 0. The alert closes when the daemon
 sees the cause fixed. The daemon keeps its checkpoint in
 `$WARDEN_HOME/daemon/state.json`. At its first start, and when it first
 discovers a repository, it records the repository's current branch and
@@ -518,9 +534,10 @@ It also records every ref tip once as the boundary. A commit that the
 boundary reaches is not judged, unless the daemon already flagged it. The
 daemon keeps every commit id it ever flagged in `state.json`. A flagged
 commit stays flagged until a full check stamps it, every ref and
-worktree that holds it drops it, or the owner trusts it. An alert about a working copy refuses commits only in its own
-worktree. Hook problems, unchecked commits, and history scan errors refuse
-commits in every worktree of the repository. The daemon skips the worktree
+worktree that holds it drops it, or the owner trusts it. An alert about a
+working copy is reported only in its own worktree. Hook problems, unchecked
+commits, and history scan errors are reported in every worktree of the
+repository. No alert stops a commit. The daemon skips the worktree
 that `scripts/self-check.sh` creates, which holds a `.warden-self-check`
 marker.
 
@@ -543,9 +560,8 @@ commit in another clone.
 The daemon honors a record only when `ssh-keygen -Y verify` accepts its
 signature from a key in the `trust_signers` file at the root of the installed
 Warden package. Every other record, and any `trusted` list in `state.json`,
-which older releases read, opens an `untrusted-trust` alert that refuses
-commits in every worktree of the repository until the file or list is
-deleted. That alert never clears the commit it names.
+which older releases read, opens an `untrusted-trust` alert that is reported
+in every worktree of the repository until the file or list is deleted. That alert never clears the commit it names.
 
 The key is what keeps an agent out, so it must need you:
 
@@ -604,9 +620,9 @@ flags it, and `warden check --base <base>` on that branch clears it.
 An open alert for a commit that no local branch or worktree HEAD reaches any
 more is dropped.
 
-It writes a heartbeat every 10 seconds. A commit-tier check exits 1 when the
-heartbeat is missing, older than 30 seconds, dated in the future, or written
-by a process that is no longer running.
+It writes a heartbeat every 10 seconds. A commit-tier check reports on stderr
+when the heartbeat is missing, older than 30 seconds, dated in the future, or
+written by a process that is no longer running, then runs its rules.
 
 `WARDEN_DAEMON=off` skips the heartbeat check, for tests and CI only. Each
 check that skips it is recorded, and the daemon flags it.

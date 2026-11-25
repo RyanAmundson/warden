@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { refusal } from "../../src/adapters/claude.js";
+import { guardFinding } from "../../src/adapters/claude.js";
 import { compile } from "../../src/compiler/compile.js";
 import { checkConsistency } from "../../src/compiler/consistency.js";
 import { stamp } from "../../src/compiler/emit.js";
@@ -86,36 +86,35 @@ describe("skill capabilities", () => {
     await usePack(gate(["printf hand-review", { command: "printf  legacy-report" }]));
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
     expect(readLock(root).generated[REPLACEMENT_POLICY]).toMatch(/^[a-f0-9]{64}$/);
-    const refused = guard(" printf\tlegacy-report ");
-    expect(refused.status).toBe(0);
-    const deny = JSON.parse(refused.stdout) as { hookSpecificOutput: Record<string, string> };
-    expect(deny.hookSpecificOutput).toMatchObject({
+    const reported = guard(" printf\tlegacy-report ");
+    expect(reported.status).toBe(0);
+    const note = JSON.parse(reported.stdout) as { hookSpecificOutput: Record<string, string> };
+    expect(note.hookSpecificOutput).toEqual({
       hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: expect.stringContaining("Capability review-gate"),
+      additionalContext: expect.stringContaining("Capability review-gate"),
     });
     for (const command of ["printf hand-review", "printf legacy-report preview", "warden check --rule no-comments", "warden doctor"]) {
-      expect(refusal(root, bash(command))).toBeUndefined();
+      expect(guardFinding(root, bash(command))).toBeUndefined();
     }
     expect(readEvidence("fixture").filter((entry) => entry.kind === "tampered")).toEqual([
       expect.objectContaining({ detail: "capability-replacement:review-gate", next: expect.stringContaining("warden check --rule no-comments") }),
     ]);
     const policy = await readFile(join(root, REPLACEMENT_POLICY));
     await rm(join(root, REPLACEMENT_POLICY));
-    expect(() => refusal(root, bash("pwd"))).toThrow("Command replacements differ from the compiled lock");
+    expect(() => guardFinding(root, bash("pwd"))).toThrow("Command replacements differ from the compiled lock");
     await writeFile(join(root, REPLACEMENT_POLICY), policy);
     await usePack(gate(["printf hand-review"]));
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
     expect(existsSync(join(root, REPLACEMENT_POLICY))).toBe(false);
-    expect(refusal(root, bash("printf legacy-report"))).toBeUndefined();
+    expect(guardFinding(root, bash("printf legacy-report"))).toBeUndefined();
     const lock = readLock(root);
     const guardrail = Object.values(lock.guardrails)[0];
     if (guardrail === undefined) throw new Error("The fixture lock needs a Guardrail");
     guardrail.options = REPLACEMENT_POLICY;
     await writeFile(join(root, ".warden/lock.json"), JSON.stringify(lock));
-    expect(refusal(root, bash("pwd"))).toBeUndefined();
+    expect(guardFinding(root, bash("pwd"))).toBeUndefined();
     await writeFile(join(root, ".warden/lock.json"), "{");
-    expect(refusal(root, bash("pwd"))).toBeUndefined();
+    expect(guardFinding(root, bash("pwd"))).toBeUndefined();
   });
 
   it("rejects duplicate replacements and replacements of a registered command", async () => {
