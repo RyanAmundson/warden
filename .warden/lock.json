@@ -1,6 +1,6 @@
 {
   "format": 3,
-  "warden": "0.1.14",
+  "warden": "0.1.16",
   "sources": {
     ".warden/config.yaml": "fe70cb9fd5288fd85b5c96d6b2bc8b0ea22739f2d431eb7094b74326f7905ae3",
     "allowed_signers": "44f0e698f518b31dbccfd1c7763a60827646fcb7e7ff2c3add820f240d9650e3",
@@ -19,9 +19,9 @@
     "typescript": "5.9.3"
   },
   "generated": {
-    ".warden/generated/eslint.rules.json": "08be0fdea9497cfcb8781882e5c690061100feddf475a5cbd5698048837efbee",
-    ".warden/generated/hooks/pre-commit": "4becfdc632a6da545261dfd87f2b8fe335d59f08366d5f25beacd8ef3bd40a1e",
-    ".warden/generated/skills/change-review/SKILL.md": "68dd5952eb519bc02b864ff0fd3faa2026de594f40fd4a0e5407f05858f21daf"
+    ".warden/generated/eslint.rules.json": "e350df82d33d67c9d19568097eb3268f4fc74b746232c584472aa49223021420",
+    ".warden/generated/hooks/pre-commit": "db95914d174db3857c7cdc301725f91288735bc4d621e5771ba31a0298d3a560",
+    ".warden/generated/skills/change-review/SKILL.md": "952c93596a7132afe1727e7715fc2383ae7dfd306386d021c304484399c7e0c7"
   },
   "guardrails": {
     "review-gate": {
