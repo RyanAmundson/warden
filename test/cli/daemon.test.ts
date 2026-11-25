@@ -726,7 +726,7 @@ it("judges a root commit, its next action closes the alert, and a deleted branch
   const short = orphan.slice(0, 12);
   const next = tampered().find((e) => e.file === orphan)?.next;
   expect(next).toContain(`run git switch -c warden-check-${short} main, then git read-tree -u --reset ${short}, then warden check --base main`);
-  expect(next).toContain(`If the check finds a Guardrail violation, ask the repository owner to save the intended changes separately and remove ${short}`);
+  expect(next).toContain("If the check finds a Guardrail violation, fix it in a new commit. Warden never blocks work, so this alert only reports");
   git(root, "switch", "-q", "-c", `warden-check-${short}`, "main");
   git(root, "read-tree", "-u", "--reset", short);
   expect(warden(root, { WARDEN_DAEMON: undefined }, "check", "--base", "main").code).toBe(0);
