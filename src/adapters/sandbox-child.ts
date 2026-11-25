@@ -20,7 +20,7 @@ interface Entry {
 interface TreeJob {
   kind: "tree";
   entry: Entry;
-  input: Record<string, unknown> & { imports?: [string, unknown][] };
+  input: Record<string, unknown> & { imports?: [string, unknown][]; loads?: boolean };
 }
 
 interface LintJob {
@@ -145,6 +145,12 @@ const tree = async ({ entry, input }: TreeJob, reply: (value: unknown) => void):
     if (answer.text === undefined) throw new Error(answer.error ?? `no text for ${file}`);
     return answer.text;
   };
+  const loadModule = (file: string): unknown => {
+    reply({ load: file });
+    const answer = parse(nextLine() ?? "{}") as { value?: unknown; error?: string };
+    if (answer.error !== undefined || !Object.hasOwn(answer, "value")) throw new Error(answer.error ?? `no value for ${file}`);
+    return answer.value;
+  };
   const markdownSections = (text: string): string[] => {
     const { marked } = require("marked") as typeof import("marked");
     return marked.lexer(text)
@@ -238,7 +244,8 @@ const tree = async ({ entry, input }: TreeJob, reply: (value: unknown) => void):
   const start = performance.now();
   let found: unknown;
   try {
-    const given = { ...input, read, markdownSections, markdownListLabels, markdownLinks, markdownAnchors, markdownProse, ...(input.imports === undefined ? {} : { imports: new Map(input.imports) }) };
+    const { loads, ...fields } = input;
+    const given = { ...fields, read, ...(loads === true ? { load: loadModule } : {}), markdownSections, markdownListLabels, markdownLinks, markdownAnchors, markdownProse, ...(input.imports === undefined ? {} : { imports: new Map(input.imports) }) };
     Object.defineProperty(given, "ts", { get: () => require("typescript") as unknown, enumerable: true });
     found = (check as (i: unknown) => unknown)(given);
   } catch (cause) {

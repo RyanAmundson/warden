@@ -1,13 +1,13 @@
 import { cmdAdapter } from "../adapters/cmd.js";
 import { eslintAdapter } from "../adapters/eslint.js";
-import { fsAdapter, graphAdapter } from "../adapters/tree.js";
+import { fsAdapter, graphAdapter, moduleAdapter } from "../adapters/tree.js";
 import { tscAdapter } from "../adapters/tsc.js";
 import { systemOneAdapter } from "../adapters/system-one.js";
 import { toolRegistrationAdapter } from "../adapters/tool-registration.js";
 import { RecordError } from "../records/load.js";
 import { declaredUnits } from "../records/units.js";
 export const adapters = new Map([
-    eslintAdapter, tscAdapter, cmdAdapter, fsAdapter, graphAdapter, systemOneAdapter, toolRegistrationAdapter,
+    eslintAdapter, tscAdapter, cmdAdapter, fsAdapter, graphAdapter, moduleAdapter, systemOneAdapter, toolRegistrationAdapter,
 ].map((a) => [a.id, a]));
 export const prefixOf = (g) => g.implementation.slice(0, g.implementation.indexOf(":"));
 export const unknownAdapters = (set) => {

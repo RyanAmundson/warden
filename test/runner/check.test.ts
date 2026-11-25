@@ -1007,7 +1007,7 @@ describe("unknown adapter at check time", () => {
     const { code, err } = await check();
     expect(code).toBe(2);
     expect(err).toBe(
-      `${file} /guardrails/extra-no-debugger/implementation: Guardrail extra-no-debugger names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd, fs, graph, system-one, tool. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...>, fs:<...>, graph:<...>, system-one:<...>, tool:<...> in ${file}, then run warden compile.\n`,
+      `${file} /guardrails/extra-no-debugger/implementation: Guardrail extra-no-debugger names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd, fs, graph, module, system-one, tool. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...>, fs:<...>, graph:<...>, module:<...>, system-one:<...>, tool:<...> in ${file}, then run warden compile.\n`,
     );
     await write(".warden/packs/extra/pack.yaml", (await read(".warden/packs/extra/pack.yaml")).replace("eslnt:", "eslint:"));
     expect((await compile(root, wardenRoot)).findings).toEqual([]);

@@ -108,6 +108,13 @@ const tree = async ({ entry, input }, reply) => {
             throw new Error(answer.error ?? `no text for ${file}`);
         return answer.text;
     };
+    const loadModule = (file) => {
+        reply({ load: file });
+        const answer = parse(nextLine() ?? "{}");
+        if (answer.error !== undefined || !Object.hasOwn(answer, "value"))
+            throw new Error(answer.error ?? `no value for ${file}`);
+        return answer.value;
+    };
     const markdownSections = (text) => {
         const { marked } = require("marked");
         return marked.lexer(text)
@@ -214,7 +221,8 @@ const tree = async ({ entry, input }, reply) => {
     const start = performance.now();
     let found;
     try {
-        const given = { ...input, read, markdownSections, markdownListLabels, markdownLinks, markdownAnchors, markdownProse, ...(input.imports === undefined ? {} : { imports: new Map(input.imports) }) };
+        const { loads, ...fields } = input;
+        const given = { ...fields, read, ...(loads === true ? { load: loadModule } : {}), markdownSections, markdownListLabels, markdownLinks, markdownAnchors, markdownProse, ...(input.imports === undefined ? {} : { imports: new Map(input.imports) }) };
         Object.defineProperty(given, "ts", { get: () => require("typescript"), enumerable: true });
         found = check(given);
     }

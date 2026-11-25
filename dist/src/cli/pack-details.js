@@ -66,6 +66,7 @@ function adapterReadiness(root, pack, id) {
                 return { status: "Ready", setup: "Uses Node and Git from the standard Warden setup." };
             return { status: "Verify in runner", setup: "Install the executables and dependencies used by this pack's commands. The dashboard does not run pack commands." };
         }
+        case "module": return { status: "Verify in runner", setup: "Warden loads each module with its bundled TypeScript, which runs the module's code. Install the project's dependencies so its imports resolve. Run the checks to verify each module loads." };
         case "tool": return { status: "Ready", setup: "Built into Warden. Set the project's manifest and script paths if they differ from the pack defaults." };
         default: return { status: "Ready", setup: "Bundled with Warden. No separate adapter installation." };
     }
@@ -74,6 +75,7 @@ const projectSetup = new Map([
     ["change-video", "Put agent-browser 0.26 or later and jq on PATH, and run the project's dev server. Recordings stay in WARDEN_HOME/videos, outside git."],
     ["idempotency", "Add an <operation>.idempotency.js, .mjs, or .ts spec with setup, run, snapshot, and inputs. Call step() between the operation's writes so Warden can test a crash and retry."],
     ["machines", "Add a .machine.json transition table. Add a matching .trace.json when you want Warden to verify recorded transitions."],
+    ["plugin-compliance", "Keep the pack's paths at **/* and set plugins to the folders that each hold one plugin. Set sharedCode, hostImports, and legacyImports for the project's layout. Install the project's dependencies so each plugin.ts loads its SDK."],
     ["proofs", "Add a Lean 4 Lake project at the project setting, default proofs. Add a <logic>.conformance.js, .mjs, or .ts spec that names the proved model's command and the implementation it checks."],
     ["unit-layout", "Set unitKinds and units in .warden/config.yaml. Add each Unit's declared Markdown document and headings."],
 ]);
