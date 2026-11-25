@@ -130,9 +130,16 @@ input::placeholder{color:#5E6773}
 .run-source{white-space:normal;overflow-wrap:anywhere}
 .run-location{max-width:18ch;white-space:normal;overflow-wrap:anywhere}
 .run-list{container-type:inline-size}
-.split{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start}
-.split>.wide{flex:3 1 620px}
-.split>.narrow{flex:2 1 400px}
+.project-links{display:flex;flex-wrap:wrap;gap:8px 16px;padding:10px 14px;border-top:1px solid var(--line)}
+.run-link,.project-links a{font-weight:650}
+.run-list th:nth-child(2){width:24%}
+.run-list .track{width:clamp(72px,12cqi,180px)}
+.findings ul{margin:0;padding:0;list-style:none}
+.finding-row{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:8px 16px;padding:8px 14px;overflow-wrap:anywhere}
+.findings.has-source .finding-row{grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr)}
+.finding-labels{border-bottom:1px solid var(--line)}
+.finding-row+.finding-row{border-top:1px solid var(--rule)}
+.finding-note{overflow-wrap:anywhere;margin-top:2px}
 .steps{list-style:none;margin:0;padding:6px 14px 10px}
 .steps li{display:grid;grid-template-columns:18px 120px minmax(0,1fr) 64px;gap:8px;padding:6px 0;border-bottom:1px solid #E6E9ED;align-items:start}
 .steps li:last-child{border-bottom:0}
@@ -146,11 +153,9 @@ input::placeholder{color:#5E6773}
 .tag.mode{color:var(--ink);background:#FFFFFF;border-color:#9AA3AE;font-size:11px;vertical-align:middle}
 .tag.mode.audit{color:var(--amberink);background:var(--amberbg);border-color:var(--amberln)}
 .banner.unwired{margin-bottom:16px}
-.acts{display:flex;align-items:center;gap:8px 12px;padding:0 14px 14px;flex-wrap:wrap}
-.detail .next{margin:14px}
 .facts{margin:0;padding:14px;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 14px}
 .facts dd{margin:0;overflow-wrap:anywhere}
-.facts+.modh,.steps+.modh,.scroll:has(.failures)+.modh{border-top:1px solid var(--line)}
+@media (min-width:1050px){.facts{grid-template-columns:max-content minmax(0,1fr) max-content minmax(0,1fr);column-gap:16px}}
 .rule-timings th:last-child{width:90px}
 .banner{display:flex;flex-direction:column;gap:12px;padding:18px 20px}
 .banner p{margin:0;font-size:14px;line-height:21px;max-width:75ch}
@@ -198,10 +203,11 @@ input::placeholder{color:#5E6773}
   .pack-table :is(th,td){white-space:normal;overflow-wrap:anywhere}
   .pack-table :is(th,td):is(:nth-child(2),:nth-child(5),:nth-child(6)){display:none}
   .pack-table :is(th,td):nth-child(3){white-space:nowrap}
-  .failures{table-layout:fixed;overflow-wrap:anywhere}
-  .failures :is(th,td){white-space:normal}
-  .failures th:first-child{width:36%}
-  .failures th:nth-child(2){width:46px}
+  .findings .finding-row{grid-template-columns:minmax(0,1fr)}
+  .findings.has-source .finding-row{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .findings .finding-labels{display:none}
+  .finding-location{grid-column:1/-1}
+  .steps li{grid-template-columns:14px minmax(80px,1fr) minmax(0,1fr) max-content}
 }
 
 @container (width < 580px){

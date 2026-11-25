@@ -370,9 +370,9 @@ it("resets the selected run and filters the way a fresh load does", async () => 
   bodies["/api/projects"] = warden;
   bodies["/api/runs"] = { project: "warden", runs: [] };
   await boot("/runs?project=warden&run=gone");
-  expect(html).toContain("is not among the last");
+  expect(html).toContain("has no retained record for run");
   await click("/runs?project=warden");
-  expect(html).not.toContain("is not among the last");
+  expect(html).not.toContain("has no retained record for run");
 });
 
 it("moves focus to the new heading after a switch, not on the first load", async () => {
@@ -420,4 +420,14 @@ it("replaces the history entry when the link names the page already open", async
   await click("/tamper");
   expect(history.replaceState).toHaveBeenCalledWith({ n: 0 }, "", `${origin}/tamper`);
   expect(history.pushState).not.toHaveBeenCalled();
+});
+
+it("loads the requested receipt from a legacy preview link", async () => {
+  bodies["/api/projects"] = { projects: [{ project: "warden", roots: ["/p/w"], lastRun: null, openAlerts: 0 }] };
+  bodies["/api/runs"] = { project: "warden", runs: [{ run: "old-run", tier: "commit", at: health.heartbeatAt, outcome: "ran", result: "pass" }] };
+  const load = vi.spyOn(globalThis, "fetch");
+  await boot("/runs?project=warden&run=old-run");
+  expect(load.mock.calls.map(([path]) => path)).toContain("/api/runs?project=warden&limit=100&run=old-run");
+  expect(html).toContain("Run details");
+  expect(html).toContain("old-run");
 });

@@ -1317,6 +1317,10 @@ it("serves every API route from the existing readers", async () => {
   expect(projects.projects[0]).toMatchObject({ project: PROJECT, roots: [root], lastRun: { outcome: "ran", result: "pass", root } });
   const runs = (await get("/api/runs?project=proj&limit=5")).body as { runs: Evidence[] };
   expect(runs.runs.map((r) => r.trigger)).toEqual(["manual"]);
+  const detail = await get(`/api/runs?project=proj&run=${runs.runs[0]?.run}`);
+  expect(detail).toMatchObject({ status: 200, body: { project: PROJECT, runs: runs.runs, findings: [], steps: expect.any(Array) } });
+  const failures = await get("/api/failures?project=proj");
+  expect(failures).toMatchObject({ status: 200, body: { project: PROJECT, checked: true, findings: [], problems: [], alerts: [{ detail: "gate-off" }] } });
   const layers = (await get("/api/layers?project=proj")).body as { bands: { band: string; kinds: { kind: string; rules: { guardrail: string }[] }[] }[]; packs: { id: string }[] };
   expect(layers.bands.map((b) => b.band)).toEqual(["deterministic", "judgment", "prose"]);
   expect(layers.bands[0]?.kinds.flatMap((k) => k.rules).length).toBeGreaterThan(0);

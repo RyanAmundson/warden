@@ -10,13 +10,14 @@ import { RecordError } from "../records/load.js";
 import { DEFAULT_PORT, type Daemon, type Detection, HEARTBEAT_MS, STALE_MS, UNWIRED, heartbeatFile, readHeartbeat, startWatching } from "../runner/daemon.js";
 import { type Evidence, readEvidence, wardenHome } from "../runner/evidence.js";
 import { PackSettingsError, packSettings, packSettingsBody, savePackSettings } from "./pack-settings.js";
+import { projectFailures, runEvidence } from "./run-evidence.js";
 import { runRecords } from "./runs.js";
 import { SAFE_NAME, VIDEO_FILE, recordingOf, videosRoot } from "./video.js";
 import { BANDS, bandCounts, loadView, packViolations } from "./view.js";
 
 export const LABEL = "warden.daemon";
 
-const PAGES = new Set(["/", "/runs", "/run", "/layers", "/violations", "/determinism", "/tamper"]);
+const PAGES = new Set(["/", "/runs", "/run", "/failures", "/layers", "/violations", "/determinism", "/tamper"]);
 
 const ASSETS: Record<string, string> = {
   "/app.css": "text/css; charset=utf-8",
@@ -130,10 +131,18 @@ export async function route(daemon: Daemon, wardenRoot: string, url: URL): Promi
       const { project } = pick();
       const limit = Number(url.searchParams.get("limit") ?? "20");
       if (!Number.isInteger(limit) || limit < 1) throw new HttpError(400, `limit must be a positive integer, not ${url.searchParams.get("limit")}`, "pass ?limit= with a positive integer");
-      return { project, runs: runRecords(readEvidence(project)).slice(-limit).reverse().map((run) => {
+      const evidence = readEvidence(project);
+      const id = url.searchParams.get("run");
+      const detail = id === null ? undefined : runEvidence(evidence, id, limit);
+      const runs = id === null ? runRecords(evidence).slice(-limit).reverse() : (detail?.runs ?? []);
+      return { project, ...detail, runs: runs.map((run) => {
         const video = run.run === undefined ? undefined : recordingOf(project, run.run);
         return video === undefined ? run : { ...run, video };
       }) };
+    }
+    case "/api/failures": {
+      const { project, roots } = pick();
+      return { project, ...projectFailures(readEvidence(project), roots), alerts: openAlerts(daemon, project) };
     }
     case "/api/layers": {
       const entry = pick();
@@ -182,7 +191,7 @@ export async function route(daemon: Daemon, wardenRoot: string, url: URL): Promi
       return { open: openAlerts(daemon, project, repo), recent: recent.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 50) };
     }
     default:
-      throw new HttpError(404, `no route ${url.pathname}`, "GET /api/health, /api/projects, /api/runs, /api/video, /api/layers, /api/violations, /api/determinism, /api/tamper, or /api/events");
+      throw new HttpError(404, `no route ${url.pathname}`, "GET /api/health, /api/projects, /api/runs, /api/video, /api/failures, /api/layers, /api/violations, /api/determinism, /api/tamper, or /api/events");
   }
 }
 

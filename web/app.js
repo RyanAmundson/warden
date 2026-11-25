@@ -4,7 +4,6 @@ import { beatText, frozenHtml, pageTitle, renderApp } from "/render.js";
 let params;
 let page;
 let project;
-let jump;
 let next;
 // The address being opened, and the address of the page on screen. They differ while a switch loads.
 let at;
@@ -17,7 +16,7 @@ const route = (url) => {
   params = new URLSearchParams(url.search);
   page = pageOf(url.pathname);
   project = params.get("project") ?? undefined;
-  jump = url.hash === "#detail";
+  if (page === "runs" && params.has("run")) page = "run";
   at = `${url.pathname}${url.search}`;
   return { run: params.get("run") ?? undefined, outcome: "all", tier: "", file: "", filter: "", paused: false, packMessage: undefined };
 };
@@ -50,7 +49,8 @@ const runsOf = async (projects, limit) => Object.fromEntries(await Promise.all(p
 const LOAD = {
   overview: async (ps) => ({ tamper: await api("/api/tamper"), runs: await runsOf(ps, 50) }),
   runs: async (ps, project) => ({ runs: await runsFor(project, 100) }),
-  run: async (ps, project) => ({ runs: await runsFor(project, 100) }),
+  run: async (ps, project) => ({ runs: await api(`/api/runs?project=${q(project)}&limit=100${params.has("run") ? `&run=${q(params.get("run"))}` : ""}`) }),
+  failures: async (ps, project) => ({ failures: await api(`/api/failures?project=${q(project)}`) }),
   layers: async (ps, project) => ({ layers: await api(`/api/layers?project=${q(project)}&edit=1${params.has("root") ? `&root=${q(params.get("root"))}` : ""}`) }),
   violations: async (ps, project) => ({ violations: await api(`/api/violations?project=${q(project)}`), layers: await api(`/api/layers?project=${q(project)}`), runs: await runsFor(project, 50) }),
   determinism: async (ps) => ({ determinism: await api("/api/determinism"), runs: await runsOf(ps, 100) }),
@@ -130,7 +130,7 @@ const load = async () => {
     if (seq !== loads) return;
     state.health = health;
     state.projects = projects;
-    const needsProject = ["runs", "run", "layers", "violations"].includes(page);
+    const needsProject = ["runs", "run", "failures", "layers", "violations"].includes(page);
     if (needsProject && project !== undefined && projects.length > 0 && !projects.some((p) => p.project === project)) {
       state.data = null;
       state.lost = false;
@@ -157,11 +157,6 @@ const load = async () => {
     state.loadedAt = Date.now();
     lastBeat = Date.now();
     commit();
-    const detail = jump && document.getElementById("detail");
-    if (detail) {
-      jump = false;
-      if (detail.getBoundingClientRect().top > innerHeight) detail.scrollIntoView();
-    }
     return;
   } catch (cause) {
     if (seq !== loads) return;
@@ -290,7 +285,6 @@ root.addEventListener("click", async (e) => {
   }
   if (el.dataset.outcome) {
     state.view.outcome = el.dataset.outcome;
-    state.view.run = undefined;
     return render();
   }
   if (el.dataset.action === "discard-packs") {
@@ -334,7 +328,6 @@ root.addEventListener("change", (e) => {
   }
   if (el.dataset.action === "tier") {
     state.view.tier = el.value;
-    state.view.run = undefined;
     render();
   }
 });
@@ -342,7 +335,6 @@ root.addEventListener("change", (e) => {
 root.addEventListener("input", (e) => {
   if (e.target.dataset.action !== "file") return;
   state.view.file = e.target.value;
-  state.view.run = undefined;
   render();
 });
 
