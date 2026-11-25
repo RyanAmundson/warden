@@ -1386,14 +1386,14 @@ if [ "$1" = --json ]; then
   if [ -n "$FAKE_PAGE_ERROR" ]; then echo "{\\"data\\":{\\"errors\\":[{\\"text\\":\\"$FAKE_PAGE_ERROR\\"}]}}"; else echo '{"data":{"errors":[]}}'; fi
   exit 0
 fi
-[ "$1 $2" = "record start" ] && printf 'WEBM-0123456789' > "$3"
+[ "$1 $2" = "record start" ] && printf "\${FAKE_WEBM-WEBM-0123456789}" > "$3"
 [ "$1" = screenshot ] && printf 'JPEG' > "$2"
 exit 0
 `);
   await chmod(join(bin, "agent-browser"), 0o755);
   const env = { PATH: `${bin}:${process.env.PATH ?? ""}` };
   const steps = join(scratch, "steps.sh");
-  await writeFile(steps, `ab wait '#save'\nab screenshot "$OUT/01-after.jpg"\n`);
+  await writeFile(steps, `ab wait '#save'\nab screenshot "$OUT/02-replaced.jpg"\n`);
   const record = (extra: Record<string, string> = {}) => warden(root, { ...env, ...extra }, "video", "record", "--url", "http://localhost:5173/", "--steps", steps);
   const off = record();
   expect(off.code).toBe(2);
@@ -1405,11 +1405,24 @@ exit 0
   expect(thrown.code).toBe(1);
   expect(thrown.err).toContain("Page errors:\nboom");
   expect(readdirSync(join(home, "videos/proj"))).toEqual([]);
+  const checked = readEvidence(PROJECT).filter((e) => e.kind === "cost" && e.guardrail === "run" && e.root === root).at(-1)?.run as string;
+  const head = git(root, "rev-parse", "HEAD").trim();
+  const run = "r-latest";
+  const fake = (id: string, at: string, from: string): Evidence => ({ at, kind: "cost", guardrail: "run", outcome: "ran", result: "pass", tier: "edit", trigger: "agent-edit", run: id, root: from, commit: head });
+  appendEvidence(PROJECT, fake(run, new Date(Date.now() + 1000).toISOString(), root));
+  appendEvidence(PROJECT, fake("r-other-checkout", new Date(Date.now() + 2000).toISOString(), join(scratch, "other-worktree")));
+  const empty = record({ FAKE_WEBM: "" });
+  expect(empty.code).toBe(1);
+  expect(empty.err).toContain("The replay wrote no change.webm.");
+  const first = record();
+  expect(first.code, first.err).toBe(0);
+  await writeFile(steps, `ab screenshot "$OUT/01-after.jpg"\n`);
   const ok = record();
   expect(ok.code, ok.err).toBe(0);
-  const run = readEvidence(PROJECT).filter((e) => e.kind === "cost" && e.guardrail === "run" && e.root === root).at(-1)?.run as string;
   expect(ok.out).toContain(`Recorded run ${run} of proj.`);
   expect(ok.out).toContain(join(home, "videos/proj", run, "01-after.jpg"));
+  expect(readdirSync(join(home, "videos/proj"))).toEqual([run]);
+  expect(checked).not.toBe(run);
   await writeFile(steps, Array.from({ length: 6 }, (_, i) => `ab screenshot "$OUT/0${i}.jpg"\n`).join(""));
   const many = record();
   expect(many.code).toBe(1);
