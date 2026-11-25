@@ -1,6 +1,6 @@
 {
   "name": "warden",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "description": "Reports Warden findings about edits, Git commits, and registered commands. Requires the global warden command.",
   "author": {
     "name": "Ryan Amundson"
