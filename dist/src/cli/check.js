@@ -10,7 +10,7 @@ import { LOCK_FORMAT, LOCK_PATH, bundledTools, canonicalJson, olderThan, readLoc
 import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, projectFiles, projectInventory, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache } from "../runner/cache.js";
-import { cleanHead, commitsOf, covers, indexTree, stagedMismatch, changedFiles, mergeBase, changesSinceMergeBase, hasPathCommitIndex, headCommit, matchesHead, lastCommittedText, showAtMergeBase, skippedIndexPaths, stageFile, sparseMode, stagedFiles, trackedFiles, unstagedFiles, checkoutBlobs } from "../runner/changed.js";
+import { cleanHead, commitChanges, commitsOf, stagedText, covers, indexTree, stagedMismatch, changedFiles, mergeBase, changesSinceMergeBase, hasPathCommitIndex, headCommit, matchesHead, lastCommittedText, showAtMergeBase, skippedIndexPaths, stageFile, sparseMode, stagedFiles, trackedFiles, unstagedFiles, checkoutBlobs } from "../runner/changed.js";
 import { heartbeatProblem, openAlerts } from "../runner/daemon.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
@@ -167,10 +167,11 @@ const mergeResults = (results) => [...new Set(results.map((r) => r.guardrail))].
     return { ...first, status, violations, judgedFiles, ms: all.reduce((n, r) => n + r.ms, 0) };
 });
 const failedOf = (failures, notes) => failures.length > 0 || [notes.tampered, notes.killed, notes.unstaged].some((list) => (list ?? []).length > 0);
-const report = (failures, set, opts, notes, audit = false) => {
+const AUDIT_MODE = "Warden is in audit mode, so it recorded this and does not block.";
+const report = (failures, set, opts, notes, audit = false, advisory = false) => {
     const failed = failedOf(failures, notes);
     if (opts.hook === "claude") {
-        if (failed)
+        if (failed && !advisory)
             process.stdout.write(`${JSON.stringify({ decision: "block", reason: formatFeedback(failures, set, "agent", notes) })}\n`);
         return 0;
     }
@@ -179,11 +180,24 @@ const report = (failures, set, opts, notes, audit = false) => {
     if (failed || opts.format === "json" || (notes.overBudget ?? []).length > 0 || (audit && (notes.outside ?? []).length > 0)) {
         process.stdout.write(`${formatFeedback(failures, set, opts.format, notes)}\n`);
     }
+    if (advisory) {
+        if (failed && opts.format === "text")
+            process.stdout.write(`${AUDIT_MODE}\n`);
+        return 0;
+    }
     const incomplete = [notes.tampered, notes.killed, notes.unstaged, notes.outside].some((list) => (list ?? []).length > 0);
     return (audit ? incomplete : failed) ? 1 : 0;
 };
+const alertMessage = (alert) => `Warden's daemon holds an open tamper alert for this repository: ${alert.detail} ${alert.file} in ${alert.root}. Next action: ${alert.next}`;
+const blocksInAudit = (root, alert) => alert.detail === "untrusted-trust" || (alert.detail === "unchecked-commit" && commitChanges(root, alert.file, ".warden"));
+const auditLocked = (root, tier) => {
+    if (tier !== "commit")
+        return true;
+    const staged = stagedText(root, LOCK_PATH);
+    return staged !== undefined && JSON.parse(staged).config.mode === "audit";
+};
 const refuseForAlert = (alert, opts) => {
-    const message = `Warden's daemon holds an open tamper alert for this repository: ${alert.detail} ${alert.file} in ${alert.root}. Next action: ${alert.next}`;
+    const message = alertMessage(alert);
     if (opts.hook === "claude") {
         process.stdout.write(`${JSON.stringify({ decision: "block", reason: message })}\n`);
         return 0;
@@ -262,6 +276,9 @@ const check = async (opts, live, audit) => {
             ...(recorded.length === 0 ? {} : { failures: recorded }),
             ...(outcome === "ran" && judged !== undefined ? { kinds: kindCounts(failures, judged.set) } : {}),
             ...(feedback?.next == null ? {} : { next: feedback.next.replace(/\.$/, "") }),
+            ...(failures.length === 0 ? {} : { failedRules: [...new Set(failures.map((v) => v.guardrail))] }),
+            ...((judged?.notes.killed ?? []).length === 0 ? {} : { killedRules: (judged?.notes.killed ?? []).map((k) => k.guardrail) }),
+            ...(live.advisory === true ? { mode: "audit" } : {}),
             ...judged?.extra,
         });
         return code;
@@ -353,6 +370,8 @@ const check = async (opts, live, audit) => {
         closeStep(live, "fail");
         return finish(project, "tampered", [], report([], set, opts, { tampered }), { set, notes: { tampered } });
     }
+    live.advisory = !audit && set.config.mode === "audit" && auditLocked(root, tier);
+    const advisory = live.advisory;
     openStep(live, "tools-ready");
     const fileSha = (file) => (existsSync(join(root, file)) ? sha256(readFileSync(join(root, file))) : "");
     const doctorKey = sha256(canonicalJson(["doctor", fileSha(LOCK_PATH), fileSha("package.json")]));
@@ -362,7 +381,7 @@ const check = async (opts, live, audit) => {
         if (health.next !== undefined) {
             process.stderr.write(`${formatDoctor({ lines: health.lines.filter((l) => l.startsWith("FAIL")), next: health.next })}\n`);
             closeStep(live, "fail");
-            return finish(project, "error", [], 2, { set, notes: {}, extra: { next: health.next } });
+            return finish(project, "error", [], advisory ? 0 : 2, { set, notes: {}, extra: { next: health.next } });
         }
         writeCache(project, doctorKey, []);
     }
@@ -404,12 +423,12 @@ const check = async (opts, live, audit) => {
         const differing = scanned.filter((f) => unstaged.has(f));
         if (differing.length > 0) {
             const notes = { unstaged: differing, base, sparse: sparseMode(root) };
-            return finish(project, "unstaged", scanned, report([], set, opts, notes), { set, notes });
+            return finish(project, "unstaged", scanned, report([], set, opts, notes, false, advisory), { set, notes });
         }
         const mismatch = stagedMismatch(root, comparison, indexedLint);
         if (mismatch.paths.length > 0) {
             const notes = { unstaged: mismatch.paths, hidden: mismatch.hidden, base, sparse: sparseMode(root) };
-            return finish(project, "unstaged", scanned, report([], set, opts, notes), { set, notes });
+            return finish(project, "unstaged", scanned, report([], set, opts, notes, false, advisory), { set, notes });
         }
         if (opts.paths === undefined)
             absent = mismatch.absent;
@@ -559,8 +578,12 @@ const check = async (opts, live, audit) => {
     const scope = opts.paths === undefined && opts.rule === undefined && !incompleteSparse ? "full" : "partial";
     const tree = tier === "commit" && scope === "full" && !failed ? indexTree(root) : undefined;
     const coveredHere = (d) => d.detail === "unchecked-commit" && tree !== undefined && commitsOf(root, [d.file]).some((c) => covers(root, { tree, mergeBase: live.base?.mergeBase }, c));
-    const alert = !audit && failed ? undefined : alerts.find((d) => !coveredHere(d));
-    const code = alert === undefined ? report(failures, set, opts, notes, audit) : refuseForAlert(alert, opts);
+    const open = alerts.filter((d) => !coveredHere(d));
+    const alert = advisory ? (open.find((d) => blocksInAudit(root, d)) ?? open[0]) : !audit && failed ? undefined : open[0];
+    const blocks = alert !== undefined && (!advisory || blocksInAudit(root, alert));
+    if (alert !== undefined && !blocks && opts.hook !== "claude")
+        process.stderr.write(`${alertMessage(alert)}\n`);
+    const code = blocks ? refuseForAlert(alert, opts) : report(failures, set, opts, notes, audit, advisory);
     if (audit)
         closeStep(live, failed || code !== 0 ? "fail" : "done");
     const empty = scanned.length === 0 && ran.ran.length === 0 && blobRun.length === 0;
@@ -607,7 +630,13 @@ async function runCheckMode(opts, audit) {
             const attemptedRoot = resolve(opts.root);
             const commit = headCommit(attemptedRoot);
             const next = known ? nextOf(cause.message) : `run warden check again; it stopped with: ${cause.message}`;
-            appendEvidence(live.project, { at: live.at, kind: "cost", guardrail: RUN_TOTAL, run: live.run, tier: live.tier, trigger: live.trigger, attemptedRoot, outcome: "error", exit: 2, ms: performance.now() - live.started, steps: live.steps, baseVerificationMs: live.baseVerificationMs, files: 0, bytes: 0, next, ...(commit === undefined ? {} : { commit }), ...live.base });
+            appendEvidence(live.project, { at: live.at, kind: "cost", guardrail: RUN_TOTAL, run: live.run, tier: live.tier, trigger: live.trigger, attemptedRoot, outcome: "error", exit: live.advisory === true ? 0 : 2, ...(live.advisory === true ? { mode: "audit" } : {}), ms: performance.now() - live.started, steps: live.steps, baseVerificationMs: live.baseVerificationMs, files: 0, bytes: 0, next, ...(commit === undefined ? {} : { commit }), ...live.base });
+        }
+        if (live.advisory === true) {
+            if (!known)
+                process.stderr.write(`${cause.message}\n`);
+            process.stderr.write(`${AUDIT_MODE}\n`);
+            return 0;
         }
         if (!known)
             throw cause;

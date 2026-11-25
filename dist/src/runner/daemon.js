@@ -84,6 +84,7 @@ export function readState() {
     return { roots: value.roots ?? {}, repos: value.repos ?? {} };
 }
 const REPO_WIDE = new Set(["hook-unwired", "unchecked-commit", "untrusted-trust"]);
+export const UNWIRED = new Set(["hook-unwired", "hooks-disabled", "plugin-missing", "plugin-disabled", "gate-off", "removed"]);
 const repoWide = (d) => REPO_WIDE.has(d.detail) || (d.detail === "scan-error" && d.file === HISTORY);
 export function openAlerts(root, audit = false) {
     const repo = commonDir(root);
@@ -137,7 +138,7 @@ const refresh = (index, project) => {
             ix.enabledRoots.add(e.root);
         if (!isRun(e) || e.tier !== "commit")
             continue;
-        if (e.tree !== undefined && e.scope === "full" && (e.result === "pass" || e.outcome === "empty"))
+        if (e.tree !== undefined && e.scope === "full" && (e.result === "pass" || e.outcome === "empty" || (e.mode === "audit" && e.outcome === "ran")))
             ix.stamps.push(e);
         if (e.root !== undefined && e.outcome !== "refused" && !ix.offRuns.has(e.run))
             ix.lastGated.set(e.root, e.at);

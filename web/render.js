@@ -45,6 +45,22 @@ const DETAIL_TEXT = {
 
 const OUTCOME_TITLE = { error: "Error", tampered: "Tampered", unstaged: "Unstaged changes", refused: "Refused" };
 
+const UNWIRED = new Set(["hook-unwired", "hooks-disabled", "plugin-missing", "plugin-disabled", "gate-off", "removed"]);
+
+const UNWIRED_EFFECT = {
+  "hook-unwired": "Commits land without a Warden check.",
+  "hooks-disabled": "Claude Code runs no hooks here, so agent edits get no Warden check.",
+  "plugin-missing": "Agent edits in Claude Code get no Warden check. Commit checks still run.",
+  "plugin-disabled": "Agent edits in Claude Code get no Warden check. Commit checks still run.",
+  "gate-off": "That commit check ran without the daemon's alert gate.",
+  removed: "Warden has no config here, so it checks nothing.",
+};
+
+const MODE = {
+  audit: ["Audit mode", "Warden records failures and never blocks edits or commits."],
+  enforce: ["Enforcing", "Failures block agent edits and commits."],
+};
+
 const LOCK_KINDS = new Set(["source-drift", "generated-drift", "lock-drift", "loosened", "weakened-kind", "base-moved", "missing-lock", "leftover-temp"]);
 
 export const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -66,6 +82,14 @@ const trigger = (run) => TRIGGERS[run.trigger] ?? run.trigger ?? "–";
 const target = (run) => run.file ?? (run.files == null ? "–" : plural(run.files, "file"));
 
 const isAudit = (run) => ["audit", "main audit", "continuous audit"].includes(run.trigger);
+
+const unwired = (run) => UNWIRED.has(run.alert);
+
+const auditMode = (run) => run.mode === "audit";
+
+const runMode = (run) => isAudit(run) ? "Advisory audit run. It never blocks." : auditMode(run) ? "Audit mode. Warden recorded this run and did not block." : "Enforcing. Failures block.";
+
+const modeTag = (mode) => MODE[mode] ? `<span class="tag mode ${mode}" title="${esc(MODE[mode][1])}">${MODE[mode][0]}</span>` : "";
 
 const checkout = (run) => run.root ?? run.attemptedRoot;
 
@@ -90,11 +114,11 @@ const href = (page, params = {}) => {
 
 const ICON_X = '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3 L9 9 M9 3 L3 9" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>';
 
-const ICON_DONE = '<svg width="14" height="14" viewBox="0 0 14 14" role="img" aria-label="done"><path d="M3 7.5 L6 10.5 L11 4" stroke="#1F5E39" stroke-width="1.8" fill="none"/></svg>';
+const ICON_DONE = '<svg width="14" height="14" viewBox="0 0 14 14" role="img" aria-label="passed"><path d="M3 7.5 L6 10.5 L11 4" stroke="#1F5E39" stroke-width="1.8" fill="none"/></svg>';
 
-const ICON_FAIL = '<svg width="14" height="14" viewBox="0 0 14 14" role="img" aria-label="stopped here"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="#8E1B14" stroke-width="1.8" fill="none"/></svg>';
+const ICON_FAIL = '<svg width="14" height="14" viewBox="0 0 14 14" role="img" aria-label="failed"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="#8E1B14" stroke-width="1.8" fill="none"/></svg>';
 
-const ICON_SKIP = '<svg width="14" height="14" viewBox="0 0 14 14" role="img" aria-label="not reached"><circle cx="7" cy="7" r="4.5" stroke="#9AA3AE" stroke-width="1.4" fill="none"/></svg>';
+const ICON_SKIP = '<svg width="14" height="14" viewBox="0 0 14 14" role="img" aria-label="not run"><circle cx="7" cy="7" r="4.5" stroke="#9AA3AE" stroke-width="1.4" fill="none"/></svg>';
 
 const BRAND = '<svg width="34" height="14" viewBox="0 4 120 24" aria-hidden="true"><rect x="1" y="4" width="26" height="24" rx="7" fill="#C9A04A"/><circle cx="10" cy="16" r="3.5" fill="#1C2A3F"/><path d="M27 10 L112 10 L118 16.5 L112 23 L104 23 L100.5 20.25 L95.5 20.25 L88.5 24 L71.5 24 L64.5 14 L59.5 14 L52.5 21.5 L35.5 21.5 L32 24 L27 24 Z" fill="#C9A04A"/></svg>';
 
@@ -119,9 +143,13 @@ export const stoppedAt = (run) => {
 
 export const outcome = (run) => {
   if (run.outcome === "refused" || (run.outcome === "ran" && isAudit(run) && run.alert !== undefined)) return { cls: "err", text: "Refused", icon: true };
-  if (run.outcome === "ran" && run.alert !== undefined) return { cls: "block", text: "Blocked by alert", icon: true };
+  if (run.outcome === "ran" && run.alert !== undefined) {
+    if (auditMode(run)) return { cls: "err", text: `${unwired(run) ? "Warden unwired" : "Tamper alert"} · not blocked`, icon: true };
+    return unwired(run) ? { cls: "tamper", text: "Warden unwired", icon: true } : { cls: "block", text: "Blocked by alert", icon: true };
+  }
   if (run.outcome === "ran" && run.result === "pass") return { cls: "pass", text: "Pass" };
   if (run.outcome === "ran" && run.result === "fail") {
+    if (auditMode(run)) return { cls: "err", text: "Failed · not blocked", icon: true };
     if (!isAudit(run)) return { cls: "block", text: "Blocked", icon: true };
     if (run.exit === 0) return { cls: "err", text: "Advisory findings" };
     return { cls: "err", text: "Incomplete audit", icon: true };
@@ -155,6 +183,7 @@ const stepLegend = () =>
   `<div class="legend">${STEPS.map((s) => `<span><i class="sw" aria-hidden="true" style="background:${s.color}"></i>${s.label}</span>`).join("")}<span><i class="sw" aria-hidden="true" style="background:${REST}"></i>setup and records</span><span>Every bar shares one scale, 0 to 3 s</span></div>`;
 
 export const projectStatus = (p) => {
+  if (p.unwired?.length > 0) return { cls: "tamper", text: "Warden unwired", icon: true };
   if (p.openAlerts > 0) return { cls: "tamper", text: plural(p.openAlerts, "open alert"), icon: true };
   if (p.lastRun === null || p.lastRun === undefined) return { cls: "idle", text: "No runs yet" };
   return outcome(p.lastRun);
@@ -224,15 +253,26 @@ export const apiError = (err) => `<section class="banner amber" role="alert" ari
 ${nextBox(err.next)}
 </section>`;
 
+export const unwiredBanner = (p) => {
+  const first = p?.unwired?.[0];
+  if (first === undefined) return "";
+  const id = `uw-${p.project.replace(/[^a-z0-9]/gi, "-")}`;
+  const rest = (p.openAlerts ?? 0) - p.unwired.length;
+  const effect = `${UNWIRED_EFFECT[first.detail] ?? ""} ${p.mode === "audit" ? "In audit mode, this alert does not block work." : "While this alert is open, Warden refuses checks that would otherwise pass."}`;
+  return `<section class="banner red unwired" role="alert" aria-labelledby="${id}"><div class="top">${tag({ cls: "tamper", text: "Warden unwired", icon: true })}<h2 id="${id}">Warden is unwired in ${esc(p.project)}</h2></div><p>${esc(DETAIL_TEXT[first.detail] ?? first.detail)} ${esc(effect.trim())} This is a setup problem, not a rule failure.${rest > 0 ? ` Fix it first, then review the other ${esc(plural(rest, "open alert"))} on the Tamper page.` : ""}</p>${nextBox(first.next)}</section>`;
+};
+
+const selectedProject = (state) => state.projects?.find((p) => p.project === state.project);
+
 const slot = (html) => `<span class="slot">${html}</span>`;
 
 const alertsSection = (data) => {
   const rows = [];
   const byProject = new Map();
-  for (const d of data.tamper.open) byProject.set(d.project, [...(byProject.get(d.project) ?? []), d]);
+  for (const d of data.tamper.open.filter((d) => !UNWIRED.has(d.detail))) byProject.set(d.project, [...(byProject.get(d.project) ?? []), d]);
   for (const [project, list] of byProject) {
     const first = list[0];
-    rows.push(`<div class="alert lit red">${slot(tag({ cls: "tamper", text: "Tamper", icon: true }))}<div><strong>${esc(project)}</strong> · ${plural(list.length, "open detection")}: ${esc(first.detail)} on <span class="mono">${esc(first.file)}</span>${list.length > 1 ? ` and ${plural(list.length - 1, "more")}` : ""}${quiet ? "" : `<div class="why">Next action: <span class="mono">${esc(first.next)}</span></div>`}</div><a href="${href("tamper")}">Open tamper detections</a></div>`);
+    rows.push(`<div class="alert lit red">${slot(tag({ cls: "tamper", text: "Tamper", icon: true }))}<div><strong>${esc(project)}</strong> · ${plural(list.length, "open detection")}: ${esc(first.detail)} on <span class="mono">${esc(first.file)}</span>${list.length > 1 ? ` and ${num(list.length - 1)} more` : ""}${quiet ? "" : `<div class="why">Next action: <span class="mono">${esc(first.next)}</span></div>`}</div><a href="${href("tamper")}">Open tamper detections</a></div>`);
   }
   for (const p of data.projects) {
     const run = p.lastRun;
@@ -262,8 +302,8 @@ const projectCard = (p, runs) => {
   const repoCount = repositories.length > 1 ? `<span class="muted">${num(affected)} of ${num(repositories.length)} repositories have open detections</span>` : "";
   const end = run && notPassing(run) && run.next ? nextBox(run.next) : `<div class="calm">${run === null || run === undefined ? "No check has run here yet." : run.outcome === "empty" ? "The last run found no changes." : passed(run) ? "The last run passed." : "The last run recorded no next action."}</div>`;
   return `<section class="mod card" aria-labelledby="${id}">
-<div class="modh"><div><h2 class="h2" id="${id}">${esc(p.project)}</h2><span class="muted mono">${roots}</span>${audits.length > 0 ? `<span class="muted" title="${esc(audits[0].ref)}">Automatic audit · ${auditRefLabel(audits[0])}</span><ul class="audit-results">${auditResults.join("")}</ul>` : ""}</div>${tag(s)}</div>
-<div class="keyrow">${projectKey(p.project, p.openAlerts > 0)}<div>${p.openAlerts > 0 ? `<span class="bad">${plural(p.openAlerts, "open tamper detection")}</span>${repoCount}<a href="${href("tamper")}">See what changed</a>` : '<span class="ok">No open tamper detections</span><span class="muted">The daemon is watching its hooks and records</span>'}</div></div>
+<div class="modh"><div><h2 class="h2" id="${id}">${esc(p.project)} ${modeTag(p.mode)}</h2><span class="muted mono">${roots}</span>${audits.length > 0 ? `<span class="muted" title="${esc(audits[0].ref)}">Automatic audit · ${auditRefLabel(audits[0])}</span><ul class="audit-results">${auditResults.join("")}</ul>` : ""}</div>${tag(s)}</div>
+<div class="keyrow">${projectKey(p.project, p.openAlerts > 0)}<div>${p.unwired?.length > 0 ? `<span class="bad">Warden is unwired</span><span class="muted">${esc(DETAIL_TEXT[p.unwired[0].detail] ?? p.unwired[0].detail)}</span><a href="${href("tamper")}">See open alerts</a>` : p.openAlerts > 0 ? `<span class="bad">${plural(p.openAlerts, "open tamper detection")}</span>${repoCount}<a href="${href("tamper")}">See what changed</a>` : '<span class="ok">No open tamper detections</span><span class="muted">The daemon is watching its hooks and records</span>'}</div></div>
 <div class="stats"><div><div class="lbl">Last run</div><div>${run ? `${esc(clock(run.at))} · ${esc(run.tier ?? "")}` : "–"}</div></div><div><div class="lbl">Last pass</div><div>${lastPass ? `${esc(clock(lastPass.at))} · ${esc(lastPass.tier ?? "")}` : (runs.length === 0 ? "–" : `none in the last ${plural(runs.length, "run")}`)}</div></div><div><div class="lbl">Open alerts</div><div>${num(p.openAlerts)}</div></div><div><div class="lbl">Ratchet left</div><div>${ratchet ? num(ratchet[1]) : "–"}</div></div></div>
 ${end}
 </section>`;
@@ -305,6 +345,7 @@ export const overviewPage = (state) => {
   const controls = `<label class="lbl" for="ov-proj">Project</label><select id="ov-proj" data-action="filter"><option value="">All projects</option>${data.projects.map((p) => `<option value="${esc(p.project)}"${view.filter === p.project ? " selected" : ""}>${esc(p.project)}</option>`).join("")}</select><button class="btn" type="button" data-action="pause" aria-pressed="${view.paused ? "true" : "false"}">${view.paused ? "Resume live" : "Pause live"}</button>`;
   const cols = ["timeLink", "project", "trigger", "tier", "changed", "outcome", "bar", "ms", "ratchet"];
   return `${header("Overview", `${plural(data.projects.length, "project")} watched · updated ${esc(clock(now.toISOString()))} · ${esc(now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }))}${view.paused ? " · live updates paused" : ""}`, controls)}
+${data.projects.map(unwiredBanner).join("")}
 ${alertsSection(data)}
 <div class="cards">${data.projects.map((p) => projectCard(p, data.runs[p.project] ?? [])).join("")}</div>
 <section class="mod" aria-labelledby="ov-stream"><div class="modh"><h2 class="h2" id="ov-stream">Live check runs</h2>${stepLegend()}</div>
@@ -312,30 +353,51 @@ ${alertsSection(data)}
 <tbody>${stream.length === 0 ? '<tr><td colspan="9" class="muted">No check has run yet. Runs appear here as agents edit and commit.</td></tr>' : stream.map((r) => runRow({ ...r, project: r.project }, cols, { fresh: view.fresh })).join("")}</tbody></table></div></section>`;
 };
 
-const stepsList = (run) => {
-  const stop = notPassing(run) ? stoppedAt(run)?.id : undefined;
-  const verdict = outcome(run);
-  let sum = 0;
-  const items = STEPS.map((s, i) => {
-    const v = run.steps?.[s.id];
-    if (v === undefined) return `<li>${ICON_SKIP}<span class="no">${i + 1} ${s.label}</span><span class="no">not reached</span><span class="r no">–</span></li>`;
-    sum += v;
-    const failed = s.id === stop && run.outcome !== "ran";
-    const final = s.id === "verdict" && notPassing(run);
-    const stopped = failed || (final && verdict.icon);
-    const note = final ? (run.alert === undefined ? verdict.text : `open tamper alert: ${run.alert}`) : failed ? verdict.text : "done";
-    return `<li>${stopped ? ICON_FAIL : ICON_DONE}<span style="font-weight:650">${i + 1} ${s.label}</span><span class="wrap${stopped ? " bad" : " muted"}">${esc(note)}</span><span class="r">${esc(elapsed(v))}</span></li>`;
-  });
-  if (run.ms !== undefined) items.push(`<li><span></span><span class="muted">setup and records</span><span></span><span class="r">${esc(elapsed(Math.max(0, run.ms - sum)))}</span></li>`);
-  return `<ol class="steps">${items.join("")}</ol>`;
+const CHECK_ICON = { pass: ICON_DONE, fail: ICON_FAIL, skip: ICON_SKIP };
+
+const check = (state, label, note, time = "") => ({ state, html: `<li class="check-${state}">${CHECK_ICON[state]}<span class="mono wrap">${esc(label)}</span><span class="wrap ${state === "fail" ? "bad" : "muted"}">${esc(note)}</span><span class="r">${esc(time)}</span></li>` });
+
+const failedRules = (run) => new Set([...(run.failedRules ?? (run.failures ?? []).map((f) => f.guardrail)), ...(run.killedRules ?? [])]);
+
+const alertsChecked = (run) => run.outcome === "empty" || (run.outcome === "ran" && (run.result === "pass" || isAudit(run) || auditMode(run)));
+
+const setupChecks = (run) => {
+  const stop = notPassing(run) && run.outcome !== "ran" ? stoppedAt(run)?.id : undefined;
+  const step = (id, label) => {
+    const v = run.steps?.[id];
+    if (v === undefined) return check("skip", label, "not reached");
+    return id === stop ? check("fail", label, outcome(run).text, elapsed(v)) : check("pass", label, "done", elapsed(v));
+  };
+  const alert = run.alert !== undefined
+    ? check("fail", "No open alerts", unwired(run) ? `Warden is unwired. ${DETAIL_TEXT[run.alert] ?? run.alert}` : `open tamper alert: ${run.alert}`)
+    : alertsChecked(run) ? check("pass", "No open alerts", "none open") : check("skip", "No open alerts", run.outcome === "ran" ? "not checked, because a rule failed first" : "not reached");
+  return [alert, step("rules-intact", "Rules intact"), step("tools-ready", "Tools ready")];
 };
 
-const rulesTable = (run) => {
-  const timings = Object.entries(run.rules ?? {});
-  const timedRules = new Set(timings.map(([id]) => id));
-  const cached = (run.cachedRules ?? []).filter((id) => !timedRules.has(id));
-  const rows = [...timings.map(([id, duration]) => [id, elapsed(duration)]), ...cached.map((id) => [id, "Cached"])];
-  return `<div class="modh"><h3 class="h2">Rule timings</h3></div>${rows.length === 0 ? `<div class="pad muted">${run.guardrails === 0 ? "No rules were selected." : "No per-rule timings were recorded."}</div>` : `<table class="rule-timings"><thead><tr><th scope="col">Rule</th><th scope="col" class="r">Duration</th></tr></thead><tbody>${rows.map(([id, duration]) => `<tr><td class="mono wrap path">${esc(id)}</td><td class="r">${esc(duration)}</td></tr>`).join("")}</tbody></table>`}`;
+const ruleChecks = (run) => {
+  const failed = failedRules(run);
+  const timed = run.rules ?? {};
+  const ids = [...new Set([...failed, ...Object.keys(timed), ...(run.cachedRules ?? [])])].sort((a, b) => Number(failed.has(b)) - Number(failed.has(a)) || a.localeCompare(b));
+  if (ids.length === 0) {
+    if (run.steps?.rules === undefined) return [check("skip", "Rules", run.outcome === "ran" || run.outcome === "empty" ? "no per-rule results were recorded" : "did not run, because Warden stopped first")];
+    return [check("skip", "Rules", run.guardrails === 0 ? "no rules were selected" : "no per-rule results were recorded")];
+  }
+  return ids.map((id) => {
+    const time = timed[id] === undefined ? "cached" : elapsed(timed[id]);
+    if (!failed.has(id)) return check("pass", id, timed[id] === undefined ? "passed, cached result" : "passed", time);
+    const shown = (run.failures ?? []).filter((f) => f.guardrail === id).length;
+    if (run.killedRules?.includes(id)) return check("fail", id, "stopped at its time budget", time);
+    return check("fail", id, shown === 0 ? "failed" : `failed · ${plural(shown, "finding")} shown below`, time);
+  });
+};
+
+export const checklist = (run, heading = { level: "h3", id: "" }) => {
+  const setup = setupChecks(run);
+  const rules = ruleChecks(run);
+  const count = (state) => [...setup, ...rules].filter((c) => c.state === state).length;
+  return `<div class="modh"><${heading.level} class="h2"${heading.id ? ` id="${heading.id}"` : ""}>Checks</${heading.level}><span class="muted">${num(count("pass"))} passed · ${num(count("fail"))} failed · ${num(count("skip"))} not run</span></div>
+<div class="lbl checks-group">Warden setup</div><ol class="steps checks">${setup.map((c) => c.html).join("")}</ol>
+<div class="lbl checks-group">Rules · ${plural(rules.filter((c) => c.state !== "skip").length, "rule")}</div><ol class="steps checks">${rules.map((c) => c.html).join("")}</ol>`;
 };
 
 const failuresTable = (run) => {
@@ -358,6 +420,7 @@ const runFacts = (run, full = false) => {
     [run.root || !run.attemptedRoot ? "Checkout" : "Attempted checkout", code(checkout(run))],
     ["Commit", code(run.commit)],
     ...(run.ref ? [["Ref", code(run.ref)]] : []),
+    ["Mode", esc(runMode(run))],
     ["Scope", esc(scope)],
     ["Files scanned", run.file == null ? esc(target(run)) : code(run.file)],
     ...(Array.isArray(run.packs) ? [["Packs", run.packs.map(code).join(", ") || "None"]] : []),
@@ -369,10 +432,8 @@ const runFacts = (run, full = false) => {
 const runDetail = (project, run) => `<section class="mod narrow detail" id="detail" aria-labelledby="rn-dh">
 <div class="modh"><div><h2 class="h2" id="rn-dh">${esc(tierTitle(run))}</h2><span class="muted">${esc(runSub(run))}</span></div>${tag(outcome(run))}</div>
 ${runFacts(run)}
-<div class="modh"><h3 class="h2">Steps</h3></div>
-${stepsList(run)}
+${checklist(run)}
 ${failuresTable(run)}
-${rulesTable(run)}
 ${run.next ? nextBox(run.next) : '<div class="pad muted">Nothing to do for this run.</div>'}
 <div class="acts"><a href="${href("run", { project, run: run.run })}" style="font-weight:600">Open the run</a><button class="btn" type="button" data-copy="${esc(run.run)}">Copy run id</button>${run.ratchet ? `<span class="mono muted">ratchet ${num(run.ratchet[0])} → ${num(run.ratchet[1])}</span>` : ""}</div>
 </section>`;
@@ -392,7 +453,9 @@ export const runsPage = (state) => {
   const tiers = ["edit", "commit", "boundary"].map((t) => `<option value="${t}"${view.tier === t ? " selected" : ""}>${t}</option>`).join("");
   const label = { all: "All runs", pass: "Passed", not: "Not passing" }[view.outcome ?? "all"];
   const cols = ["timeLink", "trigger", "tier", "outcome", "bar", "ms", "next"];
-  return `${header(`Runs · ${esc(data.runs.project)}`, `${plural(runs.length, "recent run")} · ${num(counts.not)} not passing`, projectPicker(state, "rn-proj"))}
+  const mode = selectedProject(state)?.mode;
+  return `${header(`Runs · ${esc(data.runs.project)}`, `${plural(runs.length, "recent run")} · ${num(counts.not)} not passing${MODE[mode] ? ` · ${MODE[mode][0]}: ${MODE[mode][1]}` : ""}`, projectPicker(state, "rn-proj"))}
+${unwiredBanner(selectedProject(state))}
 ${missing ? missingRun(data.runs.project, view.run, runs.length) : ""}
 <div class="filters"><div class="seg" role="group" aria-label="Outcome">${seg}</div><label><span class="lbl">Tier</span><select id="rn-tier" data-action="tier"><option value="">Every tier</option>${tiers}</select></label><label><span class="lbl">File</span><input id="rn-file" type="search" data-action="file" placeholder="Filter by changed file" value="${esc(view.file ?? "")}"></label></div>
 <div class="split"><section class="mod wide run-list" aria-labelledby="rn-list"><div class="modh"><h2 class="h2" id="rn-list">${label} · newest first</h2><span class="muted bar-note">Duration bars show up to 3 s</span></div>
@@ -411,6 +474,7 @@ export const streakOf = (runs, run) => {
 
 const runMessage = (run) => {
   const audit = isAudit(run);
+  if (run.alert !== undefined && !audit && unwired(run)) return ["Warden is unwired", `${DETAIL_TEXT[run.alert] ?? run.alert} ${auditMode(run) ? "Warden recorded this run and did not block it." : "Warden blocked this run until you fix the setup."} This is a setup problem. The rule results are in the checklist.`];
   if (run.alert !== undefined) return audit
     ? ["Audit refused by an open tamper alert", `The daemon has an open alert for this repository (${run.alert}). Resolve it before relying on the audit.`]
     : ["Blocked by an open tamper alert", `The daemon has an open alert for this repository (${run.alert}). The check exited ${run.exit ?? 1}.`];
@@ -419,7 +483,8 @@ const runMessage = (run) => {
     if (run.exit === 0) return ["Audit reported findings", "This advisory run completed with exit 0. Review the recorded findings below."];
     return ["Audit did not complete", "Review the next action and any recorded findings before relying on this result."];
   }
-  if (run.outcome === "ran") return ["Check blocked", "Review the recorded failures and next action."];
+  if (run.outcome === "ran" && auditMode(run)) return ["Rules failed in audit mode", "Warden recorded the failures and did not block. The checklist shows which rules failed."];
+  if (run.outcome === "ran") return ["Check blocked", "The checklist shows which rules failed. Fix them, then run the check again."];
   const step = stoppedAt(run);
   const name = OUTCOME_TITLE[run.outcome] ?? run.outcome;
   return step
@@ -453,12 +518,12 @@ export const runPage = (state) => {
   const run = runs.find((r) => r.run === wanted) ?? runs[0];
   if (run === undefined) return `${header(`Runs · ${esc(project)}`, "No runs yet")}<section class="mod pad muted">No check has run in ${esc(project)} yet.</section>`;
   const streak = streakOf(runs, run);
-  const reached = STEPS.filter((s) => run.steps?.[s.id] !== undefined).length;
   return `<header class="head"><div><a href="${href("runs", { project })}" style="font-size:12px;font-weight:600">Runs · ${esc(project)}</a><h1 class="h1">${esc(tierTitle(run))}</h1><div class="muted">${esc(runSub(run))}</div></div><div class="controls"><button class="btn" type="button" data-copy="${esc(run.run)}">Copy run id</button></div></header>
+${unwiredBanner(selectedProject(state))}
 ${banner(run)}
 ${videoSection(project, run)}
 <div class="split"><section class="mod narrow" aria-labelledby="er-run"><div class="modh"><h2 class="h2" id="er-run">Run details</h2>${notPassing(run) ? "" : tag(outcome(run))}</div>${runFacts(run, true)}</section>
-<section class="mod wide" aria-labelledby="er-steps"><div class="modh"><h2 class="h2" id="er-steps">Steps</h2><span class="muted">${notPassing(run) && run.outcome !== "ran" ? (reached === 0 ? "stopped before step 1" : `stopped at step ${reached} of 4`) : `${reached} of 4 steps ran`}</span></div>${stepsList(run)}${failuresTable(run)}${rulesTable(run)}</section></div>
+<section class="mod wide" aria-labelledby="er-steps">${checklist(run, { level: "h2", id: "er-steps" })}${failuresTable(run)}</section></div>
 ${streak.length > 1 ? `<section class="mod" aria-labelledby="er-streak"><div class="modh"><h2 class="h2" id="er-streak">Same outcome, ${num(streak.length)} runs in a row</h2><span class="muted">since ${esc(clock(streak.at(-1).at))}${run.next ? " · each gave the same next action" : ""}</span></div><div class="scroll"><table><thead><tr><th scope="col">Time</th><th scope="col">Trigger</th><th scope="col">Tier</th><th scope="col" class="r">ms</th></tr></thead><tbody>${streak.map((r) => `<tr${r.run === run.run ? ' class="sel" aria-current="true"' : ""}><td><a href="${href("run", { project, run: r.run })}">${esc(clock(r.at))}</a></td><td>${esc(trigger(r))}</td><td>${esc(r.tier ?? "–")}</td><td class="r">${ms(r.ms)}</td></tr>`).join("")}</tbody></table></div></section>` : ""}`;
 };
 

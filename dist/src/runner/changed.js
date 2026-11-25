@@ -83,6 +83,14 @@ export function changedFiles(root, base) {
     ];
     return [...new Set(files)].sort();
 }
+export const commitChanges = (root, commit, path) => {
+    const diff = git(root, ["diff-tree", "-r", "-m", "--first-parent", "--root", "--no-commit-id", "--name-only", commit, "--", path]);
+    return !diff.ok || diff.out.trim() !== "";
+};
+export const stagedText = (root, path) => {
+    const shown = git(root, ["show", `:${path}`]);
+    return shown.ok ? shown.out : undefined;
+};
 export const headCommit = (root) => {
     const r = git(root, ["rev-parse", "--verify", "--quiet", "HEAD"]);
     return r.ok ? r.out.trim() : undefined;

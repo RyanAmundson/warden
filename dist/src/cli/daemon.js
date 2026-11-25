@@ -7,7 +7,7 @@ import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { wardenVersion } from "../compiler/compile.js";
 import { RecordError } from "../records/load.js";
-import { HEARTBEAT_MS, STALE_MS, heartbeatFile, readHeartbeat, startWatching } from "../runner/daemon.js";
+import { HEARTBEAT_MS, STALE_MS, UNWIRED, heartbeatFile, readHeartbeat, startWatching } from "../runner/daemon.js";
 import { readEvidence, wardenHome } from "../runner/evidence.js";
 import { PackSettingsError, packSettings, packSettingsBody, savePackSettings } from "./pack-settings.js";
 import { runRecords } from "./runs.js";
@@ -50,6 +50,10 @@ const lastRan = (evidence) => runRecords(evidence).filter((e) => e.outcome === "
 const openAlerts = (daemon, project, repo) => [...daemon.projects.values()]
     .filter((w) => (project === undefined || w.project === project) && (repo === undefined || w.repo === repo))
     .flatMap((w) => [...w.open.values()]);
+const modeOf = (runs) => {
+    const last = runs.filter((run) => run.trigger !== "audit" && run.trigger !== "main audit" && run.steps?.["tools-ready"] !== undefined).at(-1);
+    return last === undefined ? null : last.mode ?? "enforce";
+};
 const bandsOf = (run) => Object.fromEntries([...BANDS.map((b) => b.name.toLowerCase()), "unknown"].map((name, i) => [name, bandCounts(run)[i] ?? 0]));
 function projectCheckout(daemon, entry, url) {
     const selected = url.searchParams.get("root");
@@ -98,6 +102,8 @@ export async function route(daemon, wardenRoot, url) {
                         lastMainAudit: latest ?? null,
                         mainAuditRuns: ["edit", "boundary"].flatMap((tier) => revisionRuns.filter((run) => run.tier === tier).slice(-1)),
                         openAlerts: p.repositories.reduce((sum, r) => sum + r.openAlerts, 0),
+                        mode: modeOf(runs),
+                        unwired: openAlerts(daemon, p.project).filter((d) => UNWIRED.has(d.detail)),
                     };
                 }) };
         case "/api/runs": {

@@ -91,7 +91,7 @@ export function computeLock(set, generated, sources, warden) {
         ]);
     }))
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-    const { project, base, tierBudgetMs, loopBreakerRepeats } = set.config;
+    const { project, base, tierBudgetMs, loopBreakerRepeats, mode } = set.config;
     return {
         format: LOCK_FORMAT,
         warden,
@@ -99,7 +99,7 @@ export function computeLock(set, generated, sources, warden) {
         tools: bundledTools(),
         generated: hashed(generated),
         guardrails: Object.fromEntries(guardrails),
-        config: { project, base, tierBudgetMs, loopBreakerRepeats, bench: benchSettings(set.config) },
+        config: { project, base, tierBudgetMs, loopBreakerRepeats, ...(mode === "audit" ? { mode } : {}), bench: benchSettings(set.config) },
     };
 }
 export function readLock(root) {

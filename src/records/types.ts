@@ -92,6 +92,7 @@ export interface ProjectConfig {
   units?: UnitDeclaration[];
   tierBudgetMs: Record<Tier, number>;
   loopBreakerRepeats: number;
+  mode?: "enforce" | "audit";
   bench?: Partial<BenchSettings>;
   learning?: { repeatFindings?: number; removalRuns?: number };
 }

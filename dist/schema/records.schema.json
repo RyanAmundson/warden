@@ -42,6 +42,7 @@
                 "units": { "type": "array", "items": { "$ref": "#/$defs/unit" } },
                 "tierBudgetMs": { "$ref": "#/$defs/tierBudgetMs" },
                 "loopBreakerRepeats": { "type": "integer", "minimum": 1 },
+                "mode": { "enum": ["enforce", "audit"] },
                 "learning": {
                     "type": "object",
                     "additionalProperties": false,

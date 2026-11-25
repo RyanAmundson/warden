@@ -53,6 +53,8 @@ const determinism = { projects: [{ project: "context-manager", run: "r-pass", at
 
 const state = (page: string, data: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ page, project: "context-manager", health, projects, data: { projects, ...data }, view: { fresh: new Set() }, now: Date.parse(at(40)), ...extra });
 
+const checks = (html: string): [string, string, string, string][] => [...html.matchAll(/<li class="check-(pass|fail|skip)"><svg[^]*?<\/svg><span class="mono wrap">([^<]*)<\/span><span class="wrap [a-z]+">([^<]*)<\/span><span class="r">([^<]*)<\/span><\/li>/g)].map((m) => m.slice(1) as [string, string, string, string]);
+
 const nextActions = (html: string): string[] => [...html.matchAll(/<div class="next"><span class="lbl">Next action<\/span><code>([^<]*)<\/code>/g)].map((m) => m[1] as string);
 
 describe("pages render from API responses", () => {
@@ -135,9 +137,11 @@ describe("pages render from API responses", () => {
       expect(html).toContain("Full tier");
       expect(html).toContain("build/core-plugin-bundles.ts</td><td class=\"r\">1</td>");
       expect(html).toContain('<code class="mono">core</code>, <code class="mono">delivery</code>');
-      expect(html).toContain('>warden-no-comments</td><td class="r">&lt;1 ms');
-      expect(html).toContain('>delivery-boundary</td><td class="r">135 ms');
-      expect(html).toContain('>warden-no-suppressions</td><td class="r">Cached');
+      expect(checks(html).filter(([, label]) => label.includes("-"))).toEqual([
+        ["fail", "delivery-boundary", "failed · 1 finding shown below", "135 ms"],
+        ["pass", "warden-no-comments", "passed", "&lt;1 ms"],
+        ["pass", "warden-no-suppressions", "passed, cached result", "cached"],
+      ]);
       expect(html).not.toContain("Block · L1");
     }
   });
@@ -149,7 +153,7 @@ describe("pages render from API responses", () => {
     const list = renderApp(state("runs", { runs }));
     expect(list).toContain("Incomplete audit");
     expect(list).toContain(">Refused</span>");
-    expect(list).toContain("No per-rule timings were recorded.");
+    expect(checks(list)).toContainEqual(["skip", "Rules", "no per-rule results were recorded", ""]);
     expect(list).toContain('>Commit</dt><dd>–</dd>');
     expect(list).toContain('>Scope</dt><dd>–</dd>');
     const detail = renderApp(state("run", { runs }, { view: { run: refused.run } }));
@@ -276,7 +280,13 @@ describe("pages render from API responses", () => {
     const early = run({ run: "r-early", outcome: "error", result: undefined, exit: 2, steps: {}, next: "run warden check --base main", ratchet: undefined, rules: undefined });
     const html = renderApp(state("run", { runs: { project: "context-manager", runs: [early] } }, { view: { run: "r-early", fresh: new Set() } }));
     expect(html).toContain("Error before the first step");
-    expect(html).toContain("stopped before step 1");
+    expect(checks(html)).toEqual([
+      ["skip", "No open alerts", "not reached", ""],
+      ["skip", "Rules intact", "not reached", ""],
+      ["skip", "Tools ready", "not reached", ""],
+      ["skip", "Rules", "did not run, because Warden stopped first", ""],
+    ]);
+    expect(html).toContain("0 passed · 0 failed · 4 not run");
     expect(nextActions(html)).toEqual(["run warden check --base main"]);
   });
 
@@ -339,6 +349,46 @@ describe("pages render from API responses", () => {
     const html = renderApp(state("tamper", { tamper: { open: [{ ...detection, file: "<img src=x onerror=alert(1)>" }], recent: [] } }));
     expect(html).not.toContain("<img src=x");
     expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+  });
+});
+
+describe("an unwired project and audit mode", () => {
+  const hook = { project: "context-manager", root: "/p/cm", file: ".warden/generated/hooks/pre-commit", detail: "hook-unwired", next: "make .git/hooks/pre-commit run Warden" };
+  const unchecked = { project: "context-manager", root: "/p/cm", file: "4fbbfa67b769", detail: "unchecked-commit", next: "check commit 4fbbfa67b769" };
+  const unwiredRun = run({ run: "r-unwired", at: at(39), alert: "hook-unwired", next: hook.next, rules: { "warden-no-comments": 0.3 }, cachedRules: ["warden-no-suppressions"] });
+  const wired = [{ ...projects[0], lastRun: unwiredRun, openAlerts: 3, mode: "enforce", unwired: [hook] }, projects[1]];
+  const at2 = (page: string, data: Record<string, unknown>, view: Record<string, unknown> = {}) => ({ ...state(page, data, { view: { fresh: new Set(), ...view } }), projects: wired, data: { projects: wired, ...data } });
+
+  it("shows an unwired project as its own setup error, apart from tamper alerts and rule results", () => {
+    const overview = renderApp(at2("overview", { tamper: { open: [hook, unchecked], recent: [] }, runs: { "context-manager": [unwiredRun], warden: [] } }));
+    expect(overview).toContain("Warden is unwired in context-manager");
+    expect(overview).toContain("The commit hook does not run Warden. Commits land without a Warden check. While this alert is open, Warden refuses checks that would otherwise pass. This is a setup problem, not a rule failure. Fix it first, then review the other 2 open alerts on the Tamper page.");
+    expect(overview).toContain("unchecked-commit on");
+    expect(overview).not.toContain("hook-unwired on");
+    expect(overview).toContain('>Warden unwired</small>');
+    expect(overview).toContain('<span class="tag mode enforce"');
+    const page = renderApp(at2("run", { runs: { project: "context-manager", runs: [unwiredRun] } }, { run: "r-unwired" }));
+    expect(page).toContain("Warden is unwired");
+    expect(checks(page)).toEqual([
+      ["fail", "No open alerts", "Warden is unwired. The commit hook does not run Warden.", ""],
+      ["pass", "Rules intact", "done", "170 ms"],
+      ["pass", "Tools ready", "done", "1 ms"],
+      ["pass", "warden-no-comments", "passed", "&lt;1 ms"],
+      ["pass", "warden-no-suppressions", "passed, cached result", "cached"],
+    ]);
+    expect(page).toContain("4 passed · 1 failed · 0 not run");
+  });
+
+  it("labels audit-mode failures as recorded and not blocking", () => {
+    const failed = run({ run: "r-audit-mode", result: "fail", exit: 0, mode: "audit", failedRules: ["warden-no-comments"], failures: [{ file: "b.ts", line: 1, guardrail: "warden-no-comments", practice: "no-comments" }] });
+    const list = renderApp(at2("runs", { runs: { project: "context-manager", runs: [failed] } }));
+    expect(list).toContain("Failed · not blocked");
+    expect(list).not.toContain(">Blocked</span>");
+    expect(list).toContain("Audit mode. Warden recorded this run and did not block.");
+    expect(list).toContain("Enforcing: Failures block agent edits and commits.");
+    const page = renderApp(at2("run", { runs: { project: "context-manager", runs: [failed] } }, { run: "r-audit-mode" }));
+    expect(page).toContain("Rules failed in audit mode");
+    expect(checks(page)).toContainEqual(["fail", "warden-no-comments", "failed · 1 finding shown below", "&lt;1 ms"]);
   });
 });
 

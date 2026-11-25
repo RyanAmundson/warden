@@ -138,6 +138,14 @@ input::placeholder{color:#5E6773}
 .steps li:last-child{border-bottom:0}
 .steps .no{color:var(--muted)}
 .steps .wrap{white-space:normal;overflow-wrap:anywhere}
+.checks li{grid-template-columns:18px minmax(0,1.1fr) minmax(0,1fr) 64px}
+.checks li.check-pass{background:#EEF6F0}
+.checks li.check-fail{background:#FBEDEB}
+.checks li.check-skip{color:var(--muted)}
+.checks-group{padding:10px 14px 0}
+.tag.mode{color:var(--ink);background:#FFFFFF;border-color:#9AA3AE;font-size:11px;vertical-align:middle}
+.tag.mode.audit{color:var(--amberink);background:var(--amberbg);border-color:var(--amberln)}
+.banner.unwired{margin-bottom:16px}
 .acts{display:flex;align-items:center;gap:8px 12px;padding:0 14px 14px;flex-wrap:wrap}
 .detail .next{margin:14px}
 .facts{margin:0;padding:14px;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 14px}

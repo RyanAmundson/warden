@@ -64,6 +64,9 @@ export interface Evidence {
   sparseCoverage?: Record<string, Kind[]>;
   sparseProjectFiles?: number;
   alert?: string;
+  mode?: "audit";
+  failedRules?: string[];
+  killedRules?: string[];
 }
 
 export type Trigger = "agent-edit" | "git-commit" | "manual" | "daemon" | "audit" | "main audit";

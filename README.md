@@ -416,6 +416,23 @@ For a pack with skill Capabilities, `warden compile` writes a single locked
 for Claude Code or `warden doctor --harness codex` for Codex to check the
 corresponding repository skill links and get the command to create them.
 
+## Audit mode
+
+To adopt Warden without blocking work, add `mode: audit` to
+`.warden/config.yaml` and run `warden compile`. In audit mode, edit and commit
+checks run every rule and record the results, but they don't block. Agent
+edits get no block decision, and commit checks exit 0. Rule failures, daemon
+alerts, and errors after the rule integrity scan are recorded as Evidence and
+shown on the dashboard as not blocked.
+
+Two things still block in audit mode:
+
+- Tampering that the rule integrity scan reports, such as source drift.
+- A commit check while the daemon is not running.
+
+Switching an enforcing project to audit mode is loosening. Land it the same way
+as any other loosening. The default, `mode: enforce`, blocks on failures.
+
 ## Advisory checks
 
 Run `warden audit` to report edit-tier findings. Use `--tier boundary` to

@@ -742,6 +742,62 @@ const slowLint = (ms: number): void => {
   });
 };
 
+describe("audit mode", () => {
+  const auditConfig = (): string => `${config(["core", "local"])}mode: audit\n`;
+
+  it("switching an enforcing project to audit mode against base is loosening, and the check still blocks", async () => {
+    await write(".warden/config.yaml", auditConfig());
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    expect((await check()).code).toBe(1);
+    expect(await tampered()).toEqual([{ file: ".warden/lock.json", detail: "loosened" }]);
+  });
+
+  it("records rule failures without blocking a commit or an agent edit", async () => {
+    git("checkout", "-q", "main");
+    await write(".warden/config.yaml", auditConfig());
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    git("add", "-A");
+    git("commit", "-q", "-m", "audit mode");
+    git("checkout", "-q", "-B", "feature");
+    await write("b.ts", "// two\nconst b = 1;\n");
+    const commit = await check();
+    expect(commit.code).toBe(0);
+    expect(commit.out).toContain("Warden is in audit mode, so it recorded this and does not block.");
+    const agent = await check({ format: "agent", hook: "claude" });
+    expect(agent).toEqual({ code: 0, out: "", err: "" });
+    const runs = (await evidence()).filter((e) => e.kind === "cost" && e.guardrail === "run");
+    expect(runs.map((e) => [e.tier, e.result, e.exit, e.mode, e.failedRules])).toEqual([
+      ["commit", "fail", 0, "audit", ["warden-no-comments"]],
+      ["edit", "fail", 0, "audit", ["warden-no-comments"]],
+    ]);
+  });
+
+  it("lets an unwired hook pass, but still blocks on an unchecked commit that changed .warden", async () => {
+    git("checkout", "-q", "main");
+    await write(".warden/config.yaml", auditConfig());
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    git("add", "-A");
+    git("commit", "-q", "-m", "audit mode");
+    const policyCommit = git("rev-parse", "HEAD").trim();
+    await write("c.ts", "const c = 1;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "plain change");
+    const plainCommit = git("rev-parse", "HEAD").trim();
+    git("checkout", "-q", "-B", "feature");
+    await write("b.ts", "// two\nconst b = 1;\n");
+    const repo = join(root, ".git");
+    const alert = (detail: string, file: string) => ({ project: "fixture", root, repo, file, detail, next: `fix ${detail}` });
+    await mkdir(join(home, "daemon"), { recursive: true });
+    const seed = (...open: ReturnType<typeof alert>[]) => writeFile(join(home, "daemon", "state.json"), JSON.stringify({ roots: { [root]: { open } } }));
+    await seed(alert("hook-unwired", ".warden/generated/hooks/pre-commit"), alert("unchecked-commit", plainCommit));
+    const unwired = await check({ format: "agent", hook: "claude" });
+    expect(unwired).toEqual({ code: 0, out: "", err: "" });
+    await seed(alert("hook-unwired", ".warden/generated/hooks/pre-commit"), alert("unchecked-commit", policyCommit));
+    const policy = await check({ format: "agent", hook: "claude" });
+    expect((JSON.parse(policy.out) as { decision: string; reason: string })).toMatchObject({ decision: "block", reason: expect.stringContaining(`unchecked-commit ${policyCommit}`) });
+  });
+});
+
 describe("final review: budgets", () => {
   it("a lint Guardrail over budget still counts and caches its violations, and records a Warden defect", async () => {
     await write("b.ts", "var b = 1;\n");

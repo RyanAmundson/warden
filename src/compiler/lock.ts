@@ -16,7 +16,7 @@ export interface Lock {
   tools: Record<string, string>;
   generated: Record<string, string>;
   guardrails: Record<string, LockedGuardrail>;
-  config: Pick<ProjectConfig, "project" | "base" | "tierBudgetMs" | "loopBreakerRepeats"> & { bench?: BenchSettings };
+  config: Pick<ProjectConfig, "project" | "base" | "tierBudgetMs" | "loopBreakerRepeats" | "mode"> & { bench?: BenchSettings };
 }
 
 export interface LockedGuardrail {
@@ -137,7 +137,7 @@ export function computeLock(
       }),
     )
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  const { project, base, tierBudgetMs, loopBreakerRepeats } = set.config;
+  const { project, base, tierBudgetMs, loopBreakerRepeats, mode } = set.config;
   return {
     format: LOCK_FORMAT,
     warden,
@@ -145,7 +145,7 @@ export function computeLock(
     tools: bundledTools(),
     generated: hashed(generated),
     guardrails: Object.fromEntries(guardrails),
-    config: { project, base, tierBudgetMs, loopBreakerRepeats, bench: benchSettings(set.config) },
+    config: { project, base, tierBudgetMs, loopBreakerRepeats, ...(mode === "audit" ? { mode } : {}), bench: benchSettings(set.config) },
   };
 }
 

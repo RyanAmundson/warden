@@ -110,6 +110,7 @@ const loosened = async (set, wardenRoot, comparison, at, lock) => {
     }
     if (changed(before.config.project, lock.config.project) ||
         lock.config.loopBreakerRepeats > before.config.loopBreakerRepeats ||
+        (lock.config.mode === "audit" && before.config.mode !== "audit") ||
         benchLoosened(before.config.bench, lock.config.bench) ||
         tiers.some((t) => lock.config.tierBudgetMs[t] > before.config.tierBudgetMs[t])) {
         found.push({ file: LOCK_PATH, detail: "loosened" });
