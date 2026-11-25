@@ -112,6 +112,44 @@ describe("the plugin hooks", { timeout: 60_000 }, () => {
   });
 });
 
+it("allows a normal commit when the installed self-check and generated hook both fail", () => {
+  const generated = join(root, ".warden/generated/hooks/pre-commit");
+  const original = readFileSync(generated, "utf8");
+  mkdirSync(join(root, "scripts"), { recursive: true });
+  writeFileSync(join(root, "scripts/self-check.sh"), "#!/bin/sh\nexit 7\n");
+  git("add", "scripts/self-check.sh");
+  git("commit", "-qm", "Add the failing self-check fixture");
+  git("tag", "fixture-release");
+  try {
+    git("config", "core.hooksPath", ".warden/generated/hooks");
+    const generatedInstall = run("sh", [join(warden, "scripts/install-hooks.sh"), "fixture-release"]);
+    expect(generatedInstall.status, generatedInstall.stderr).toBe(0);
+    expect(readFileSync(generated, "utf8")).toBe(original);
+    git("config", "core.hooksPath", ".git/hooks");
+    const install = run("sh", [join(warden, "scripts/install-hooks.sh"), "fixture-release"]);
+    expect(install.status, install.stderr).toBe(0);
+    writeFileSync(generated, `#!/bin/sh
+case "$GIT_INDEX_FILE" in
+  *next-index-"$PPID".lock) exit 9 ;;
+esac
+exit 10
+`);
+    const fixture = join(root, "scripts/self-check.sh");
+    writeFileSync(fixture, "#!/bin/sh\n# A path-limited commit.\nexit 7\n");
+    const commit = run("git", [
+      "-c", "commit.gpgsign=false",
+      "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+      "commit", "--only", "-qm", "Commit through the installed hook", "--", fixture,
+    ]);
+    expect(commit.status, commit.stderr).toBe(0);
+    expect(commit.stderr).toContain("Warden self-check exited 7");
+    expect(commit.stderr).toContain("Warden's commit hook exited 9");
+  } finally {
+    writeFileSync(generated, original);
+    git("config", "core.hooksPath", ".warden/generated/hooks");
+  }
+});
+
 describe("the CLI", { timeout: 120_000 }, () => {
   it("check and audit exit 0 when the lock was written by an older Warden", () => {
     const lock = join(root, ".warden/lock.json");
