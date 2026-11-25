@@ -1,6 +1,8 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { isAbsolute, join, posix, relative, sep } from "node:path";
+import { extname, isAbsolute, join, posix, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { RecordError } from "../records/load.js";
 import { enabledOn, pathGroups } from "../records/paths.js";
 import { unitLookup } from "../records/units.js";
@@ -98,7 +100,32 @@ export async function importGraph(root: string, files: string[], read: (file: st
 
 const generated = (id: string): string => `.warden/generated/${id}.rules.json`;
 
-const treeAdapter = (id: "fs" | "graph"): Adapter => ({
+const LOADER = fileURLToPath(new URL(`./module-loader${extname(fileURLToPath(import.meta.url))}`, import.meta.url));
+
+const LOAD_TIMEOUT_MS = 120_000;
+
+const loadError = (stderr: string): string => {
+  const lines = stderr.split("\n").map((line) => line.trim()).filter((line) => line !== "");
+  return lines.find((line) => /^[A-Za-z]*Error\b/.test(line)) ?? lines.at(-1) ?? "it printed nothing";
+};
+
+const moduleLoader = (root: string): ((file: string) => unknown) => {
+  const loaded = new Map<string, { value: unknown } | { error: string }>();
+  return (file) => {
+    let result = loaded.get(file);
+    if (result === undefined) {
+      const child = spawnSync(process.execPath, [LOADER, join(root, file)], { cwd: root, encoding: "utf8", maxBuffer: 256 * 1024 * 1024, timeout: LOAD_TIMEOUT_MS });
+      result = child.status === 0
+        ? { value: JSON.parse(child.stdout) as unknown }
+        : { error: child.error !== undefined ? `${file} did not load: ${child.error.message}` : `${file} did not load: ${loadError(child.stderr)}` };
+      loaded.set(file, result);
+    }
+    if ("error" in result) throw new Error(result.error);
+    return result.value;
+  };
+};
+
+const treeAdapter = (id: "fs" | "graph" | "module"): Adapter => ({
   id,
   wholeTree: true,
   emit(gs: Guardrail[], set: RecordSet): Record<string, string> {
@@ -131,12 +158,13 @@ const treeAdapter = (id: "fs" | "graph"): Adapter => ({
       owners: Object.fromEntries(files.map((file) => [file, owner(posix.dirname(file))?.id ?? null])),
     };
     const prepMs = performance.now() - start + (ctx.projectInventory?.discoveryMs ?? 0);
+    const loadModule = id === "module" ? moduleLoader(ctx.root) : undefined;
     const out: RunResult[] = [];
     for (const g of gs) {
       const entry = entries.find((e) => e.guardrail === g.id);
       if (entry === undefined) throw new RecordError(generated(id), "", `has no entry for Guardrail ${g.id}. Next action: run warden compile.`);
       const code = await packEntry(g, id);
-      const input = { files: g.scope === "project" ? files : files.filter((f) => enabledOn(f, entry.groups)), ...(nonRegular.size > 0 ? { nonRegular: [...nonRegular] } : {}), all: files, ...(imports === undefined ? {} : { imports: [...imports] }), settings: entry.settings ?? {}, options: g.options ?? null, terms, ...(g.scope === "project" && structure !== undefined ? { unitStructure: structure } : {}) };
+      const input = { files: g.scope === "project" ? files : files.filter((f) => enabledOn(f, entry.groups)), ...(nonRegular.size > 0 ? { nonRegular: [...nonRegular] } : {}), all: files, ...(imports === undefined ? {} : { imports: [...imports] }), settings: entry.settings ?? {}, options: g.options ?? null, terms, ...(loadModule === undefined ? {} : { loads: true }), ...(g.scope === "project" && structure !== undefined ? { unitStructure: structure } : {}) };
       const given = (file: string): string => {
         if (!known.has(file)) throw new Error(`${file} is not one of the files the check was given`);
         if (projectRoot !== undefined) {
@@ -149,7 +177,11 @@ const treeAdapter = (id: "fs" | "graph"): Adapter => ({
         }
         return read(file);
       };
-      const { found, ms } = await inSandbox<{ found: Found[]; ms: number }>(code, { kind: "tree", entry: code, input }, given, ctx.signal);
+      const load = loadModule === undefined ? undefined : (file: string): unknown => {
+        if (!known.has(file)) throw new Error(`${file} is not one of the files the check was given`);
+        return loadModule(file);
+      };
+      const { found, ms } = await inSandbox<{ found: Found[]; ms: number }>(code, { kind: "tree", entry: code, input }, given, ctx.signal, load);
       const violations = found.map((v): Violation => {
         if (!known.has(v.file) && !(g.scope === "project" && v.file === "")) {
           const file = join(g.packDir as string, `${id}.js`);
@@ -166,3 +198,5 @@ const treeAdapter = (id: "fs" | "graph"): Adapter => ({
 export const fsAdapter = treeAdapter("fs");
 
 export const graphAdapter = treeAdapter("graph");
+
+export const moduleAdapter = treeAdapter("module");

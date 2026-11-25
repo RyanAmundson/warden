@@ -1,0 +1,503 @@
+id: plugin-compliance
+layer: 17
+terms:
+  - id: plugin-compliance/plugin
+    definition: A folder that declares one plugin to a host through the plugin SDK's definePlugin.
+    bans: []
+settings:
+  type: object
+  additionalProperties: false
+  examples:
+    - plugins: [plugin]
+      sharedCode: [libs]
+      hostImports: ["^@host/"]
+      legacyImports: ["^@legacy/"]
+      worldModules: [electron]
+      consoleFolders: [cli]
+  properties:
+    plugins:
+      description: Folders, relative to the project root, that each hold one plugin. An entry ending in /* names each folder directly inside it.
+      type: array
+      items: { type: string, minLength: 1 }
+      default: ["."]
+    sharedCode:
+      description: Folders, relative to the project root, that a plugin may import by relative path.
+      type: array
+      items: { type: string, minLength: 1 }
+      default: []
+    hostImports:
+      description: Regular expressions for import specifiers that reach host code or another plugin (PQ-sdk.2).
+      type: array
+      items: { type: string, minLength: 1 }
+      default: []
+    legacyImports:
+      description: Regular expressions for import specifiers that are legacy bridges to the host (PQ-sdk.3).
+      type: array
+      items: { type: string, minLength: 1 }
+      default: []
+    worldModules:
+      description: Modules, besides the Node built-ins the pack lists, that read or change the world (PQ-world.1). Each also covers its subpaths.
+      type: array
+      items: { type: string, minLength: 1 }
+      default: []
+    consoleFolders:
+      description: Folder names where production code may print to the console (PQ-logs.1).
+      type: array
+      items: { type: string, minLength: 1 }
+      default: []
+    nonProduction:
+      description: Regular expressions for plugin-relative paths that are not production code, added to the pack's test, story, and fixture patterns.
+      type: array
+      items: { type: string, minLength: 1 }
+      default: []
+    skipFolders:
+      description: Folder names whose source files the pack skips, added to node_modules, dist, and coverage.
+      type: array
+      items: { type: string, minLength: 1 }
+      default: []
+    contractLock:
+      description: The file in each plugin folder that records its published contracts (PQ-interop.11).
+      type: string
+      pattern: '^[A-Za-z0-9_.-]+$'
+      default: contracts.lock.json
+practices:
+  - id: pq-sdk-1
+    statement: "The plugin declares itself once, in plugin.ts with definePlugin, and no plugin.json copies the declaration."
+    terms: [plugin-compliance/plugin]
+    paths: ["**/*"]
+    conflictsWith: []
+    guardrails:
+      - id: warden-pq-sdk-1
+        kind: lint
+        runs: [boundary]
+        budgetMs: 30000
+        version: 1
+        implementation: "fs:plugin-compliance/declaration"
+        mustFail:
+          "plugin/plugin.ts": |
+            import { definePlugin } from "@sdk/core";
+            export const plugin = definePlugin({});
+
+          "plugin/plugin.json": "{}\n"
+        mustPass:
+          "plugin/plugin.ts": |
+            import { definePlugin } from "@sdk/core";
+            export const plugin = definePlugin({});
+
+  - id: pq-sdk-2
+    statement: "The plugin imports no host code and no other plugin; code it shares with other plugins comes from a configured shared folder."
+    terms: [plugin-compliance/plugin]
+    paths: ["**/*"]
+    conflictsWith: []
+    guardrails:
+      - id: warden-pq-sdk-2
+        kind: lint
+        runs: [boundary]
+        budgetMs: 30000
+        version: 1
+        implementation: "fs:plugin-compliance/isolation"
+        mustFail:
+          "plugin/main.ts": |
+            import { app } from "../host/app.js";
+            export const a = app;
+
+        mustPass:
+          "plugin/main.ts": |
+            import { util } from "../libs/util.js";
+            import { own } from "./own.js";
+            export const a = [util, own];
+
+  - id: pq-sdk-3
+    statement: "The plugin reaches the host only through the SDK, never through a configured legacy bridge, tests included."
+    terms: [plugin-compliance/plugin]
+    paths: ["**/*"]
+    conflictsWith: []
+    guardrails:
+      - id: warden-pq-sdk-3
+        kind: lint
+        runs: [boundary]
+        budgetMs: 30000
+        version: 1
+        implementation: "fs:plugin-compliance/legacy"
+        mustFail:
+          "plugin/main.test.ts": |
+            import { shim } from "@legacy/host";
+            export const a = shim;
+
+        mustPass:
+          "plugin/main.test.ts": |
+            import { definePlugin } from "@sdk/core";
+            export const a = definePlugin;
+
+  - id: pq-world-1
+    statement: "The plugin's production code reads nothing itself: no filesystem, process, network, or browser storage module or global; host sources supply its data."
+    terms: [plugin-compliance/plugin]
+    paths: ["**/*"]
+    conflictsWith: []
+    guardrails:
+      - id: warden-pq-world-1
+        kind: lint
+        runs: [boundary]
+        budgetMs: 30000
+        version: 1
+        implementation: "fs:plugin-compliance/world"
+        mustFail:
+          "plugin/main.ts": |
+            import { readFileSync } from "node:fs";
+            export const a = readFileSync;
+
+        mustPass:
+          "plugin/main.ts": |
+            import type { Stats } from "node:fs";
+            export type A = Stats;
+
+          "plugin/main.test.ts": "export const a = fetch;\n"
+  - id: pq-world-2
+    statement: "The plugin's production code never polls; it declares a source with a trigger and the host refreshes it."
+    terms: [plugin-compliance/plugin]
+    paths: ["**/*"]
+    conflictsWith: []
+    guardrails:
+      - id: warden-pq-world-2
+        kind: lint
+        runs: [boundary]
+        budgetMs: 30000
+        version: 1
+        implementation: "fs:plugin-compliance/polling"
+        mustFail:
+          "plugin/main.ts": "export const stop = setInterval(() => undefined, 1000);\n"
+        mustPass:
+          "plugin/main.ts": |
+            import { timer } from "rxjs";
+            export const once = timer(1000);
+
+  - id: pq-effects-1
+    statement: "The plugin's production code never runs a git write itself; the host's checkout service makes every change to a repository."
+    terms: [plugin-compliance/plugin]
+    paths: ["**/*"]
+    conflictsWith: []
+    guardrails:
+      - id: warden-pq-effects-1
+        kind: lint
+        runs: [boundary]
+        budgetMs: 30000
+        version: 1
+        implementation: "fs:plugin-compliance/git-writes"
+        mustFail:
+          "plugin/main.ts": "export const run = (exec: (cmd: string, args: string[]) => void) => exec(\"git\", [\"commit\", \"-m\", \"x\"]);\n"
+        mustPass:
+          "plugin/main.ts": "export const run = (exec: (cmd: string, args: string[]) => void) => exec(\"git\", [\"branch\", \"--show-current\"]);\n"
+  - id: pq-logs-1
+    statement: "The plugin's production code logs through the host's feeds; console output is allowed only in configured command-line folders."
+    terms: [plugin-compliance/plugin]
+    paths: ["**/*"]
+    conflictsWith: []
+    guardrails:
+      - id: warden-pq-logs-1
+        kind: lint
+        runs: [boundary]
+        budgetMs: 30000
+        version: 1
+        implementation: "fs:plugin-compliance/console"
+        mustFail:
+          "plugin/main.ts": "console.log(\"started\");\n"
+        mustPass:
+          "plugin/cli/run.ts": "console.log(\"started\");\n"
+  - id: pq-docs-1
+    statement: "The plugin ships README.md, CONTRACT.md, and a CHANGELOG.md heading for the version in its package.json."
+    terms: [plugin-compliance/plugin]
+    paths: ["**/*"]
+    conflictsWith: []
+    guardrails:
+      - id: warden-pq-docs-1
+        kind: lint
+        runs: [boundary]
+        budgetMs: 30000
+        version: 1
+        implementation: "fs:plugin-compliance/documents"
+        mustFail:
+          "plugin/package.json": "{ \"version\": \"1.0.0\" }\n"
+          "plugin/README.md": "# P\n"
+          "plugin/CHANGELOG.md": "## 1.0.0\n"
+        mustPass:
+          "plugin/package.json": "{ \"version\": \"1.0.0\" }\n"
+          "plugin/README.md": "# P\n"
+          "plugin/CONTRACT.md": "# P\n"
+          "plugin/CHANGELOG.md": "## 1.0.0\n"
+  - id: pq-interop-1
+    statement: "Every slot, service, and collection the plugin declares is named in its own namespace, once."
+    terms: [plugin-compliance/plugin]
+    paths: ["**/*"]
+    conflictsWith: []
+    guardrails:
+      - id: warden-pq-interop-1
+        kind: lint
+        runs: [boundary]
+        budgetMs: 120000
+        version: 1
+        implementation: "module:plugin-compliance/namespaced"
+        mustFail:
+          "plugin/plugin.ts": |
+            const definePlugin = <T,>(definition: T): T => definition;
+            export const plugin = definePlugin({
+              manifest: {"id": "p", "name": "P", "version": "1.0.0", "features": [{"services": [{"id": "other.svc", "version": 1, "side": "main", "methods": {"run": {"result": {"type": "string"}}}}]}]},
+              main: () => import("./main.js"),
+            });
+
+        mustPass:
+          "plugin/plugin.ts": |
+            const definePlugin = <T,>(definition: T): T => definition;
+            export const plugin = definePlugin({
+              manifest: {"id": "p", "name": "P", "version": "1.0.0", "features": [{"services": [{"id": "p.svc", "version": 1, "side": "main", "methods": {"run": {"result": {"type": "string"}}}}]}]},
+              main: () => import("./main.js"),
+            });
+
+  - id: pq-interop-2
+    statement: "Each entity kind the plugin owns is presented once, with an entities collection the plugin declares."
+    terms: [plugin-compliance/plugin]
+    paths: ["**/*"]
+    conflictsWith: []
+    guardrails:
+      - id: warden-pq-interop-2
+        kind: lint
+        runs: [boundary]
+        budgetMs: 120000
+        version: 1
+        implementation: "module:plugin-compliance/presented"
+        mustFail:
+          "plugin/plugin.ts": |
+            const definePlugin = <T,>(definition: T): T => definition;
+            export const plugin = definePlugin({
+              manifest: {"id": "p", "name": "P", "version": "1.0.0", "features": [{"entityKinds": ["thing"]}]},
+              main: () => import("./main.js"),
+            });
+
+        mustPass:
+          "plugin/plugin.ts": |
+            const definePlugin = <T,>(definition: T): T => definition;
+            export const plugin = definePlugin({
+              manifest: {"id": "p", "name": "P", "version": "1.0.0", "features": [{"entityKinds": ["thing"], "kindPresentation": [{"kind": "thing", "entities": "p.things"}], "collections": [{"id": "p.things", "version": 1, "key": "id", "schema": {"type": "object", "properties": {"id": {"type": "string"}}}}]}]},
+              main: () => import("./main.js"),
+            });
+
+  - id: pq-interop-3
+    statement: "The plugin reaches another plugin's service only by a versioned id that its CONTRACT.md names."
+    terms: [plugin-compliance/plugin]
+    paths: ["**/*"]
+    conflictsWith: []
+    guardrails:
+      - id: warden-pq-interop-3
+        kind: lint
+        runs: [boundary]
+        budgetMs: 120000
+        version: 1
+        implementation: "module:plugin-compliance/peers-listed"
+        mustFail:
+          "plugin/plugin.ts": |
+            const definePlugin = <T,>(definition: T): T => definition;
+            export const plugin = definePlugin({
+              manifest: {"id": "p", "name": "P", "version": "1.0.0", "features": []},
+              main: () => import("./main.js"),
+            });
+
+          "plugin/main.ts": "export const go = (registry: { request(id: string, input: object): unknown }) => registry.request(\"other.svc@1\", {});\n"
+          "plugin/CONTRACT.md": "# P\n"
+        mustPass:
+          "plugin/plugin.ts": |
+            const definePlugin = <T,>(definition: T): T => definition;
+            export const plugin = definePlugin({
+              manifest: {"id": "p", "name": "P", "version": "1.0.0", "features": []},
+              main: () => import("./main.js"),
+            });
+
+          "plugin/main.ts": "export const go = (registry: { request(id: string, input: object): unknown }) => registry.request(\"other.svc@1\", {});\n"
+          "plugin/CONTRACT.md": |
+            # P
+
+            Requests other.svc@1.
+
+  - id: pq-interop-4
+    statement: "For each peer service the plugin requests, a test titled [absent:<id>@<major>] drives the plugin with that provider absent."
+    terms: [plugin-compliance/plugin]
+    paths: ["**/*"]
+    conflictsWith: []
+    guardrails:
+      - id: warden-pq-interop-4
+        kind: lint
+        runs: [boundary]
+        budgetMs: 120000
+        version: 1
+        implementation: "module:plugin-compliance/peers-absent"
+        mustFail:
+          "plugin/plugin.ts": |
+            const definePlugin = <T,>(definition: T): T => definition;
+            export const plugin = definePlugin({
+              manifest: {"id": "p", "name": "P", "version": "1.0.0", "features": []},
+              main: () => import("./main.js"),
+            });
+
+          "plugin/main.ts": "export const go = (registry: { request(id: string, input: object): unknown }) => registry.request(\"other.svc@1\", {});\n"
+        mustPass:
+          "plugin/plugin.ts": |
+            const definePlugin = <T,>(definition: T): T => definition;
+            export const plugin = definePlugin({
+              manifest: {"id": "p", "name": "P", "version": "1.0.0", "features": []},
+              main: () => import("./main.js"),
+            });
+
+          "plugin/main.ts": "export const go = (registry: { request(id: string, input: object): unknown }) => registry.request(\"other.svc@1\", {});\n"
+          "plugin/main.test.ts": |
+            // [absent:other.svc@1]
+            export {};
+
+  - id: pq-interop-5
+    statement: "Each command-line command calls an existing method of one of the plugin's own main-side services, and says what it does."
+    terms: [plugin-compliance/plugin]
+    paths: ["**/*"]
+    conflictsWith: []
+    guardrails:
+      - id: warden-pq-interop-5
+        kind: lint
+        runs: [boundary]
+        budgetMs: 120000
+        version: 1
+        implementation: "module:plugin-compliance/commands"
+        mustFail:
+          "plugin/plugin.ts": |
+            const definePlugin = <T,>(definition: T): T => definition;
+            export const plugin = definePlugin({
+              manifest: {"id": "p", "name": "P", "version": "1.0.0", "features": [{"cliCommands": [{"namespace": "p", "name": "go", "service": "p.svc@1", "method": "run", "description": "Runs it."}]}]},
+              main: () => import("./main.js"),
+            });
+
+        mustPass:
+          "plugin/plugin.ts": |
+            const definePlugin = <T,>(definition: T): T => definition;
+            export const plugin = definePlugin({
+              manifest: {"id": "p", "name": "P", "version": "1.0.0", "features": [{"services": [{"id": "p.svc", "version": 1, "side": "main", "methods": {"run": {"result": {"type": "string"}}}}], "cliCommands": [{"namespace": "p", "name": "go", "service": "p.svc@1", "method": "run", "description": "Runs it."}]}]},
+              main: () => import("./main.js"),
+            });
+
+  - id: pq-interop-8
+    statement: "Each collection the plugin declares has a version and keys its records by a required string field."
+    terms: [plugin-compliance/plugin]
+    paths: ["**/*"]
+    conflictsWith: []
+    guardrails:
+      - id: warden-pq-interop-8
+        kind: lint
+        runs: [boundary]
+        budgetMs: 120000
+        version: 1
+        implementation: "module:plugin-compliance/keyed"
+        mustFail:
+          "plugin/plugin.ts": |
+            const definePlugin = <T,>(definition: T): T => definition;
+            export const plugin = definePlugin({
+              manifest: {"id": "p", "name": "P", "version": "1.0.0", "features": [{"collections": [{"id": "p.c", "version": 0, "key": "id", "schema": {"type": "object", "properties": {"id": {"type": "string"}}}}]}]},
+              main: () => import("./main.js"),
+            });
+
+        mustPass:
+          "plugin/plugin.ts": |
+            const definePlugin = <T,>(definition: T): T => definition;
+            export const plugin = definePlugin({
+              manifest: {"id": "p", "name": "P", "version": "1.0.0", "features": [{"collections": [{"id": "p.c", "version": 1, "key": "id", "schema": {"type": "object", "properties": {"id": {"type": "string"}}}}]}]},
+              main: () => import("./main.js"),
+            });
+
+  - id: pq-interop-9
+    statement: "Each contract the plugin publishes is named in CONTRACT.md and has a test titled [contract:<id>@<major>]."
+    terms: [plugin-compliance/plugin]
+    paths: ["**/*"]
+    conflictsWith: []
+    guardrails:
+      - id: warden-pq-interop-9
+        kind: lint
+        runs: [boundary]
+        budgetMs: 120000
+        version: 1
+        implementation: "module:plugin-compliance/documented"
+        mustFail:
+          "plugin/plugin.ts": |
+            const definePlugin = <T,>(definition: T): T => definition;
+            export const plugin = definePlugin({
+              manifest: {"id": "p", "name": "P", "version": "1.0.0", "features": [{"ownedSlots": [{"id": "p.slot@1", "entry": {"type": "object"}, "cardinality": "many"}]}]},
+              main: () => import("./main.js"),
+            });
+
+          "plugin/CONTRACT.md": "# P\n"
+        mustPass:
+          "plugin/plugin.ts": |
+            const definePlugin = <T,>(definition: T): T => definition;
+            export const plugin = definePlugin({
+              manifest: {"id": "p", "name": "P", "version": "1.0.0", "features": [{"ownedSlots": [{"id": "p.slot@1", "entry": {"type": "object"}, "cardinality": "many"}]}]},
+              main: () => import("./main.js"),
+            });
+
+          "plugin/CONTRACT.md": |
+            # P
+
+            Publishes p.slot@1.
+
+          "plugin/slot.test.ts": |
+            // [contract:p.slot@1]
+            export {};
+
+  - id: pq-interop-11
+    statement: "A published contract changes only under a new major; the plugin's contract lock records each one."
+    terms: [plugin-compliance/plugin]
+    paths: ["**/*"]
+    conflictsWith: []
+    guardrails:
+      - id: warden-pq-interop-11
+        kind: lint
+        runs: [boundary]
+        budgetMs: 120000
+        version: 1
+        implementation: "module:plugin-compliance/recorded"
+        mustFail:
+          "plugin/plugin.ts": |
+            const definePlugin = <T,>(definition: T): T => definition;
+            export const plugin = definePlugin({
+              manifest: {"id": "p", "name": "P", "version": "1.0.0", "features": [{"ownedSlots": [{"id": "p.slot@1", "entry": {"type": "object"}, "cardinality": "many"}]}]},
+              main: () => import("./main.js"),
+            });
+
+        mustPass:
+          "plugin/plugin.ts": |
+            const definePlugin = <T,>(definition: T): T => definition;
+            export const plugin = definePlugin({
+              manifest: {"id": "p", "name": "P", "version": "1.0.0", "features": [{"ownedSlots": [{"id": "p.slot@1", "entry": {"type": "object"}, "cardinality": "many"}]}]},
+              main: () => import("./main.js"),
+            });
+
+          "plugin/contracts.lock.json": "{ \"p.slot@1\": { \"slot\": \"cc1f7cc873e2f286\" } }\n"
+  - id: pq-interop-12
+    statement: "Each slot contribution names a versioned slot outside shell.*, and one into the plugin's own slot names a major it declares or accepts."
+    terms: [plugin-compliance/plugin]
+    paths: ["**/*"]
+    conflictsWith: []
+    guardrails:
+      - id: warden-pq-interop-12
+        kind: lint
+        runs: [boundary]
+        budgetMs: 120000
+        version: 1
+        implementation: "module:plugin-compliance/contributions"
+        mustFail:
+          "plugin/plugin.ts": |
+            const definePlugin = <T,>(definition: T): T => definition;
+            export const plugin = definePlugin({
+              manifest: {"id": "p", "name": "P", "version": "1.0.0", "features": [{"contributions": [{"id": "menu", "slot": "shell.menu@1"}]}]},
+              main: () => import("./main.js"),
+            });
+
+        mustPass:
+          "plugin/plugin.ts": |
+            const definePlugin = <T,>(definition: T): T => definition;
+            export const plugin = definePlugin({
+              manifest: {"id": "p", "name": "P", "version": "1.0.0", "features": [{"contributions": [{"id": "menu", "slot": "other.menu@1"}]}]},
+              main: () => import("./main.js"),
+            });
+

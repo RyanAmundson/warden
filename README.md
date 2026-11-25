@@ -356,6 +356,45 @@ Warden uses that example Unit to verify both cases. During a boundary check,
 the Guardrail receives the project's declared Units and their file ownership.
 Warden skips checks with `unitExample` in projects that omit `units`.
 
+## Module Guardrails
+
+A `module:<pack>/<name>` Guardrail runs `<name>` from the pack's `module.js`
+with the same input as an `fs:` Guardrail, plus `load(file)`. `load` imports
+one of the given files and returns its exports as data: functions become
+`{ "$function": "<name>" }`, and a true cycle becomes `"[Circular]"`. Warden
+loads TypeScript with its bundled compiler and resolves bare imports from the
+project's installed `node_modules`, so the project needs no TypeScript runtime
+of its own. Loading runs the module's code outside the sandbox, in its own Node
+process. A module that does not load makes `load` throw with the error.
+
+## Check plugin compliance
+
+The `plugin-compliance` pack checks plugins built on the plugin SDK's
+`definePlugin` against 17 rows: 8 from the plugin's source files and 9 from
+the manifest its `plugin.ts` exports. Every row runs at the boundary tier
+only, so no hook runs it. Install the project's dependencies, then run:
+
+```bash
+warden check --tier boundary --base main
+```
+
+```yaml
+  - id: plugin-compliance
+    paths: ["**/*"]
+    settings:
+      plugins: ["plugins/*"]   # default ["."]: the project root is the plugin
+      sharedCode: [libs]
+      hostImports: ["^@app/"]
+      legacyImports: ["^@sdk/shims/"]
+```
+
+Keep `paths` at `["**/*"]`; the `plugins` setting chooses the folders. An
+entry ending in `/*` names each folder directly inside it. Each plugin keeps
+its published contracts in `contracts.lock.json`; a finding for a new
+contract prints the entry to add. See
+[the design](docs/design/2026-11-25-plugin-compliance-pack-design.md) for
+each row and setting.
+
 ## Git pre-commit hook
 
 `warden compile` writes `.warden/generated/hooks/pre-commit`, an executable

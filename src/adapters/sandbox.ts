@@ -15,6 +15,7 @@ const STDERR_LINES = 20;
 
 interface Reply {
   read?: string;
+  load?: string;
   done?: unknown;
   failure?: { file: string; pointer: string; message: string };
   crash?: string;
@@ -118,7 +119,7 @@ const decodeReply = (line: string, tag: string): Reply | undefined => {
   try {
     const reply = JSON.parse(line.slice(prefix.length)) as Reply | null;
     if (reply === null || typeof reply !== "object" || Object.keys(reply).length !== 1) return undefined;
-    if (typeof reply.read === "string" || typeof reply.crash === "string" || Object.hasOwn(reply, "done")) return reply;
+    if (typeof reply.read === "string" || typeof reply.load === "string" || typeof reply.crash === "string" || Object.hasOwn(reply, "done")) return reply;
     const failure = reply.failure;
     return typeof failure?.file === "string" && typeof failure.pointer === "string" && typeof failure.message === "string" ? reply : undefined;
   } catch {
@@ -126,7 +127,7 @@ const decodeReply = (line: string, tag: string): Reply | undefined => {
   }
 };
 
-export function inSandbox<T>(blamed: PackEntry, job: object, read: (file: string) => string, signal?: AbortSignal): Promise<T> {
+export function inSandbox<T>(blamed: PackEntry, job: object, read: (file: string) => string, signal?: AbortSignal, load?: (file: string) => unknown): Promise<T> {
   const b = boxFor(realpathSync(blamed.packDir));
   const run = (): Promise<T> =>
     new Promise<T>((resolve, reject) => {
@@ -164,6 +165,17 @@ export function inSandbox<T>(blamed: PackEntry, job: object, read: (file: string
           let answer: { text: string } | { error: string };
           try {
             answer = { text: read(reply.read) };
+          } catch (cause) {
+            answer = { error: (cause as Error).message };
+          }
+          b.proc.stdin.write(`${JSON.stringify(answer)}\n`);
+          return;
+        }
+        if (reply.load !== undefined) {
+          let answer: { value: unknown } | { error: string };
+          try {
+            if (load === undefined) throw new Error("this adapter loads no modules");
+            answer = { value: load(reply.load) };
           } catch (cause) {
             answer = { error: (cause as Error).message };
           }

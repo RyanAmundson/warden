@@ -192,7 +192,7 @@ describe("compile", () => {
       {
         code: "unknown-adapter",
         record: "local-no-var",
-        message: `Guardrail local-no-var names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd, fs, graph, system-one, tool. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...>, fs:<...>, graph:<...>, system-one:<...>, tool:<...> in ${file}, then run warden compile.`,
+        message: `Guardrail local-no-var names adapter "eslnt", which is not registered; the known adapters are eslint, tsc, cmd, fs, graph, module, system-one, tool. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...>, fs:<...>, graph:<...>, module:<...>, system-one:<...>, tool:<...> in ${file}, then run warden compile.`,
       },
     ]);
     expect(written).toEqual([]);
@@ -424,7 +424,7 @@ describe("compile", () => {
     await expect(expectedOutputs(await loadRecords(root, wardenRoot), root, wardenRoot)).rejects.toMatchObject({
       file,
       pointer: "/guardrails/local-script/implementation",
-      message: `Guardrail local-script names adapter "cmdd", which is not registered; the known adapters are eslint, tsc, cmd, fs, graph, system-one, tool. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...>, fs:<...>, graph:<...>, system-one:<...>, tool:<...> in ${file}, then run warden compile.`,
+      message: `Guardrail local-script names adapter "cmdd", which is not registered; the known adapters are eslint, tsc, cmd, fs, graph, module, system-one, tool. Next action: set implementation to one of eslint:<...>, tsc:<...>, cmd:<...>, fs:<...>, graph:<...>, module:<...>, system-one:<...>, tool:<...> in ${file}, then run warden compile.`,
     });
   });
 

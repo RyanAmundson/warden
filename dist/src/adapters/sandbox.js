@@ -91,7 +91,7 @@ const decodeReply = (line, tag) => {
         const reply = JSON.parse(line.slice(prefix.length));
         if (reply === null || typeof reply !== "object" || Object.keys(reply).length !== 1)
             return undefined;
-        if (typeof reply.read === "string" || typeof reply.crash === "string" || Object.hasOwn(reply, "done"))
+        if (typeof reply.read === "string" || typeof reply.load === "string" || typeof reply.crash === "string" || Object.hasOwn(reply, "done"))
             return reply;
         const failure = reply.failure;
         return typeof failure?.file === "string" && typeof failure.pointer === "string" && typeof failure.message === "string" ? reply : undefined;
@@ -100,7 +100,7 @@ const decodeReply = (line, tag) => {
         return undefined;
     }
 };
-export function inSandbox(blamed, job, read, signal) {
+export function inSandbox(blamed, job, read, signal, load) {
     const b = boxFor(realpathSync(blamed.packDir));
     const run = () => new Promise((resolve, reject) => {
         signal?.throwIfAborted();
@@ -137,6 +137,19 @@ export function inSandbox(blamed, job, read, signal) {
                 let answer;
                 try {
                     answer = { text: read(reply.read) };
+                }
+                catch (cause) {
+                    answer = { error: cause.message };
+                }
+                b.proc.stdin.write(`${JSON.stringify(answer)}\n`);
+                return;
+            }
+            if (reply.load !== undefined) {
+                let answer;
+                try {
+                    if (load === undefined)
+                        throw new Error("this adapter loads no modules");
+                    answer = { value: load(reply.load) };
                 }
                 catch (cause) {
                     answer = { error: cause.message };
