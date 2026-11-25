@@ -103,16 +103,6 @@ export function changedFiles(root: string, base: BaseRef): string[] {
   return [...new Set(files)].sort();
 }
 
-export const commitChanges = (root: string, commit: string, path: string): boolean => {
-  const diff = git(root, ["diff-tree", "-r", "-m", "--first-parent", "--root", "--no-commit-id", "--name-only", commit, "--", path]);
-  return !diff.ok || diff.out.trim() !== "";
-};
-
-export const stagedText = (root: string, path: string): string | undefined => {
-  const shown = git(root, ["show", `:${path}`]);
-  return shown.ok ? shown.out : undefined;
-};
-
 export const headCommit = (root: string): string | undefined => {
   const r = git(root, ["rev-parse", "--verify", "--quiet", "HEAD"]);
   return r.ok ? r.out.trim() : undefined;
@@ -367,6 +357,9 @@ export function showAtCommit(root: string, commit: string, path: string): string
 
 export const showAtMergeBase = (root: string, base: BaseRef, path: string): string | undefined =>
   showAtCommit(root, mergeBase(root, base), path);
+
+export const pathHistory = (root: string, at: string, path: string): string[] =>
+  must(root, ["log", "--format=%H", at, "--", `./${path}`]).split("\n").filter((line) => line !== "");
 
 export const indexTree = (root: string): string | undefined => {
   const r = git(root, ["write-tree"]);

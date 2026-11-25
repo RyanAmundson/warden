@@ -772,29 +772,62 @@ describe("audit mode", () => {
     ]);
   });
 
-  it("lets an unwired hook pass, but still blocks on an unchecked commit that changed .warden", async () => {
+  const auditOnMain = async (): Promise<void> => {
     git("checkout", "-q", "main");
     await write(".warden/config.yaml", auditConfig());
     expect((await compile(root, wardenRoot)).findings).toEqual([]);
     git("add", "-A");
     git("commit", "-q", "-m", "audit mode");
-    const policyCommit = git("rev-parse", "HEAD").trim();
+    git("checkout", "-q", "-B", "feature");
+  };
+
+  const seedAlerts = async (...open: { detail: string; file: string }[]): Promise<void> => {
+    await mkdir(join(home, "daemon"), { recursive: true });
+    const repo = join(root, ".git");
+    await writeFile(join(home, "daemon", "state.json"), JSON.stringify({ roots: { [root]: { open: open.map((d) => ({ project: "fixture", root, repo, ...d, next: `fix ${d.detail}` })) } } }));
+  };
+
+  it("prints every open daemon alert and blocks on none of them", async () => {
+    await auditOnMain();
     await write("c.ts", "const c = 1;\n");
     git("add", "-A");
-    git("commit", "-q", "-m", "plain change");
-    const plainCommit = git("rev-parse", "HEAD").trim();
-    git("checkout", "-q", "-B", "feature");
+    git("commit", "-q", "-m", "unhooked change");
+    const unhooked = git("rev-parse", "HEAD").trim();
+    await write("b.ts", "const b = 1;\n");
+    await seedAlerts({ detail: "unchecked-commit", file: unhooked }, { detail: "untrusted-trust", file: "trusted" }, { detail: "hook-unwired", file: ".warden/generated/hooks/pre-commit" });
+    expect(await check({ format: "agent", hook: "claude" })).toEqual({ code: 0, out: "", err: "" });
+    const commit = await check();
+    expect(commit.code).toBe(0);
+    for (const shown of [`unchecked-commit ${unhooked}`, "untrusted-trust trusted", "hook-unwired .warden/generated/hooks/pre-commit"]) expect(commit.err).toContain(shown);
+  });
+
+  it("keeps enforcing while the commit that switched to audit mode is unchecked", async () => {
+    await auditOnMain();
+    const switched = git("rev-parse", "main").trim();
     await write("b.ts", "// two\nconst b = 1;\n");
-    const repo = join(root, ".git");
-    const alert = (detail: string, file: string) => ({ project: "fixture", root, repo, file, detail, next: `fix ${detail}` });
-    await mkdir(join(home, "daemon"), { recursive: true });
-    const seed = (...open: ReturnType<typeof alert>[]) => writeFile(join(home, "daemon", "state.json"), JSON.stringify({ roots: { [root]: { open } } }));
-    await seed(alert("hook-unwired", ".warden/generated/hooks/pre-commit"), alert("unchecked-commit", plainCommit));
-    const unwired = await check({ format: "agent", hook: "claude" });
-    expect(unwired).toEqual({ code: 0, out: "", err: "" });
-    await seed(alert("hook-unwired", ".warden/generated/hooks/pre-commit"), alert("unchecked-commit", policyCommit));
-    const policy = await check({ format: "agent", hook: "claude" });
-    expect((JSON.parse(policy.out) as { decision: string; reason: string })).toMatchObject({ decision: "block", reason: expect.stringContaining(`unchecked-commit ${policyCommit}`) });
+    await seedAlerts({ detail: "unchecked-commit", file: switched });
+    expect((await check()).code).toBe(1);
+  });
+
+  it("an audit lock on the base branch outside this branch's history does not switch it to audit mode", async () => {
+    git("checkout", "-q", "-B", "feature");
+    git("checkout", "-q", "main");
+    await write(".warden/config.yaml", auditConfig());
+    expect((await compile(root, wardenRoot)).findings).toEqual([]);
+    git("add", "-A");
+    git("commit", "-q", "-m", "audit mode only on main");
+    git("checkout", "-q", "feature");
+    await write("b.ts", "// two\nconst b = 1;\n");
+    expect((await check()).code).toBe(1);
+  });
+
+  it("records tampering without blocking once the base branch is in audit mode", async () => {
+    await auditOnMain();
+    await write(".warden/baseline.json", JSON.stringify({ "warden-no-comments": { "a.ts": 2 } }));
+    const { code, out } = await check();
+    expect(code).toBe(0);
+    expect(out).toContain("Warden is in audit mode, so it recorded this and does not block.");
+    expect(await tampered()).toEqual([{ file: ".warden/baseline.json", detail: "loosened" }]);
   });
 });
 

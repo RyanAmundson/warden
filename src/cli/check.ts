@@ -11,7 +11,7 @@ import { RecordError, loadRecords, parseConfig } from "../records/load.js";
 import type { Guardrail, Kind, RecordSet, Tier } from "../records/types.js";
 import { BASELINE_PATH, applyBaseline, carryRenames, projectFiles, projectInventory, readBaseline, writeBaseline } from "../runner/baseline.js";
 import { cacheKey, readCache, writeCache, type CachedViolations } from "../runner/cache.js";
-import { type BaseRef, cleanHead, commitChanges, commitsOf, stagedText, covers, indexTree, stagedMismatch, changedFiles, mergeBase, changesSinceMergeBase, hasPathCommitIndex, headCommit, matchesHead, lastCommittedText, showAtMergeBase, skippedIndexPaths, stageFile, sparseMode, stagedFiles, trackedFiles, type StagedBlob, unstagedFiles, checkoutBlobs } from "../runner/changed.js";
+import { type BaseRef, cleanHead, commitsOf, covers, pathHistory, resolveBaseCommit, showAtCommit, indexTree, stagedMismatch, changedFiles, mergeBase, changesSinceMergeBase, hasPathCommitIndex, headCommit, matchesHead, lastCommittedText, showAtMergeBase, skippedIndexPaths, stageFile, sparseMode, stagedFiles, trackedFiles, type StagedBlob, unstagedFiles, checkoutBlobs } from "../runner/changed.js";
 import { type Detection, heartbeatProblem, openAlerts } from "../runner/daemon.js";
 import { doctor, formatDoctor } from "../runner/doctor.js";
 import { type Evidence, LOOP_TAIL_BYTES, type Outcome, RUN_TOTAL, type RunFailure, type Step, type Trigger, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
@@ -47,6 +47,40 @@ const guardrailsOf = (set: RecordSet, implementation: string): Guardrail[] => se
 const hookBase = (root: string): string => {
   if (!existsSync(join(root, LOCK_PATH))) throw new RecordError(LOCK_PATH, "", "is missing, so the edit hook has no base branch. Next action: run warden compile");
   return readLock(root).config.base;
+};
+
+const lockModeAt = (root: string, commit: string): string | undefined => {
+  const text = showAtCommit(root, commit, LOCK_PATH);
+  if (text === undefined) return undefined;
+  try {
+    return (JSON.parse(text) as ReturnType<typeof readLock>).config.mode;
+  } catch {
+    return undefined;
+  }
+};
+
+const auditSwitch = (root: string, at: string): string | undefined => {
+  if (lockModeAt(root, at) !== "audit") return undefined;
+  return pathHistory(root, at, LOCK_PATH).find((commit) => lockModeAt(root, `${commit}^`) !== "audit");
+};
+
+const committedBase = (root: string, opts: CheckOptions): string | undefined => {
+  if (opts.base !== undefined) return opts.base;
+  if (opts.hook === "claude" && existsSync(join(root, LOCK_PATH))) return readLock(root).config.base;
+  const lock = lastCommittedText(root, LOCK_PATH);
+  return lock === undefined ? undefined : (JSON.parse(lock) as ReturnType<typeof readLock>).config.base;
+};
+
+const auditMode = (root: string, opts: CheckOptions): boolean => {
+  try {
+    const name = committedBase(root, opts);
+    const commit = name === undefined ? undefined : resolveBaseCommit(root, name)?.commit;
+    if (name === undefined || commit === undefined) return false;
+    const switched = auditSwitch(root, mergeBase(root, { name, commit }));
+    return switched !== undefined && !openAlerts(root).some((d) => d.detail === "unchecked-commit" && d.file === switched);
+  } catch {
+    return false;
+  }
 };
 
 const removedWarden = (root: string, given: string | undefined): { set: RecordSet; tamper: Tamper } | undefined => {
@@ -210,15 +244,6 @@ const report = (failures: Violation[], set: RecordSet, opts: CheckOptions, notes
 
 const alertMessage = (alert: Detection): string => `Warden's daemon holds an open tamper alert for this repository: ${alert.detail} ${alert.file} in ${alert.root}. Next action: ${alert.next}`;
 
-const blocksInAudit = (root: string, alert: Detection): boolean =>
-  alert.detail === "untrusted-trust" || (alert.detail === "unchecked-commit" && commitChanges(root, alert.file, ".warden"));
-
-const auditLocked = (root: string, tier: Tier): boolean => {
-  if (tier !== "commit") return true;
-  const staged = stagedText(root, LOCK_PATH);
-  return staged !== undefined && (JSON.parse(staged) as ReturnType<typeof readLock>).config.mode === "audit";
-};
-
 const refuseForAlert = (alert: Detection, opts: CheckOptions): number => {
   const message = alertMessage(alert);
   if (opts.hook === "claude") {
@@ -284,6 +309,8 @@ const baselineTotal = (b: Record<string, Record<string, number>>): number => Obj
 
 const check = async (opts: CheckOptions, live: Live, audit: boolean): Promise<number> => {
   const root = resolve(opts.root);
+  live.advisory = !audit && auditMode(root, opts);
+  const advisory = live.advisory;
   if (lstatSync(join(root, ".warden"), { throwIfNoEntry: false })?.isSymbolicLink() === true) {
     throw new RecordError(".warden", "", "is a symbolic link. Next action: move the link aside, restore the tracked .warden directory, then run warden check again.");
   }
@@ -335,7 +362,7 @@ const check = async (opts: CheckOptions, live: Live, audit: boolean): Promise<nu
     appendEvidence(removed.set.config.project, { at, kind: "tampered", file: removed.tamper.file, detail: removed.tamper.detail });
     closeStep(live, "fail");
     const notes = { tampered: [removed.tamper] };
-    return finish(removed.set.config.project, "tampered", [], report([], removed.set, opts, notes), { set: removed.set, notes });
+    return finish(removed.set.config.project, "tampered", [], report([], removed.set, opts, notes, false, advisory), { set: removed.set, notes });
   }
   if (!existsSync(join(root, ".warden/config.yaml"))) {
     throw new RecordError(".warden/config.yaml", "", "not found. Next action: run warden init.");
@@ -343,18 +370,6 @@ const check = async (opts: CheckOptions, live: Live, audit: boolean): Promise<nu
   const set = await loadRecords(root, opts.wardenRoot);
   const { project, loopBreakerRepeats } = set.config;
   live.project = project;
-  if (tier === "commit") {
-    if (process.env.WARDEN_DAEMON === "off") appendEvidence(project, { at, kind: "gate-off", run, tier, trigger: live.trigger, root, ...(opts.base === undefined ? {} : { base: opts.base }) });
-    else {
-      const problem = heartbeatProblem();
-      if (problem !== undefined) {
-        process.stderr.write(`${problem}\n`);
-        const commit = headCommit(root);
-        appendEvidence(project, { at, kind: "cost", guardrail: RUN_TOTAL, run, tier, trigger: live.trigger, root, outcome: "refused", exit: 1, ms: performance.now() - live.started, steps: {}, files: 0, bytes: 0, next: nextOf(problem) as string, ...(commit === undefined ? {} : { commit }) });
-        return 1;
-      }
-    }
-  }
   let comparison: ReturnType<typeof verifyCheckBase>;
   const verificationStarted = performance.now();
   try {
@@ -362,6 +377,19 @@ const check = async (opts: CheckOptions, live: Live, audit: boolean): Promise<nu
     live.base = { base: comparison.name, mergeBase: mergeBase(root, comparison) };
   } finally {
     live.baseVerificationMs = performance.now() - verificationStarted;
+  }
+  if (tier === "commit") {
+    if (process.env.WARDEN_DAEMON === "off") appendEvidence(project, { at, kind: "gate-off", run, tier, trigger: live.trigger, root, ...(opts.base === undefined ? {} : { base: opts.base }) });
+    else {
+      const problem = heartbeatProblem();
+      if (problem !== undefined && advisory) process.stderr.write(`${problem}\n${AUDIT_MODE}\n`);
+      else if (problem !== undefined) {
+        process.stderr.write(`${problem}\n`);
+        const commit = headCommit(root);
+        appendEvidence(project, { at, kind: "cost", guardrail: RUN_TOTAL, run, tier, trigger: live.trigger, root, outcome: "refused", exit: 1, ms: performance.now() - live.started, steps: {}, files: 0, bytes: 0, next: nextOf(problem) as string, ...(commit === undefined ? {} : { commit }) });
+        return 1;
+      }
+    }
   }
   const base = comparison.name;
   const alerts = openAlerts(root, audit);
@@ -396,7 +424,7 @@ const check = async (opts: CheckOptions, live: Live, audit: boolean): Promise<nu
     if (tampered.length > 0) {
       for (const t of tampered) appendEvidence(project, { at, kind: "tampered", file: t.file, detail: t.detail });
       closeStep(live, "fail");
-      return finish(project, "tampered", [], report([], set, opts, { tampered }), { set, notes: { tampered } });
+      return finish(project, "tampered", [], report([], set, opts, { tampered }, false, advisory), { set, notes: { tampered } });
     }
     const [first] = unknown as [(typeof unknown)[number]];
     throw new RecordError(first.file, `/guardrails/${first.record}/implementation`, first.message);
@@ -406,10 +434,8 @@ const check = async (opts: CheckOptions, live: Live, audit: boolean): Promise<nu
   if (tampered.length > 0) {
     for (const t of tampered) appendEvidence(project, { at, kind: "tampered", file: t.file, detail: t.detail, guardrail: t.guardrail });
     closeStep(live, "fail");
-    return finish(project, "tampered", [], report([], set, opts, { tampered }), { set, notes: { tampered } });
+    return finish(project, "tampered", [], report([], set, opts, { tampered }, false, advisory), { set, notes: { tampered } });
   }
-  live.advisory = !audit && set.config.mode === "audit" && auditLocked(root, tier);
-  const advisory = live.advisory;
   openStep(live, "tools-ready");
   const fileSha = (file: string): string => (existsSync(join(root, file)) ? sha256(readFileSync(join(root, file))) : "");
   const doctorKey = sha256(canonicalJson(["doctor", fileSha(LOCK_PATH), fileSha("package.json")]));
@@ -609,9 +635,9 @@ const check = async (opts: CheckOptions, live: Live, audit: boolean): Promise<nu
   const tree = tier === "commit" && scope === "full" && !failed ? indexTree(root) : undefined;
   const coveredHere = (d: Detection): boolean => d.detail === "unchecked-commit" && tree !== undefined && commitsOf(root, [d.file]).some((c) => covers(root, { tree, mergeBase: live.base?.mergeBase }, c));
   const open = alerts.filter((d) => !coveredHere(d));
-  const alert = advisory ? (open.find((d) => blocksInAudit(root, d)) ?? open[0]) : !audit && failed ? undefined : open[0];
-  const blocks = alert !== undefined && (!advisory || blocksInAudit(root, alert));
-  if (alert !== undefined && !blocks && opts.hook !== "claude") process.stderr.write(`${alertMessage(alert)}\n`);
+  const alert = advisory || audit || !failed ? open[0] : undefined;
+  const blocks = alert !== undefined && !advisory;
+  if (advisory && opts.hook !== "claude") for (const d of open) process.stderr.write(`${alertMessage(d)}\n`);
   const code = blocks ? refuseForAlert(alert, opts) : report(failures, set, opts, notes, audit, advisory);
   if (audit) closeStep(live, failed || code !== 0 ? "fail" : "done");
   const empty = scanned.length === 0 && ran.ran.length === 0 && blobRun.length === 0;

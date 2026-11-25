@@ -419,19 +419,22 @@ corresponding repository skill links and get the command to create them.
 ## Audit mode
 
 To adopt Warden without blocking work, add `mode: audit` to
-`.warden/config.yaml` and run `warden compile`. In audit mode, edit and commit
-checks run every rule and record the results, but they don't block. Agent
-edits get no block decision, and commit checks exit 0. Rule failures, daemon
-alerts, and errors after the rule integrity scan are recorded as Evidence and
-shown on the dashboard as not blocked.
+`.warden/config.yaml` and run `warden compile`. Audit mode never blocks. Edit
+and commit checks run every rule and exit 0. Agent edits get no block decision.
+Rule failures and tampering are recorded as Evidence. Every open daemon alert, a
+stopped daemon, and any error are printed. The dashboard shows each run as not
+blocked.
 
-Two things still block in audit mode:
+Warden decides the mode from the lock at the merge base of your branch and the
+base branch, so a branch must contain the commit that switched to audit mode.
+A branch made before the switch keeps enforcing until you merge the base branch
+into it. Warden also keeps enforcing while the daemon reports the switching
+commit as unchecked. Check that commit, or have the repository owner sign it
+with `warden trust`.
 
-- Tampering that the rule integrity scan reports, such as source drift.
-- A commit check while the daemon is not running.
-
-Switching an enforcing project to audit mode is loosening. Land it the same way
-as any other loosening. The default, `mode: enforce`, blocks on failures.
+Switching an enforcing project to audit mode is loosening, so the check blocks
+that change until it lands on the base branch. The default, `mode: enforce`,
+blocks on failures.
 
 ## Advisory checks
 
