@@ -1,6 +1,6 @@
 {
   "name": "warden",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "description": "Runs Warden's edit checks and applies its tool policies for records, Git commits, and registered command replacements. Requires the global warden command.",
   "author": {
     "name": "Ryan Amundson"
