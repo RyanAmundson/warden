@@ -554,7 +554,11 @@ warden enroll sign /path/to/repo --ref refs/remotes/origin/main --key ~/.ssh/war
 ```
 
 The key must be listed in Warden's `trust_signers`, have a passphrase, and
-stay out of `ssh-agent`, as for [`warden trust`](#daemon). After a Warden
+stay out of `ssh-agent`, as for [`warden trust`](#daemon). Restart the
+daemon after a new enrollment; a change to an existing one applies at the
+next scan. The daemon still reads `daemon/audit-only.json` only to report that
+it is obsolete: migrate and sign each repository it lists, then delete it.
+After a Warden
 upgrade, or after you edit `policy/config.yaml`, run `warden enroll compile
 /path/to/repo --ref <ref>` and sign again.
 
@@ -569,8 +573,10 @@ commit as the base, or the first audited commit's parent. Failed runs retry
 after one minute or when the ref advances. Your existing fetch process keeps
 remote-tracking refs current. Each receipt records the repository, ref,
 commit, base, and enabled packs, and the dashboard shows the receipts for the
-enrolled ref. Automatic hooks and checkout discovery skip every worktree of
-an enrolled repository.
+enrolled ref. A run that cannot start, for example because the ref no longer
+descends from the last audited commit, records an `error` receipt for each
+tier, once per distinct message. Automatic hooks and checkout discovery skip
+every worktree of an enrolled repository.
 
 ### What keeps an enrolled policy from being loosened
 
@@ -593,9 +599,14 @@ policy drift.
 
 Limits: a process running as you can edit `trust_signers` in the installed
 package, replace the daemon's runtime, or delete Evidence lines, so keep the
-package and `$WARDEN_HOME` out of agents' reach where you can. Linked paths
-come from the repository's working tree, not the audited commit, and are not
-signed. Audits do not lower the enrolled baseline; lower it by hand.
+package and `$WARDEN_HOME` out of agents' reach where you can. The unsigned
+`checkpoint.json` decides which commits are still to be audited, so an edit
+to it can skip a commit without a receipt. Linked paths come from the
+repository's working tree, not the audited commit, are not signed, and take
+any write a pack makes through them. Audits do not lower the enrolled
+baseline; lower it by hand. The checkout reads the repository's objects
+through Git's alternates file; Git can refresh the timestamps of those object
+files, but it writes no new files to the repository.
 
 ## Daemon
 

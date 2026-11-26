@@ -9,7 +9,7 @@ import { COMMIT_LOOKUP_BATCH, allTips, commitsOf, commonDir, covers, lockVersion
 import { claudeDir, commitHookItem, pluginAction, pluginState } from "./doctor.js";
 import { LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, evidenceProjects, readEvidenceFrom, readEvidenceTail, wardenHome, writeAtomic } from "./evidence.js";
 import { formatFeedback } from "./feedback.js";
-import { auditEnrollment, readEnrollments } from "./enrollment.js";
+import { auditEnrollment, readEnrollments, recordAuditFailure } from "./enrollment.js";
 import { findTampering } from "./tamper.js";
 import { TRUST_SIGNERS, readTrustFiles, signatureValid, trustDir } from "./trust.js";
 export const DEFAULT_PORT = 7419;
@@ -112,7 +112,12 @@ export function discoverRoots(auditOnly = new Map()) {
         .flatMap((p) => readEvidenceTail(p, LOOP_TAIL_BYTES).flatMap((e) => (e.root === undefined ? [] : [e.root])));
     return [...new Set(roots)].filter((r) => existsSync(join(r, ".warden/config.yaml")));
 }
-const readAuditOnly = () => readEnrollments();
+const readAuditOnly = () => {
+    const legacy = join(wardenHome(), "daemon", "audit-only.json");
+    if (existsSync(legacy))
+        process.stderr.write(`Warden no longer reads ${legacy}. Next action: for each repository it lists, run warden enroll migrate <repo> --ref <ref> and warden enroll sign <repo> --ref <ref> --key <your trust key>, then delete ${legacy} and restart the daemon.\n`);
+    return readEnrollments();
+};
 export function isAuditOnlyCheckout(root) {
     const projects = readAuditOnly();
     if (projects.size === 0)
@@ -581,6 +586,7 @@ export function startWatching(opts) {
         throw cause;
     }
     const audits = new Map();
+    const auditErrors = new Map();
     const auditAbort = new AbortController();
     const auditEnrolled = () => {
         if (opts.enrolledAudits === false)
@@ -589,8 +595,16 @@ export function startWatching(opts) {
             if (audits.has(enrolled.dir))
                 continue;
             audits.set(enrolled.dir, auditEnrollment(enrolled, { wardenRoot: opts.wardenRoot, signal: auditAbort.signal })
-                .then(() => { }, (cause) => { if (!auditAbort.signal.aborted)
-                report(cause); })
+                .then(() => { auditErrors.delete(enrolled.dir); }, (cause) => {
+                if (auditAbort.signal.aborted)
+                    return;
+                const message = cause instanceof Error ? cause.message : String(cause);
+                if (auditErrors.get(enrolled.dir) === message)
+                    return;
+                auditErrors.set(enrolled.dir, message);
+                report(cause);
+                recordAuditFailure(enrolled, message);
+            })
                 .finally(() => { audits.delete(enrolled.dir); }));
         }
     };

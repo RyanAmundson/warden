@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { compile } from "../compiler/compile.js";
 import { canonicalJson, sha256 } from "../compiler/lock.js";
 import { RecordError, parseConfig } from "../records/load.js";
+import { ignoresPathCase, pathCaseKey } from "../records/paths.js";
 import type { Baseline } from "./baseline.js";
 import { RUN_TOTAL, appendEvidence, wardenHome, writeAtomic } from "./evidence.js";
 import { TRUST_SIGNERS, signText, signedBy } from "./trust.js";
@@ -185,7 +186,13 @@ async function snapshot(checkout: string, e: Enrollment, staging: string, commit
   const env = { GIT_INDEX_FILE: join(checkout, ".git", "warden-snapshot-index") };
   await git(checkout, ["read-tree", commit], signal, env);
   const listed = (await git(checkout, ["ls-files", "-z"], signal, env)).split("\0").filter((file) => file !== "");
-  const stripped = listed.filter((file) => file === ".warden" || file.startsWith(".warden/") || e.data.some((glob) => matchesGlob(file, glob)));
+  const ignoreCase = ignoresPathCase(checkout);
+  const keyOf = (path: string): string => pathCaseKey(path, ignoreCase);
+  const globs = e.data.map(keyOf);
+  const stripped = listed.filter((file) => {
+    const key = keyOf(file);
+    return key === ".warden" || key.startsWith(".warden/") || globs.some((glob) => matchesGlob(key, glob));
+  });
   for (let i = 0; i < stripped.length; i += 500) await git(checkout, ["update-index", "--force-remove", "--", ...stripped.slice(i, i + 500)], signal, env);
   await git(checkout, ["--work-tree", staging, "add", "--force", "--ignore-removal", "--", "."], signal, env);
   const tree = await git(checkout, ["write-tree"], signal, env);
@@ -264,7 +271,16 @@ export async function migrateEnrollment(repo: string, ref: string, from: string,
   const dir = enrollmentDir(root, ref);
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
-  const enrollment: Enrollment = { project: config.project, root, ref, data, links, ...(initialBase === undefined ? {} : { initialBase }) };
+  try {
+    return await writeMigration(dir, root, ref, commit, config.project, show, listed, policy, wardenRoot, data, links, initialBase);
+  } catch (cause) {
+    rmSync(dir, { recursive: true, force: true });
+    throw cause;
+  }
+}
+
+async function writeMigration(dir: string, root: string, ref: string, commit: string, project: string, show: (path: string) => Promise<Buffer>, listed: string[], policy: string[], wardenRoot: string, data: string[], links: string[], initialBase?: string): Promise<Migration> {
+  const enrollment: Enrollment = { project, root, ref, data, links, ...(initialBase === undefined ? {} : { initialBase }) };
   writeFileSync(join(dir, "enrollment.json"), `${JSON.stringify(enrollment, null, 2)}\n`);
   const copy = async (path: string, to: string): Promise<void> => {
     mkdirSync(join(to, ".."), { recursive: true });
@@ -275,7 +291,7 @@ export async function migrateEnrollment(repo: string, ref: string, from: string,
   const sourceGaps = policy.includes(".warden/baseline.json") ? total(JSON.parse((await show(".warden/baseline.json")).toString("utf8")) as Baseline) : 0;
   const { gaps } = await compileEnrollment(dir, wardenRoot);
   if (gaps !== sourceGaps) throw new Error(`the enrolled baseline holds ${gaps} gaps, but ${commit}'s .warden/baseline.json holds ${sourceGaps}. Next action: report this to Warden's maintainers with ${dir}`);
-  return { dir, project: config.project, gaps, sourceGaps };
+  return { dir, project, gaps, sourceGaps };
 }
 
 const readCheckpoint = (file: string): Checkpoint => {
@@ -358,8 +374,14 @@ async function auditTier({ e, commit, base, tier, checkout, snapshotBase, execut
   return exit === 0 && summary !== undefined && (summary.outcome === "ran" || summary.outcome === "empty");
 }
 
-export async function auditEnrollment(e: EnrolledProject, opts: AuditOptions): Promise<boolean> {
+export function recordAuditFailure(e: EnrolledProject, message: string): void {
+  const at = new Date().toISOString();
+  for (const tier of TIERS) appendEvidence(e.project, { at, kind: "cost", guardrail: RUN_TOTAL, run: randomUUID(), tier, outcome: "error", exit: 2, ms: 0, files: 0, next: message, root: e.root, ref: e.ref, trigger: TRIGGER } as Parameters<typeof appendEvidence>[1]);
+}
+
+export async function auditEnrollment(enrolled: EnrolledProject, opts: AuditOptions): Promise<boolean> {
   const { signal, once = false } = opts;
+  const e: EnrolledProject = { ...readEnrollment(enrolled.dir), dir: enrolled.dir };
   const commit = await commitAt(e.root, e.ref, signal);
   const path = join(e.dir, "checkpoint.json");
   const checkpoint = readCheckpoint(path);

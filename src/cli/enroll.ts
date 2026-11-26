@@ -27,6 +27,6 @@ export function runEnrollSign(repo: string, ref: string, key: string, wardenRoot
   requireOwnerKey(key, signers, "run warden enroll sign again");
   signEnrollment(dir, key);
   if (enrollmentTampering(dir, signers).length > 0) throw new Error(`${key} is not an owner key in ${signers}, so the daemon would not honor this enrollment. Next action: sign with the key that ${signers} lists`);
-  process.stdout.write(`Signed the enrollment in ${dir}. The daemon audits ${ref} of ${root} with it at its next scan.\n`);
+  process.stdout.write(`Signed the enrollment in ${dir}. The daemon uses it at its next scan; restart the daemon if this enrollment is new.\n`);
   return 0;
 }

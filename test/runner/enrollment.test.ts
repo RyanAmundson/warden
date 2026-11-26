@@ -58,7 +58,7 @@ function fixture() {
 
 const fakeAudit = (scratchDir: string) => {
   const executable = join(scratchDir, "audit.mjs");
-  writeFileSync(executable, `import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
+  writeFileSync(executable, `import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 const [, , command, , tier, , base] = process.argv;
 if (command !== "audit") process.exit(23);
@@ -76,6 +76,7 @@ writeFileSync(evidence + "/sample.jsonl", JSON.stringify({
   detail: readFileSync("example.txt", "utf8"),
   policy: readFileSync(".warden/config.yaml", "utf8"),
   data: readFileSync("plugin/contracts.lock.json", "utf8"),
+  leaked: [".warden/extra.txt", "plugin/other.lock.json"].filter((file) => existsSync(file)),
 }));
 `);
   return executable;
@@ -186,6 +187,9 @@ test("reports a tampered enrollment instead of auditing it, and accepts a lowere
   const file = join(dir, "policy", "baseline.json");
   writeFileSync(file, JSON.stringify({ "warden-a": { "src/a.ts": 1 }, "warden-b": { "src/a.ts": 4 } }));
   expect(enrollmentTampering(dir, f.signers)).toEqual([]);
+  expect(await auditEnrollment(enrolled, opts)).toBe(true);
+  expect(receipts().slice(3)).toMatchObject([{ tier: "edit", outcome: "ran" }, { tier: "boundary", outcome: "ran" }]);
+  f.git("update-ref", ref, f.commit("after the lowered baseline"));
   writeFileSync(file, JSON.stringify({ ...baseline, "warden-b": { "src/a.ts": 5 } }));
   expect(enrollmentTampering(dir, f.signers)).toEqual([{ file, detail: "loosened", guardrail: "warden-b" }]);
   writeFileSync(file, JSON.stringify({ ...baseline, "warden-c": { "src/c.ts": 1 } }));
@@ -203,8 +207,21 @@ test("reports a tampered enrollment instead of auditing it, and accepts a lowere
   writeFileSync(enrollmentFile, JSON.stringify({ ...JSON.parse(readFileSync(enrollmentFile, "utf8")), data: [] }));
   expect(enrollmentTampering(dir, f.signers)[0]).toEqual({ file: enrollmentFile, detail: "changed" });
   expect(await auditEnrollment(readEnrollments().get("sample")!, opts)).toBe(false);
-  expect(receipts().slice(3)[0]).toMatchObject({ kind: "tampered", detail: "changed", file: enrollmentFile });
-  expect(receipts().some((r) => r.outcome === "ran")).toBe(false);
+  expect(receipts().slice(5)[0]).toMatchObject({ kind: "tampered", detail: "changed", file: enrollmentFile });
+  expect(receipts().filter((r) => r.outcome === "ran")).toHaveLength(2);
+});
+
+test("keeps repository files that differ from the enrolled paths only in case out of the checkout", { timeout: 120_000 }, async () => {
+  const f = fixture();
+  f.commit("enrolled");
+  const { enrolled } = await enroll(f);
+  signEnrollment(enrolled.dir, f.key);
+  const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: f.root, input: "planted", encoding: "utf8" }).trim();
+  for (const path of [".WARDEN/extra.txt", "Plugin/other.lock.json"]) f.git("update-index", "--add", "--cacheinfo", `100644,${blob},${path}`);
+  f.git("commit", "--quiet", "-m", "case collisions");
+  f.git("update-ref", ref, f.git("rev-parse", "HEAD"));
+  expect(await auditEnrollment(enrolled, { wardenRoot, executable: fakeAudit(scratch), signers: f.signers, once: true })).toBe(true);
+  expect(receipts()).toMatchObject([{ tier: "edit", leaked: [] }, { tier: "boundary", leaked: [] }]);
 });
 
 test("makes an executable failure visible for both tiers and keeps missed changes in a tier's comparison", { timeout: 120_000 }, async () => {
@@ -247,6 +264,25 @@ test("the daemon audits each enrolled ref on its own", { timeout: 120_000 }, asy
     expect(receipts()).toMatchObject([{ kind: "tampered", detail: "unsigned", ref, root: f.root }, { tier: "edit", outcome: "tampered" }, { tier: "boundary", outcome: "tampered" }]);
     const projects = await (await fetch(`http://127.0.0.1:${dashboard.port}/api/projects`)).json() as { projects: unknown[] };
     expect(projects.projects).toMatchObject([{ project: "sample", roots: [], mode: "audit", lastMainAudit: { root: f.root, ref } }]);
+  } finally {
+    await dashboard.close();
+  }
+});
+
+test("the daemon records an audit that cannot start as one error receipt per tier", { timeout: 120_000 }, async () => {
+  const f = fixture();
+  f.commit("enrolled");
+  await enroll(f);
+  f.git("update-ref", "-d", ref);
+  const dashboard = await serve(wardenRoot, 0, { intervalMs: 100 });
+  try {
+    const evidence = join(process.env.WARDEN_HOME as string, "evidence", "sample.jsonl");
+    for (let i = 0; i < 200 && !existsSync(evidence); i++) await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 500));
+    expect(receipts()).toMatchObject([
+      { tier: "edit", outcome: "error", ref, root: f.root, next: expect.stringContaining(ref) },
+      { tier: "boundary", outcome: "error", ref },
+    ]);
   } finally {
     await dashboard.close();
   }
