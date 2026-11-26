@@ -154,10 +154,10 @@ describe("the CLI", { timeout: 120_000 }, () => {
   it("skips automatic hooks in every linked checkout of a published-audit repository", () => {
     const home = mkdtempSync(join(tmpdir(), "warden-published-audit-"));
     const linked = join(home, "linked");
-    mkdirSync(join(home, "daemon"));
-    writeFileSync(join(home, "daemon/audit-only.json"), JSON.stringify([
-      { project: "fixture", root, ref: "refs/remotes/origin/main" },
-    ]));
+    mkdirSync(join(home, "enrollments/fixture"), { recursive: true });
+    writeFileSync(join(home, "enrollments/fixture/enrollment.json"), JSON.stringify(
+      { project: "fixture", root, ref: "refs/remotes/origin/main", data: [], links: [] },
+    ));
     try {
       git("worktree", "add", "--detach", linked);
       for (const cwd of [root, linked]) {
@@ -178,10 +178,10 @@ describe("the CLI", { timeout: 120_000 }, () => {
 
   it("reports an unavailable audit checkout and still runs an unrelated hook", () => {
     const home = mkdtempSync(join(tmpdir(), "warden-missing-audit-checkout-"));
-    mkdirSync(join(home, "daemon"));
-    writeFileSync(join(home, "daemon/audit-only.json"), JSON.stringify([
-      { project: "fixture", root: join(home, "missing"), ref: "refs/remotes/origin/main" },
-    ]));
+    mkdirSync(join(home, "enrollments/fixture"), { recursive: true });
+    writeFileSync(join(home, "enrollments/fixture/enrollment.json"), JSON.stringify(
+      { project: "fixture", root: join(home, "missing"), ref: "refs/remotes/origin/main", data: [], links: [] },
+    ));
     try {
       const result = cli(["guard"], {
         env: { WARDEN_HOME: home },

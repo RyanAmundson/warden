@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { type FSWatcher, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, watch } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { setImmediate as yieldToEvents } from "node:timers/promises";
 import { COMMIT_HOOK, RELEASES } from "../compiler/emit.js";
 import { FIRST_STAMPING, LOCK_PATH, firstLine, olderThan, readLock } from "../compiler/lock.js";
@@ -9,6 +9,7 @@ import { type Committed, type Worktree, COMMIT_LOOKUP_BATCH, allTips, commitsOf,
 import { type PluginState, claudeDir, commitHookItem, pluginAction, pluginState } from "./doctor.js";
 import { type Evidence, LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, evidenceProjects, readEvidenceFrom, readEvidenceTail, wardenHome, writeAtomic } from "./evidence.js";
 import { formatFeedback } from "./feedback.js";
+import { type EnrolledProject, auditEnrollment, readEnrollments } from "./enrollment.js";
 import { findTampering } from "./tamper.js";
 import { TRUST_SIGNERS, readTrustFiles, signatureValid, trustDir } from "./trust.js";
 
@@ -157,30 +158,9 @@ export function discoverRoots(auditOnly: ReadonlyMap<string, AuditOnlyProject> =
   return [...new Set(roots)].filter((r) => existsSync(join(r, ".warden/config.yaml")));
 }
 
-export interface AuditOnlyProject {
-  project: string;
-  root: string;
-  ref: string;
-}
+export type AuditOnlyProject = EnrolledProject;
 
-function readAuditOnly(): Map<string, AuditOnlyProject> {
-  const file = join(wardenHome(), "daemon", "audit-only.json");
-  const text = readOptional(file);
-  const entries: unknown = text === undefined ? [] : parsed(text);
-  if (!Array.isArray(entries)) throw new RecordError(file, "", "must contain an array of audit-only project registrations.");
-  const projects = new Map<string, AuditOnlyProject>();
-  for (const entry of entries) {
-    if (entry === null || typeof entry !== "object" ||
-      typeof entry.project !== "string" || !/^[a-z0-9][a-z0-9-]*$/.test(entry.project) ||
-      typeof entry.root !== "string" || !isAbsolute(entry.root) ||
-      typeof entry.ref !== "string" || !entry.ref.startsWith("refs/remotes/") ||
-      projects.has(entry.project)) {
-      throw new RecordError(file, "", "each registration needs a unique project ID, an absolute checkout path, and a remote-tracking ref.");
-    }
-    projects.set(entry.project, { project: entry.project, root: entry.root, ref: entry.ref });
-  }
-  return projects;
-}
+const readAuditOnly = (): Map<string, AuditOnlyProject> => readEnrollments();
 
 export function isAuditOnlyCheckout(root: string): boolean {
   const projects = readAuditOnly();
@@ -312,6 +292,7 @@ export interface DaemonOptions {
   onDetection?: (d: Detection) => void;
   onEvidence?: (project: string) => void;
   onError?: (cause: Error) => void;
+  enrolledAudits?: boolean;
 }
 
 export interface Watched {
@@ -677,10 +658,23 @@ export function startWatching(opts: DaemonOptions): Daemon {
     evidenceWatcher.close();
     throw cause;
   }
+  const audits = new Map<string, Promise<void>>();
+  const auditAbort = new AbortController();
+  const auditEnrolled = (): void => {
+    if (opts.enrolledAudits === false) return;
+    for (const enrolled of auditOnly.values()) {
+      if (audits.has(enrolled.dir)) continue;
+      audits.set(enrolled.dir, auditEnrollment(enrolled, { wardenRoot: opts.wardenRoot, signal: auditAbort.signal })
+        .then(() => {}, (cause: unknown) => { if (!auditAbort.signal.aborted) report(cause); })
+        .finally(() => { audits.delete(enrolled.dir); }));
+    }
+  };
   tick();
+  auditEnrolled();
   const interval = setInterval(() => {
     tick();
     discoverInBackground();
+    auditEnrolled();
   }, opts.intervalMs ?? HEARTBEAT_MS);
   return {
     projects,
@@ -699,6 +693,8 @@ export function startWatching(opts: DaemonOptions): Daemon {
     stop: async () => {
       stopped = true;
       clearInterval(interval);
+      auditAbort.abort();
+      await Promise.all(audits.values());
       await Promise.all(discoveries.values());
       evidenceWatcher.close();
       for (const w of projects.values()) {

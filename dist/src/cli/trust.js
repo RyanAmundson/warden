@@ -8,16 +8,19 @@ const inAgent = (pub) => {
     const listed = spawnSync("ssh-add", ["-L"], { encoding: "utf8" });
     return (listed.stdout ?? "").split("\n").some((line) => line.split(" ")[1] === blob);
 };
+export function requireOwnerKey(key, signers, again) {
+    if (keygen(["-y", "-P", "", "-f", key]).status === 0)
+        throw new Error(`${key} has no passphrase, so any process running as you could sign with it. Next action: run ssh-keygen -p -f ${key} to set one, then ${again}`);
+    if (!existsSync(`${key}.pub`))
+        throw new Error(`${key}.pub is missing, so Warden cannot check whether ssh-agent holds the key. Next action: run ssh-keygen -y -f ${key} > ${key}.pub, then ${again}`);
+    if (inAgent(`${key}.pub`))
+        throw new Error(`${key} is loaded in ssh-agent, so any process running as you could sign with it without the passphrase. Next action: run ssh-add -d ${key}.pub, then ${again}`);
+    if (signerLines(signers).length === 0)
+        throw new Error(`${signers} lists no owner key, so nothing can be signed. Next action: make a passphrase-protected key with ssh-keygen -t ed25519 -f ~/.ssh/warden_owner, never add it to ssh-agent, and add a line "<you> <public key>" for it to ${signers}`);
+}
 export function runTrust(root, wardenRoot, commit, key, reason) {
     const signers = join(wardenRoot, TRUST_SIGNERS);
-    if (keygen(["-y", "-P", "", "-f", key]).status === 0)
-        throw new Error(`${key} has no passphrase, so any process running as you could sign with it. Next action: run ssh-keygen -p -f ${key} to set one, then run warden trust again`);
-    if (!existsSync(`${key}.pub`))
-        throw new Error(`${key}.pub is missing, so Warden cannot check whether ssh-agent holds the key. Next action: run ssh-keygen -y -f ${key} > ${key}.pub, then run warden trust again`);
-    if (inAgent(`${key}.pub`))
-        throw new Error(`${key} is loaded in ssh-agent, so any process running as you could sign with it without the passphrase. Next action: run ssh-add -d ${key}.pub, then run warden trust again`);
-    if (signerLines(signers).length === 0)
-        throw new Error(`${signers} lists no owner key, so no trust can be signed. Next action: make a passphrase-protected key with ssh-keygen -t ed25519 -f ~/.ssh/warden_owner, never add it to ssh-agent, and add a line "<you> <public key>" for it to ${signers}`);
+    requireOwnerKey(key, signers, "run warden trust again");
     const full = commitOf(root, commit);
     if (full === undefined)
         throw new Error(`${commit} is not a commit in ${root}. Next action: pass the full id the daemon's alert names`);

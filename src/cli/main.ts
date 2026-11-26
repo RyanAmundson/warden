@@ -17,6 +17,7 @@ import { runAudit, runCheck } from "./check.js";
 import { installDaemon, runDaemon, uninstallDaemon } from "./daemon.js";
 import { runDispute, runDisputeRuling } from "./dispute.js";
 import { runExplain } from "./explain.js";
+import { runEnrollCompile, runEnrollMigrate, runEnrollSign } from "./enroll.js";
 import { runDoctor, runInit } from "./init.js";
 import { runMutationReview } from "./mutations.js";
 import { runNewCapability } from "./new-capability.js";
@@ -381,6 +382,37 @@ program
   .requiredOption("--reason <text>", "why you trust the commit")
   .action((commit: string, o: { key: string; reason: string }) => {
     process.exitCode = runTrust(root(), findWardenRoot(), commit, o.key, o.reason);
+  });
+
+const enroll = program.command("enroll").description("audit a repository's ref from WARDEN_HOME, without reading policy from or writing to the repository");
+
+enroll
+  .command("migrate <repo>")
+  .description("copy a repository's in-repo .warden and pack data into WARDEN_HOME, and compile it with this Warden")
+  .requiredOption("--ref <ref>", "the full ref the daemon audits, such as refs/remotes/origin/main")
+  .option("--from <commit>", "the commit whose .warden to copy; defaults to the ref")
+  .option("--data <glob...>", "repository paths a pack reads as records, such as plugins/*/contracts.lock.json", [])
+  .option("--link <path...>", "repository paths linked into the audit checkout from the working tree, such as node_modules", [])
+  .option("--initial-base <commit>", "the commit the first audit compares against; defaults to the first audited commit's parent")
+  .action(async (repo: string, o: { ref: string; from?: string; data: string[]; link: string[]; initialBase?: string }) => {
+    process.exitCode = await runEnrollMigrate(repo, o.ref, o.from, findWardenRoot(), o.data, o.link, o.initialBase);
+  });
+
+enroll
+  .command("compile <repo>")
+  .description("recompile an enrolled policy with this Warden, after an upgrade or a config change")
+  .requiredOption("--ref <ref>", "the enrolled full ref")
+  .action(async (repo: string, o: { ref: string }) => {
+    process.exitCode = await runEnrollCompile(repo, o.ref, findWardenRoot());
+  });
+
+enroll
+  .command("sign <repo>")
+  .description("as the owner, sign an enrolled policy so the daemon audits with it; asks for your trust key's passphrase")
+  .requiredOption("--ref <ref>", "the enrolled full ref")
+  .requiredOption("--key <file>", "your passphrase-protected private key listed in Warden's trust_signers")
+  .action((repo: string, o: { ref: string; key: string }) => {
+    process.exitCode = runEnrollSign(repo, o.ref, o.key, findWardenRoot());
   });
 
 program

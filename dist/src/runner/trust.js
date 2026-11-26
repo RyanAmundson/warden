@@ -24,26 +24,28 @@ const inTemp = (run) => {
     }
 };
 export const signerLines = (signers) => existsSync(signers) ? readFileSync(signers, "utf8").split("\n").filter((l) => l.trim() !== "" && !l.trim().startsWith("#")) : [];
-export function signatureValid(signers, t) {
+export function signedBy(signers, namespace, text, signature) {
     return inTemp((dir) => {
-        const sig = join(dir, "trust.sig");
-        writeFileSync(sig, t.signature);
+        const sig = join(dir, "signed.sig");
+        writeFileSync(sig, signature);
         const found = keygen(["-Y", "find-principals", "-s", sig, "-f", signers]);
         if (found.status !== 0)
             return false;
-        return found.stdout.split("\n").filter((p) => p !== "").some((p) => keygen(["-Y", "verify", "-f", signers, "-I", p, "-n", TRUST_NAMESPACE, "-s", sig], message(t)).status === 0);
+        return found.stdout.split("\n").filter((p) => p !== "").some((p) => keygen(["-Y", "verify", "-f", signers, "-I", p, "-n", namespace, "-s", sig], text).status === 0);
     });
 }
-export function signTrust(key, t) {
+export const signatureValid = (signers, t) => signedBy(signers, TRUST_NAMESPACE, message(t), t.signature);
+export function signText(key, namespace, text, again) {
     return inTemp((dir) => {
-        const file = join(dir, "trust");
-        writeFileSync(file, message(t));
-        const r = spawnSync("ssh-keygen", ["-q", "-Y", "sign", "-f", key, "-n", TRUST_NAMESPACE, file], { stdio: ["inherit", "ignore", "inherit"] });
+        const file = join(dir, "signed");
+        writeFileSync(file, text);
+        const r = spawnSync("ssh-keygen", ["-q", "-Y", "sign", "-f", key, "-n", namespace, file], { stdio: ["inherit", "ignore", "inherit"] });
         if (r.error !== undefined || r.status !== 0)
-            throw new Error(`ssh-keygen could not sign with ${key}${r.error === undefined ? "" : `: ${r.error.message}`}. Next action: run warden trust again in a terminal and enter the key's passphrase`);
-        return { ...t, signature: readFileSync(`${file}.sig`, "utf8") };
+            throw new Error(`ssh-keygen could not sign with ${key}${r.error === undefined ? "" : `: ${r.error.message}`}. Next action: ${again} in a terminal and enter the key's passphrase`);
+        return readFileSync(`${file}.sig`, "utf8");
     });
 }
+export const signTrust = (key, t) => ({ ...t, signature: signText(key, TRUST_NAMESPACE, message(t), "run warden trust again") });
 const trustFile = (t) => join(trustDir(), `${createHash("sha256").update(t.repo).digest("hex").slice(0, 12)}-${t.commit}.json`);
 export const writeTrust = (t) => {
     const file = trustFile(t);

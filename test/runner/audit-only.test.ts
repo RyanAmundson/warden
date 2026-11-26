@@ -6,6 +6,7 @@ import { expect, it, vi } from "vitest";
 import { serve } from "../../src/cli/daemon.js";
 import * as changed from "../../src/runner/changed.js";
 import { openAlerts, stateFile } from "../../src/runner/daemon.js";
+import { enrollmentsDir } from "../../src/runner/enrollment.js";
 import { appendEvidence } from "../../src/runner/evidence.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
@@ -44,9 +45,10 @@ it("shows the published audit and excludes the repository's remembered and newly
     init(root, "audit-only");
     init(separate, "separate");
     git(root, "worktree", "add", "--detach", linked);
-    const directory = resolve(stateFile(), "..");
+    const directory = join(enrollmentsDir(), "audit-only");
     mkdirSync(directory, { recursive: true });
-    writeFileSync(join(directory, "audit-only.json"), JSON.stringify([{ project: "audit-only", root, ref }]));
+    mkdirSync(resolve(stateFile(), ".."), { recursive: true });
+    writeFileSync(join(directory, "enrollment.json"), JSON.stringify({ project: "audit-only", root, ref, data: [], links: [] }));
     writeFileSync(stateFile(), JSON.stringify({ roots: { [linked]: { open: [{
       project: "audit-only", root: linked, repo, file: "fixture", detail: "unchecked-commit", next: "check",
     }] } }, repos: { [repo]: { tips: [], unchecked: [] } } }));
@@ -54,7 +56,7 @@ it("shows the published audit and excludes the repository's remembered and newly
     appendEvidence("audit-only", { at, kind: "registered", root: linked });
     appendEvidence("audit-only", { at, kind: "cost", guardrail: "run", tier: "edit", run: "one", trigger: "main audit", root, ref, exit: 0, outcome: "ran" });
     appendEvidence("separate", { at, kind: "registered", root: separate });
-    dashboard = await serve(wardenRoot, 0);
+    dashboard = await serve(wardenRoot, 0, { enrolledAudits: false });
     await dashboard.daemon.discover();
     expect([...dashboard.daemon.projects.keys()]).toEqual([separate]);
     expect(list.mock.calls.map(([directory]) => directory)).not.toContain(repo);

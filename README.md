@@ -152,6 +152,9 @@ edits `.warden`:
 
 ## Sign changes to .warden
 
+A project enrolled from outside the repository is signed differently; see
+[What keeps an enrolled policy from being loosened](#what-keeps-an-enrolled-policy-from-being-loosened).
+
 Every commit since the merge base that changed a file under `.warden/` must
 carry a git SSH signature from a key in the `allowed_signers` file at the root
 of the installed Warden package. The list ships with Warden, so no file in the
@@ -509,44 +512,90 @@ the baseline, Git index, and commit approval records intact. The daemon
 continues to record commit-hook and unchecked-commit alerts for enforcement
 through `warden check`.
 
-Run the packaged watcher under a process supervisor to audit a published ref.
-Pass the repository path, the project ID from its config, a full Git ref, and
-the absolute path to the Warden executable. Run one watcher per repository
-and ref within a Warden home.
+## Enroll a project from outside
+
+The daemon can audit a repository's published ref without reading policy from
+the repository or writing anything to it. The enrollment lives under
+`$WARDEN_HOME/enrollments/<id>/`, one folder per repository path and ref:
+
+- `enrollment.json`: the project ID, the repository's absolute path, the
+  full ref, the data globs, and the links.
+- `policy/`: the project's `.warden` folder, with `config.yaml`,
+  `baseline.json`, `lock.json`, and generated files.
+- `data/`: records that a pack reads at repository paths, such as each
+  plugin's `contracts.lock.json` for the `plugin-compliance` pack, stored at
+  the same relative paths.
+- `signed.json` and `signed.json.sig`: what the owner signed.
+- `checkpoint.json`: the last audited commit for each tier.
+
+To move an in-repo enrollment out of the repository, run `warden enroll
+migrate` on the repository's root. It reads `.warden/` and the data files
+from a commit with `git cat-file`, compiles the lock with the running Warden,
+and confirms that the enrolled baseline holds the same number of gaps as the
+repository's. It writes nothing to the repository.
 
 ```sh
-node /path/to/warden/scripts/watch-main.mjs /path/to/repo sample refs/remotes/origin/main /path/to/warden/bin/warden.js
+warden enroll migrate /path/to/repo --ref refs/remotes/origin/main \
+  --data 'plugins/*/contracts.lock.json' --link node_modules
 ```
 
-The watcher checks the local ref every 10 seconds. It audits the first
-observed commit and subsequent advances in a temporary Git checkout, using
-both the edit and boundary tiers. Each tier uses its last completed
-revision as the base, or the first observed commit's parent before any
-completed run. Failed runs retry after one minute or when the ref advances.
-The watcher relies on your existing Git fetch process to update remote-tracking
-refs. Each receipt records the source root, ref, commit, base, and enabled packs.
+`--from <commit>` picks the commit to copy, and defaults to the ref.
+`--data` takes globs in the same syntax as pack paths. `--link` names
+working-tree paths, such as `node_modules`, that the audit checkout links to
+so that the module adapter can load `plugin.ts`. `--initial-base <commit>`
+starts the first comparison at an earlier commit. Running `migrate` again
+replaces the enrollment and its checkpoint.
 
-For a published branch without Warden enrollment, pass `--policy-commit SHA`
-and an approved policy list. The watcher restores the pinned commit's policy
-into its temporary checkout. Use `--initial-base SHA` when creating a
-checkpoint to start the comparison from an earlier published commit.
+The daemon audits nothing until the owner signs the enrollment. Review the
+folder, then run this in a terminal and enter the key's passphrase:
 
-To show a published audit in the dashboard without watching any checkout of
-its repository, add an entry to `daemon/audit-only.json` under
-`WARDEN_HOME` and restart the daemon. The file is a JSON array. Each entry
-identifies the project, its absolute checkout path, and its remote-tracking ref.
-
-```json
-[{"project":"sample","root":"/path/to/repo","ref":"refs/remotes/origin/main"}]
+```sh
+warden enroll sign /path/to/repo --ref refs/remotes/origin/main --key ~/.ssh/warden_owner
 ```
 
-The daemon displays receipts for the registered ref and skips checkout discovery
-for the repository. Run the published-ref watcher separately.
+The key must be listed in Warden's `trust_signers`, have a passphrase, and
+stay out of `ssh-agent`, as for [`warden trust`](#daemon). After a Warden
+upgrade, or after you edit `policy/config.yaml`, run `warden enroll compile
+/path/to/repo --ref <ref>` and sign again.
 
-To restrict execution to approved policy versions, append the path to a
-JSON file containing an array of objects with `config` and `lock` SHA-256
-digests. Append `--once` to check the current ref and exit. Use a separate
-`WARDEN_HOME` for this mode when a watcher already runs for that ref.
+Every 10 seconds the daemon reads each enrolled ref from the repository's
+local Git objects. When the ref has advanced, it audits the new commit with
+the edit and boundary tiers in a temporary Git checkout. That checkout has
+no remote refs. Its commits are snapshots of the audited commit and its base.
+Each snapshot drops the repository's own `.warden/` and every file the data
+globs match, then holds the enrolled `policy/` as `.warden/` and the files in
+`data/`. Only the enrolled packs run. Each tier uses its last completed
+commit as the base, or the first audited commit's parent. Failed runs retry
+after one minute or when the ref advances. Your existing fetch process keeps
+remote-tracking refs current. Each receipt records the repository, ref,
+commit, base, and enabled packs, and the dashboard shows the receipts for the
+enrolled ref. Automatic hooks and checkout discovery skip every worktree of
+an enrolled repository.
+
+### What keeps an enrolled policy from being loosened
+
+The signature replaces the signed `.warden` commits that an in-repo
+enrollment needs; see [Sign changes to .warden](#sign-changes-to-warden).
+Before each audit, the daemon checks `signed.json.sig` against
+`trust_signers` and compares the folder with `signed.json`. It reports these
+findings as `tampered` receipts, and runs no rules until the cause is fixed:
+
+- `unsigned` or `untrusted-signature`: the owner has not signed, or another
+  key signed.
+- `changed`, `added`, or `removed`: `enrollment.json`, a file in `policy/`,
+  or a file in `data/` differs from what was signed.
+- `loosened`: `policy/baseline.json` holds a count above the signed count for
+  a rule and file, or an entry the signed baseline lacks.
+
+A lowered baseline count needs no new signature. Inside the checkout, the
+audit still reports a lock that no longer matches the enrolled config as
+policy drift.
+
+Limits: a process running as you can edit `trust_signers` in the installed
+package, replace the daemon's runtime, or delete Evidence lines, so keep the
+package and `$WARDEN_HOME` out of agents' reach where you can. Linked paths
+come from the repository's working tree, not the audited commit, and are not
+signed. Audits do not lower the enrolled baseline; lower it by hand.
 
 ## Daemon
 
