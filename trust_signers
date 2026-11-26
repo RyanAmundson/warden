@@ -1,2 +1,3 @@
 # Owner keys that may sign `warden trust` records, in ssh allowed_signers format.
 # List only a passphrase-protected key that is never added to ssh-agent.
+ryan ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMGfRiP8xpFmawUQf5xY7DDuhFx7xU6SalDi1xuWzKVF
