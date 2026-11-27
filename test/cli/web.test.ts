@@ -176,7 +176,6 @@ describe("pages render from API responses", () => {
     const audit = run({ run: "r-main", trigger: "main audit", ref: "refs/remotes/origin/main" });
     const watched = [{ ...projects[0], lastRun: exRuns[0], lastMainAudit: audit }, { ...projects[1], repositories: [{ repo: "/p/w/.git", roots: ["/p/w", "/p/w2"], openAlerts: 0 }, { repo: "/p/copy/.git", roots: ["/p/copy"], openAlerts: 1 }] }];
     const html = renderApp(state("overview", { projects: watched, tamper, runs: { "example-project": [...exRuns, audit], warden: [] } }, { projects: watched }));
-    expect(html).toContain('class="watch-audit">Automatic audit · origin/main');
     expect(html).toContain('title="refs/remotes/origin/main">Automatic audit · origin/main');
     expect(html).toContain('href="/run?project=example-project&amp;run=r-main">Edit audit');
     expect(html).toContain('href="/run?project=example-project&amp;run=r-main"');
@@ -190,8 +189,9 @@ describe("pages render from API responses", () => {
     const manual = run({ run: "manual", trigger: "manual", at: at(50) });
     const watched = [{ ...projects[0], lastRun: manual, lastMainAudit: boundary, mainAuditRuns: [edit, boundary] }];
     const html = renderApp(state("overview", { projects: watched, tamper, runs: { "example-project": [manual, boundary, edit] } }, { projects: watched }));
-    expect(html).toContain('>edit · Advisory findings</span>');
-    expect(html).toContain('>boundary · Pass</span>');
+    const sidebar = html.match(/<ul class="nav project-nav">([\s\S]*?)<\/ul>/)?.[1] ?? "";
+    expect(sidebar).toContain('class="project-name">example-project</span>');
+    expect(sidebar).not.toMatch(/Automatic audit|edit ·|boundary ·/);
     expect(html).toContain('href="/run?project=example-project&amp;run=main-edit">Edit audit</a> <span class="tag err">Advisory findings</span>');
     expect(html).toContain('href="/run?project=example-project&amp;run=main-boundary">Boundary audit</a> <span class="tag pass">Pass</span>');
   });
@@ -294,6 +294,38 @@ describe("pages render from API responses", () => {
     expect(html).toContain("compiler proves it · none yet");
     expect(html).toContain("Promote");
     expect(html).toContain('<span class="muted">Off</span>');
+  });
+
+  it("groups saved pack states and exposes checks and readiness without disclosure", () => {
+    const layersWithSettings = {
+      ...layers,
+      packSettings: {
+        root: "/p/w",
+        packs: [{ id: "core", on: true, required: true }, { id: "principles", on: false, required: false }],
+        details: [{
+          id: "principles",
+          setup: "Configure & verify.",
+          adapters: [{ id: "cmd", status: "Needs setup", setup: "Install <runner>." }],
+          checks: [
+            { id: "check-1", statement: "Check the <boundary>.", adapter: "cmd", runs: ["commit"] },
+            { id: "check-2", statement: "Check the <boundary>.", adapter: "cmd", runs: ["edit"] },
+          ],
+        }],
+      },
+    };
+    const html = renderApp(state("layers", { layers: layersWithSettings }, { project: "warden", view: { packDraft: new Map([["principles", true]]), fresh: new Set() } }));
+    expect(html).toMatch(/id="enabled-packs">[^<]*<\/h3>[\s\S]*id="pack-info-core"/);
+    expect(html).toMatch(/id="disabled-packs">[^<]*<\/h3>[\s\S]*id="pack-info-principles"/);
+    expect(html).toContain('href="#pack-info-principles"');
+    expect(html).toContain('data-pack="principles" aria-label="principles pack" checked>On (unsaved)');
+    expect(html).toContain("On · Required");
+    expect(html).toContain("Check and setup details are unavailable.");
+    expect(html.match(/<strong>Check the &lt;boundary&gt;.<\/strong>/g)).toHaveLength(1);
+    expect(html).toContain("<code>check-2</code><span>cmd · edit</span>");
+    expect(html).toContain("Configure &amp; verify.");
+    expect(html).toContain("Install &lt;runner&gt;.");
+    expect(html).not.toContain("<details");
+    expect(html.indexOf('data-action="discard-packs"')).toBeGreaterThan(html.indexOf('id="pack-info-principles"'));
   });
 
   it("renders violations by pack with counts and the ratchet", () => {
@@ -524,7 +556,7 @@ describe("UI QA fixes", () => {
 
   it("marks the current watched project in the sidebar, and the stylesheet styles it", async () => {
     const html = renderApp(state("runs", { runs: { project: "example-project", runs: exRuns } }));
-    expect(html).toMatch(/aria-current="true"><span>example-project<\/span>/);
+    expect(html).toContain('href="/runs?project=example-project" aria-current="true"');
     const css = await readFile(join(wardenRoot, "web/app.css"), "utf8");
     expect(css).toContain(".nav a[aria-current]{");
   });

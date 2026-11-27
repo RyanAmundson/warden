@@ -65,7 +65,6 @@ const render = () => {
   state.now = Date.now();
   const key = focusKey(document.activeElement);
   const caret = document.activeElement?.selectionStart;
-  const openDetails = state.page === "layers" ? [...root.querySelectorAll("[data-pack-details][open]")].map((details) => details.id) : [];
   const playing = root.querySelector("video");
   try {
     root.innerHTML = renderApp(state);
@@ -74,10 +73,6 @@ const render = () => {
   }
   const video = root.querySelector("video");
   if (playing && video?.src === playing.src) video.replaceWith(playing);
-  for (const id of openDetails) {
-    const details = root.querySelector(`#${CSS.escape(id)}`);
-    if (details) details.open = true;
-  }
   document.title = pageTitle(state);
   const el = key ? root.querySelector(key) : null;
   if (el) {
