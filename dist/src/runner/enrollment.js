@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, matchesGlob } from "node:path";
@@ -316,6 +316,10 @@ export async function checkCandidate(project, checkout, ref, base, candidate, ru
         return await withScratch(async (scratch) => {
             const dir = join(scratch, "enrollment");
             cpSync(enrollment, dir, { recursive: true });
+            if (!lstatSync(dir).isDirectory() ||
+                readdirSync(dir, { recursive: true, withFileTypes: true }).some((entry) => entry.isSymbolicLink())) {
+                throw new Error("The signed enrollment must contain only regular files and directories.");
+            }
             const invalid = enrollmentTampering(dir, opts.signers ?? join(opts.wardenRoot, TRUST_SIGNERS))[0];
             if (invalid !== undefined)
                 throw new Error(`Invalid enrollment: ${invalid.detail} (${invalid.file}).`);

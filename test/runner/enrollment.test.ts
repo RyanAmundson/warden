@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
@@ -239,6 +239,10 @@ fi
   }
   writeFileSync(join(pack, "fs.js"), "export default { layout: () => [] };");
   expect(await run(bad)).toMatchObject({ result: "error", message: expect.stringContaining("Invalid enrollment") });
+  const externalPolicy = join(scratch, "external-policy");
+  renameSync(policy, externalPolicy);
+  symlinkSync(externalPolicy, policy);
+  expect(await run(bad)).toMatchObject({ result: "error", message: expect.stringContaining("regular files and directories") });
 });
 
 test("reports a tampered enrollment instead of auditing it, and accepts a lowered baseline without a new signature", { timeout: 120_000 }, async () => {
