@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
@@ -30,12 +30,12 @@ afterEach(() => {
   rmSync(scratch, { recursive: true, force: true });
 });
 
-function fixture() {
+function fixture(format = "sha1") {
   const root = join(scratch, "repo");
   mkdirSync(join(root, ".warden"), { recursive: true });
   mkdirSync(join(root, "plugin"), { recursive: true });
   const git = (...args: string[]) => execFileSync("git", ["-c", "commit.gpgsign=false", ...args], { cwd: root, encoding: "utf8" }).trim();
-  git("init", "--quiet", "-b", "main");
+  git("init", "--quiet", "--object-format", format, "-b", "main");
   git("config", "user.email", "test@example.test");
   git("config", "user.name", "Fixture");
   git("config", "core.hooksPath", join(scratch, "no-hooks"));
@@ -59,7 +59,7 @@ function fixture() {
 
 const fakeAudit = (scratchDir: string) => {
   const executable = join(scratchDir, "audit.mjs");
-  writeFileSync(executable, `import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+  writeFileSync(executable, `import { chmodSync, existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 const [, , command, , tier, , base] = process.argv;
 if (command !== "audit") process.exit(23);
@@ -160,8 +160,8 @@ test("runs the real warden audit against a migrated, signed enrollment", { timeo
   expect(f.state()).toEqual(before);
 });
 
-test("checks a contributed rule on exact commits without enrolling a linked checkout", { timeout: 120_000 }, async () => {
-  const f = fixture();
+test.each(["sha1", "sha256"])("checks a contributed rule on exact %s commits without enrolling a linked checkout", { timeout: 120_000 }, async (format) => {
+  const f = fixture(format);
   const base = f.commit("enrolled");
   const { enrolled } = await enroll(f);
   const policy = join(enrolled.dir, "policy");
@@ -205,7 +205,11 @@ practices:
   const opts = { wardenRoot, signers: f.signers };
   const run = (candidate: string, rule = "fixture-source-layout") =>
     checkCandidate("sample", linked, ref, base, candidate, rule, opts);
+  const unrelated = join(enrolled.dir, "..", "unrelated");
+  mkdirSync(unrelated);
+  writeFileSync(join(unrelated, "enrollment.json"), '{"project":"unrelated"}');
   expect(await run(good)).toMatchObject({ version: 1, base, candidate: good, result: "pass" });
+  expect(await checkCandidate("unrelated", linked, ref, base, good, "fixture-source-layout", opts)).toMatchObject({ result: "error" });
   expect(await run(bad)).toMatchObject({ base, candidate: bad, result: "fail", findings: [{ file: "unexpected/bad.js" }] });
   expect(await run(bad, "unknown-rule")).toMatchObject({ result: "error" });
   expect(await run("HEAD")).toMatchObject({ result: "error" });
@@ -215,6 +219,24 @@ practices:
   expect(existsSync(join(process.env.WARDEN_HOME as string, "evidence"))).toBe(false);
   expect(readFileSync(join(linked, "example.txt"), "utf8")).toBe("dirty linked checkout");
   expect(f.git("rev-parse", ref)).toBe(base);
+  const bin = join(scratch, "bin");
+  mkdirSync(bin);
+  const keygen = execFileSync("sh", ["-c", "command -v ssh-keygen"], { encoding: "utf8" }).trim();
+  const path = process.env.PATH;
+  const mutation = join(bin, "ssh-keygen");
+  writeFileSync(mutation, `#!/bin/sh
+"${keygen}" "$@" || exit $?
+if [ "$1 $2" = "-Y verify" ]; then
+  printf '%s\n' 'export default { layout: () => [] };' > "${join(pack, "fs.js")}"
+fi
+`);
+  chmodSync(mutation, 0o755);
+  process.env.PATH = `${bin}:${path}`;
+  try {
+    expect(await run(bad)).toMatchObject({ result: "fail", findings: [{ file: "unexpected/bad.js" }] });
+  } finally {
+    process.env.PATH = path;
+  }
   writeFileSync(join(pack, "fs.js"), "export default { layout: () => [] };");
   expect(await run(bad)).toMatchObject({ result: "error", message: expect.stringContaining("Invalid enrollment") });
 });

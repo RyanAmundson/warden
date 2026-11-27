@@ -152,7 +152,8 @@ async function enrolledCheckout(e, scratch, signal) {
     const staging = join(scratch, "staging");
     mkdirSync(staging);
     overlay(e.dir, staging);
-    await git(scratch, ["init", "--quiet", "--", checkout], signal);
+    const format = await git(e.root, ["rev-parse", "--show-object-format"], signal);
+    await git(scratch, ["init", "--quiet", "--object-format", format, "--", checkout], signal);
     const objects = join(await git(e.root, ["rev-parse", "--path-format=absolute", "--git-common-dir"], signal), "objects");
     writeFileSync(join(checkout, ".git", "objects", "info", "alternates"), `${objects}\n`);
     const at = async (commit, base) => {
@@ -300,28 +301,39 @@ export async function checkCandidate(project, checkout, ref, base, candidate, ru
     const summary = { version: 1, project, ref, base, candidate, rule };
     const { signal } = opts;
     try {
-        const e = readEnrollments().get(project);
-        if (e === undefined || e.ref !== ref)
-            throw new Error(`No signed enrollment for ${project} at ${ref}.`);
-        const common = (root) => git(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"], signal);
-        if (realpathSync(await common(checkout)) !== realpathSync(await common(e.root))) {
-            throw new Error("The candidate checkout does not share the enrolled repository's Git objects.");
-        }
         if (!COMMIT.test(base) || !COMMIT.test(candidate) || base.length !== candidate.length || base === candidate) {
             throw new Error("Supply distinct full base and candidate commit IDs.");
         }
-        if (await commitAt(checkout, base, signal) !== base || await commitAt(checkout, candidate, signal) !== candidate) {
-            throw new Error("The base and candidate must both name commits.");
+        const worktrees = await git(checkout, ["worktree", "list", "--porcelain", "-z"], signal);
+        const enrolled = worktrees.split("\0")
+            .filter((field) => field.startsWith("worktree "))
+            .map((field) => enrollmentDir(field.slice("worktree ".length), ref))
+            .filter((dir) => existsSync(join(dir, "enrollment.json")));
+        const [enrollment, alternate] = enrolled;
+        if (enrollment === undefined || alternate !== undefined) {
+            throw new Error(`Expected one signed enrollment for ${project} at ${ref}, found ${enrolled.length}.`);
         }
-        await git(checkout, ["merge-base", "--is-ancestor", base, candidate], signal);
-        const invalid = enrollmentTampering(e.dir, opts.signers ?? join(opts.wardenRoot, TRUST_SIGNERS))[0];
-        if (invalid !== undefined)
-            throw new Error(`Invalid enrollment: ${invalid.detail} (${invalid.file}).`);
-        const config = parseConfig(join(e.dir, POLICY, "config.yaml"), readFileSync(join(e.dir, POLICY, "config.yaml"), "utf8"));
-        if (config.project !== project)
-            throw new Error("The signed policy names a different project.");
-        const packs = config.packs.filter((pack) => pack.enabled !== false).map((pack) => pack.id);
         return await withScratch(async (scratch) => {
+            const dir = join(scratch, "enrollment");
+            cpSync(enrollment, dir, { recursive: true });
+            const invalid = enrollmentTampering(dir, opts.signers ?? join(opts.wardenRoot, TRUST_SIGNERS))[0];
+            if (invalid !== undefined)
+                throw new Error(`Invalid enrollment: ${invalid.detail} (${invalid.file}).`);
+            const e = { ...readEnrollment(dir), dir };
+            if (e.project !== project || e.ref !== ref)
+                throw new Error("The signed enrollment names a different project or ref.");
+            const common = (root) => git(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"], signal);
+            if (realpathSync(await common(checkout)) !== realpathSync(await common(e.root))) {
+                throw new Error("The candidate checkout does not share the enrolled repository's Git objects.");
+            }
+            if (await commitAt(checkout, base, signal) !== base || await commitAt(checkout, candidate, signal) !== candidate) {
+                throw new Error("The base and candidate must both name commits.");
+            }
+            await git(checkout, ["merge-base", "--is-ancestor", base, candidate], signal);
+            const config = parseConfig(join(dir, POLICY, "config.yaml"), readFileSync(join(dir, POLICY, "config.yaml"), "utf8"));
+            if (config.project !== project)
+                throw new Error("The signed policy names a different project.");
+            const packs = config.packs.filter((pack) => pack.enabled !== false).map((pack) => pack.id);
             const isolated = await enrolledCheckout(e, scratch, signal);
             const { base: snapshotBase } = await isolated.at(candidate, base);
             if (snapshotBase === undefined)
