@@ -51,6 +51,12 @@ const projectsOf = (daemon) => {
         watched.push({ project: auditOnly.project, roots: [], repositories: [], auditOnly });
     return watched.sort((a, b) => a.project.localeCompare(b.project));
 };
+const runSummary = (run) => {
+    if (run?.report === undefined)
+        return run ?? null;
+    const { failures: _failures, ...summary } = run;
+    return summary;
+};
 const lastRan = (evidence) => runRecords(evidence).filter((e) => e.outcome === "ran").at(-1);
 const openAlerts = (daemon, project, repo) => [...daemon.projects.values()]
     .filter((w) => (project === undefined || w.project === project) && (repo === undefined || w.repo === repo))
@@ -106,13 +112,15 @@ export async function route(daemon, wardenRoot, url) {
                     const runs = runRecords(projectEvidence(p));
                     const mainRuns = p.auditOnly === undefined
                         ? runs.filter((run) => run.trigger === "main audit" && run.root !== undefined && p.roots.includes(run.root))
-                        : runs;
+                        : runs.filter((run) => run.report === undefined);
+                    const latestReports = new Map(runs.flatMap((run) => run.report === undefined ? [] : [[run.report.adapter, run]]));
                     const latest = mainRuns.at(-1);
                     const revisionRuns = mainRuns.filter((run) => run.commit === latest?.commit && run.ref === latest?.ref && run.root === latest?.root);
                     return {
                         ...p,
-                        lastRun: runs.at(-1) ?? null,
+                        lastRun: runSummary(runs.at(-1)),
                         lastMainAudit: latest ?? null,
+                        mainReports: [...latestReports.values()].map(runSummary),
                         mainAuditRuns: ["edit", "boundary"].flatMap((tier) => revisionRuns.filter((run) => run.tier === tier).slice(-1)),
                         openAlerts: p.repositories.reduce((sum, r) => sum + r.openAlerts, 0),
                         mode: p.auditOnly === undefined ? modeOf(runs) : "audit",
@@ -132,7 +140,7 @@ export async function route(daemon, wardenRoot, url) {
             const run = detail?.runs[0];
             const enrollment = entry.auditOnly;
             const root = run?.root;
-            const ruleDetails = detail !== undefined && run !== undefined && root !== undefined && (enrollment !== undefined || entry.roots.includes(root))
+            const ruleDetails = detail !== undefined && run !== undefined && run.report === undefined && root !== undefined && (enrollment !== undefined || entry.roots.includes(root))
                 ? await currentRuleDetails(run, detail.findings, project, root, wardenRoot, enrollment && enrollmentPolicyDir(enrollment.dir))
                 : undefined;
             return { project, ...detail, ...(ruleDetails === undefined ? {} : { currentRuleDetails: ruleDetails }), runs: runs.map((run) => {

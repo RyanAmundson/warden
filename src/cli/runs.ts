@@ -42,7 +42,17 @@ export const padCells = (text: string, width: number): string => text + " ".repe
 
 export const visible = (text: string): string => text.replace(/[\x00-\x1f\x7f-\x9f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
 
-export const runRecords = (evidence: Evidence[]): Evidence[] => evidence.filter((e) => e.kind === "cost" && e.guardrail === RUN_TOTAL && e.outcome !== undefined);
+export const runRecords = (evidence: Evidence[]): Evidence[] => {
+  const reports = new Set<string>();
+  return evidence.filter((event) => {
+    if (event.kind !== "cost" || event.guardrail !== RUN_TOTAL || event.outcome === undefined) return false;
+    if (event.report !== undefined && event.run !== undefined) {
+      if (reports.has(event.run)) return false;
+      reports.add(event.run);
+    }
+    return true;
+  });
+};
 
 export const clock = (at: string): string => new Date(at).toTimeString().slice(0, 8);
 

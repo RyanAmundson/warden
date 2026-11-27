@@ -91,7 +91,7 @@ export function projectFailures(evidence, roots) {
         const source = sourceOf(event);
         const events = event.run === undefined ? [] : fired.get(event.run) ?? [];
         const findings = findingsOf(event, events);
-        const scope = JSON.stringify([source.root, source.trigger, source.tier, source.ref]);
+        const scope = JSON.stringify([source.root, source.trigger, source.tier, source.ref, event.report?.adapter]);
         attempts.set(scope, { run: event, findingCount: findings.length });
         if (event.outcome !== "ran")
             continue;

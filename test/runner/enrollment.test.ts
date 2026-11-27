@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { serve } from "../../src/cli/daemon.js";
+import { type Evidence, appendEvidence } from "../../src/runner/evidence.js";
 import { auditEnrollment, enrollmentTampering, migrateEnrollment, readEnrollments, signEnrollment } from "../../src/runner/enrollment.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
@@ -287,3 +288,74 @@ test("the daemon records an audit that cannot start as one error receipt per tie
     await dashboard.close();
   }
 });
+
+test("publishes validated ESLint evidence to the existing project and notifies its subscribers", async () => {
+  const publisher = new URL("../../dist/src/cli/publish.js", import.meta.url).href;
+  const { publishESLint } = await import(publisher) as {
+    publishESLint: (project: string, report: string, snapshot: string, wardenRoot: string) => Evidence;
+  };
+  const f = fixture();
+  const oldCommit = f.commit("enrolled");
+  const { enrolled } = await enroll(f);
+  signEnrollment(enrolled.dir, f.key);
+  const linked = join(scratch, "linked");
+  f.git("worktree", "add", "--detach", linked, oldCommit);
+  const report = join(scratch, "eslint.json");
+  const entry = {
+    filePath: join(linked, "example.txt"), errorCount: 1, warningCount: 0,
+    messages: [{ severity: 2, ruleId: "checker/rule", line: 1, message: "Fix this." }],
+  };
+  const ignored = {
+    filePath: join(linked, "plugin", "contracts.lock.json"), errorCount: 0, warningCount: 1,
+    messages: [{ severity: 1, ruleId: null, message: "File ignored because no matching configuration was supplied." }],
+  };
+  writeFileSync(report, JSON.stringify([entry, ignored]));
+  const signersRoot = join(scratch, "warden");
+  mkdirSync(signersRoot);
+  writeFileSync(join(signersRoot, "trust_signers"), readFileSync(f.signers));
+  const served = await serve(wardenRoot, 0, { enrolledAudits: false });
+  try {
+    const base = `http://127.0.0.1:${served.port}`;
+    const projects = async () => (await (await fetch(`${base}/api/projects`)).json()).projects;
+    const watches = await projects();
+    const before = f.state();
+    const stream = await fetch(`${base}/api/events`, { signal: AbortSignal.timeout(4000) });
+    const reader = stream.body?.pipeThrough(new TextDecoderStream()).getReader();
+    if (reader === undefined) throw new Error("No event stream");
+    try {
+      const receipt = publishESLint("sample", report, linked, signersRoot);
+      expect(receipt).toMatchObject({ commit: oldCommit, ref, result: "fail", scope: "partial", exit: 0, files: 1, report: { adapter: "eslint", warnings: 0 } });
+      let events = "";
+      while (!events.includes('data: {"project":"sample"}')) {
+        const chunk = await reader.read();
+        if (chunk.done) throw new Error("Evidence stream closed early");
+        events += chunk.value;
+      }
+      const detail = await (await fetch(`${base}/api/runs?project=sample&run=${receipt.run}`)).json();
+      expect(detail.findings).toEqual([{ file: "example.txt", line: 1, guardrail: "checker/rule", practice: "eslint", doThis: "Fix this." }]);
+      expect(await projects()).toMatchObject([{ ...watches[0], lastRun: { run: receipt.run }, mainReports: [{ run: receipt.run }] }]);
+      expect(f.state()).toEqual(before);
+      expect(publishESLint("sample", report, linked, signersRoot).run).toBe(receipt.run);
+      expect(receipts()).toHaveLength(1);
+
+      writeFileSync(report, JSON.stringify([ignored]));
+      expect(() => publishESLint("sample", report, linked, signersRoot)).toThrow("did not check any tracked files");
+      writeFileSync(report, JSON.stringify([{ ...entry, errorCount: 0 }]));
+      expect(() => publishESLint("sample", report, linked, signersRoot)).toThrow("counts disagree");
+      writeFileSync(report, JSON.stringify([{ ...entry, filePath: join(linked, "..", "elsewhere") }]));
+      expect(() => publishESLint("sample", report, linked, signersRoot)).toThrow("outside the checked commit");
+      writeFileSync(report, JSON.stringify([entry]));
+      const tip = f.commit("advanced");
+      f.git("update-ref", ref, tip);
+      expect(() => publishESLint("sample", report, linked, signersRoot)).toThrow("does not match");
+      expect(receipts()).toHaveLength(1);
+      appendEvidence("sample", { ...receipt, at: new Date().toISOString() });
+      const runs = await (await fetch(`${base}/api/runs?project=sample`)).json();
+      expect(runs.runs.map((run: Evidence) => run.run)).toEqual([receipt.run]);
+    } finally {
+      await reader.cancel();
+    }
+  } finally {
+    await served.close();
+  }
+}, 120_000);

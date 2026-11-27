@@ -292,6 +292,26 @@ audited ref and commit, each audit tier's result, and findings with file
 locations and guidance. Compare findings with the code in your worktree and
 run the project's checks to verify any fix.
 
+## Publish an external check
+
+A local checker can contribute a report for an existing signed enrollment.
+For ESLint, run the checker with its JSON formatter against a clean checkout
+of the enrolled ref, then publish the report from that checkout.
+
+```sh
+warden publish eslint PROJECT /path/to/eslint-report.json
+```
+
+Warden checks the report's file paths and diagnostic counts and matches the
+checkout's commit to the enrolled ref. The local publisher supplies the
+report and is responsible for running the checker against that checkout.
+The receipt covers the files in the report. Publishing creates no watch
+and does not change repository files.
+
+Read the receipt through the dashboard's Runs page, the `main-audit` skill,
+or `GET /api/runs?project=PROJECT`. Use the skill helper's `--watch` option
+from any linked worktree to receive updates.
+
 ## Unit records
 
 Declare Unit kinds and Unit ownership in `.warden/config.yaml`. A kind fixes the

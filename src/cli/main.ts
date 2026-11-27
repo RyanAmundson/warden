@@ -23,6 +23,7 @@ import { runMutationReview } from "./mutations.js";
 import { runNewCapability } from "./new-capability.js";
 import { runNewUnit } from "./new-unit.js";
 import { runPacks } from "./packs.js";
+import { publishESLint } from "./publish.js";
 import { runLearningReport, runReport } from "./report.js";
 import { type ReviewOptions, reviewOptions, runBrief, runReviewConfirm, runReviewHistory, runReviewProposals, runReviewRecord, runReviewRule, runTriage } from "./review.js";
 import { recordClaudeStalls } from "./session-end.js";
@@ -40,7 +41,7 @@ const oneOf = <T extends string>(command: string, name: string, value: string, a
   return value as T;
 };
 
-const NEVER_BLOCK = new Set(["check", "audit", "guard", "session-end"]);
+const NEVER_BLOCK = new Set(["check", "audit", "guard", "session-end", "publish"]);
 const reportVerdict = (verdict: number): void => {
   if (verdict !== 0) process.stderr.write(`Warden reported problems (verdict ${verdict}) and exits 0, because Warden never blocks work.\n`);
   process.exitCode = 0;
@@ -382,6 +383,15 @@ program
   .requiredOption("--reason <text>", "why you trust the commit")
   .action((commit: string, o: { key: string; reason: string }) => {
     process.exitCode = runTrust(root(), findWardenRoot(), commit, o.key, o.reason);
+  });
+
+program.command("publish <adapter> <project> <report>")
+  .description("publish an external check report for an enrolled Git ref")
+  .option("--snapshot <directory>", "Git checkout that produced the report", process.cwd())
+  .action((adapter: string, project: string, report: string, o: { snapshot: string }) => {
+    if (adapter !== "eslint") throw new Error(`Unsupported report adapter ${adapter}. Next action: run warden publish eslint --help.`);
+    const { run, ref, commit, result, files, kinds } = publishESLint(project, report, o.snapshot, findWardenRoot());
+    process.stdout.write(`${JSON.stringify({ project, run, ref, commit, result, files, findings: kinds?.lint })}\n`);
   });
 
 const enroll = program.command("enroll").description("audit a repository's ref from WARDEN_HOME, without reading policy from or writing to the repository");

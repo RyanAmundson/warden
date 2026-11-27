@@ -28,7 +28,19 @@ export const cut = (text, width) => {
 };
 export const padCells = (text, width) => text + " ".repeat(Math.max(0, width - columns(text)));
 export const visible = (text) => text.replace(/[\x00-\x1f\x7f-\x9f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
-export const runRecords = (evidence) => evidence.filter((e) => e.kind === "cost" && e.guardrail === RUN_TOTAL && e.outcome !== undefined);
+export const runRecords = (evidence) => {
+    const reports = new Set();
+    return evidence.filter((event) => {
+        if (event.kind !== "cost" || event.guardrail !== RUN_TOTAL || event.outcome === undefined)
+            return false;
+        if (event.report !== undefined && event.run !== undefined) {
+            if (reports.has(event.run))
+                return false;
+            reports.add(event.run);
+        }
+        return true;
+    });
+};
 export const clock = (at) => new Date(at).toTimeString().slice(0, 8);
 export const target = (e) => e.file ?? `${e.files ?? 0} file${e.files === 1 ? "" : "s"}`;
 export const verdictOf = (e) => e.result ?? (e.outcome === "ran" ? "no result recorded" : (e.outcome ?? ""));
