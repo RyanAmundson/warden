@@ -280,6 +280,18 @@ Codex asks you to review the plugin's hooks before they run. Once trusted:
 - A missing or older global `warden` prints the install command on stderr,
   as in Claude Code, and the patch or commit goes through.
 
+## Read your project's published audit
+
+The Warden plugin includes the `main-audit` skill in Claude Code and
+Codex. Install or update the plugin at user scope to make the skill available
+without adding files to your project. Ask your agent what Warden found on
+published main from the registered checkout or one of its Git worktrees.
+
+The skill reads the local daemon's existing audit receipts. It reports the
+audited ref and commit, each audit tier's result, and findings with file
+locations and guidance. Compare findings with the code in your worktree and
+run the project's checks to verify any fix.
+
 ## Unit records
 
 Declare Unit kinds and Unit ownership in `.warden/config.yaml`. A kind fixes the
