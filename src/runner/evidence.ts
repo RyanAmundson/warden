@@ -30,6 +30,7 @@ export interface Evidence {
   files?: number;
   bytes?: number;
   rules?: Record<string, number>;
+  ruleDetails?: Record<string, RuleDetail>;
   outcome?: Outcome;
   commit?: string;
   k?: number;
@@ -72,6 +73,11 @@ export interface Evidence {
 export type Trigger = "agent-edit" | "git-commit" | "manual" | "daemon" | "audit" | "main audit";
 
 export type Step = "rules-intact" | "tools-ready" | "rules" | "verdict";
+
+export interface RuleDetail {
+  name: string;
+  description: string;
+}
 
 export interface RunFailure {
   file: string;

@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Served, serve } from "../../src/cli/daemon.js";
 import { projectFailures, runEvidence } from "../../src/cli/run-evidence.js";
-import type { Evidence } from "../../src/runner/evidence.js";
+import { type Evidence, appendEvidence } from "../../src/runner/evidence.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
 
@@ -222,6 +222,21 @@ describe("pages render from API responses", () => {
       ]);
       expect(html).not.toContain("Block · L1");
     }
+  });
+
+  it("shows the recorded name and description for a failed rule in the run detail", () => {
+    const failed = run({
+      run: "named", tier: "boundary", trigger: "main audit", result: "fail", exit: 0,
+      rules: { "warden-pq-sdk-1": 1 }, cachedRules: ["removed-rule"], failedRules: ["warden-pq-sdk-1"],
+      ruleDetails: { "warden-pq-sdk-1": { name: "Single plugin declaration", description: 'Checks use of <definePlugin>.' } },
+      failures: [{ file: "plugin.ts", line: 4, guardrail: "warden-pq-sdk-1", practice: "pq-sdk-1" }],
+    });
+    const html = renderApp(state("run", { runs: { project: "example-project", runs: [failed] } }));
+    expect(html.match(/title="warden-pq-sdk-1">Single plugin declaration/g)).toHaveLength(2);
+    expect(html).toContain("Checks use of &lt;definePlugin&gt;.");
+    expect(html).toContain("failed · 1 finding shown below");
+    expect(html).toContain('<span class="mono wrap">removed-rule</span><span class="wrap muted">passed, cached result</span><span class="r">cached</span>');
+    expect(html).not.toContain("Descriptions use the current rule definitions.");
   });
 
   it("distinguishes an incomplete audit from refusal and leaves unknown receipt fields blank", () => {
@@ -660,6 +675,44 @@ describe("the daemon serves the web UI", () => {
         .on("error", fail)
         .end();
     });
+
+  it("reads labels for a retained published audit from its enrollment policy", async () => {
+    const root = join(scratch, "source");
+    const dir = join(scratch, "enrollment");
+    const ref = "refs/remotes/origin/main";
+    const project = "retained-audit";
+    const policy = join(dir, "policy");
+    await mkdir(policy, { recursive: true });
+    await writeFile(join(policy, "config.yaml"), `project: ${project}
+warden: "0.1.0"
+base: main
+packs:
+  - id: plugin-compliance
+    paths: ["**/*"]
+tierBudgetMs: { edit: 2000, commit: 10000, boundary: 120000 }
+loopBreakerRepeats: 3
+`);
+    const enrollments = served.daemon.auditOnly as Map<string, { project: string; root: string; dir: string; ref: string; data: string[]; links: string[] }>;
+    enrollments.set(project, { project, root, dir, ref, data: [], links: [] });
+    try {
+      appendEvidence(project, {
+        at: at(30), kind: "cost", guardrail: "run", run: "retained", root, ref, trigger: "main audit", outcome: "ran",
+        rules: { "warden-pq-sdk-1": 1, "removed-rule": 2 },
+      });
+      const current = await get(`/api/runs?project=${project}&detail=1`);
+      expect(current.status).toBe(200);
+      expect(JSON.parse(current.body)).toMatchObject({
+        runs: [{ run: "retained", rules: { "warden-pq-sdk-1": 1, "removed-rule": 2 } }],
+        currentRuleDetails: { "warden-pq-sdk-1": { name: "Single plugin declaration", description: expect.stringContaining("The plugin declares itself once") } },
+      });
+      await rm(join(policy, "config.yaml"));
+      const missing = await get(`/api/runs?project=${project}&run=retained`);
+      expect(missing.status).toBe(200);
+      expect(JSON.parse(missing.body)).not.toHaveProperty("currentRuleDetails");
+    } finally {
+      enrollments.delete(project);
+    }
+  });
 
   it.each(["/", "/runs", "/run", "/failures", "/layers", "/violations", "/determinism", "/tamper"])("serves %s as the page shell", async (path) => {
     const res = await get(path);

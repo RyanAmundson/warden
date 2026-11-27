@@ -25,6 +25,8 @@ const TRIGGER = "main audit";
 
 const POLICY = "policy";
 
+export const enrollmentPolicyDir = (dir: string): string => join(dir, POLICY);
+
 const DATA = "data";
 
 const SIGNED = "signed.json";
@@ -178,7 +180,7 @@ export function enrollmentTampering(dir: string, signers: string): EnrollmentTam
 }
 
 const overlay = (dir: string, target: string): void => {
-  cpSync(join(dir, POLICY), join(target, ".warden"), { recursive: true });
+  cpSync(enrollmentPolicyDir(dir), join(target, ".warden"), { recursive: true });
   if (existsSync(join(dir, DATA))) cpSync(join(dir, DATA), target, { recursive: true });
 };
 

@@ -360,7 +360,18 @@ ${alertsSection(data)}
 
 const CHECK_ICON = { pass: ICON_DONE, fail: ICON_FAIL, skip: ICON_SKIP };
 
-const check = (state, label, note, time = "") => ({ state, html: `<li class="check-${state}">${CHECK_ICON[state]}<span class="mono wrap">${esc(label)}</span><span class="wrap ${state === "fail" ? "bad" : "muted"}">${esc(note)}</span><span class="r">${esc(time)}</span></li>` });
+const ruleDetail = (details, id) => Object.hasOwn(details, id) ? details[id] : undefined;
+
+const ruleName = (id, detail) => detail
+  ? `<strong title="${esc(id)}">${esc(detail.name)}</strong>`
+  : `<span class="mono">${esc(id)}</span>`;
+
+const check = (state, label, note, time = "", detail) => {
+  const name = detail
+    ? `<div class="wrap rule-detail">${ruleName(label, detail)}<div class="muted">${esc(detail.description)}</div></div>`
+    : `<span class="mono wrap">${esc(label)}</span>`;
+  return { state, html: `<li class="check-${state}">${CHECK_ICON[state]}${name}<span class="wrap ${state === "fail" ? "bad" : "muted"}">${esc(note)}</span><span class="r">${esc(time)}</span></li>` };
+};
 
 const failedRules = (run) => new Set([...(run.failedRules ?? (run.failures ?? []).map((f) => f.guardrail)), ...(run.killedRules ?? [])]);
 
@@ -380,7 +391,7 @@ const setupChecks = (run, events) => {
   return [alert, step("rules-intact", "Rules intact"), step("tools-ready", "Tools ready")];
 };
 
-const ruleChecks = (run) => {
+const ruleChecks = (run, details) => {
   const failed = failedRules(run);
   const timed = run.rules ?? {};
   const ids = [...new Set([...failed, ...Object.keys(timed), ...(run.cachedRules ?? [])])].sort((a, b) => Number(failed.has(b)) - Number(failed.has(a)) || a.localeCompare(b));
@@ -389,37 +400,39 @@ const ruleChecks = (run) => {
     return [check("skip", "Rules", run.guardrails === 0 ? "no rules were selected" : "no per-rule results were recorded")];
   }
   return ids.map((id) => {
+    const detail = ruleDetail(details, id);
     const time = timed[id] === undefined ? "cached" : elapsed(timed[id]);
-    if (!failed.has(id)) return check("pass", id, timed[id] === undefined ? "passed, cached result" : "passed", time);
+    if (!failed.has(id)) return check("pass", id, timed[id] === undefined ? "passed, cached result" : "passed", time, detail);
     const shown = (run.failures ?? []).filter((f) => f.guardrail === id).length;
-    if (run.killedRules?.includes(id)) return check("fail", id, "stopped at its time budget", time);
-    return check("fail", id, shown === 0 ? "failed" : `failed · ${plural(shown, "finding")} shown below`, time);
+    if (run.killedRules?.includes(id)) return check("fail", id, "stopped at its time budget", time, detail);
+    return check("fail", id, shown === 0 ? "failed" : `failed · ${plural(shown, "finding")} shown below`, time, detail);
   });
 };
 
-export const checklist = (run, heading = { level: "h3", id: "" }, events = []) => {
+export const checklist = (run, heading = { level: "h3", id: "" }, events = [], currentDetails) => {
   const setup = setupChecks(run, events);
-  const rules = ruleChecks(run);
+  const rules = ruleChecks(run, run.ruleDetails ?? currentDetails ?? {});
   const count = (state) => [...setup, ...rules].filter((c) => c.state === state).length;
   return `<div class="modh"><${heading.level} class="h2"${heading.id ? ` id="${heading.id}"` : ""}>Checks</${heading.level}><span class="muted">${num(count("pass"))} passed · ${num(count("fail"))} failed · ${num(count("skip"))} not run</span></div>
 <div class="lbl checks-group">Warden setup</div><ol class="steps checks">${setup.map((c) => c.html).join("")}</ol>
-<div class="lbl checks-group">Rules · ${plural(rules.filter((c) => c.state !== "skip").length, "rule")}</div><ol class="steps checks">${rules.map((c) => c.html).join("")}</ol>`;
+<div class="lbl checks-group">Rules · ${plural(rules.filter((c) => c.state !== "skip").length, "rule")}</div>${currentDetails ? '<p class="muted rule-detail-source">Descriptions use the current rule definitions.</p>' : ""}<ol class="steps checks">${rules.map((c) => c.html).join("")}</ol>`;
 };
 
-const findingRow = ({ source, file, guardrail, line, practice, doThis }, project) => {
+const findingRow = ({ source, file, guardrail, line, practice, doThis }, project, details) => {
+  const detail = ruleDetail(details, guardrail);
   const location = file ? `${file}${line > 0 ? `:${line}` : ""}` : "Project-wide";
   const label = source ? `${new Date(source.at).toLocaleDateString()} ${short(source.at)} · ${source.tier ?? "Run"}` : "";
   const run = source?.run ? `<a class="run-link" href="${href("run", { project, run: source.run })}">${esc(label)}</a>` : esc(label);
   return `<li class="finding-row">
 <div class="finding-location"><div class="mono">${esc(location)}</div>${doThis ? `<div class="muted finding-note">${esc(doThis)}</div>` : ""}</div>
-<div><div class="mono">${esc(guardrail)}</div>${practice ? `<div class="muted">${esc(practice)}</div>` : ""}</div>
+<div>${ruleName(guardrail, detail)}${practice && !detail ? `<div class="muted">${esc(practice)}</div>` : ""}</div>
 ${source ? `<div>${run}<div class="muted">${esc([trigger(source), shortRef(source.ref)].filter(Boolean).join(" · "))}</div>${source.root ? `<div class="mono muted" title="${esc(source.root)}">${esc(pathTail(source.root))}</div>` : ""}</div>` : ""}
 </li>`;
 };
 
-const findingsList = (list, project) => `<div class="findings${project ? " has-source" : ""}">
+const findingsList = (list, project, details = {}) => `<div class="findings${project ? " has-source" : ""}">
 <div class="finding-row finding-labels lbl" aria-hidden="true"><span>Location</span><span>Guardrail</span>${project ? "<span>Source run</span>" : ""}</div>
-<ul aria-label="Rule findings">${list.map((finding) => findingRow(finding, project)).join("")}</ul></div>`;
+<ul aria-label="Rule findings">${list.map((finding) => findingRow(finding, project, details)).join("")}</ul></div>`;
 
 export const failuresPage = (state) => {
   const { data } = state;
@@ -548,13 +561,14 @@ export const runPage = (state) => {
   if (run === undefined) return `${header(`Runs · ${esc(project)}`, "No runs yet")}<section class="mod pad muted">No check has run in ${esc(project)} yet.</section>`;
   const streak = streakOf(runs, run);
   const findings = data.runs.findings ?? run.failures ?? [];
+  const details = run.ruleDetails ?? data.runs.currentRuleDetails;
   const date = new Date(run.at).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
   return `<header class="head"><div><a href="${href("runs", { project })}" style="font-size:12px;font-weight:600">Runs · ${esc(project)}</a><h1 class="h1">${esc(tierTitle(run))}</h1><div class="muted">${esc(date)} · ${esc(runSub(run))}</div></div><div class="controls"><button class="btn" type="button" data-copy="${esc(run.run)}">Copy run ID</button></div></header>
 ${unwiredBanner(selectedProject(state))}
 ${banner(run)}
 ${videoSection(project, run)}
-<section class="mod" aria-labelledby="er-steps">${checklist({ ...run, failures: findings }, { level: "h2", id: "er-steps" }, data.runs.steps)}${!notPassing(run) && run.next ? nextBox(run.next) : ""}</section>
-${findings.length ? `<section class="mod" aria-labelledby="er-findings"><div class="modh"><h2 class="h2" id="er-findings">Recorded ${isAudit(run) ? "findings" : "failures"}</h2><span class="muted">${num(findings.length)}</span></div>${findingsList(findings)}</section>` : ""}
+<section class="mod" aria-labelledby="er-steps">${checklist({ ...run, failures: findings }, { level: "h2", id: "er-steps" }, data.runs.steps, data.runs.currentRuleDetails)}${!notPassing(run) && run.next ? nextBox(run.next) : ""}</section>
+${findings.length ? `<section class="mod" aria-labelledby="er-findings"><div class="modh"><h2 class="h2" id="er-findings">Recorded ${isAudit(run) ? "findings" : "failures"}</h2><span class="muted">${num(findings.length)}</span></div>${findingsList(findings, undefined, details)}</section>` : ""}
 <section class="mod" aria-labelledby="er-run"><div class="modh"><h2 class="h2" id="er-run">Run details</h2>${notPassing(run) ? "" : tag(outcome(run))}</div>${runFacts(run)}</section>
 ${streak.length > 1 ? `<section class="mod" aria-labelledby="er-streak"><div class="modh"><h2 class="h2" id="er-streak">Same outcome, ${num(streak.length)} runs in a row</h2><span class="muted">since ${esc(clock(streak.at(-1).at))}${run.next ? " · each gave the same next action" : ""}</span></div><div class="scroll"><table><thead><tr><th scope="col">Time</th><th scope="col">Trigger</th><th scope="col">Tier</th><th scope="col" class="r">ms</th></tr></thead><tbody>${streak.map((r) => `<tr${r.run === run.run ? ' class="sel" aria-current="true"' : ""}><td><a href="${href("run", { project, run: r.run })}">${esc(clock(r.at))}</a></td><td>${esc(trigger(r))}</td><td>${esc(r.tier ?? "–")}</td><td class="r">${ms(r.ms)}</td></tr>`).join("")}</tbody></table></div></section>` : ""}`;
 };

@@ -17,6 +17,7 @@ const TIERS = ["edit", "boundary"];
 const RETRY_MS = 60_000;
 const TRIGGER = "main audit";
 const POLICY = "policy";
+export const enrollmentPolicyDir = (dir) => join(dir, POLICY);
 const DATA = "data";
 const SIGNED = "signed.json";
 const BASELINE = `${POLICY}/baseline.json`;
@@ -122,7 +123,7 @@ export function enrollmentTampering(dir, signers) {
     return found;
 }
 const overlay = (dir, target) => {
-    cpSync(join(dir, POLICY), join(target, ".warden"), { recursive: true });
+    cpSync(enrollmentPolicyDir(dir), join(target, ".warden"), { recursive: true });
     if (existsSync(join(dir, DATA)))
         cpSync(join(dir, DATA), target, { recursive: true });
 };

@@ -146,9 +146,9 @@ export function checkCapability(file: string, value: Omit<Capability, "pack">): 
   check(file, validateCapability, value);
 }
 
-export async function readPack(projectRoot: string, wardenRoot: string, id: string, configFile: string): Promise<{ pack: Pack; source: "bundled" | "local" }> {
+export async function readPack(projectRoot: string, wardenRoot: string, id: string, configFile: string, policyDir = join(projectRoot, ".warden")): Promise<{ pack: Pack; source: "bundled" | "local" }> {
   const bundled = join(wardenRoot, "packs", id, "pack.yaml");
-  const local = join(projectRoot, ".warden", "packs", id, "pack.yaml");
+  const local = join(policyDir, "packs", id, "pack.yaml");
   const [inBundled, inLocal] = await Promise.all([readText(bundled), readText(local)]);
   if (inBundled !== undefined && inLocal !== undefined) {
     throw new RecordError(configFile, "/packs", `pack ${id} exists in both ${bundled} and ${local}`);
@@ -234,8 +234,8 @@ export const exampleSet = (set: RecordSet): RecordSet => ({
   },
 });
 
-export async function loadRecords(projectRoot: string, wardenRoot: string, source?: string): Promise<RecordSet> {
-  const configFile = join(projectRoot, ".warden", "config.yaml");
+export async function loadRecords(projectRoot: string, wardenRoot: string, source?: string, policyDir = join(projectRoot, ".warden")): Promise<RecordSet> {
+  const configFile = join(policyDir, "config.yaml");
   const configText = source ?? await readText(configFile);
   if (configText === undefined) throw new RecordError(configFile, "", "not found. Next action: run warden init.");
   const config = parseConfig(configFile, configText);
@@ -247,7 +247,7 @@ export async function loadRecords(projectRoot: string, wardenRoot: string, sourc
     }
     seen.add(entry.id);
     if (entry.enabled === false) continue;
-    const { pack } = await readPack(projectRoot, wardenRoot, entry.id, configFile);
+    const { pack } = await readPack(projectRoot, wardenRoot, entry.id, configFile, policyDir);
     const settings = resolveSettings(pack, entry.settings, configFile, `/packs/${index}/settings`);
     if (settings !== undefined) entry.settings = settings;
     packs.push(pack);
