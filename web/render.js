@@ -219,7 +219,7 @@ const sidebar = (state) => {
     }).join("");
     return `<div><div class="lbl">${group}</div><ul class="nav" aria-label="${group}">${links}</ul></div>`;
   }).join("");
-  const projectPage = ["failures", "packs", "rule-strength"].includes(page) ? page : "runs";
+  const projectPage = PROJECT_PAGES.has(page) && page !== "run" ? page : "runs";
   const watched = projects
     .map((p) => {
       const s = projectStatus(p);
@@ -237,9 +237,6 @@ const sidebar = (state) => {
 };
 
 const header = (title, sub, controls = "") => `<header class="head"><div><h1 class="h1">${title}</h1><div class="muted">${sub}</div></div>${controls === "" ? "" : `<div class="controls">${controls}</div>`}</header>`;
-
-const projectPicker = (state, id) =>
-  `<label class="lbl" for="${id}">Project</label><select id="${id}" data-nav="project" title="${esc(state.project)}"${state.view.packDraft?.size || state.view.packSaving ? " disabled" : ""}>${state.projects.map((p) => `<option value="${esc(p.project)}"${p.project === state.project ? " selected" : ""}>${esc(p.project)}</option>`).join("")}</select>`;
 
 export const emptyState = (page) => `${header(PAGES[page === "run" ? "runs" : page] ?? "Overview", "0 projects watched")}
 <section class="mod empty" aria-labelledby="em-h">
@@ -454,7 +451,7 @@ export const failuresPage = (state) => {
   const recorded = current.length ? findingsList(current, project) : notice(checked ? "No unresolved tracked failures or audit findings in the retained records." : "No check has run for a watched checkout yet.");
   const issues = problems.map((run) => `<div class="alert">${slot(tag(outcome(run)))}<div><strong>${esc(tierTitle(run))}</strong><div class="muted">${esc(trigger(run))}${checkout(run) ? ` · <span class="mono" title="${esc(checkout(run))}">${esc(pathTail(checkout(run)))}</span>` : ""}</div>${run.next && !quiet ? `<div class="mono finding-note">${esc(run.next)}</div>` : ""}</div>${run.run ? `<a href="${href("run", { project, run: run.run })}">Open run</a>` : ""}</div>`).join("");
   const detections = alerts.map((alert) => `<div class="alert"><div><strong>${esc(alertLabel(alert.detail))}</strong><div class="mono finding-note">${esc(alert.file)} · ${esc(alert.root)}</div>${alert.next && !quiet ? `<div class="muted finding-note">${esc(alert.next)}</div>` : ""}</div></div>`).join("");
-  return `${header(`Current failures · ${esc(project)}`, "Check failures with no recorded resolution, plus the latest findings from each audit.", projectPicker(state, "fl-proj"))}
+  return `${header(`Current failures · ${esc(project)}`, "Check failures with no recorded resolution, plus the latest findings from each audit.")}
 ${section("fl-findings", "Rule findings", current.length, recorded)}
 ${unverified.length ? section("fl-unverified", "Findings with unverified status", unverified.length, notice("Warden recorded these findings without evidence that tracks when they clear.") + findingsList(unverified, project)) : ""}
 ${section("fl-problems", "Latest run problems", problems.length, issues || notice("No run problems in the latest recorded attempts."))}
@@ -500,7 +497,7 @@ export const runsPage = (state) => {
   const label = { all: "All runs", pass: "Passed", not: "Not passing" }[view.outcome ?? "all"];
   const cols = ["timeLink", "trigger", "tier", "outcome", "bar", "ms", "next"];
   const mode = selectedProject(state)?.mode;
-  return `${header(`Runs · ${esc(data.runs.project)}`, `${plural(runs.length, "recent run")} · ${num(counts.not)} not passing${MODE[mode] ? ` · ${MODE[mode][0]}: ${MODE[mode][1]}` : ""}`, `<a class="run-link" href="${href("failures", { project: data.runs.project })}">Current failures</a>${projectPicker(state, "rn-proj")}`)}
+  return `${header(`Runs · ${esc(data.runs.project)}`, `${plural(runs.length, "recent run")} · ${num(counts.not)} not passing${MODE[mode] ? ` · ${MODE[mode][0]}: ${MODE[mode][1]}` : ""}`, `<a class="run-link" href="${href("failures", { project: data.runs.project })}">Current failures</a>`)}
 ${unwiredBanner(selectedProject(state))}
 <div class="filters"><div class="seg" role="group" aria-label="Outcome">${seg}</div><label><span class="lbl">Tier</span><select id="rn-tier" data-action="tier"><option value="">Every tier</option>${tiers}</select></label><label><span class="lbl">File</span><input id="rn-file" type="search" data-action="file" placeholder="Filter by changed file" value="${esc(view.file ?? "")}"></label></div>
 <section class="mod run-list" aria-labelledby="rn-list"><div class="modh"><h2 class="h2" id="rn-list">${label} · newest first</h2><span class="muted bar-note">Duration bars show up to 3 s</span></div>
@@ -655,7 +652,7 @@ export const packsPage = (state) => {
   const { data } = state;
   if (data.projects.length === 0) return emptyState(state.page);
   const l = data.layers;
-  return `${header(`Packs · ${esc(l.project)}`, "Choose which packs are enabled.", projectPicker(state, "packs-project"))}${packCatalog(state, l)}`;
+  return `${header(`Packs · ${esc(l.project)}`, "Choose which packs are enabled.")}${packCatalog(state, l)}`;
 };
 
 const ruleRows = (rules, context) => `<ul class="policy-rules">${rules.map((r) => `<li>
@@ -699,7 +696,7 @@ export const ruleStrengthPage = (state) => {
   const by = view.ruleGroup ?? "strength";
   const groups = [["strength", "By strength"], ["purpose", "By purpose"]].map(([id, label]) => `<button type="button" id="rule-group-${id}" data-rule-group="${id}" aria-pressed="${by === id}">${label}</button>`).join("");
   const checkout = l.root ? checkoutPicker(state, l.project, l.root, "strength-checkout") : "";
-  return `${header(`Rule strength · ${esc(l.project)}`, "See what each configured rule checks and how it’s evaluated.", projectPicker(state, "strength-project"))}
+  return `${header(`Rule strength · ${esc(l.project)}`, "See what each configured rule checks and how it’s evaluated.")}
 <div class="controls policy-controls">${checkout}<div class="seg" role="group" aria-label="Group rules">${groups}</div></div>
 <div class="next"><span class="lbl">Weakest practice</span><span>${verdict}</span></div>
 ${by === "purpose" ? rulesByPurpose(l.bands) || '<p class="muted">No configured rules.</p>' : rulesByStrength(l.bands)}`;
@@ -725,7 +722,7 @@ export const violationsPage = (state) => {
     )
     .join("");
   const off = (data.layers?.packs ?? []).filter((p) => !p.on).map((p) => `<tr><td class="muted" style="font-weight:700">${esc(p.id)}</td><td class="muted">Off in this project · ${plural(p.rules, "rule")}</td><td class="r muted">–</td><td class="r muted">–</td><td></td></tr>`).join("");
-  return `${header(`Violations · ${esc(v.project)}`, last ? `Counted at the last run that reached rules: ${esc(clock(last.at))}, ${esc(TRIGGERS[last.trigger] ?? last.trigger ?? "")}` : "No run has reached rules yet", projectPicker(state, "vi-proj"))}
+  return `${header(`Violations · ${esc(v.project)}`, last ? `Counted at the last run that reached rules: ${esc(clock(last.at))}, ${esc(TRIGGERS[last.trigger] ?? last.trigger ?? "")}` : "No run has reached rules yet")}
 <div class="mod summary"><span><span class="lbl">Ratchet</span> <strong>${ratchetRun ? `${num(ratchetRun.ratchet[0])} → ${num(ratchetRun.ratchet[1])}` : "–"}</strong> <span class="muted">at the last run; it may only go down</span></span><span><span class="lbl">New</span> <strong>${counted.length === 0 ? "–" : num(fresh)}</strong> <span class="muted">${counted.length === 0 ? "not counted yet" : fresh === 0 ? "nothing is blocking" : "blocking until fixed"}</span></span><span><span class="lbl">Baselined</span> <strong>${num(baselined)}</strong> <span class="muted">in .warden/baseline.json</span></span></div>
 <section class="mod" aria-labelledby="vi-packs"><div class="modh"><h2 class="h2" id="vi-packs">Violations by pack</h2><div class="legend"><span><i class="sw old" aria-hidden="true"></i>baselined, allowed until touched</span><span><i class="sw new" aria-hidden="true"></i>new in the last run, blocking</span></div></div>
 <div class="scroll"><table><thead><tr><th scope="col" style="width:260px">Pack or Guardrail</th><th scope="col">Share of the largest pack</th><th scope="col" class="r">Baselined</th><th scope="col" class="r">New</th><th scope="col">Last run</th></tr></thead><tbody>${rows}${off}</tbody></table></div></section>`;
@@ -817,7 +814,7 @@ export const mainHtml = (state) => {
   if (!state.data) return '<p class="muted">Loading…</p>';
   const selected = selectedProject(state);
   if (checkoutPageUnavailable(state.page, selected)) {
-    return `${header(`${PAGES[state.page]} · ${esc(selected.project)}`, `Automatic audit · ${auditRefLabel(selected.auditOnly)}`, projectPicker(state, "checkout-page-project"))}
+    return `${header(`${PAGES[state.page]} · ${esc(selected.project)}`, `Automatic audit · ${auditRefLabel(selected.auditOnly)}`)}
 <section class="mod" aria-labelledby="checkout-page-unavailable"><div class="modh"><h2 class="h2" id="checkout-page-unavailable">Watched checkout required</h2></div><p class="pad muted">This project has a published audit and 0 watched checkouts.</p><div class="project-links"><a href="${href("failures", { project: selected.project })}">Current failures</a><a href="${href("runs", { project: selected.project })}">Run history</a></div></section>`;
   }
   return (RENDER[state.page] ?? overviewPage)(state);

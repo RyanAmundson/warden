@@ -332,7 +332,6 @@ root.addEventListener("click", async (e) => {
 
 root.addEventListener("change", (e) => {
   const el = e.target;
-  if (el.dataset.nav === "project") go(new URL(`/${state.page}?project=${q(el.value)}`, location.href));
   if (el.dataset.nav === "checkout") go(new URL(`/${state.page}?project=${q(state.project)}&root=${q(el.value)}`, location.href));
   if (el.dataset.pack !== undefined) {
     const { view } = state;

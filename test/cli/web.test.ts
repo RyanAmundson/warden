@@ -287,6 +287,22 @@ describe("pages render from API responses", () => {
     }
   });
 
+  it("uses sidebar links as the project switcher on project pages", () => {
+    const data = {
+      layers,
+      violations,
+      runs: { project: "example-project", runs: exRuns },
+      failures: { project: "example-project", findings: [], problems: [], alerts: [] },
+    };
+    for (const page of ["runs", "failures", "packs", "rule-strength", "violations"]) {
+      const html = renderApp(state(page, data));
+      const sidebar = html.match(/<ul class="nav project-nav">([\s\S]*?)<\/ul>/)?.[1] ?? "";
+      expect(sidebar).toContain(`href="/${page}?project=example-project" aria-current="true"`);
+      expect(sidebar).toContain(`href="/${page}?project=warden"`);
+      expect(html).not.toContain('data-nav="project"');
+    }
+  });
+
   it("gives pack settings and rule strength separate destinations", () => {
     const packs = renderApp(state("packs", { layers }, { project: "warden" }));
     const strength = renderApp(state("rule-strength", { layers }, { project: "warden" }));

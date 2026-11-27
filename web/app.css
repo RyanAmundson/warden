@@ -41,7 +41,6 @@ a{color:var(--link);text-underline-offset:3px}a:hover{color:#0E2747}
 .head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px 24px;flex-wrap:wrap}
 .head>div:first-child{display:flex;flex-direction:column;gap:2px;min-width:0;overflow-wrap:anywhere}
 .head>.controls{min-width:0;max-width:100%}
-.head select[data-nav="project"]{text-overflow:ellipsis}
 .h1{margin:0;font-stretch:87%;font-weight:750;font-size:26px;line-height:32px;text-wrap:balance}
 .controls{display:flex;align-items:center;gap:8px 10px;flex-wrap:wrap}
 .mod{background:var(--card);border:1px solid var(--line);min-width:0}
