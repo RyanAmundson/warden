@@ -1,7 +1,14 @@
-export const PAGES = { overview: "Overview", runs: "Runs", failures: "Current failures", layers: "Layers", violations: "Violations", determinism: "Determinism", tamper: "Tamper" };
+export const PAGES = { overview: "Overview", runs: "Runs", failures: "Current failures", packs: "Packs", "rule-strength": "Rule strength", violations: "Violations", determinism: "Determinism", tamper: "Tamper" };
 
-const PROJECT_PAGES = new Set(["runs", "run", "failures", "layers", "violations"]);
-export const checkoutPageUnavailable = (page, project) => project?.auditOnly && (page === "layers" || page === "violations");
+const NAV_GROUPS = [
+  ["Activity", ["overview", "runs", "failures"]],
+  ["Policy", ["packs", "rule-strength"]],
+  ["Diagnostics", ["violations", "determinism", "tamper"]],
+];
+
+const CHECKOUT_PAGES = new Set(["packs", "rule-strength", "violations"]);
+const PROJECT_PAGES = new Set(["runs", "run", "failures", ...CHECKOUT_PAGES]);
+export const checkoutPageUnavailable = (page, project) => project?.auditOnly && CHECKOUT_PAGES.has(page);
 
 export const STEPS = [
   { id: "rules-intact", label: "rules intact", color: "#24364F" },
@@ -16,13 +23,13 @@ const SCALE_MS = 3000;
 
 const TRIGGERS = { "agent-edit": "agent edit", "git-commit": "git commit", manual: "manual run", audit: "manual audit", "main audit": "main branch update", daemon: "daemon" };
 
-const KIND_TEXT = { type: "compiler proves it", lint: "static analysis on every edit", runtime: "a command or test must pass", model: "a model decides", review: "a reviewer decides", instruction: "told, not checked", legacy: "wrapped old check" };
+const KIND_TEXT = { type: "compiler proves it", lint: "static analysis on every edit", runtime: "a command or test must pass", model: "a model decides", review: "a reviewer decides", instruction: "documented expectation", legacy: "wrapped old check" };
 
 const KIND_RANK = { type: 0, lint: 0, runtime: 1, model: 2, review: 3, instruction: 4, legacy: 5 };
 
 const DETERMINISTIC = new Set(["type", "lint", "runtime"]);
 
-const BAND_TEXT = { deterministic: "a machine proves it, on every run", judgment: "someone decides, each time", prose: "told, never checked" };
+const BAND_TEXT = { deterministic: "Automated checks with repeatable results", judgment: "A model or reviewer evaluates the rule", prose: "Instructions and legacy checks" };
 
 const DETAIL_TEXT = {
   "source-drift": "A pack or record file changed without warden compile.",
@@ -204,23 +211,26 @@ const homeOf = (file) => (file ? file.replace(/\/daemon\/heartbeat\.json$/, "") 
 
 const sidebar = (state) => {
   const { health, projects = [], page, project, lost, now } = state;
-  const nav = Object.entries(PAGES)
-    .map(([id, label]) => {
+  const nav = NAV_GROUPS.map(([group, pages]) => {
+    const links = pages.map((id) => {
       const current = id === page || (id === "runs" && page === "run");
-      return `<li><a href="${href(id, PROJECT_PAGES.has(id) ? { project } : {})}"${current ? ' aria-current="page"' : ""}>${label}</a></li>`;
-    })
-    .join("");
+      const root = id === "packs" || id === "rule-strength" ? state.view?.root : undefined;
+      return `<li><a href="${href(id, PROJECT_PAGES.has(id) ? { project, root } : {})}"${current ? ' aria-current="page"' : ""}>${PAGES[id]}</a></li>`;
+    }).join("");
+    return `<div><div class="lbl">${group}</div><ul class="nav" aria-label="${group}">${links}</ul></div>`;
+  }).join("");
+  const projectPage = ["failures", "packs", "rule-strength"].includes(page) ? page : "runs";
   const watched = projects
     .map((p) => {
       const s = projectStatus(p);
       const tone = s.cls === "pass" ? "" : s.cls === "idle" ? " none" : " bad";
-      return `<li><a href="${href(page === "failures" ? "failures" : "runs", { project: p.project })}"${PROJECT_PAGES.has(page) && p.project === project ? ' aria-current="true"' : ""}><span class="project-name">${esc(p.project)}</span><small class="${tone.trim()}">${esc(s.text)}</small></a></li>`;
+      return `<li><a href="${href(projectPage, { project: p.project })}"${PROJECT_PAGES.has(page) && p.project === project ? ' aria-current="true"' : ""}><span class="project-name">${esc(p.project)}</span><small class="${tone.trim()}">${esc(s.text)}</small></a></li>`;
     })
     .join("");
   return `<nav class="side" aria-label="Warden">
 <div class="brand">${BRAND}<span>WARDEN</span></div>
 <div class="daemon${lost ? " lost" : ""}"><b><i aria-hidden="true"></i>${lost ? "Daemon not answering" : "Daemon live"}</b><span id="beat">${esc(beatText(health, now))}</span></div>
-<div class="navs"><ul class="nav">${nav}</ul>
+<div class="navs"><div class="nav-menu">${nav}</div>
 <div><div class="lbl">${projects.some((p) => p.auditOnly) ? "Projects" : "Watched projects"}</div><ul class="nav project-nav">${watched === "" ? '<li class="empty-item">None yet</li>' : watched}</ul></div></div>
 <div class="foot">Warden ${esc(health?.version ?? "")} · evidence in ${esc(homeOf(health?.heartbeatFile))}</div>
 </nav>`;
@@ -229,7 +239,7 @@ const sidebar = (state) => {
 const header = (title, sub, controls = "") => `<header class="head"><div><h1 class="h1">${title}</h1><div class="muted">${sub}</div></div>${controls === "" ? "" : `<div class="controls">${controls}</div>`}</header>`;
 
 const projectPicker = (state, id) =>
-  `<label class="lbl" for="${id}">Project</label><select id="${id}" data-nav="project"${state.view.packDraft?.size || state.view.packSaving ? " disabled" : ""}>${state.projects.map((p) => `<option value="${esc(p.project)}"${p.project === state.project ? " selected" : ""}>${esc(p.project)}</option>`).join("")}</select>`;
+  `<label class="lbl" for="${id}">Project</label><select id="${id}" data-nav="project" title="${esc(state.project)}"${state.view.packDraft?.size || state.view.packSaving ? " disabled" : ""}>${state.projects.map((p) => `<option value="${esc(p.project)}"${p.project === state.project ? " selected" : ""}>${esc(p.project)}</option>`).join("")}</select>`;
 
 export const emptyState = (page) => `${header(PAGES[page === "run" ? "runs" : page] ?? "Overview", "0 projects watched")}
 <section class="mod empty" aria-labelledby="em-h">
@@ -335,7 +345,7 @@ const runRow = (run, cols, view) => {
     next,
   };
   const cls = [notPassing(run) ? "held" : "", view?.fresh?.has(run.run) ? "arrived" : ""].filter(Boolean).join(" ");
-  return `<tr${cls === "" ? "" : ` class="${cls}"`}>${cols.map((c) => cells[c]).join("")}</tr>`;
+  return `<tr${run.run ? " data-run-row" : ""}${cls === "" ? "" : ` class="${cls}"`}>${cols.map((c) => cells[c]).join("")}</tr>`;
 };
 
 export const overviewPage = (state) => {
@@ -587,80 +597,112 @@ const packChecks = (checks) => {
 
 const packDetailsPanel = (detail) => `<div class="pack-detail-body">
 <div>
-<h5>Checks</h5>
+<h4>Checks</h4>
 ${detail.checks.length ? packChecks(detail.checks) : '<p class="muted">This pack has no checks.</p>'}
 </div>
 <div>
-<h5>Setup</h5>
+<h4>Setup</h4>
 ${detail.setup ? `<p>${esc(detail.setup)}</p>` : ""}
 ${detail.adapters.length ? `<ul class="pack-detail-list">${detail.adapters.map((adapter) => `<li><div class="pack-adapter"><code>${esc(adapter.id)}</code> ${readinessTag(adapter.status)}</div><p>${esc(adapter.setup)}</p></li>`).join("")}</ul>` : '<p class="muted">No execution adapters required.</p>'}
 </div>
 </div>`;
 
+const checkoutPicker = (state, project, selected, id, disabled = false) => {
+  const roots = state.projects.find((entry) => entry.project === project)?.roots ?? [];
+  const labels = roots.map(pathTail);
+  return roots.length > 1
+    ? `<label for="${id}" class="lbl">Checkout</label><select id="${id}" data-nav="checkout" title="${esc(selected)}"${disabled ? " disabled" : ""}>${roots.map((root, i) => `<option value="${esc(root)}"${root === selected ? " selected" : ""}>${esc(labels.indexOf(labels[i]) === labels.lastIndexOf(labels[i]) ? labels[i] : root)}</option>`).join("")}</select>`
+    : `<span class="lbl">Checkout</span><span class="mono">${esc(selected)}</span>`;
+};
+
 const packCatalog = (state, l) => {
   const settings = l.packSettings;
   const { packDraft, packSaving, packMessage } = state.view;
   const packCount = packDraft?.size ?? 0;
-  const roots = state.projects.find((project) => project.project === l.project)?.roots ?? [];
-  const checkout = settings && (roots.length > 1
-    ? `<label for="pack-checkout" class="lbl">Checkout</label><select id="pack-checkout" data-nav="checkout"${packSaving || packCount ? " disabled" : ""}>${roots.map((root) => `<option value="${esc(root)}"${root === settings.root ? " selected" : ""}>${esc(root)}</option>`).join("")}</select>`
-    : `<span class="lbl">Checkout</span><span class="mono">${esc(settings.root)}</span>`);
   const detailById = new Map(settings?.details?.map((detail) => [detail.id, detail]));
   const groups = [
     { id: "enabled-packs", title: "Enabled in this checkout", packs: l.packs.filter((pack) => pack.on) },
     { id: "disabled-packs", title: "Disabled in this checkout", packs: l.packs.filter((pack) => !pack.on) },
   ];
-  const packArticle = (pack) => {
+  const packOption = (pack) => {
     const saved = settings?.packs.find((entry) => entry.id === pack.id);
     const checked = packDraft?.get(pack.id) ?? saved?.on ?? pack.on;
     const status = saved && !saved.required
       ? `<label class="pack-toggle"><input type="checkbox" id="pack-${esc(pack.id)}" data-pack="${esc(pack.id)}" aria-label="${esc(pack.id)} pack"${checked ? " checked" : ""}${packSaving ? " disabled" : ""}>${checked ? "On" : "Off"}${packDraft?.has(pack.id) ? " (unsaved)" : ""}</label>`
       : pack.on ? `<span class="on"><i aria-hidden="true"></i>${saved?.required ? "On · Required" : "On"}</span>` : '<span class="muted">Off</span>';
+    return `<li><a href="#pack-info-${encodeURIComponent(pack.id)}">${esc(pack.id)}</a>${status}</li>`;
+  };
+  const packArticle = (pack) => {
     const detail = detailById.get(pack.id);
     return `<article class="pack-entry" id="pack-info-${esc(pack.id)}" aria-labelledby="pack-title-${esc(pack.id)}" tabindex="-1">
-<header class="pack-entry-head"><div><h4 id="pack-title-${esc(pack.id)}">${esc(pack.id)}</h4><p class="muted">${esc(pack.source)} · ${plural(pack.rules, "rule")}</p></div>${status}</header>
+<header class="pack-entry-head"><div><h3 id="pack-title-${esc(pack.id)}">${esc(pack.id)}</h3><p class="muted">${esc(pack.source)} · ${plural(pack.rules, "rule")}</p></div></header>
 ${detail ? packDetailsPanel(detail) : '<p class="pack-no-details muted">Check and setup details are unavailable.</p>'}
 </article>`;
   };
-  const index = groups.map((group) => `<div><strong>${group.title} · ${group.packs.length}</strong>${group.packs.length ? `<ul>${group.packs.map((pack) => `<li><a href="#pack-info-${encodeURIComponent(pack.id)}">${esc(pack.id)}</a></li>`).join("")}</ul>` : ""}</div>`).join("");
-  return `<section class="mod pack-catalog" aria-labelledby="ly-packs"><form id="pack-settings">
-<div class="modh"><h2 class="h2" id="ly-packs">Packs</h2><a href="#rule-strength">Rule strength</a></div>
-${settings ? `<div class="pack-toolbar"><div class="controls">${checkout}</div><p>Changes apply to this checkout. New packs cover all paths. After saving, run <code>warden compile</code> with this Warden build and sign the commit.</p><p>Readiness reflects this checkout and the dashboard process. Check separate runners in their own environment.</p></div>` : ""}
-${l.packs.length ? `<nav class="pack-index" aria-label="Jump to pack">${index}</nav>` : '<p class="pad muted">No packs available for this checkout.</p>'}
-${groups.filter((group) => group.packs.length > 0).map((group) => `<section aria-labelledby="${group.id}"><h3 class="pack-group" id="${group.id}">${group.title}</h3>${group.packs.map(packArticle).join("")}</section>`).join("")}
+  const options = groups.map((group) => `<section aria-labelledby="${group.id}"><h3 id="${group.id}">${group.title} <span class="muted">${group.packs.length}</span></h3>${group.packs.length ? `<ul>${group.packs.map(packOption).join("")}</ul>` : '<p class="muted">None</p>'}</section>`).join("");
+  return `<section class="mod pack-catalog" aria-labelledby="pack-config"><form id="pack-settings">
+<div class="modh"><h2 class="h2" id="pack-config">Pack settings</h2></div>
+${settings ? `<div class="pack-toolbar"><div class="controls">${checkoutPicker(state, l.project, settings.root, "pack-checkout", packSaving || packCount)}</div><p>Changes apply to this checkout. New packs cover all paths. After saving, run <code>warden compile</code> with this Warden build and sign the commit.</p></div>` : ""}
+${l.packs.length ? `<div class="pack-options">${options}</div>` : '<p class="pad muted">No packs available for this checkout.</p>'}
+${settings ? `<div class="pack-toolbar pack-actions controls${packCount || packSaving ? " pending" : ""}"><button type="submit" class="btn"${!packCount || packSaving ? " disabled" : ""}>${packSaving ? "Saving…" : "Save pack changes"}</button><button type="button" class="btn" data-action="discard-packs"${!packCount || packSaving ? " disabled" : ""}>Discard changes</button><span role="status">${esc(packMessage ?? (packCount ? plural(packCount, "unsaved change") : ""))}</span></div>` : ""}
+</form></section>
+${l.packs.length ? `<section class="mod pack-catalog" aria-labelledby="pack-details"><div class="modh"><div><h2 class="h2" id="pack-details">Checks and setup</h2><span class="muted">Readiness is measured in this checkout and dashboard process.</span></div></div>${groups.flatMap((group) => group.packs.map(packArticle)).join("")}
 ${settings?.jev ? `<section class="pack-evaluator" aria-labelledby="jev-evaluator"><div class="pack-adapter"><h3 id="jev-evaluator">Jev live calls (TypeSafe)</h3>${readinessTag(settings.jev.status)}</div><p>${settings.jev.packIds.length ? `Declared in ${esc(settings.jev.packIds.join(", "))}.` : "Optional evaluator. No pack in this checkout declares a Jev check."}</p><p>${esc(settings.jev.setup)}</p></section>` : ""}
-${settings ? `<div class="pack-toolbar pack-actions controls${packCount || packSaving || packMessage ? " pending" : ""}"><button type="submit" class="btn"${!packCount || packSaving ? " disabled" : ""}>${packSaving ? "Saving…" : "Save pack changes"}</button><button type="button" class="btn" data-action="discard-packs"${!packCount || packSaving ? " disabled" : ""}>Discard changes</button><span role="status">${esc(packMessage ?? (packCount ? plural(packCount, "unsaved change") : ""))}</span></div>` : ""}
-</form></section>`;
+</section>` : ""}`;
 };
 
-export const layersPage = (state) => {
+export const packsPage = (state) => {
   const { data } = state;
   if (data.projects.length === 0) return emptyState(state.page);
   const l = data.layers;
+  return `${header(`Packs · ${esc(l.project)}`, "Choose which packs are enabled.", projectPicker(state, "packs-project"))}${packCatalog(state, l)}`;
+};
+
+const ruleRows = (rules, context) => `<ul class="policy-rules">${rules.map((r) => `<li>
+<div><strong>${esc(r.name ?? r.guardrail)}</strong>${context && r.statement ? `<p>${esc(r.statement)}</p>` : ""}</div>
+<div class="rule-meta muted">${context ? `<span>${esc(r.pack)}</span>` : `<span title="${esc(KIND_TEXT[r.kind] ?? "")}">${esc(r.bandLabel)} · ${esc(r.kind)}</span>`}<code>${esc(r.guardrail)}</code>${r.adapter ? `<span>${esc(r.adapter)}</span>` : ""}${r.runs.length ? `<span>Runs at ${esc(r.runs.join(", "))}</span>` : ""}<span>Median ${esc(r.median)}</span>${r.promote ? tag({ cls: "err", text: "Promote" }) : ""}</div>
+</li>`).join("")}</ul>`;
+
+const bandLabel = (band) => band.replace(/^./, (first) => first.toUpperCase());
+
+const rulesByStrength = (bands) => bands.map((band) => {
+  const count = band.kinds.reduce((sum, kind) => sum + kind.rules.length, 0);
+  return `<section class="mod policy-group"><div class="modh"><div><h2 class="h2">${esc(bandLabel(band.band))}</h2><span class="muted">${esc(BAND_TEXT[band.band] ?? "")}</span></div><span class="muted">${plural(count, "rule")}</span></div>
+${count ? band.kinds.filter((kind) => kind.rules.length).map((kind) => `<h3 class="policy-subhead">${esc(bandLabel(kind.kind))}<span class="muted">${esc(KIND_TEXT[kind.kind])}</span></h3>${ruleRows(kind.rules, true)}`).join("") : '<p class="pad muted">No rules at this strength.</p>'}
+</section>`;
+}).join("");
+
+const rulesByPurpose = (bands) => {
+  const packs = new Map();
+  for (const band of bands) {
+    for (const { rules } of band.kinds) {
+      for (const rule of rules) {
+        if (!packs.has(rule.pack)) packs.set(rule.pack, new Map());
+        const practices = packs.get(rule.pack);
+        if (!practices.has(rule.practice)) practices.set(rule.practice, []);
+        practices.get(rule.practice).push({ ...rule, bandLabel: bandLabel(band.band) });
+      }
+    }
+  }
+  return [...packs].sort(([a], [b]) => a.localeCompare(b)).map(([pack, practices]) => `<section class="mod policy-group"><div class="modh"><h2 class="h2">${esc(pack)}</h2></div>
+${[...practices.values()].map((rules) => `<h3 class="policy-subhead">${esc(rules[0].statement || rules[0].practice)}</h3>${ruleRows(rules, false)}`).join("")}
+</section>`).join("");
+};
+
+export const ruleStrengthPage = (state) => {
+  const { data, view } = state;
+  if (data.projects.length === 0) return emptyState(state.page);
+  const l = data.layers;
   const w = weakest(l.practices);
-  const verdict = w === undefined || DETERMINISTIC.has(w.strongestKind) ? "None. Every practice is held by a deterministic rule." : `${esc(w.practice)}, held only by ${esc(w.strongestKind)}. Add a type, lint, or runtime Guardrail to ${esc(w.practice)}.`;
-  const marks = { deterministic: '<span class="band det" aria-hidden="true"></span>', judgment: '<span class="band jud" aria-hidden="true"></span>', prose: '<span class="band pro" aria-hidden="true"></span>' };
-  const bands = l.bands
-    .map((b) => {
-      const count = b.kinds.reduce((n, k) => n + k.rules.length, 0);
-      const rows = b.kinds
-        .map(
-          (k) =>
-            `<tr class="kind"><td>${KIND_RANK[k.kind] ?? ""}</td><td>${esc(k.kind)}</td><td colspan="6" class="note">${esc(KIND_TEXT[k.kind] ?? "")} · ${k.rules.length === 0 ? "none yet" : plural(k.rules.length, "rule")}</td></tr>${k.rules
-              .map((r) => `<tr class="sub"><td></td><td class="mono" style="padding-left:30px" title="${esc(r.guardrail)}">${esc(r.guardrail)}</td><td title="${esc(r.pack)}">${esc(r.pack)}</td><td title="${esc(r.practice)}">${esc(r.practice)}</td><td title="${esc(r.adapter)}">${esc(r.adapter)}</td><td title="${esc(r.runs.join(", "))}">${esc(r.runs.join(", "))}</td><td class="r">${esc(r.median)}</td><td>${r.promote ? tag({ cls: "err", text: "Promote" }) : ""}</td></tr>`)
-              .join("")}`,
-        )
-        .join("");
-      const name = esc(b.band.replace(/^./, (c) => c.toUpperCase()));
-      const id = esc(b.band);
-      return `<section class="mod" aria-labelledby="ly-${id}"><div class="modh"><div style="flex-direction:row;align-items:center;gap:10px">${marks[b.band] ?? ""}<h2 class="h2" id="ly-${id}">${name}</h2><span class="muted">${esc(BAND_TEXT[b.band] ?? "")}</span></div><span class="muted">${plural(count, "rule")}</span></div><div class="scroll"><table class="bandt"><colgroup><col style="width:56px"><col style="width:19%"><col style="width:10%"><col style="width:15%"><col style="width:10%"><col style="width:11%"><col style="width:90px"><col style="width:96px"></colgroup>${count === 0 ? "" : '<thead><tr><th scope="col">Rank</th><th scope="col">Kind or Guardrail</th><th scope="col">Pack</th><th scope="col">Practice</th><th scope="col">Adapter</th><th scope="col">Runs at</th><th scope="col" class="r">Median</th><th scope="col"><span class="lbl">Weak</span></th></tr></thead>'}<tbody>${rows}</tbody></table></div></section>`;
-    })
-    .join("");
-  return `${header(`Layers · ${esc(l.project)}`, "Configure packs and review rule strength.", projectPicker(state, "ly-proj"))}
-${packCatalog(state, l)}
-<section class="rule-strength" aria-labelledby="rule-strength"><h2 class="h2" id="rule-strength">Rule strength</h2>
-<div class="next"><span class="lbl">Weakest practice</span><span style="flex:1 1 320px;font-size:14px">${verdict}</span></div>
-${bands}</section>`;
+  const rule = l.bands.flatMap((band) => band.kinds.flatMap((kind) => kind.rules)).find((entry) => entry.practice === w?.practice && entry.kind === w.strongestKind);
+  const verdict = w === undefined ? "No configured rules." : DETERMINISTIC.has(w.strongestKind) ? "Every practice has a deterministic rule." : `${esc(rule?.statement || w.practice)} · strongest rule uses ${esc(w.strongestKind)}.`;
+  const by = view.ruleGroup ?? "strength";
+  const groups = [["strength", "By strength"], ["purpose", "By purpose"]].map(([id, label]) => `<button type="button" id="rule-group-${id}" data-rule-group="${id}" aria-pressed="${by === id}">${label}</button>`).join("");
+  const checkout = l.root ? checkoutPicker(state, l.project, l.root, "strength-checkout") : "";
+  return `${header(`Rule strength · ${esc(l.project)}`, "See what each configured rule checks and how it’s evaluated.", projectPicker(state, "strength-project"))}
+<div class="controls policy-controls">${checkout}<div class="seg" role="group" aria-label="Group rules">${groups}</div></div>
+<div class="next"><span class="lbl">Weakest practice</span><span>${verdict}</span></div>
+${by === "purpose" ? rulesByPurpose(l.bands) || '<p class="muted">No configured rules.</p>' : rulesByStrength(l.bands)}`;
 };
 
 export const violationsPage = (state) => {
@@ -766,7 +808,7 @@ export const tamperPage = (state) => {
 ${history}`;
 };
 
-const RENDER = { overview: overviewPage, runs: runsPage, run: runPage, failures: failuresPage, layers: layersPage, violations: violationsPage, determinism: determinismPage, tamper: tamperPage };
+const RENDER = { overview: overviewPage, runs: runsPage, run: runPage, failures: failuresPage, packs: packsPage, "rule-strength": ruleStrengthPage, violations: violationsPage, determinism: determinismPage, tamper: tamperPage };
 
 export const pageTitle = (state) => `${state.page === "run" ? "Run" : (PAGES[state.page] ?? "Warden")} · Warden`;
 

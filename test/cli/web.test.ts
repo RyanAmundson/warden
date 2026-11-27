@@ -41,9 +41,9 @@ const tamper = { open: [detection], recent: [{ ...detection, at: at(10), kind: "
 const layers = {
   project: "warden",
   bands: [
-    { band: "deterministic", kinds: [{ kind: "type", rules: [] }, { kind: "lint", rules: [{ pack: "core", guardrail: "warden-no-comments", practice: "no-comments", kind: "lint", adapter: "eslint", runs: ["edit", "commit"], median: "shared", promote: false }] }, { kind: "runtime", rules: [] }] },
+    { band: "deterministic", kinds: [{ kind: "type", rules: [] }, { kind: "lint", rules: [{ pack: "core", guardrail: "warden-no-comments", practice: "no-comments", name: "No comments", statement: "Keep source free of comments.", kind: "lint", adapter: "eslint", runs: ["edit", "commit"], median: "shared", promote: false }] }, { kind: "runtime", rules: [] }] },
     { band: "judgment", kinds: [{ kind: "model", rules: [] }, { kind: "review", rules: [] }] },
-    { band: "prose", kinds: [{ kind: "instruction", rules: [{ pack: "core", guardrail: "warden-say-why", practice: "say-why", kind: "instruction", adapter: "claude", runs: ["edit"], median: "–", promote: true }] }, { kind: "legacy", rules: [] }] },
+    { band: "prose", kinds: [{ kind: "instruction", rules: [{ pack: "core", guardrail: "warden-say-why", practice: "say-why", name: "Say why", statement: "Explain the reason for the change.", kind: "instruction", adapter: "claude", runs: ["edit"], median: "–", promote: true }] }, { kind: "legacy", rules: [] }] },
   ],
   practices: [{ practice: "no-comments", strongestKind: "lint", promote: false }, { practice: "say-why", strongestKind: "instruction", promote: true }],
   packs: [{ id: "core", source: "bundled", on: true, rules: 2 }, { id: "principles", source: "bundled", on: false, rules: 9 }],
@@ -149,7 +149,7 @@ describe("pages render from API responses", () => {
     expect(html).toContain("…/p/w</span> and 1 other checkout");
     expect(html).toContain("43,634");
     expect(nextActions(html)).toEqual([ERROR_NEXT]);
-    expect((html.match(/<tr class="held">/g) ?? []).length).toBe(3);
+    expect((html.match(/<tr data-run-row class="held">/g) ?? []).length).toBe(3);
     expect(html).toContain('aria-current="page">Overview');
   });
 
@@ -287,13 +287,29 @@ describe("pages render from API responses", () => {
     }
   });
 
-  it("renders layers with the weakest practice and the packs", () => {
-    const html = renderApp(state("layers", { layers }, { project: "warden" }));
-    expect(html).toContain("say-why, held only by instruction");
-    expect(html).toContain("warden-no-comments");
-    expect(html).toContain("compiler proves it · none yet");
-    expect(html).toContain("Promote");
-    expect(html).toContain('<span class="muted">Off</span>');
+  it("gives pack settings and rule strength separate destinations", () => {
+    const packs = renderApp(state("packs", { layers }, { project: "warden" }));
+    const strength = renderApp(state("rule-strength", { layers }, { project: "warden" }));
+    expect(packs).toContain('aria-label="Policy"');
+    expect(packs).toContain('href="/packs?project=warden" aria-current="page">Packs');
+    expect(packs).toContain('href="/rule-strength?project=warden">Rule strength');
+    expect(packs).toContain('id="pack-settings"');
+    expect(packs).not.toContain("Weakest practice");
+    expect(strength).not.toContain('id="pack-settings"');
+    expect(strength).toContain("Explain the reason for the change. · strongest rule uses instruction.");
+    expect(strength).toContain("<strong>No comments</strong>");
+    expect(strength).toContain("Keep source free of comments.");
+    expect(strength).toContain("Promote");
+  });
+
+  it("groups rules by their authored practice and shows their strength", () => {
+    const html = renderApp(state("rule-strength", { layers }, { project: "warden", view: { ruleGroup: "purpose" } }));
+    expect(html).toContain('data-rule-group="purpose" aria-pressed="true"');
+    expect(html).toContain('<h2 class="h2">core</h2>');
+    expect(html).toContain('<h3 class="policy-subhead">Keep source free of comments.</h3><ul class="policy-rules">');
+    expect(html).toContain('Deterministic · lint');
+    expect(html).toContain('Prose · instruction');
+    expect(html).toContain('<code>warden-no-comments</code>');
   });
 
   it("groups saved pack states and exposes checks and readiness without disclosure", () => {
@@ -313,9 +329,9 @@ describe("pages render from API responses", () => {
         }],
       },
     };
-    const html = renderApp(state("layers", { layers: layersWithSettings }, { project: "warden", view: { packDraft: new Map([["principles", true]]), fresh: new Set() } }));
-    expect(html).toMatch(/id="enabled-packs">[^<]*<\/h3>[\s\S]*id="pack-info-core"/);
-    expect(html).toMatch(/id="disabled-packs">[^<]*<\/h3>[\s\S]*id="pack-info-principles"/);
+    const html = renderApp(state("packs", { layers: layersWithSettings }, { project: "warden", view: { packDraft: new Map([["principles", true]]), fresh: new Set() } }));
+    expect(html).toMatch(/id="enabled-packs">.*?<\/h3>.*?href="#pack-info-core"/);
+    expect(html).toMatch(/id="disabled-packs">.*?<\/h3>.*?href="#pack-info-principles"/);
     expect(html).toContain('href="#pack-info-principles"');
     expect(html).toContain('data-pack="principles" aria-label="principles pack" checked>On (unsaved)');
     expect(html).toContain("On · Required");
@@ -325,7 +341,7 @@ describe("pages render from API responses", () => {
     expect(html).toContain("Configure &amp; verify.");
     expect(html).toContain("Install &lt;runner&gt;.");
     expect(html).not.toContain("<details");
-    expect(html.indexOf('data-action="discard-packs"')).toBeGreaterThan(html.indexOf('id="pack-info-principles"'));
+    expect(html.indexOf('data-action="discard-packs"')).toBeGreaterThan(html.indexOf('data-pack="principles"'));
   });
 
   it("renders violations by pack with counts and the ratchet", () => {
@@ -435,7 +451,7 @@ describe("pages render from API responses", () => {
   });
 
   it("escapes band names from the layers API", () => {
-    const html = renderApp(state("layers", { layers: { ...layers, bands: [{ band: '"><x-inj>', kinds: [] }] } }, { project: "warden" }));
+    const html = renderApp(state("rule-strength", { layers: { ...layers, bands: [{ band: '"><x-inj>', kinds: [] }] } }, { project: "warden" }));
     expect(html).not.toContain("<x-inj>");
   });
 
@@ -446,7 +462,7 @@ describe("pages render from API responses", () => {
   });
 
   it("renders the empty state on every project page when nothing is watched", () => {
-    for (const page of ["overview", "runs", "run", "layers", "violations", "determinism", "tamper"]) {
+    for (const page of ["overview", "runs", "run", "packs", "rule-strength", "violations", "determinism", "tamper"]) {
       const html = renderApp({ ...state(page, {}), projects: [], data: { projects: [] } });
       expect(html).toContain("No projects are watched yet");
       expect(nextActions(html)).toEqual(["run warden init in a project"]);
@@ -464,7 +480,7 @@ describe("pages render from API responses", () => {
   });
 
   it("renders an API error with the next action the API gave", () => {
-    const html = renderApp({ ...state("layers", {}), error: { status: 422, error: "lock written by an older Warden", next: "run warden compile" } });
+    const html = renderApp({ ...state("packs", {}), error: { status: 422, error: "lock written by an older Warden", next: "run warden compile" } });
     expect(html).toContain("lock written by an older Warden");
     expect(nextActions(html)).toEqual(["run warden compile"]);
   });
@@ -568,10 +584,10 @@ describe("UI QA fixes", () => {
   });
 
   it("offers no dead link from the empty state and words None yet as plain text", () => {
-    const html = renderApp({ ...state("layers", {}), projects: [], data: { projects: [] } });
+    const html = renderApp({ ...state("packs", {}), projects: [], data: { projects: [] } });
     expect(html).not.toContain('href="/layers">See the bundled packs');
     expect(html).toContain('<li class="empty-item">None yet</li>');
-    expect(html).toContain('<h1 class="h1">Layers</h1>');
+    expect(html).toContain('<h1 class="h1">Packs</h1>');
   });
 
   it("makes the frozen page inert while the daemon is lost", () => {
@@ -579,11 +595,11 @@ describe("UI QA fixes", () => {
     expect(html).toMatch(/<div class="frozen" inert[ >]/);
   });
 
-  it("omits the column header of a band with no rules", () => {
-    const html = renderApp(state("layers", { layers }, { project: "warden" }));
-    const judgment = html.slice(html.indexOf('id="ly-judgment"'), html.indexOf('id="ly-prose"'));
-    expect(judgment).not.toContain("<thead>");
-    expect(html.slice(html.indexOf('id="ly-prose"'))).toContain("<thead>");
+  it("retains the empty judgment band in the strength grouping", () => {
+    const html = renderApp(state("rule-strength", { layers }, { project: "warden" }));
+    const judgment = html.slice(html.indexOf(">Judgment</h2>"), html.indexOf(">Prose</h2>"));
+    expect(judgment).toContain("No rules at this strength.");
+    expect(html).not.toContain("<table");
   });
 });
 
@@ -616,31 +632,10 @@ describe("review and UI QA round 2", () => {
     expect(html).not.toContain(`Next action: <span class="mono">${ERROR_NEXT}`);
   });
 
-  it("gives every layer band table the same fixed columns", async () => {
-    const html = renderApp(state("layers", { layers }));
-    const tables = [...html.matchAll(/<table class="bandt">(<colgroup>.*?<\/colgroup>)/g)].map((m) => m[1]);
-    expect(tables).toHaveLength(3);
-    expect(new Set(tables).size).toBe(1);
-    expect(await readFile(join(wardenRoot, "web/app.css"), "utf8")).toContain(".bandt{table-layout:fixed");
-  });
-
-  it("keeps the Weak column wide enough for the Promote tag", () => {
-    const html = renderApp(state("layers", { layers }));
-    expect(html).toContain("Promote");
-    for (const m of html.matchAll(/<colgroup>(.*?)<\/colgroup>/g)) expect(m[1]).toMatch(/<col style="width:96px"><\/colgroup>|<col style="width:96px">$/);
-  });
-
-  it("wraps long band cells instead of clipping them", async () => {
+  it("wraps long rule identifiers and recorded finding paths", async () => {
     const css = await readFile(join(wardenRoot, "web/app.css"), "utf8");
-    expect(css).toContain(".bandt td{white-space:normal;overflow-wrap:anywhere}");
-    expect(css).not.toMatch(/\.bandt td\{[^}]*overflow:hidden/);
-  });
-
-  it("breaks long identifiers in the Layers band and recorded finding rows while keeping the Median on one line", async () => {
-    const css = await readFile(join(wardenRoot, "web/app.css"), "utf8");
+    expect(css).toContain(".policy-group,.policy-group .modh{overflow-wrap:anywhere}");
     expect(css).toContain("td.path{overflow-wrap:anywhere");
-    expect(css).toContain(".bandt td{white-space:normal;overflow-wrap:anywhere");
-    expect(css).toContain(".bandt td.r{white-space:nowrap}");
     const html = renderApp(state("run", { runs: { project: "example-project", runs: exRuns } }, { view: { run: "r-block", fresh: new Set() } }));
     expect(css).toMatch(/\.finding-row\{[^}]*overflow-wrap:anywhere/);
     expect(html).toContain('<div class="finding-location"><div class="mono">src/cli/view.ts:212</div>');
@@ -746,7 +741,7 @@ loopBreakerRepeats: 3
     }
   });
 
-  it.each(["/", "/runs", "/run", "/failures", "/layers", "/violations", "/determinism", "/tamper"])("serves %s as the page shell", async (path) => {
+  it.each(["/", "/runs", "/run", "/failures", "/packs", "/rule-strength", "/layers", "/violations", "/determinism", "/tamper"])("serves %s as the page shell", async (path) => {
     const res = await get(path);
     expect(res.status).toBe(200);
     expect(res.type).toBe("text/html; charset=utf-8");

@@ -16,7 +16,7 @@ import { runRecords } from "./runs.js";
 import { SAFE_NAME, VIDEO_FILE, recordingOf, videosRoot } from "./video.js";
 import { BANDS, bandCounts, loadView, packViolations } from "./view.js";
 export const LABEL = "warden.daemon";
-const PAGES = new Set(["/", "/runs", "/run", "/failures", "/layers", "/violations", "/determinism", "/tamper"]);
+const PAGES = new Set(["/", "/runs", "/run", "/failures", "/packs", "/rule-strength", "/layers", "/violations", "/determinism", "/tamper"]);
 const ASSETS = {
     "/app.css": "text/css; charset=utf-8",
     "/app.js": "text/javascript; charset=utf-8",
@@ -161,6 +161,7 @@ export async function route(daemon, wardenRoot, url) {
             const promoted = new Set(model.practices.filter((p) => p.promote).map((p) => p.practice));
             return {
                 project,
+                root,
                 bands: BANDS.map((b) => ({ band: b.name.toLowerCase(), kinds: b.kinds.map((kind) => ({ kind, rules: model.layers.filter((r) => r.kind === kind).map((r) => ({ ...r, promote: promoted.has(r.practice) })) })) })),
                 practices: model.practices,
                 packs: model.packList,

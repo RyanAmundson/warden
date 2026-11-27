@@ -12,13 +12,16 @@ let shown;
 const position = () => history.state?.n ?? 0;
 let shownAt;
 const pageOf = (path) => path.replace(/^\/+|\/+$/g, "") || "overview";
+const legacyStrength = (url) => pageOf(url.pathname) === "layers" && url.hash === "#rule-strength";
+const routeAddress = (url) => `${url.pathname}${url.search}${legacyStrength(url) ? url.hash : ""}`;
 const route = (url) => {
   params = new URLSearchParams(url.search);
   page = pageOf(url.pathname);
+  if (page === "layers") page = legacyStrength(url) ? "rule-strength" : "packs";
   project = params.get("project") ?? undefined;
   if (page === "runs" && params.has("run")) page = "run";
-  at = `${url.pathname}${url.search}`;
-  return { run: params.get("run") ?? undefined, outcome: "all", tier: "", file: "", filter: "", paused: false, packMessage: undefined };
+  at = routeAddress(url);
+  return { root: params.get("root") ?? undefined, run: params.get("run") ?? undefined, outcome: "all", tier: "", file: "", filter: "", paused: false, ruleGroup: "strength", packMessage: undefined };
 };
 const root = document.getElementById("app");
 const view = { ...route(location), packDraft: new Map(), fresh: new Set() };
@@ -32,6 +35,7 @@ let lastBeat = Date.now();
 let events;
 let pending;
 let loads = 0;
+let arrived = false;
 
 const api = async (path, options) => {
   const res = await fetch(path, { cache: "no-store", ...options }).catch((cause) => {
@@ -46,12 +50,20 @@ const q = (name) => encodeURIComponent(name);
 const runsFor = (project, limit) => api(`/api/runs?project=${q(project)}&limit=${limit}`);
 const runsOf = async (projects, limit) => Object.fromEntries(await Promise.all(projects.map(async (p) => [p.project, (await runsFor(p.project, limit)).runs])));
 
+const loadPolicy = async (project, edit) => {
+  const query = new URLSearchParams({ project });
+  if (edit) query.set("edit", "1");
+  if (params.has("root")) query.set("root", params.get("root"));
+  return { layers: await api(`/api/layers?${query}`) };
+};
+
 const LOAD = {
   overview: async (ps) => ({ tamper: await api("/api/tamper"), runs: await runsOf(ps, 50) }),
   runs: async (ps, project) => ({ runs: await runsFor(project, 100) }),
   run: async (ps, project) => ({ runs: await api(`/api/runs?project=${q(project)}&limit=100${params.has("run") ? `&run=${q(params.get("run"))}` : "&detail=1"}`) }),
   failures: async (ps, project) => ({ failures: await api(`/api/failures?project=${q(project)}`) }),
-  layers: async (ps, project) => ({ layers: await api(`/api/layers?project=${q(project)}&edit=1${params.has("root") ? `&root=${q(params.get("root"))}` : ""}`) }),
+  packs: (ps, project) => loadPolicy(project, true),
+  "rule-strength": (ps, project) => loadPolicy(project, false),
   violations: async (ps, project) => ({ violations: await api(`/api/violations?project=${q(project)}`), layers: await api(`/api/layers?project=${q(project)}`), runs: await runsFor(project, 50) }),
   determinism: async (ps) => ({ determinism: await api("/api/determinism"), runs: await runsOf(ps, 100) }),
   tamper: async () => ({ tamper: await api("/api/tamper") }),
@@ -97,8 +109,19 @@ const goLost = () => {
 
 // After an in-page navigation, show the new page the way a fresh load would: at the top, with focus on its heading.
 const arrive = () => {
-  if (next === undefined) return;
+  const navigating = next !== undefined;
+  if (arrived && !navigating) return;
+  arrived = true;
   next = undefined;
+  const pack = page === "packs" && location.hash.startsWith("#pack-info-")
+    ? document.getElementById(location.hash.slice(1))
+    : null;
+  if (pack) {
+    pack.focus({ preventScroll: true });
+    pack.scrollIntoView();
+    return;
+  }
+  if (!navigating) return;
   const heading = root.querySelector("h1") ?? root.querySelector("main");
   if (heading) {
     heading.tabIndex = -1;
@@ -125,7 +148,7 @@ const load = async () => {
     if (seq !== loads) return;
     state.health = health;
     state.projects = projects;
-    const needsProject = ["runs", "run", "failures", "layers", "violations"].includes(page);
+    const needsProject = ["runs", "run", "failures", "packs", "rule-strength", "violations"].includes(page);
     if (needsProject && project !== undefined && projects.length > 0 && !projects.some((p) => p.project === project)) {
       state.data = null;
       state.lost = false;
@@ -192,13 +215,13 @@ const go = (url, push = true) => {
   load();
 };
 
-// A hash-only change, such as "See run details", stays on the page being opened.
+// In-page anchors stay on the current page. The old Rule strength bookmark changes pages.
 // Any other Back or Forward opens its address, even while a switch is still loading.
 // The browser makes a new entry with no state for a "#" link, after the one it left, so it is numbered here.
 window.addEventListener("popstate", () => {
   if (typeof history.state?.n !== "number") history.replaceState({ n: last + 1 }, "", location.href);
   last = position();
-  if (`${location.pathname}${location.search}` !== at) go(new URL(location.href), false);
+  if (routeAddress(location) !== at) go(new URL(location.href), false);
 });
 
 const schedule = () => {
@@ -263,11 +286,14 @@ root.addEventListener("submit", async (e) => {
 });
 
 root.addEventListener("click", async (e) => {
-  const link = e.target.closest("a[href]");
-  if (link && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && !link.target && !link.hasAttribute("download")) {
+  const modified = e.metaKey || e.ctrlKey || e.shiftKey || e.altKey;
+  const link = e.target.closest("a[href]") ?? (!modified && !window.getSelection?.()?.toString()
+    ? e.target.closest("tr[data-run-row]")?.querySelector("a.run-link")
+    : null);
+  if (link && e.button === 0 && !modified && !link.target && !link.hasAttribute("download")) {
     const url = new URL(link.href);
-    const here = url.pathname === location.pathname && url.search === location.search;
-    if (url.origin !== location.origin || !(pageOf(url.pathname) in LOAD) || (here && url.hash !== "")) return;
+    const here = routeAddress(url) === routeAddress(location);
+    if (url.origin !== location.origin || !(pageOf(url.pathname) in LOAD || pageOf(url.pathname) === "layers") || (here && url.hash !== "")) return;
     e.preventDefault();
     return go(url);
   }
@@ -279,6 +305,10 @@ root.addEventListener("click", async (e) => {
     el.textContent = "Copied";
     setTimeout(() => (el.textContent = label), 1500);
     return;
+  }
+  if (el.dataset.ruleGroup) {
+    state.view.ruleGroup = el.dataset.ruleGroup;
+    return render();
   }
   if (el.dataset.outcome) {
     state.view.outcome = el.dataset.outcome;
@@ -303,7 +333,7 @@ root.addEventListener("click", async (e) => {
 root.addEventListener("change", (e) => {
   const el = e.target;
   if (el.dataset.nav === "project") go(new URL(`/${state.page}?project=${q(el.value)}`, location.href));
-  if (el.dataset.nav === "checkout") go(new URL(`/layers?project=${q(state.project)}&root=${q(el.value)}`, location.href));
+  if (el.dataset.nav === "checkout") go(new URL(`/${state.page}?project=${q(state.project)}&root=${q(el.value)}`, location.href));
   if (el.dataset.pack !== undefined) {
     const { view } = state;
     const { root: checkout, revision, packs } = state.data.layers.packSettings;
