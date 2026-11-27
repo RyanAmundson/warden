@@ -35,6 +35,7 @@ let up = true;
 let on: Record<string, (e: unknown) => unknown> = {};
 let fetches = 0;
 const heading = { tagName: "H1", tabIndex: 0, focus: vi.fn() };
+const packAnchor = { focus: vi.fn(), scrollIntoView: vi.fn() };
 const origin = "http://127.0.0.1:7419";
 const place = { pathname: "/", search: "", hash: "", origin, get href() { return `${origin}${this.pathname}${this.search}${this.hash}`; }, assign: vi.fn(), reload: vi.fn() };
 const moveTo = (href: string): void => {
@@ -94,9 +95,11 @@ beforeEach(() => {
   vi.stubGlobal("confirm", vi.fn(() => false));
   fetches = 0;
   heading.focus = vi.fn();
+  packAnchor.focus.mockClear();
+  packAnchor.scrollIntoView.mockClear();
   bodies = { "/api/health": health, "/api/projects": { projects: [] }, "/api/tamper": { open: [], recent: [] }, "/api/determinism": { projects: [] } };
   const root = { set innerHTML(v: string) { html = v; }, get innerHTML() { return html; }, addEventListener(name: string, f: (e: unknown) => unknown) { on[name] = f; }, querySelector(sel: string) { return sel === "h1" ? heading : null; }, querySelectorAll() { return []; } };
-  vi.stubGlobal("document", { getElementById: (id: string) => (id === "app" ? root : null), activeElement: null, title: "" });
+  vi.stubGlobal("document", { getElementById: (id: string) => id === "app" ? root : id === "pack-info-core" ? packAnchor : null, activeElement: null, title: "" });
   heading.tabIndex = 0;
   vi.stubGlobal("window", { addEventListener(name: string, f: (e: unknown) => unknown) { on[name] = f; }, scrollTo: vi.fn() });
   vi.stubGlobal("CSS", { escape: (s: string) => s });
@@ -253,7 +256,7 @@ it("shows published audit coverage and keeps checkout-only pages usable for watc
   expect(html).toContain("Automatic audit · origin/main");
   expect(html).toContain("0 watched checkouts");
   expect(html).toContain("The daemon is watching its hooks and records");
-  for (const page of ["layers", "violations"]) {
+  for (const page of ["packs", "rule-strength", "violations"]) {
     const before = fetches;
     await click(`/${page}?project=example-project`);
     expect(fetches - before).toBe(2);
@@ -261,29 +264,70 @@ it("shows published audit coverage and keeps checkout-only pages usable for watc
     expect(html).toContain('href="/failures?project=example-project">Current failures');
     expect(html).toContain('href="/runs?project=example-project">Run history');
   }
-  await click("/layers?project=warden");
-  expect(html).toContain("Layers · warden");
+  await click("/packs?project=warden");
+  expect(html).toContain("Packs · warden");
   expect(html).not.toContain("Watched checkout required");
+});
+
+it("opens run detail from a run row's non-link cell", async () => {
+  bodies["/api/projects"] = warden;
+  bodies["/api/runs"] = { project: "warden", runs: [] };
+  await boot("/runs?project=warden");
+  const link = { href: `${origin}/run?project=warden&run=r1`, target: "", hasAttribute: () => false };
+  const e = { button: 0, preventDefault: vi.fn(), target: {
+    closest: (selector: string) => selector === "tr[data-run-row]" ? { querySelector: () => link } : null,
+  } };
+  await on.click?.(e);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(e.preventDefault).toHaveBeenCalled();
+  expect(document.title).toBe("Run · Warden");
+});
+
+it("opens legacy Layers bookmarks and treats Rule strength as a separate page in history", async () => {
+  bodies["/api/projects"] = warden;
+  bodies["/api/layers"] = layers;
+  await boot("/layers?project=warden#pack-info-core");
+  expect(document.title).toBe("Packs · Warden");
+  expect(packAnchor.scrollIntoView).toHaveBeenCalledTimes(1);
+  history.pushState(null, "", "/layers?project=warden#rule-strength");
+  on.popstate?.({});
+  await vi.advanceTimersByTimeAsync(0);
+  expect(document.title).toBe("Rule strength · Warden");
+  history.back();
+  on.popstate?.({});
+  await vi.advanceTimersByTimeAsync(0);
+  expect(document.title).toBe("Packs · Warden");
+  expect(packAnchor.scrollIntoView).toHaveBeenCalledTimes(2);
+});
+
+it("keeps the selected checkout when switching between policy pages", async () => {
+  bodies["/api/projects"] = warden;
+  bodies["/api/layers"] = layers;
+  await boot("/packs?project=warden&root=%2Fp%2Fw");
+  expect(html).toContain('href="/rule-strength?project=warden&amp;root=%2Fp%2Fw"');
+  await click("/rule-strength?project=warden&root=%2Fp%2Fw");
+  expect(html).toContain('href="/packs?project=warden&amp;root=%2Fp%2Fw"');
+  expect(html).toContain('href="/runs?project=warden"');
 });
 
 it("asks before a switch discards unsaved pack changes, and stays when told to", async () => {
   bodies["/api/projects"] = warden;
   bodies["/api/layers"] = layers;
   await boot("/tamper");
-  await click("/layers?project=warden");
+  await click("/packs?project=warden");
   on.change?.({ target: { dataset: { pack: "custom" }, checked: true } });
   const e = await click("/tamper");
   expect(e.preventDefault).toHaveBeenCalled();
   expect(confirm).toHaveBeenCalledTimes(1);
-  expect(document.title).toBe("Layers · Warden");
-  expect(place.pathname).toBe("/layers");
+  expect(document.title).toBe("Packs · Warden");
+  expect(place.pathname).toBe("/packs");
   history.back();
   on.popstate?.({});
   await vi.advanceTimersByTimeAsync(0);
   expect(confirm).toHaveBeenCalledTimes(2);
   expect(history.go).toHaveBeenLastCalledWith(1);
-  expect(place.pathname).toBe("/layers");
-  expect(document.title).toBe("Layers · Warden");
+  expect(place.pathname).toBe("/packs");
+  expect(document.title).toBe("Packs · Warden");
   vi.mocked(confirm).mockReturnValue(true);
   await click("/tamper");
   expect(document.title).toBe("Tamper · Warden");
@@ -293,13 +337,13 @@ it("asks before a switch discards unsaved pack changes, and stays when told to",
 it("abandons a pending switch when a pack is toggled before it draws", async () => {
   bodies["/api/projects"] = warden;
   bodies["/api/layers"] = layers;
-  await boot("/layers?project=warden");
+  await boot("/packs?project=warden");
   const link = { href: `${origin}/tamper`, target: "", hasAttribute: () => false };
   on.click?.({ button: 0, preventDefault() {}, target: { closest: (sel: string) => (sel === "a[href]" ? link : null) } });
   on.change?.({ target: { dataset: { pack: "custom" }, checked: true } });
   await vi.advanceTimersByTimeAsync(0);
-  expect(place.pathname).toBe("/layers");
-  expect(document.title).toBe("Layers · Warden");
+  expect(place.pathname).toBe("/packs");
+  expect(document.title).toBe("Packs · Warden");
   expect(history.go).toHaveBeenCalledWith(-1);
   expect(history.replaceState).not.toHaveBeenCalled();
 });
@@ -307,7 +351,7 @@ it("abandons a pending switch when a pack is toggled before it draws", async () 
 it("returns to the page on screen in one step after two quick switches and a pack toggle", async () => {
   bodies["/api/projects"] = warden;
   bodies["/api/layers"] = layers;
-  await boot("/layers?project=warden");
+  await boot("/packs?project=warden");
   press("/tamper");
   press("/determinism");
   on.change?.({ target: { dataset: { pack: "custom" }, checked: true } });
@@ -316,8 +360,8 @@ it("returns to the page on screen in one step after two quick switches and a pac
   await vi.advanceTimersByTimeAsync(0);
   expect(history.go).toHaveBeenCalledWith(-2);
   expect(confirm).not.toHaveBeenCalled();
-  expect(place.pathname).toBe("/layers");
-  expect(document.title).toBe("Layers · Warden");
+  expect(place.pathname).toBe("/packs");
+  expect(document.title).toBe("Packs · Warden");
 });
 
 const press = (href: string): void => {
@@ -329,7 +373,7 @@ it("opens the Back address when Back is pressed while a switch is still loading"
   bodies["/api/projects"] = warden;
   bodies["/api/layers"] = layers;
   await boot("/tamper");
-  press("/layers?project=warden");
+  press("/packs?project=warden");
   history.back();
   on.popstate?.({});
   await vi.advanceTimersByTimeAsync(0);
@@ -337,18 +381,18 @@ it("opens the Back address when Back is pressed while a switch is still loading"
   expect(document.title).toBe("Tamper · Warden");
 });
 
-it("keeps the Layers address when a pack is toggled before a Back switch draws", async () => {
+it("keeps the Packs address when a pack is toggled before a Back switch draws", async () => {
   bodies["/api/projects"] = warden;
   bodies["/api/layers"] = layers;
   await boot("/tamper");
-  await click("/layers?project=warden");
-  expect(document.title).toBe("Layers · Warden");
+  await click("/packs?project=warden");
+  expect(document.title).toBe("Packs · Warden");
   history.back();
   on.popstate?.({});
   on.change?.({ target: { dataset: { pack: "custom" }, checked: true } });
   await vi.advanceTimersByTimeAsync(0);
-  expect(`${place.pathname}${place.search}`).toBe("/layers?project=warden");
-  expect(document.title).toBe("Layers · Warden");
+  expect(`${place.pathname}${place.search}`).toBe("/packs?project=warden");
+  expect(document.title).toBe("Packs · Warden");
 });
 
 it("returns from a cancelled two-step Back across a hash entry without reloading", async () => {
@@ -359,21 +403,21 @@ it("returns from a cancelled two-step Back across a hash entry without reloading
   await click("/runs?project=warden");
   history.pushState(null, "", "/runs?project=warden#x");
   on.popstate?.({});
-  await click("/layers?project=warden");
+  await click("/packs?project=warden");
   on.change?.({ target: { dataset: { pack: "custom" }, checked: true } });
   history.go(-2);
   on.popstate?.({});
   await vi.advanceTimersByTimeAsync(0);
   expect(confirm).toHaveBeenCalledTimes(1);
   expect(history.go).toHaveBeenLastCalledWith(2);
-  expect(`${place.pathname}${place.search}`).toBe("/layers?project=warden");
-  expect(document.title).toBe("Layers · Warden");
+  expect(`${place.pathname}${place.search}`).toBe("/packs?project=warden");
+  expect(document.title).toBe("Packs · Warden");
 });
 
 it("discards the pack draft as soon as a switch is confirmed", async () => {
   bodies["/api/projects"] = warden;
   bodies["/api/layers"] = layers;
-  await boot("/layers?project=warden");
+  await boot("/packs?project=warden");
   on.change?.({ target: { dataset: { pack: "custom" }, checked: true } });
   vi.mocked(confirm).mockReturnValue(true);
   press("/tamper");
@@ -414,6 +458,8 @@ it("keeps focus on the heading when a live update redraws the page", async () =>
   Object.assign(document, { activeElement: heading });
   heading.tabIndex = 0;
   heading.focus = vi.fn();
+  packAnchor.focus.mockClear();
+  packAnchor.scrollIntoView.mockClear();
   es.fire("evidence", JSON.stringify({ project: "warden" }));
   await vi.advanceTimersByTimeAsync(300);
   expect(heading.focus).toHaveBeenCalledWith({ preventScroll: true });

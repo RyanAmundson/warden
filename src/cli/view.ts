@@ -5,6 +5,7 @@ import { bundledTools } from "../compiler/lock.js";
 import { RecordError, loadRecords } from "../records/load.js";
 import { type Kind, type Tier, kindRank } from "../records/types.js";
 import { type Evidence, type Step, evidenceProjects, readEvidence } from "../runner/evidence.js";
+import { describeRules } from "../runner/rule-details.js";
 import { MAX_RECORDED_FAILURES } from "./check.js";
 import { listPacks } from "./packs.js";
 import { buildReport } from "./report.js";
@@ -44,11 +45,12 @@ export interface LayerRule {
   median: string;
 }
 
-export async function loadView(root: string, wardenRoot: string): Promise<ViewModel> {
+export async function loadView(root: string, wardenRoot: string) {
   if (!existsSync(join(root, ".warden/config.yaml"))) throw new RecordError(".warden/config.yaml", "", ".warden/config.yaml not found. Next action: run warden init");
   const set = await loadRecords(root, wardenRoot);
   const report = await buildReport(root, wardenRoot);
   const budget = new Map(set.packs.flatMap((p) => p.practices.flatMap((x) => x.guardrails.map((g) => [g.id, g.budgetMs] as const))));
+  const ruleDetails = describeRules(set.packs, new Set(budget.keys()));
   const median = (id: string): string => {
     const row = report.guardrails.find((g) => g.guardrail === id);
     return row?.costShared !== undefined ? "shared" : `${row?.medianMs ?? 0} ms`;
@@ -66,13 +68,13 @@ export async function loadView(root: string, wardenRoot: string): Promise<ViewMo
     now: Date.now(),
     layers: set.packs.flatMap((p) =>
       p.practices.flatMap((x) =>
-        x.guardrails.map((g) => ({ pack: p.id, guardrail: g.id, practice: x.id, kind: g.kind, adapter: g.implementation.slice(0, g.implementation.indexOf(":")), runs: g.runs, median: median(g.id) })),
+        x.guardrails.map((g) => ({ pack: p.id, guardrail: g.id, practice: x.id, name: ruleDetails[g.id]?.name ?? g.id, statement: x.statement, kind: g.kind, adapter: g.implementation.slice(0, g.implementation.indexOf(":")), runs: g.runs, median: median(g.id) })),
       ),
     ),
     practices: report.practices.map(({ practice, strongestKind, promote }) => ({ practice, strongestKind, promote })),
     packList: (await listPacks(root, wardenRoot)).map((r) => ({ id: r.id, source: r.source, on: r.on, rules: Object.values(r.kinds).reduce((a, b) => a + b, 0) })),
     projects: [...new Set([set.config.project, ...evidenceProjects()])].map((project) => ({ project, run: lastRan(project === set.config.project ? evidence : readEvidence(project)) })),
-  };
+  } satisfies ViewModel;
 }
 
 export interface Size {
