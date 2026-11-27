@@ -143,9 +143,9 @@ export function parseConfig(file, text) {
 export function checkCapability(file, value) {
     check(file, validateCapability, value);
 }
-export async function readPack(projectRoot, wardenRoot, id, configFile) {
+export async function readPack(projectRoot, wardenRoot, id, configFile, policyDir = join(projectRoot, ".warden")) {
     const bundled = join(wardenRoot, "packs", id, "pack.yaml");
-    const local = join(projectRoot, ".warden", "packs", id, "pack.yaml");
+    const local = join(policyDir, "packs", id, "pack.yaml");
     const [inBundled, inLocal] = await Promise.all([readText(bundled), readText(local)]);
     if (inBundled !== undefined && inLocal !== undefined) {
         throw new RecordError(configFile, "/packs", `pack ${id} exists in both ${bundled} and ${local}`);
@@ -234,8 +234,8 @@ export const exampleSet = (set) => ({
         }),
     },
 });
-export async function loadRecords(projectRoot, wardenRoot, source) {
-    const configFile = join(projectRoot, ".warden", "config.yaml");
+export async function loadRecords(projectRoot, wardenRoot, source, policyDir = join(projectRoot, ".warden")) {
+    const configFile = join(policyDir, "config.yaml");
     const configText = source ?? await readText(configFile);
     if (configText === undefined)
         throw new RecordError(configFile, "", "not found. Next action: run warden init.");
@@ -249,7 +249,7 @@ export async function loadRecords(projectRoot, wardenRoot, source) {
         seen.add(entry.id);
         if (entry.enabled === false)
             continue;
-        const { pack } = await readPack(projectRoot, wardenRoot, entry.id, configFile);
+        const { pack } = await readPack(projectRoot, wardenRoot, entry.id, configFile, policyDir);
         const settings = resolveSettings(pack, entry.settings, configFile, `/packs/${index}/settings`);
         if (settings !== undefined)
             entry.settings = settings;

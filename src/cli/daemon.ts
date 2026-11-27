@@ -8,9 +8,10 @@ import { dirname, join } from "node:path";
 import { wardenVersion } from "../compiler/compile.js";
 import { RecordError } from "../records/load.js";
 import { type AuditOnlyProject, DEFAULT_PORT, type Daemon, type Detection, HEARTBEAT_MS, STALE_MS, UNWIRED, heartbeatFile, readHeartbeat, startWatching } from "../runner/daemon.js";
+import { enrollmentPolicyDir } from "../runner/enrollment.js";
 import { type Evidence, readEvidence, wardenHome } from "../runner/evidence.js";
 import { PackSettingsError, packSettings, packSettingsBody, savePackSettings } from "./pack-settings.js";
-import { projectFailures, runEvidence } from "./run-evidence.js";
+import { currentRuleDetails, projectFailures, runEvidence } from "./run-evidence.js";
 import { runRecords } from "./runs.js";
 import { SAFE_NAME, VIDEO_FILE, recordingOf, videosRoot } from "./video.js";
 import { BANDS, bandCounts, loadView, packViolations } from "./view.js";
@@ -145,10 +146,16 @@ export async function route(daemon: Daemon, wardenRoot: string, url: URL): Promi
       const limit = Number(url.searchParams.get("limit") ?? "20");
       if (!Number.isInteger(limit) || limit < 1) throw new HttpError(400, `limit must be a positive integer, not ${url.searchParams.get("limit")}`, "pass ?limit= with a positive integer");
       const evidence = projectEvidence(entry);
-      const id = url.searchParams.get("run");
+      const id = url.searchParams.get("run") ?? (url.searchParams.has("detail") ? runRecords(evidence).at(-1)?.run ?? null : null);
       const detail = id === null ? undefined : runEvidence(evidence, id, limit);
       const runs = id === null ? runRecords(evidence).slice(-limit).reverse() : (detail?.runs ?? []);
-      return { project, ...detail, runs: runs.map((run) => {
+      const run = detail?.runs[0];
+      const enrollment = entry.auditOnly;
+      const root = run?.root;
+      const ruleDetails = detail !== undefined && run !== undefined && root !== undefined && (enrollment !== undefined || entry.roots.includes(root))
+        ? await currentRuleDetails(run, detail.findings, project, root, wardenRoot, enrollment && enrollmentPolicyDir(enrollment.dir))
+        : undefined;
+      return { project, ...detail, ...(ruleDetails === undefined ? {} : { currentRuleDetails: ruleDetails }), runs: runs.map((run) => {
         const video = run.run === undefined ? undefined : recordingOf(project, run.run);
         return video === undefined ? run : { ...run, video };
       }) };

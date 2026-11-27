@@ -16,6 +16,7 @@ import { doctor, formatDoctor } from "../runner/doctor.js";
 import { LOOP_TAIL_BYTES, RUN_TOTAL, appendEvidence, readEvidenceTail } from "../runner/evidence.js";
 import { formatFeedback } from "../runner/feedback.js";
 import { recordResolutions } from "../runner/resolutions.js";
+import { describeRules, recordedRuleIds } from "../runner/rule-details.js";
 import { runGuardrails, unknownAdapters, wholeTree } from "../runner/run.js";
 import { findTampering, readBaseLock } from "../runner/tamper.js";
 import { verifyCheckBase } from "./base.js";
@@ -284,6 +285,9 @@ const check = async (opts, live, audit) => {
         const failures = judged?.failures ?? [];
         const feedback = judged === undefined ? undefined : JSON.parse(formatFeedback(failures, judged.set, "json", judged.notes));
         const recorded = (feedback?.failures ?? []).slice(0, MAX_RECORDED_FAILURES).map(({ file, line, guardrail, practice, doThis }) => ({ file, line, guardrail, practice, ...(doThis === undefined ? {} : { doThis }) }));
+        const failedRules = [...new Set(failures.map((v) => v.guardrail))];
+        const killedRules = (judged?.notes.killed ?? []).map((k) => k.guardrail);
+        const ruleIds = recordedRuleIds({ ...judged?.extra, failedRules, killedRules });
         appendEvidence(project, {
             at,
             kind: "cost",
@@ -308,8 +312,9 @@ const check = async (opts, live, audit) => {
             ...(recorded.length === 0 ? {} : { failures: recorded }),
             ...(outcome === "ran" && judged !== undefined ? { kinds: kindCounts(failures, judged.set) } : {}),
             ...(feedback?.next == null ? {} : { next: feedback.next.replace(/\.$/, "") }),
-            ...(failures.length === 0 ? {} : { failedRules: [...new Set(failures.map((v) => v.guardrail))] }),
-            ...((judged?.notes.killed ?? []).length === 0 ? {} : { killedRules: (judged?.notes.killed ?? []).map((k) => k.guardrail) }),
+            ...(failedRules.length === 0 ? {} : { failedRules }),
+            ...(killedRules.length === 0 ? {} : { killedRules }),
+            ...(judged === undefined || ruleIds.size === 0 ? {} : { ruleDetails: describeRules(judged.set.packs, ruleIds) }),
             ...(live.advisory === true ? { mode: "audit" } : {}),
             ...judged?.extra,
         });

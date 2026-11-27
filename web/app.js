@@ -49,7 +49,7 @@ const runsOf = async (projects, limit) => Object.fromEntries(await Promise.all(p
 const LOAD = {
   overview: async (ps) => ({ tamper: await api("/api/tamper"), runs: await runsOf(ps, 50) }),
   runs: async (ps, project) => ({ runs: await runsFor(project, 100) }),
-  run: async (ps, project) => ({ runs: await api(`/api/runs?project=${q(project)}&limit=100${params.has("run") ? `&run=${q(params.get("run"))}` : ""}`) }),
+  run: async (ps, project) => ({ runs: await api(`/api/runs?project=${q(project)}&limit=100${params.has("run") ? `&run=${q(params.get("run"))}` : "&detail=1"}`) }),
   failures: async (ps, project) => ({ failures: await api(`/api/failures?project=${q(project)}`) }),
   layers: async (ps, project) => ({ layers: await api(`/api/layers?project=${q(project)}&edit=1${params.has("root") ? `&root=${q(params.get("root"))}` : ""}`) }),
   violations: async (ps, project) => ({ violations: await api(`/api/violations?project=${q(project)}`), layers: await api(`/api/layers?project=${q(project)}`), runs: await runsFor(project, 50) }),

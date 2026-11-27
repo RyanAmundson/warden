@@ -1,3 +1,5 @@
+import { loadRecords, RecordError } from "../records/load.js";
+import { describeRules, recordedRuleIds } from "../runner/rule-details.js";
 import { runRecords } from "./runs.js";
 const findingKey = ({ guardrail, file }) => JSON.stringify([guardrail, file]);
 const sourceRoot = (run) => run.root ?? run.attemptedRoot;
@@ -41,6 +43,23 @@ export function runEvidence(evidence, id, limit) {
         findings: findingsOf(run, firedByRun(events).get(id) ?? []),
         steps: events.filter((event) => event.kind === "step").map(({ at, step, state, ms }) => ({ at, step, state, ms })),
     };
+}
+export async function currentRuleDetails(run, findings, project, root, wardenRoot, policyDir) {
+    const ids = recordedRuleIds(run, findings);
+    if (ids.size === 0 || run.ruleDetails !== undefined)
+        return undefined;
+    try {
+        const { config, packs } = await loadRecords(root, wardenRoot, undefined, policyDir);
+        if (config.project !== project)
+            return undefined;
+        const details = describeRules(packs, ids);
+        return Object.keys(details).length ? details : undefined;
+    }
+    catch (cause) {
+        if (cause instanceof RecordError || ["ENOENT", "ENOTDIR", "EACCES", "EPERM"].includes(cause.code ?? ""))
+            return undefined;
+        throw cause;
+    }
 }
 export function projectFailures(evidence, roots) {
     const fired = firedByRun(evidence);

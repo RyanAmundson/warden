@@ -150,6 +150,9 @@ input::placeholder{color:#5E6773}
 .checks li.check-fail{background:#FBEDEB}
 .checks li.check-skip{color:var(--muted)}
 .checks-group{padding:10px 14px 0}
+.rule-checks li:not(.check-skip){grid-template-columns:18px minmax(0,2fr) minmax(0,1fr) 64px}
+.rule-detail .muted{margin-top:2px}
+.rule-detail-source{margin:4px 14px 0}
 .tag.mode{color:var(--ink);background:#FFFFFF;border-color:#9AA3AE;font-size:11px;vertical-align:middle}
 .tag.mode.audit{color:var(--amberink);background:var(--amberbg);border-color:var(--amberln)}
 .banner.unwired{margin-bottom:16px}
@@ -208,6 +211,9 @@ input::placeholder{color:#5E6773}
   .findings .finding-labels{display:none}
   .finding-location{grid-column:1/-1}
   .steps li{grid-template-columns:14px minmax(80px,1fr) minmax(0,1fr) max-content}
+  .rule-checks li:not(.check-skip){grid-template-columns:14px minmax(0,1fr) max-content;row-gap:4px}
+  .rule-checks li:not(.check-skip)>:nth-child(2){grid-column:2/-1}
+  .rule-checks li:not(.check-skip)>:nth-child(3){grid-column:2}
 }
 
 @container (width < 580px){
