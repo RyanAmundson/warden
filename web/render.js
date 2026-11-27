@@ -1,13 +1,13 @@
 export const PAGES = { overview: "Overview", runs: "Runs", failures: "Current failures", packs: "Packs", "rule-strength": "Rule strength", violations: "Violations", determinism: "Determinism", tamper: "Tamper" };
 
 const NAV_GROUPS = [
-  ["Activity", ["overview", "runs", "failures"]],
+  ["Activity", ["runs", "failures"]],
   ["Policy", ["packs", "rule-strength"]],
   ["Diagnostics", ["violations", "determinism", "tamper"]],
 ];
 
-const CHECKOUT_PAGES = new Set(["packs", "rule-strength", "violations"]);
-const PROJECT_PAGES = new Set(["runs", "run", "failures", ...CHECKOUT_PAGES]);
+const CHECKOUT_PAGES = new Set(["rule-strength", "violations"]);
+const PROJECT_PAGES = new Set(["runs", "run", "failures", "packs", ...CHECKOUT_PAGES]);
 export const checkoutPageUnavailable = (page, project) => project?.auditOnly && CHECKOUT_PAGES.has(page);
 
 export const STEPS = [
@@ -213,25 +213,27 @@ const sidebar = (state) => {
   const { health, projects = [], page, project, lost, now } = state;
   const nav = NAV_GROUPS.map(([group, pages]) => {
     const links = pages.map((id) => {
-      const current = id === page || (id === "runs" && page === "run");
+      const current = (id === "packs" ? state.view?.packShortcut : id === page) || (id === "runs" && page === "run");
       const root = id === "packs" || id === "rule-strength" ? state.view?.root : undefined;
-      return `<li><a href="${href(id, PROJECT_PAGES.has(id) ? { project, root } : {})}"${current ? ' aria-current="page"' : ""}>${PAGES[id]}</a></li>`;
+      return `<li><a href="${href(id === "packs" ? "configuration" : id, { project, root })}${id === "packs" ? "#pack-config" : ""}"${current ? ' aria-current="page"' : ""}>${PAGES[id]}</a></li>`;
     }).join("");
     return `<div><div class="lbl">${group}</div><ul class="nav" aria-label="${group}">${links}</ul></div>`;
   }).join("");
-  const projectPage = PROJECT_PAGES.has(page) && page !== "run" ? page : "runs";
+  const projectPage = PROJECT_PAGES.has(page) && page !== "run" ? (page === "packs" ? "configuration" : page) : "runs";
   const watched = projects
     .map((p) => {
       const s = projectStatus(p);
       const tone = s.cls === "pass" ? "" : s.cls === "idle" ? " none" : " bad";
-      return `<li><a href="${href(projectPage, { project: p.project })}"${PROJECT_PAGES.has(page) && p.project === project ? ' aria-current="true"' : ""}><span class="project-name">${esc(p.project)}</span><small class="${tone.trim()}">${esc(s.text)}</small></a></li>`;
+      return `<li><a href="${href(projectPage, { project: p.project })}${state.view?.packShortcut ? "#pack-config" : ""}"${PROJECT_PAGES.has(page) && p.project === project ? ' aria-current="true"' : ""}><span class="project-name">${esc(p.project)}</span><small class="${tone.trim()}">${esc(s.text)}</small></a></li>`;
     })
     .join("");
   return `<nav class="side" aria-label="Warden">
 <div class="brand">${BRAND}<span>WARDEN</span></div>
 <div class="daemon${lost ? " lost" : ""}"><b><i aria-hidden="true"></i>${lost ? "Daemon not answering" : "Daemon live"}</b><span id="beat">${esc(beatText(health, now))}</span></div>
-<div class="navs"><div class="nav-menu">${nav}</div>
-<div><div class="lbl">${projects.some((p) => p.auditOnly) ? "Projects" : "Watched projects"}</div><ul class="nav project-nav">${watched === "" ? '<li class="empty-item">None yet</li>' : watched}</ul></div></div>
+<div class="navs">
+<ul class="nav" aria-label="Dashboard"><li><a href="${href("overview", { project })}"${page === "overview" ? ' aria-current="page"' : ""}>Overview</a></li><li><a href="${href("configuration", { project, root: state.view?.root })}"${page === "packs" && !state.view?.packShortcut ? ' aria-current="page"' : ""}>Configuration</a></li></ul>
+<div><div class="lbl">Projects</div><ul class="nav project-nav" aria-label="Projects">${watched === "" ? '<li class="empty-item">None yet</li>' : watched}</ul></div>
+<div class="nav-menu">${nav}</div></div>
 <div class="foot">Warden ${esc(health?.version ?? "")} · evidence in ${esc(homeOf(health?.heartbeatFile))}</div>
 </nav>`;
 };
@@ -349,11 +351,11 @@ export const overviewPage = (state) => {
   const { data, view = {} } = state;
   if (data.projects.length === 0) return emptyState(state.page);
   const all = data.projects.flatMap((p) => (data.runs[p.project] ?? []).map((r) => ({ ...r, project: p.project })));
-  const stream = all.filter((r) => !view.filter || r.project === view.filter).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 25);
+  const stream = all.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 25);
   const now = new Date(state.loadedAt ?? state.now ?? Date.now());
   const auditOnlyCount = data.projects.filter((p) => p.auditOnly).length;
   const coverage = `${plural(data.projects.length - auditOnlyCount, "project")} watched${auditOnlyCount ? ` · ${plural(auditOnlyCount, "published audit")}` : ""}`;
-  const controls = `<label class="lbl" for="ov-proj">Project</label><select id="ov-proj" data-action="filter"><option value="">All projects</option>${data.projects.map((p) => `<option value="${esc(p.project)}"${view.filter === p.project ? " selected" : ""}>${esc(p.project)}</option>`).join("")}</select><button class="btn" type="button" data-action="pause" aria-pressed="${view.paused ? "true" : "false"}">${view.paused ? "Resume live" : "Pause live"}</button>`;
+  const controls = `<button class="btn" type="button" data-action="pause" aria-pressed="${view.paused ? "true" : "false"}">${view.paused ? "Resume live" : "Pause live"}</button>`;
   const cols = ["timeLink", "project", "trigger", "tier", "changed", "outcome", "bar", "ms", "ratchet"];
   return `${header("Overview", `${coverage} · updated ${esc(clock(now.toISOString()))} · ${esc(now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }))}${view.paused ? " · live updates paused" : ""}`, controls)}
 ${data.projects.map(unwiredBanner).join("")}
@@ -614,7 +616,7 @@ const checkoutPicker = (state, project, selected, id, disabled = false) => {
 
 const packCatalog = (state, l) => {
   const settings = l.packSettings;
-  const { packDraft, packSaving, packMessage } = state.view;
+  const { packDraft, packSaving, packMessage, watchSaving } = state.view;
   const packCount = packDraft?.size ?? 0;
   const detailById = new Map(settings?.details?.map((detail) => [detail.id, detail]));
   const groups = [
@@ -625,7 +627,7 @@ const packCatalog = (state, l) => {
     const saved = settings?.packs.find((entry) => entry.id === pack.id);
     const checked = packDraft?.get(pack.id) ?? saved?.on ?? pack.on;
     const status = saved && !saved.required
-      ? `<label class="pack-toggle"><input type="checkbox" id="pack-${esc(pack.id)}" data-pack="${esc(pack.id)}" aria-label="${esc(pack.id)} pack"${checked ? " checked" : ""}${packSaving ? " disabled" : ""}>${checked ? "On" : "Off"}${packDraft?.has(pack.id) ? " (unsaved)" : ""}</label>`
+      ? `<label class="pack-toggle"><input type="checkbox" id="pack-${esc(pack.id)}" data-pack="${esc(pack.id)}" aria-label="${esc(pack.id)} pack"${checked ? " checked" : ""}${packSaving || watchSaving ? " disabled" : ""}>${checked ? "On" : "Off"}${packDraft?.has(pack.id) ? " (unsaved)" : ""}</label>`
       : pack.on ? `<span class="on"><i aria-hidden="true"></i>${saved?.required ? "On · Required" : "On"}</span>` : '<span class="muted">Off</span>';
     return `<li><a href="#pack-info-${encodeURIComponent(pack.id)}">${esc(pack.id)}</a>${status}</li>`;
   };
@@ -638,7 +640,7 @@ ${detail ? packDetailsPanel(detail) : '<p class="pack-no-details muted">Check an
   };
   const options = groups.map((group) => `<section aria-labelledby="${group.id}"><h3 id="${group.id}">${group.title} <span class="muted">${group.packs.length}</span></h3>${group.packs.length ? `<ul>${group.packs.map(packOption).join("")}</ul>` : '<p class="muted">None</p>'}</section>`).join("");
   return `<section class="mod pack-catalog" aria-labelledby="pack-config"><form id="pack-settings">
-<div class="modh"><h2 class="h2" id="pack-config">Pack settings</h2></div>
+<div class="modh"><h2 class="h2" id="pack-config" tabindex="-1">Packs · ${esc(l.project)}</h2></div>
 ${settings ? `<div class="pack-toolbar"><div class="controls">${checkoutPicker(state, l.project, settings.root, "pack-checkout", packSaving || packCount)}</div><p>Changes apply to this checkout. New packs cover all paths. After saving, run <code>warden compile</code> with this Warden build and sign the commit.</p></div>` : ""}
 ${l.packs.length ? `<div class="pack-options">${options}</div>` : '<p class="pad muted">No packs available for this checkout.</p>'}
 ${settings ? `<div class="pack-toolbar pack-actions controls${packCount || packSaving ? " pending" : ""}"><button type="submit" class="btn"${!packCount || packSaving ? " disabled" : ""}>${packSaving ? "Saving…" : "Save pack changes"}</button><button type="button" class="btn" data-action="discard-packs"${!packCount || packSaving ? " disabled" : ""}>Discard changes</button><span role="status">${esc(packMessage ?? (packCount ? plural(packCount, "unsaved change") : ""))}</span></div>` : ""}
@@ -648,11 +650,33 @@ ${settings?.jev ? `<section class="pack-evaluator" aria-labelledby="jev-evaluato
 </section>` : ""}`;
 };
 
+const watchPanel = (state) => {
+  const { projects, watch = { added: [], paused: [] } } = state.data;
+  const { watchSaving, watchRoot, watchMessage, packSaving, packDraft } = state.view ?? {};
+  const blockedByPack = packSaving || packDraft?.size;
+  const disabled = watchSaving || blockedByPack ? ' aria-disabled="true"' : "";
+  const active = new Map(projects.map((entry) => [entry.project, entry]));
+  const names = [...new Set([...active.keys(), ...watch.added.map(({ project }) => project), ...watch.paused])].sort();
+  const rows = names.map((project) => {
+    const entry = active.get(project);
+    const paused = watch.paused.includes(project);
+    const status = paused ? "Stopped" : entry?.auditOnly ? "Published audit" : entry ? "Watching" : "Checkout unavailable";
+    return `<li><strong>${esc(project)}</strong><span class="muted">${status}</span><button type="button" class="btn" id="watch-toggle-${esc(encodeURIComponent(project))}" data-watch="${esc(project)}" data-watching="${paused}" aria-label="${paused ? "Resume watching" : "Stop watching"} ${esc(project)}"${disabled}>${paused ? "Resume watching" : "Stop watching"}</button></li>`;
+  }).join("");
+  return `<section class="mod" aria-labelledby="watch-heading">
+<div class="modh"><h2 class="h2" id="watch-heading">Watched projects</h2></div>
+${rows ? `<ul class="watch-list">${rows}</ul>` : '<p class="pad muted">No watched projects yet.</p>'}
+<form id="watch-add" class="watch-form"><label for="watch-root">Checkout path</label><div class="controls"><input id="watch-root" name="root" required placeholder="/path/to/project" value="${esc(watchRoot ?? "")}"${blockedByPack ? " disabled" : watchSaving ? " readonly" : ""}><button id="watch-submit" class="btn" type="submit"${disabled}>Add project</button></div><p class="muted">Run <code>warden init</code> in a new checkout before adding it. Stopping a watch pauses daemon checks and scheduled audits. Existing runs and checkout hooks stay in place.</p><p role="status">${esc(watchSaving ? "Updating watched projects…" : watchMessage ?? "")}</p></form>
+</section>`;
+};
+
 export const packsPage = (state) => {
   const { data } = state;
-  if (data.projects.length === 0) return emptyState(state.page);
-  const l = data.layers;
-  return `${header(`Packs · ${esc(l.project)}`, "Choose which packs are enabled.")}${packCatalog(state, l)}`;
+  const selected = selectedProject(state);
+  const packContent = data.layersError ? apiError(data.layersError)
+    : data.layers ? packCatalog(state, data.layers)
+    : `<section class="mod" aria-labelledby="pack-config"><div class="modh"><h2 class="h2" id="pack-config" tabindex="-1">Packs${selected ? ` · ${esc(selected.project)}` : ""}</h2></div><p class="pad muted">${selected?.auditOnly ? "Pack settings require a watched checkout. This project uses a published audit." : "Add a project with a watched checkout to manage its packs."}</p></section>`;
+  return `${header("Configuration", "Manage watched projects and packs.")}${watchPanel(state)}${packContent}`;
 };
 
 const ruleRows = (rules, context) => `<ul class="policy-rules">${rules.map((r) => `<li>
@@ -807,7 +831,7 @@ ${history}`;
 
 const RENDER = { overview: overviewPage, runs: runsPage, run: runPage, failures: failuresPage, packs: packsPage, "rule-strength": ruleStrengthPage, violations: violationsPage, determinism: determinismPage, tamper: tamperPage };
 
-export const pageTitle = (state) => `${state.page === "run" ? "Run" : (PAGES[state.page] ?? "Warden")} · Warden`;
+export const pageTitle = (state) => `${state.page === "run" ? "Run" : state.page === "packs" ? "Configuration" : (PAGES[state.page] ?? "Warden")} · Warden`;
 
 export const mainHtml = (state) => {
   if (state.error) return apiError(state.error);

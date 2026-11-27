@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { request } from "node:http";
@@ -153,10 +154,11 @@ describe("pages render from API responses", () => {
     expect(html).toContain('aria-current="page">Overview');
   });
 
-  it("filters the overview stream to one project", () => {
-    const html = renderApp(state("overview", { tamper, runs: { "example-project": exRuns, warden: [run({ run: "w-1", trigger: "manual" })] } }, { view: { filter: "warden", fresh: new Set() } }));
+  it("shows all projects in the overview stream without a project filter", () => {
+    const html = renderApp(state("overview", { tamper, runs: { "example-project": exRuns, warden: [run({ run: "w-1", trigger: "manual" })] } }));
     expect(html).toContain("manual run");
-    expect(html).not.toContain("<td>agent edit</td>");
+    expect(html).toContain('href="/run?project=example-project&amp;run=r-pass"');
+    expect(html).not.toContain('id="ov-proj"');
   });
 
   it("links the full-width history to failures and filters to not passing", () => {
@@ -189,7 +191,7 @@ describe("pages render from API responses", () => {
     const manual = run({ run: "manual", trigger: "manual", at: at(50) });
     const watched = [{ ...projects[0], lastRun: manual, lastMainAudit: boundary, mainAuditRuns: [edit, boundary] }];
     const html = renderApp(state("overview", { projects: watched, tamper, runs: { "example-project": [manual, boundary, edit] } }, { projects: watched }));
-    const sidebar = html.match(/<ul class="nav project-nav">([\s\S]*?)<\/ul>/)?.[1] ?? "";
+    const sidebar = html.match(/<ul class="nav project-nav" aria-label="Projects">([\s\S]*?)<\/ul>/)?.[1] ?? "";
     expect(sidebar).toContain('class="project-name">example-project</span>');
     expect(sidebar).not.toMatch(/Automatic audit|edit ·|boundary ·/);
     expect(html).toContain('href="/run?project=example-project&amp;run=main-edit">Edit audit</a> <span class="tag err">Advisory findings</span>');
@@ -296,9 +298,9 @@ describe("pages render from API responses", () => {
     };
     for (const page of ["runs", "failures", "packs", "rule-strength", "violations"]) {
       const html = renderApp(state(page, data));
-      const sidebar = html.match(/<ul class="nav project-nav">([\s\S]*?)<\/ul>/)?.[1] ?? "";
-      expect(sidebar).toContain(`href="/${page}?project=example-project" aria-current="true"`);
-      expect(sidebar).toContain(`href="/${page}?project=warden"`);
+      const sidebar = html.match(/<ul class="nav project-nav" aria-label="Projects">([\s\S]*?)<\/ul>/)?.[1] ?? "";
+      expect(sidebar).toContain(`href="/${page === "packs" ? "configuration" : page}?project=example-project" aria-current="true"`);
+      expect(sidebar).toContain(`href="/${page === "packs" ? "configuration" : page}?project=warden"`);
       expect(html).not.toContain('data-nav="project"');
     }
   });
@@ -307,7 +309,9 @@ describe("pages render from API responses", () => {
     const packs = renderApp(state("packs", { layers }, { project: "warden" }));
     const strength = renderApp(state("rule-strength", { layers }, { project: "warden" }));
     expect(packs).toContain('aria-label="Policy"');
-    expect(packs).toContain('href="/packs?project=warden" aria-current="page">Packs');
+    expect(packs).toContain('href="/configuration?project=warden" aria-current="page">Configuration');
+    expect(packs).toContain('href="/configuration?project=warden#pack-config">Packs');
+    expect(packs).toContain("Watched projects");
     expect(packs).toContain('href="/rule-strength?project=warden">Rule strength');
     expect(packs).toContain('id="pack-settings"');
     expect(packs).not.toContain("Weakest practice");
@@ -316,6 +320,14 @@ describe("pages render from API responses", () => {
     expect(strength).toContain("<strong>No comments</strong>");
     expect(strength).toContain("Keep source free of comments.");
     expect(strength).toContain("Promote");
+  });
+
+  it("keeps the same watch button identity when a project is stopped", () => {
+    const project = projects[0]?.project;
+    const active = renderApp(state("packs", { layers }));
+    const stopped = renderApp(state("packs", { watch: { added: [], paused: [project] }, projects: projects.slice(1) }, { view: { watchSaving: true } }));
+    expect(active).toContain('id="watch-toggle-example-project" data-watch="example-project" data-watching="false"');
+    expect(stopped).toContain('id="watch-toggle-example-project" data-watch="example-project" data-watching="true" aria-label="Resume watching example-project" aria-disabled="true"');
   });
 
   it("groups rules by their authored practice and shows their strength", () => {
@@ -478,7 +490,7 @@ describe("pages render from API responses", () => {
   });
 
   it("renders the empty state on every project page when nothing is watched", () => {
-    for (const page of ["overview", "runs", "run", "packs", "rule-strength", "violations", "determinism", "tamper"]) {
+    for (const page of ["overview", "runs", "run", "rule-strength", "violations", "determinism", "tamper"]) {
       const html = renderApp({ ...state(page, {}), projects: [], data: { projects: [] } });
       expect(html).toContain("No projects are watched yet");
       expect(nextActions(html)).toEqual(["run warden init in a project"]);
@@ -603,7 +615,8 @@ describe("UI QA fixes", () => {
     const html = renderApp({ ...state("packs", {}), projects: [], data: { projects: [] } });
     expect(html).not.toContain('href="/layers">See the bundled packs');
     expect(html).toContain('<li class="empty-item">None yet</li>');
-    expect(html).toContain('<h1 class="h1">Packs</h1>');
+    expect(html).toContain('<h1 class="h1">Configuration</h1>');
+    expect(html).toContain('id="watch-add"');
   });
 
   it("makes the frozen page inert while the daemon is lost", () => {
@@ -757,7 +770,45 @@ loopBreakerRepeats: 3
     }
   });
 
-  it.each(["/", "/runs", "/run", "/failures", "/packs", "/rule-strength", "/layers", "/violations", "/determinism", "/tamper"])("serves %s as the page shell", async (path) => {
+  it("adds a configured checkout, stops discovery across restarts, and resumes watching it", async () => {
+    const root = join(scratch, "watch-fixture");
+    const project = "watch-fixture";
+    execFileSync("git", ["init", "-q", root]);
+    await mkdir(join(root, ".warden"));
+    const config = await readFile(join(wardenRoot, ".warden", "config.yaml"), "utf8");
+    await writeFile(join(root, ".warden", "config.yaml"), config.replace(/^project: .*$/m, `project: ${project}`));
+
+    const post = (body: object, trusted = true): Promise<Response> => {
+      const origin = `http://127.0.0.1:${served.port}`;
+      return fetch(`${origin}/api/watch`, {
+        method: "POST",
+        headers: { origin: trusted ? origin : "https://example.com", "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    };
+    const roster = async (): Promise<string[]> => JSON.parse((await get("/api/projects")).body).projects.map((entry: { project: string }) => entry.project);
+
+    expect(await roster()).not.toContain(project);
+    expect((await post({ root }, false)).status).toBe(403);
+    expect((await post({ root: "." })).status).toBe(422);
+    const add = await post({ root });
+    expect(add.status).toBe(200);
+    expect(await add.json()).toEqual({ project });
+    expect(await roster()).toContain(project);
+    appendEvidence(project, { at: at(30), kind: "change", root });
+    expect((await post({ project, watching: false })).status).toBe(200);
+    await served.daemon.discover();
+    expect(await roster()).not.toContain(project);
+
+    await served.close();
+    served = await serve(wardenRoot, 0);
+    expect(await roster()).not.toContain(project);
+    expect(JSON.parse((await get("/api/watch")).body)).toMatchObject({ added: [{ project, root }], paused: [project] });
+    expect((await post({ project, watching: true })).status).toBe(200);
+    expect(await roster()).toContain(project);
+  });
+
+  it.each(["/", "/runs", "/run", "/failures", "/configuration", "/packs", "/rule-strength", "/layers", "/violations", "/determinism", "/tamper"])("serves %s as the page shell", async (path) => {
     const res = await get(path);
     expect(res.status).toBe(200);
     expect(res.type).toBe("text/html; charset=utf-8");

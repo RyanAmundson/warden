@@ -97,7 +97,7 @@ beforeEach(() => {
   heading.focus = vi.fn();
   packAnchor.focus.mockClear();
   packAnchor.scrollIntoView.mockClear();
-  bodies = { "/api/health": health, "/api/projects": { projects: [] }, "/api/tamper": { open: [], recent: [] }, "/api/determinism": { projects: [] } };
+  bodies = { "/api/health": health, "/api/projects": { projects: [] }, "/api/tamper": { open: [], recent: [] }, "/api/watch": { added: [], paused: [] }, "/api/determinism": { projects: [] } };
   const root = { set innerHTML(v: string) { html = v; }, get innerHTML() { return html; }, addEventListener(name: string, f: (e: unknown) => unknown) { on[name] = f; }, querySelector(sel: string) { return sel === "h1" ? heading : null; }, querySelectorAll() { return []; } };
   vi.stubGlobal("document", { getElementById: (id: string) => id === "app" ? root : id === "pack-info-core" ? packAnchor : null, activeElement: null, title: "" });
   heading.tabIndex = 0;
@@ -256,7 +256,7 @@ it("shows published audit coverage and keeps checkout-only pages usable for watc
   expect(html).toContain("Automatic audit · origin/main");
   expect(html).toContain("0 watched checkouts");
   expect(html).toContain("The daemon is watching its hooks and records");
-  for (const page of ["packs", "rule-strength", "violations"]) {
+  for (const page of ["rule-strength", "violations"]) {
     const before = fetches;
     await click(`/${page}?project=example-project`);
     expect(fetches - before).toBe(2);
@@ -264,9 +264,33 @@ it("shows published audit coverage and keeps checkout-only pages usable for watc
     expect(html).toContain('href="/failures?project=example-project">Current failures');
     expect(html).toContain('href="/runs?project=example-project">Run history');
   }
+  await click("/configuration?project=example-project");
+  expect(html).toContain("Pack settings require a watched checkout.");
+  expect(html).toContain('data-watch="example-project"');
   await click("/packs?project=warden");
   expect(html).toContain("Packs · warden");
   expect(html).not.toContain("Watched checkout required");
+});
+
+it("adds a watched project from Configuration and selects its packs", async () => {
+  const fetchGet = globalThis.fetch;
+  const created = { project: "added", roots: ["/p/added"], lastRun: null, openAlerts: 0 };
+  const post = vi.fn(async (_path: string, _body: string) => {
+    bodies["/api/projects"] = { projects: [created] };
+    bodies["/api/watch"] = { added: [{ project: "added", root: "/p/added" }], paused: [] };
+    bodies["/api/layers"] = { ...layers, project: "added" };
+    return { ok: true, status: 200, json: async () => ({ project: "added" }) };
+  });
+  vi.stubGlobal("fetch", (path: string, options: RequestInit) =>
+    options.method === "POST" ? post(path, String(options.body)) : fetchGet(path, options));
+  await boot("/configuration");
+  expect(html).toContain('id="watch-add"');
+  on.input?.({ target: { id: "watch-root", value: "/p/added", dataset: {} } });
+  await on.submit?.({ target: { id: "watch-add" }, preventDefault: vi.fn() });
+  expect(post).toHaveBeenCalledWith("/api/watch", JSON.stringify({ root: "/p/added" }));
+  expect(place.search).toBe("?project=added");
+  expect(html).toContain("Watching added.");
+  expect(html).toContain("Packs · added");
 });
 
 it("opens run detail from a run row's non-link cell", async () => {
@@ -287,7 +311,7 @@ it("opens legacy Layers bookmarks and treats Rule strength as a separate page in
   bodies["/api/projects"] = warden;
   bodies["/api/layers"] = layers;
   await boot("/layers?project=warden#pack-info-core");
-  expect(document.title).toBe("Packs · Warden");
+  expect(document.title).toBe("Configuration · Warden");
   expect(packAnchor.scrollIntoView).toHaveBeenCalledTimes(1);
   history.pushState(null, "", "/layers?project=warden#rule-strength");
   on.popstate?.({});
@@ -296,7 +320,7 @@ it("opens legacy Layers bookmarks and treats Rule strength as a separate page in
   history.back();
   on.popstate?.({});
   await vi.advanceTimersByTimeAsync(0);
-  expect(document.title).toBe("Packs · Warden");
+  expect(document.title).toBe("Configuration · Warden");
   expect(packAnchor.scrollIntoView).toHaveBeenCalledTimes(2);
 });
 
@@ -306,7 +330,7 @@ it("keeps the selected checkout when switching between policy pages", async () =
   await boot("/packs?project=warden&root=%2Fp%2Fw");
   expect(html).toContain('href="/rule-strength?project=warden&amp;root=%2Fp%2Fw"');
   await click("/rule-strength?project=warden&root=%2Fp%2Fw");
-  expect(html).toContain('href="/packs?project=warden&amp;root=%2Fp%2Fw"');
+  expect(html).toContain('href="/configuration?project=warden&amp;root=%2Fp%2Fw#pack-config"');
   expect(html).toContain('href="/runs?project=warden"');
 });
 
@@ -319,7 +343,7 @@ it("asks before a switch discards unsaved pack changes, and stays when told to",
   const e = await click("/tamper");
   expect(e.preventDefault).toHaveBeenCalled();
   expect(confirm).toHaveBeenCalledTimes(1);
-  expect(document.title).toBe("Packs · Warden");
+  expect(document.title).toBe("Configuration · Warden");
   expect(place.pathname).toBe("/packs");
   history.back();
   on.popstate?.({});
@@ -327,7 +351,7 @@ it("asks before a switch discards unsaved pack changes, and stays when told to",
   expect(confirm).toHaveBeenCalledTimes(2);
   expect(history.go).toHaveBeenLastCalledWith(1);
   expect(place.pathname).toBe("/packs");
-  expect(document.title).toBe("Packs · Warden");
+  expect(document.title).toBe("Configuration · Warden");
   vi.mocked(confirm).mockReturnValue(true);
   await click("/tamper");
   expect(document.title).toBe("Tamper · Warden");
@@ -343,7 +367,7 @@ it("abandons a pending switch when a pack is toggled before it draws", async () 
   on.change?.({ target: { dataset: { pack: "custom" }, checked: true } });
   await vi.advanceTimersByTimeAsync(0);
   expect(place.pathname).toBe("/packs");
-  expect(document.title).toBe("Packs · Warden");
+  expect(document.title).toBe("Configuration · Warden");
   expect(history.go).toHaveBeenCalledWith(-1);
   expect(history.replaceState).not.toHaveBeenCalled();
 });
@@ -361,7 +385,7 @@ it("returns to the page on screen in one step after two quick switches and a pac
   expect(history.go).toHaveBeenCalledWith(-2);
   expect(confirm).not.toHaveBeenCalled();
   expect(place.pathname).toBe("/packs");
-  expect(document.title).toBe("Packs · Warden");
+  expect(document.title).toBe("Configuration · Warden");
 });
 
 const press = (href: string): void => {
@@ -386,13 +410,13 @@ it("keeps the Packs address when a pack is toggled before a Back switch draws", 
   bodies["/api/layers"] = layers;
   await boot("/tamper");
   await click("/packs?project=warden");
-  expect(document.title).toBe("Packs · Warden");
+  expect(document.title).toBe("Configuration · Warden");
   history.back();
   on.popstate?.({});
   on.change?.({ target: { dataset: { pack: "custom" }, checked: true } });
   await vi.advanceTimersByTimeAsync(0);
   expect(`${place.pathname}${place.search}`).toBe("/packs?project=warden");
-  expect(document.title).toBe("Packs · Warden");
+  expect(document.title).toBe("Configuration · Warden");
 });
 
 it("returns from a cancelled two-step Back across a hash entry without reloading", async () => {
@@ -411,7 +435,7 @@ it("returns from a cancelled two-step Back across a hash entry without reloading
   expect(confirm).toHaveBeenCalledTimes(1);
   expect(history.go).toHaveBeenLastCalledWith(2);
   expect(`${place.pathname}${place.search}`).toBe("/packs?project=warden");
-  expect(document.title).toBe("Packs · Warden");
+  expect(document.title).toBe("Configuration · Warden");
 });
 
 it("discards the pack draft as soon as a switch is confirmed", async () => {
@@ -466,12 +490,12 @@ it("keeps focus on the heading when a live update redraws the page", async () =>
   expect(heading.tabIndex).toBe(-1);
 });
 
-it("switches project from the picker in place", async () => {
+it("switches project from the sidebar in place", async () => {
   bodies["/api/projects"] = { projects: [...warden.projects, { project: "other", roots: ["/p/o"], lastRun: null, openAlerts: 0 }] };
   bodies["/api/runs"] = { project: "warden", runs: [] };
   await boot("/runs?project=warden");
-  on.change?.({ target: { dataset: { nav: "project" }, value: "other" } });
-  await vi.advanceTimersByTimeAsync(0);
+  expect(html).toContain('href="/runs?project=other"');
+  await click("/runs?project=other");
   expect(history.pushState).toHaveBeenCalledWith({ n: 1 }, "", `${origin}/runs?project=other`);
   expect(FakeSource.all).toHaveLength(1);
 });

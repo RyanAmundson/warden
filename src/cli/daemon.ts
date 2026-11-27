@@ -9,8 +9,9 @@ import { wardenVersion } from "../compiler/compile.js";
 import { RecordError } from "../records/load.js";
 import { type AuditOnlyProject, DEFAULT_PORT, type Daemon, type Detection, HEARTBEAT_MS, STALE_MS, UNWIRED, heartbeatFile, readHeartbeat, startWatching } from "../runner/daemon.js";
 import { enrollmentPolicyDir } from "../runner/enrollment.js";
+import { isProjectName } from "../runner/watch-settings.js";
 import { type Evidence, readEvidence, wardenHome } from "../runner/evidence.js";
-import { PackSettingsError, packSettings, packSettingsBody, savePackSettings } from "./pack-settings.js";
+import { PackSettingsError, packSettings, savePackSettings, settingsBody } from "./pack-settings.js";
 import { currentRuleDetails, projectFailures, runEvidence } from "./run-evidence.js";
 import { runRecords } from "./runs.js";
 import { SAFE_NAME, VIDEO_FILE, recordingOf, videosRoot } from "./video.js";
@@ -18,7 +19,7 @@ import { BANDS, bandCounts, loadView, packViolations } from "./view.js";
 
 export const LABEL = "warden.daemon";
 
-const PAGES = new Set(["/", "/runs", "/run", "/failures", "/packs", "/rule-strength", "/layers", "/violations", "/determinism", "/tamper"]);
+const PAGES = new Set(["/", "/runs", "/run", "/failures", "/configuration", "/packs", "/rule-strength", "/layers", "/violations", "/determinism", "/tamper"]);
 
 const ASSETS: Record<string, string> = {
   "/app.css": "text/css; charset=utf-8",
@@ -65,7 +66,9 @@ const projectsOf = (daemon: Daemon): ProjectEntry[] => {
     const repositories = [...repos.values()];
     return { project, roots: repositories.flatMap((r) => r.roots), repositories };
   });
-  for (const auditOnly of daemon.auditOnly.values()) watched.push({ project: auditOnly.project, roots: [], repositories: [], auditOnly });
+  for (const auditOnly of daemon.auditOnly.values()) {
+    if (!daemon.watchSettings.paused.includes(auditOnly.project)) watched.push({ project: auditOnly.project, roots: [], repositories: [], auditOnly });
+  }
   return watched.sort((a, b) => a.project.localeCompare(b.project));
 };
 
@@ -107,11 +110,28 @@ function projectCheckout(daemon: Daemon, entry: ProjectEntry, url: URL): string 
 }
 
 export async function changeProjectPacks(daemon: Daemon, wardenRoot: string, url: URL, request: IncomingMessage): Promise<unknown> {
-  const { revision, changes } = await packSettingsBody(request);
+  const { revision, changes } = await settingsBody(request);
   const entry = projectsOf(daemon).find((project) => project.project === url.searchParams.get("project"));
   if (!entry || !url.searchParams.has("root")) throw new PackSettingsError(404, "Select a watched project and checkout.");
   const root = projectCheckout(daemon, entry, url);
   return savePackSettings(root, entry.project, wardenRoot, revision, changes);
+}
+
+async function changeWatch(daemon: Daemon, request: IncomingMessage): Promise<unknown> {
+  const body = await settingsBody(request);
+  if (typeof body.root === "string" && Object.keys(body).length === 1) {
+    return { project: await daemon.addWatch(body.root.trim()) };
+  }
+  const { project, watching } = body;
+  if (!isProjectName(project) || typeof watching !== "boolean" || Object.keys(body).length !== 2) {
+    throw new HttpError(400, "Enter a checkout path or choose a project and watch status.", "open Configuration in the dashboard");
+  }
+  const { added, paused } = daemon.watchSettings;
+  if (!paused.includes(project) && !added.some((entry) => entry.project === project) && !projectsOf(daemon).some((entry) => entry.project === project)) {
+    throw new HttpError(404, `Warden has no project named ${project}.`, "reload Configuration and try again");
+  }
+  await daemon.setWatch(project, watching);
+  return { project };
 }
 
 export async function route(daemon: Daemon, wardenRoot: string, url: URL): Promise<unknown> {
@@ -128,6 +148,8 @@ export async function route(daemon: Daemon, wardenRoot: string, url: URL): Promi
       const beat = readHeartbeat();
       return { status: "ok", pid: process.pid, version: await wardenVersion(wardenRoot), startedAt: daemon.startedAt, heartbeatAt: beat?.at ?? null, heartbeatFile: heartbeatFile(), intervalMs: HEARTBEAT_MS, staleAfterMs: STALE_MS, port: beat?.port ?? null, projects: projects.length, openAlerts: openAlerts(daemon).length };
     }
+    case "/api/watch":
+      return daemon.watchSettings;
     case "/api/projects":
       return { projects: projects.map((p) => {
         const runs = runRecords(projectEvidence(p));
@@ -222,7 +244,7 @@ export async function route(daemon: Daemon, wardenRoot: string, url: URL): Promi
       return { open: openAlerts(daemon, project, repo), recent: recent.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 50) };
     }
     default:
-      throw new HttpError(404, `no route ${url.pathname}`, "GET /api/health, /api/projects, /api/runs, /api/video, /api/failures, /api/layers, /api/violations, /api/determinism, /api/tamper, or /api/events");
+      throw new HttpError(404, `no route ${url.pathname}`, "GET /api/health, /api/projects, /api/runs, /api/video, /api/failures, /api/layers, /api/violations, /api/determinism, /api/tamper, /api/watch, or /api/events");
   }
 }
 
@@ -260,7 +282,7 @@ function sendFile(req: IncomingMessage, res: ServerResponse, { file, type }: { f
   pipeline(createReadStream(file, { start, end }), res, () => {});
 }
 
-const failure = (cause: Error): HttpError => cause instanceof HttpError ? cause : cause instanceof PackSettingsError ? new HttpError(cause.status, cause.message, "review the pack selection and reload Layers if the checkout changed") : cause instanceof RecordError ? new HttpError(422, cause.message, /Next action: (.*?)\.?$/.exec(cause.message)?.[1] ?? "run warden check in the project and fix what it reports") : new HttpError(500, cause.message, "read the daemon log and fix what it names");
+const failure = (cause: Error): HttpError => cause instanceof HttpError ? cause : cause instanceof PackSettingsError ? new HttpError(cause.status, cause.message, "review the settings in Configuration and try again") : cause instanceof RecordError ? new HttpError(422, cause.message, /Next action: (.*?)\.?$/.exec(cause.message)?.[1] ?? "run warden check in the project and fix what it reports") : new HttpError(500, cause.message, "read the daemon log and fix what it names");
 
 const sendError = (res: ServerResponse, cause: Error): void => {
   const http = failure(cause);
@@ -303,8 +325,9 @@ export async function serve(wardenRoot: string, port: number, opts: { intervalMs
       res.writeHead(403, { "content-type": "application/json" }).end(`${JSON.stringify({ error: `Host ${req.headers.host ?? "(none)"} is not this daemon`, next: `open http://127.0.0.1:${bound}/ directly` })}\n`);
       return;
     }
-    const changes = req.method === "POST" && url.pathname === "/api/packs";
-    if (req.method !== "GET" && !changes) {
+    const writePacks = req.method === "POST" && url.pathname === "/api/packs";
+    const writeWatch = req.method === "POST" && url.pathname === "/api/watch";
+    if (req.method !== "GET" && !writePacks && !writeWatch) {
       res.writeHead(405, { "content-type": "application/json" }).end(`${JSON.stringify({ error: `${req.method} is not supported`, next: "send a GET request" })}\n`);
       return;
     }
@@ -331,7 +354,9 @@ export async function serve(wardenRoot: string, port: number, opts: { intervalMs
       }
       return;
     }
-    const result = changes ? changeProjectPacks(daemon, wardenRoot, url, req) : route(daemon, wardenRoot, url);
+    const result = writePacks ? changeProjectPacks(daemon, wardenRoot, url, req)
+      : writeWatch ? changeWatch(daemon, req)
+      : route(daemon, wardenRoot, url);
     result.then(
       (body) => res.writeHead(200, { "content-type": "application/json" }).end(`${JSON.stringify(body)}\n`),
       (cause: Error) => sendError(res, cause),

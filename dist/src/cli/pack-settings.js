@@ -56,7 +56,7 @@ function parseChanges(value) {
 export async function savePackSettings(root, project, wardenRoot, revision, input) {
     const current = readConfig(root, project);
     if (current.revision !== revision)
-        throw new PackSettingsError(409, "The config changed. Reload Layers before saving again.");
+        throw new PackSettingsError(409, "The config changed. Reload Configuration before saving again.");
     const changes = parseChanges(input);
     const available = new Map((await listPacks(root, wardenRoot, current.text)).map((pack) => [pack.id, pack]));
     const document = parseDocument(current.text);
@@ -85,7 +85,7 @@ export async function savePackSettings(root, project, wardenRoot, revision, inpu
     const temp = join(current.folder, `config.pack-${randomUUID()}.tmp`);
     const latest = readConfig(root, project);
     if (latest.revision !== current.revision || latest.stat.ino !== current.stat.ino || latest.stat.dev !== current.stat.dev) {
-        throw new PackSettingsError(409, "The config changed. Reload Layers before saving again.");
+        throw new PackSettingsError(409, "The config changed. Reload Configuration before saving again.");
     }
     const fd = openSync(temp, "wx", current.stat.mode & 0o777);
     try {
@@ -103,24 +103,24 @@ export async function savePackSettings(root, project, wardenRoot, revision, inpu
     }
     return { changed: true };
 }
-export async function packSettingsBody(request) {
+export async function settingsBody(request) {
     if (request.headers.origin !== `http://${request.headers.host}` || request.headers["content-type"] !== "application/json") {
-        throw new PackSettingsError(403, "Save pack changes from the local Warden dashboard.");
+        throw new PackSettingsError(403, "Save settings from the local Warden dashboard.");
     }
     let body = "";
     for await (const chunk of request.iterator({ destroyOnReturn: false })) {
         body += chunk;
         if (Buffer.byteLength(body) > 64 * 1024)
-            throw new PackSettingsError(413, "The pack change request is too large.");
+            throw new PackSettingsError(413, "The settings request is too large.");
     }
     let value;
     try {
         value = JSON.parse(body);
     }
     catch {
-        throw new PackSettingsError(400, "Send pack changes as JSON.");
+        throw new PackSettingsError(400, "Send settings as JSON.");
     }
     if (value === null || typeof value !== "object" || Array.isArray(value))
-        throw new PackSettingsError(400, "Send a pack settings object.");
+        throw new PackSettingsError(400, "Send a settings object.");
     return value;
 }

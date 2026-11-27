@@ -13,15 +13,16 @@ const position = () => history.state?.n ?? 0;
 let shownAt;
 const pageOf = (path) => path.replace(/^\/+|\/+$/g, "") || "overview";
 const legacyStrength = (url) => pageOf(url.pathname) === "layers" && url.hash === "#rule-strength";
-const routeAddress = (url) => `${url.pathname}${url.search}${legacyStrength(url) ? url.hash : ""}`;
+const routeAddress = (url) => `${url.pathname}${url.search}${legacyStrength(url) || url.hash === "#pack-config" ? url.hash : ""}`;
 const route = (url) => {
   params = new URLSearchParams(url.search);
   page = pageOf(url.pathname);
+  if (page === "configuration") page = "packs";
   if (page === "layers") page = legacyStrength(url) ? "rule-strength" : "packs";
   project = params.get("project") ?? undefined;
   if (page === "runs" && params.has("run")) page = "run";
   at = routeAddress(url);
-  return { root: params.get("root") ?? undefined, run: params.get("run") ?? undefined, outcome: "all", tier: "", file: "", filter: "", paused: false, ruleGroup: "strength", packMessage: undefined };
+  return { root: params.get("root") ?? undefined, run: params.get("run") ?? undefined, outcome: "all", tier: "", file: "", packShortcut: page === "packs" && (url.hash === "#pack-config" || pageOf(url.pathname) === "packs"), paused: false, ruleGroup: "strength", packMessage: undefined };
 };
 const root = document.getElementById("app");
 const view = { ...route(location), packDraft: new Map(), fresh: new Set() };
@@ -57,12 +58,24 @@ const loadPolicy = async (project, edit) => {
   return { layers: await api(`/api/layers?${query}`) };
 };
 
+const loadConfiguration = async (projects, project) => {
+  const watch = api("/api/watch");
+  const policy = project && !projects.find((entry) => entry.project === project)?.auditOnly
+    ? loadPolicy(project, true).catch((cause) => {
+        if (cause.network || cause.status === undefined) throw cause;
+        return { layersError: { status: cause.status, ...cause.body } };
+      })
+    : {};
+  const [settings, packs] = await Promise.all([watch, policy]);
+  return { watch: settings, ...packs };
+};
+
 const LOAD = {
   overview: async (ps) => ({ tamper: await api("/api/tamper"), runs: await runsOf(ps, 50) }),
   runs: async (ps, project) => ({ runs: await runsFor(project, 100) }),
   run: async (ps, project) => ({ runs: await api(`/api/runs?project=${q(project)}&limit=100${params.has("run") ? `&run=${q(params.get("run"))}` : "&detail=1"}`) }),
   failures: async (ps, project) => ({ failures: await api(`/api/failures?project=${q(project)}`) }),
-  packs: (ps, project) => loadPolicy(project, true),
+  packs: loadConfiguration,
   "rule-strength": (ps, project) => loadPolicy(project, false),
   violations: async (ps, project) => ({ violations: await api(`/api/violations?project=${q(project)}`), layers: await api(`/api/layers?project=${q(project)}`), runs: await runsFor(project, 50) }),
   determinism: async (ps) => ({ determinism: await api("/api/determinism"), runs: await runsOf(ps, 100) }),
@@ -113,8 +126,8 @@ const arrive = () => {
   if (arrived && !navigating) return;
   arrived = true;
   next = undefined;
-  const pack = page === "packs" && location.hash.startsWith("#pack-info-")
-    ? document.getElementById(location.hash.slice(1))
+  const pack = page === "packs"
+    ? document.getElementById(location.hash.startsWith("#pack-info-") ? location.hash.slice(1) : view.packShortcut ? "pack-config" : "")
     : null;
   if (pack) {
     pack.focus({ preventScroll: true });
@@ -148,7 +161,7 @@ const load = async () => {
     if (seq !== loads) return;
     state.health = health;
     state.projects = projects;
-    const needsProject = ["runs", "run", "failures", "packs", "rule-strength", "violations"].includes(page);
+    const needsProject = ["runs", "run", "failures", "rule-strength", "violations"].includes(page);
     if (needsProject && project !== undefined && projects.length > 0 && !projects.some((p) => p.project === project)) {
       state.data = null;
       state.lost = false;
@@ -225,7 +238,7 @@ window.addEventListener("popstate", () => {
 });
 
 const schedule = () => {
-  if (state.view.paused || state.view.packDraft.size || state.view.packSaving) return;
+  if (state.view.paused || state.view.packDraft.size || state.view.packSaving || state.view.watchSaving) return;
   clearTimeout(pending);
   pending = setTimeout(load, 250);
 };
@@ -259,11 +272,44 @@ window.addEventListener("beforeunload", (e) => {
   e.returnValue = "";
 });
 
+const changeWatch = async (change) => {
+  if (view.watchSaving || view.packSaving || view.packDraft.size) return;
+  const origin = at;
+  view.watchSaving = true;
+  clearTimeout(pending);
+  render();
+  try {
+    const { project: changed } = await api("/api/watch", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(change),
+    });
+    if ("root" in change) view.watchRoot = "";
+    view.watchMessage = change.watching === false ? `Stopped watching ${changed}.` : `Watching ${changed}.`;
+    if (at === origin && ("root" in change || (change.watching === false && changed === project))) {
+      const url = new URL("/configuration", location.href);
+      if ("root" in change) url.searchParams.set("project", changed);
+      history.replaceState(history.state, "", url.href);
+      Object.assign(view, route(url));
+    }
+    view.watchSaving = false;
+    await load();
+  } catch (error) {
+    view.watchSaving = false;
+    view.watchMessage = error.message;
+    render();
+  }
+};
+
 root.addEventListener("submit", async (e) => {
+  const { view } = state;
+  if (e.target.id === "watch-add") {
+    e.preventDefault();
+    return changeWatch({ root: view.watchRoot ?? "" });
+  }
   if (e.target.id !== "pack-settings") return;
   e.preventDefault();
-  const { view } = state;
-  if (view.packDraft.size === 0 || view.packSaving) return;
+  if (view.packDraft.size === 0 || view.packSaving || view.watchSaving) return;
   view.packSaving = true;
   view.packMessage = undefined;
   render();
@@ -293,12 +339,13 @@ root.addEventListener("click", async (e) => {
   if (link && e.button === 0 && !modified && !link.target && !link.hasAttribute("download")) {
     const url = new URL(link.href);
     const here = routeAddress(url) === routeAddress(location);
-    if (url.origin !== location.origin || !(pageOf(url.pathname) in LOAD || pageOf(url.pathname) === "layers") || (here && url.hash !== "")) return;
+    if (url.origin !== location.origin || !(pageOf(url.pathname) in LOAD || ["layers", "configuration"].includes(pageOf(url.pathname))) || (here && url.hash !== "")) return;
     e.preventDefault();
     return go(url);
   }
   const el = e.target.closest("button");
   if (!el) return;
+  if (el.dataset.watch) return changeWatch({ project: el.dataset.watch, watching: el.dataset.watching === "true" });
   if (el.dataset.copy !== undefined) {
     await navigator.clipboard.writeText(el.dataset.copy);
     const label = el.textContent;
@@ -332,7 +379,10 @@ root.addEventListener("click", async (e) => {
 
 root.addEventListener("change", (e) => {
   const el = e.target;
-  if (el.dataset.nav === "checkout") go(new URL(`/${state.page}?project=${q(state.project)}&root=${q(el.value)}`, location.href));
+  if (el.dataset.nav === "checkout") {
+    const path = state.page === "packs" ? "configuration" : state.page;
+    go(new URL(`/${path}?project=${q(state.project)}&root=${q(el.value)}${view.packShortcut ? "#pack-config" : ""}`, location.href));
+  }
   if (el.dataset.pack !== undefined) {
     const { view } = state;
     const { root: checkout, revision, packs } = state.data.layers.packSettings;
@@ -348,10 +398,6 @@ root.addEventListener("change", (e) => {
     view.packMessage = undefined;
     render();
   }
-  if (el.dataset.action === "filter") {
-    state.view.filter = el.value;
-    render();
-  }
   if (el.dataset.action === "tier") {
     state.view.tier = el.value;
     render();
@@ -359,6 +405,7 @@ root.addEventListener("change", (e) => {
 });
 
 root.addEventListener("input", (e) => {
+  if (e.target.id === "watch-root") view.watchRoot = e.target.value;
   if (e.target.dataset.action !== "file") return;
   state.view.file = e.target.value;
   render();

@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, watch } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { setImmediate as yieldToEvents } from "node:timers/promises";
 import { COMMIT_HOOK, RELEASES } from "../compiler/emit.js";
 import { FIRST_STAMPING, LOCK_PATH, firstLine, olderThan, readLock } from "../compiler/lock.js";
@@ -12,6 +12,7 @@ import { formatFeedback } from "./feedback.js";
 import { auditEnrollment, readEnrollments, recordAuditFailure } from "./enrollment.js";
 import { findTampering } from "./tamper.js";
 import { TRUST_SIGNERS, readTrustFiles, signatureValid, trustDir } from "./trust.js";
+import { readWatchSettings, writeWatchSettings } from "./watch-settings.js";
 export const DEFAULT_PORT = 7419;
 export const HEARTBEAT_MS = 10_000;
 export const STALE_MS = 30_000;
@@ -219,6 +220,12 @@ export function startWatching(opts) {
     const excludedRepos = new Set([...auditOnly.values()].map(({ root }) => commonDir(root)));
     const indexes = new Map();
     const state = readState();
+    let settings = readWatchSettings();
+    const isPaused = (project) => settings.paused.includes(project);
+    const updateSettings = (next) => {
+        writeWatchSettings(next);
+        settings = next;
+    };
     const startedAt = now();
     const debounce = opts.debounceMs ?? 200;
     let stopped = false;
@@ -228,7 +235,7 @@ export function startWatching(opts) {
     const saveState = () => writeAtomic(stateFile(), `${JSON.stringify(state)}\n`);
     let stateChanged = false;
     for (const [root, saved] of Object.entries(state.roots)) {
-        if (!saved.open.some(({ repo }) => excludedRepos.has(repo)))
+        if (!saved.open.some(({ repo, project }) => excludedRepos.has(repo) || isPaused(project)))
             continue;
         delete state.roots[root];
         stateChanged = true;
@@ -384,8 +391,9 @@ export function startWatching(opts) {
         }
         return [...found, ...w.recordFound];
     };
+    const active = (w) => !stopped && projects.get(w.root) === w;
     const schedule = (w) => {
-        if (stopped)
+        if (!active(w))
             return;
         clearTimeout(w.timer);
         w.timer = setTimeout(() => {
@@ -422,10 +430,10 @@ export function startWatching(opts) {
             return w.scanning;
         }
         w.scanning = scanQueue.then(async () => {
-            if (stopped)
+            if (!active(w))
                 return;
             await yieldToEvents();
-            if (stopped)
+            if (!active(w))
                 return;
             if (!existsSync(w.root)) {
                 drop(w);
@@ -436,7 +444,7 @@ export function startWatching(opts) {
                 appendEvidence(w.project, { at: now(), kind: "change", trigger: "daemon", root: w.root, file });
             w.changes.clear();
             const found = await scanRoot(w);
-            if (stopped)
+            if (!active(w))
                 return;
             const current = new Map(found.map((d) => [key(d), d]));
             for (const [k, d] of current) {
@@ -452,7 +460,7 @@ export function startWatching(opts) {
             .catch(report)
             .finally(() => {
             w.scanning = undefined;
-            if (w.again === true && !stopped) {
+            if (w.again === true && active(w)) {
                 w.again = false;
                 void scan(w);
             }
@@ -480,7 +488,7 @@ export function startWatching(opts) {
         if (excludedRepos.has(repo))
             return;
         const project = projectOf(root);
-        if (auditOnly.has(project))
+        if (auditOnly.has(project) || isPaused(project))
             return;
         const w = { root, project, repo, specs: watchSpecs(root, repo), open: new Map(saved.map((d) => [key(d), d])), watchers: new Map(), changes: new Set(), filesChanged: true, recordFound: [] };
         projects.set(root, w);
@@ -513,7 +521,8 @@ export function startWatching(opts) {
         if (stopped)
             return Promise.resolve();
         const remembered = Object.keys(state.roots).filter((r) => existsSync(join(r, ".warden/config.yaml")));
-        watchRoots([...discoverRoots(auditOnly), ...remembered]);
+        const added = settings.added.map(({ root }) => root).filter((root) => existsSync(join(root, ".warden/config.yaml")));
+        watchRoots([...discoverRoots(auditOnly), ...remembered, ...added]);
         const repositories = new Set([...projects.values()].map((w) => w.repo));
         return Promise.all([...repositories].map((repo) => {
             const pending = discoveries.get(repo);
@@ -587,16 +596,16 @@ export function startWatching(opts) {
     }
     const audits = new Map();
     const auditErrors = new Map();
-    const auditAbort = new AbortController();
     const auditEnrolled = () => {
         if (opts.enrolledAudits === false)
             return;
         for (const enrolled of auditOnly.values()) {
-            if (audits.has(enrolled.dir))
+            if (audits.has(enrolled.project) || isPaused(enrolled.project))
                 continue;
-            audits.set(enrolled.dir, auditEnrollment(enrolled, { wardenRoot: opts.wardenRoot, signal: auditAbort.signal })
+            const abort = new AbortController();
+            const done = auditEnrollment(enrolled, { wardenRoot: opts.wardenRoot, signal: abort.signal })
                 .then(() => { auditErrors.delete(enrolled.dir); }, (cause) => {
-                if (auditAbort.signal.aborted)
+                if (abort.signal.aborted)
                     return;
                 const message = cause instanceof Error ? cause.message : String(cause);
                 if (auditErrors.get(enrolled.dir) === message)
@@ -605,8 +614,56 @@ export function startWatching(opts) {
                 report(cause);
                 recordAuditFailure(enrolled, message);
             })
-                .finally(() => { audits.delete(enrolled.dir); }));
+                .finally(() => { audits.delete(enrolled.project); });
+            audits.set(enrolled.project, { done, abort });
         }
+    };
+    const setWatch = async (project, watching) => {
+        const watched = [...projects.values()].filter((checkout) => checkout.project === project);
+        if (watching === !isPaused(project))
+            return;
+        const added = [...settings.added, ...watched.filter(({ root }) => !settings.added.some((entry) => entry.root === root)).map(({ root }) => ({ project, root }))];
+        updateSettings({ added, paused: watching ? settings.paused.filter((name) => name !== project) : [...settings.paused, project] });
+        if (watching) {
+            await discover();
+            auditEnrolled();
+        }
+        else {
+            const audit = audits.get(project);
+            audit?.abort.abort();
+            for (const checkout of watched)
+                drop(checkout);
+            await Promise.all([...watched.map((checkout) => checkout.scanning), audit?.done]);
+            if (!isPaused(project))
+                auditEnrolled();
+        }
+        opts.onEvidence?.(project);
+    };
+    const addWatch = async (path) => {
+        if (!isAbsolute(path) || !existsSync(path))
+            throw new RecordError(path, "", "Choose an existing absolute checkout path.");
+        const root = realpathSync(path);
+        const config = join(root, ".warden", "config.yaml");
+        if (!existsSync(config))
+            throw new RecordError(config, "", "This checkout has no Warden configuration. Next action: run warden init in the checkout before adding it");
+        const gitRoot = () => {
+            try {
+                return gitPath(root, ["rev-parse", "--show-toplevel"]);
+            }
+            catch {
+                return undefined;
+            }
+        };
+        if (gitRoot() !== root)
+            throw new RecordError(root, "", "Choose the root of the Git checkout.");
+        const project = parseConfig(config, readFileSync(config, "utf8")).project;
+        if (excludedRepos.has(commonDir(root)) || auditOnly.has(project))
+            throw new RecordError(root, "", "This project uses a published audit. Resume it from the project list.");
+        const entry = { project, root };
+        updateSettings({ added: [...settings.added.filter((item) => item.root !== root), entry], paused: settings.paused.filter((name) => name !== project) });
+        await discover();
+        opts.onEvidence?.(project);
+        return project;
     };
     tick();
     auditEnrolled();
@@ -619,6 +676,9 @@ export function startWatching(opts) {
         projects,
         auditOnly,
         startedAt,
+        get watchSettings() { return settings; },
+        addWatch,
+        setWatch,
         heartbeat,
         discover,
         rescan: async () => {
@@ -634,8 +694,9 @@ export function startWatching(opts) {
         stop: async () => {
             stopped = true;
             clearInterval(interval);
-            auditAbort.abort();
-            await Promise.all(audits.values());
+            for (const { abort } of audits.values())
+                abort.abort();
+            await Promise.all([...audits.values()].map(({ done }) => done));
             await Promise.all(discoveries.values());
             evidenceWatcher.close();
             for (const w of projects.values()) {
