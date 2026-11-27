@@ -52,8 +52,11 @@ const readEnrollment = (dir) => {
         typeof value.ref !== "string" || !value.ref.startsWith("refs/") ||
         !Array.isArray(value.data) || !value.data.every((glob) => typeof glob === "string" && glob !== "" && !isAbsolute(glob)) ||
         !Array.isArray(value.links) || !value.links.every(relativePath) ||
+        (value.reportAdapters !== undefined && (!Array.isArray(value.reportAdapters) ||
+            new Set(value.reportAdapters).size !== value.reportAdapters.length ||
+            !value.reportAdapters.every((id) => typeof id === "string" && /^[a-z0-9][a-z0-9-]*$/.test(id) && id !== "eslint"))) ||
         (value.initialBase !== undefined && (typeof value.initialBase !== "string" || !COMMIT.test(value.initialBase)))) {
-        throw new RecordError(file, "", "needs a project ID, an absolute repository path, a full ref, data globs, relative links, and an optional full initialBase commit. Next action: run warden enroll migrate again for this repository and ref");
+        throw new RecordError(file, "", "needs a project ID, an absolute repository path, a full ref, data globs, relative links, optional unique report adapter IDs, and an optional full initialBase commit. Next action: run warden enroll migrate again for this repository and ref");
     }
     return value;
 };
@@ -251,13 +254,13 @@ const readCheckpoint = (file) => {
     }
     return checkpoint;
 };
-async function auditTier({ e, commit, base, tier, checkout, snapshotBase, executable, auditHome, packs, signal }) {
+async function runEnrolledTier({ e, commit, base, tier, checkout, snapshotBase, executable, auditHome, packs, signal, rule }) {
     const at = new Date().toISOString();
     const start = performance.now();
     let exit = 0;
     let message;
     try {
-        await exec(process.execPath, [executable, "audit", "--tier", tier, "--base", snapshotBase, "--format", "json"], {
+        await exec(process.execPath, [executable, "audit", "--tier", tier, "--base", snapshotBase, "--format", "json", ...(rule === undefined ? [] : ["--rule", rule])], {
             cwd: checkout,
             env: { ...gitEnv(), WARDEN_HOME: auditHome, GIT_ALLOW_PROTOCOL: "" },
             maxBuffer: 64 * 1024 * 1024,
@@ -286,13 +289,58 @@ async function auditTier({ e, commit, base, tier, checkout, snapshotBase, execut
         message = `Warden produced no ${tier} receipt for ${commit}.`;
     }
     const fallback = { at, kind: "cost", guardrail: RUN_TOTAL, run: randomUUID(), tier, outcome: "error", exit, ms: performance.now() - start, files: 0, next: message };
-    appendEvidence(e.project, {
+    return {
         ...(summary ?? fallback),
         ...(exit !== 0 && summary?.exit !== exit ? { outcome: "error", exit } : {}),
         ...(message === undefined ? {} : { next: summary?.next ?? message }),
         root: e.root, ref: e.ref, commit, base, packs, trigger: TRIGGER,
-    });
-    return exit === 0 && summary !== undefined && (summary.outcome === "ran" || summary.outcome === "empty");
+    };
+}
+export async function checkCandidate(project, checkout, ref, base, candidate, rule, opts) {
+    const summary = { version: 1, project, ref, base, candidate, rule };
+    const { signal } = opts;
+    try {
+        const e = readEnrollments().get(project);
+        if (e === undefined || e.ref !== ref)
+            throw new Error(`No signed enrollment for ${project} at ${ref}.`);
+        const common = (root) => git(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"], signal);
+        if (realpathSync(await common(checkout)) !== realpathSync(await common(e.root))) {
+            throw new Error("The candidate checkout does not share the enrolled repository's Git objects.");
+        }
+        if (!COMMIT.test(base) || !COMMIT.test(candidate) || base.length !== candidate.length || base === candidate) {
+            throw new Error("Supply distinct full base and candidate commit IDs.");
+        }
+        if (await commitAt(checkout, base, signal) !== base || await commitAt(checkout, candidate, signal) !== candidate) {
+            throw new Error("The base and candidate must both name commits.");
+        }
+        await git(checkout, ["merge-base", "--is-ancestor", base, candidate], signal);
+        const invalid = enrollmentTampering(e.dir, opts.signers ?? join(opts.wardenRoot, TRUST_SIGNERS))[0];
+        if (invalid !== undefined)
+            throw new Error(`Invalid enrollment: ${invalid.detail} (${invalid.file}).`);
+        const config = parseConfig(join(e.dir, POLICY, "config.yaml"), readFileSync(join(e.dir, POLICY, "config.yaml"), "utf8"));
+        if (config.project !== project)
+            throw new Error("The signed policy names a different project.");
+        const packs = config.packs.filter((pack) => pack.enabled !== false).map((pack) => pack.id);
+        return await withScratch(async (scratch) => {
+            const isolated = await enrolledCheckout(e, scratch, signal);
+            const { base: snapshotBase } = await isolated.at(candidate, base);
+            if (snapshotBase === undefined)
+                throw new Error("Warden could not read the base snapshot.");
+            const receipt = await runEnrolledTier({
+                e, commit: candidate, base, tier: "boundary", checkout: isolated.checkout, snapshotBase,
+                executable: opts.executable ?? join(opts.wardenRoot, "bin", "warden.js"),
+                auditHome: join(scratch, "evidence"), packs, signal, rule,
+            });
+            if (receipt.exit === 0 && receipt.outcome === "ran" && Object.hasOwn(receipt.rules ?? {}, rule) &&
+                (receipt.result === "pass" || receipt.result === "fail")) {
+                return { ...summary, result: receipt.result, findings: receipt.failures, message: receipt.next };
+            }
+            return { ...summary, result: "error", message: receipt.next ?? `No completed result for ${rule}.` };
+        });
+    }
+    catch (cause) {
+        return { ...summary, result: "error", message: cause.message };
+    }
 }
 export function recordAuditFailure(e, message) {
     const at = new Date().toISOString();
@@ -359,7 +407,9 @@ export async function auditEnrollment(enrolled, opts) {
             checkpoint.tiers[tier] = state;
             writeAtomic(path, `${JSON.stringify(checkpoint)}\n`);
             const snapshotted = await at(commit, base);
-            const done = await auditTier({ e, commit, base, tier, checkout, snapshotBase: snapshotted.base, executable: opts.executable ?? join(opts.wardenRoot, "bin", "warden.js"), auditHome: join(scratch, `evidence-${tier}`), packs, signal });
+            const receipt = await runEnrolledTier({ e, commit, base, tier, checkout, snapshotBase: snapshotted.base, executable: opts.executable ?? join(opts.wardenRoot, "bin", "warden.js"), auditHome: join(scratch, `evidence-${tier}`), packs, signal });
+            appendEvidence(e.project, receipt);
+            const done = receipt.exit === 0 && (receipt.outcome === "ran" || receipt.outcome === "empty");
             if (done) {
                 state.completed = commit;
                 writeAtomic(path, `${JSON.stringify(checkpoint)}\n`);

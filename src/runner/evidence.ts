@@ -19,7 +19,7 @@ export interface Evidence {
   attempts?: string[];
   triggered?: boolean;
   run?: string;
-  report?: { adapter: "eslint"; warnings: number };
+  report?: { adapter: string; warnings: number };
   sourceRun?: string;
   session?: string;
   policy?: string;

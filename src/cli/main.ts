@@ -23,7 +23,7 @@ import { runMutationReview } from "./mutations.js";
 import { runNewCapability } from "./new-capability.js";
 import { runNewUnit } from "./new-unit.js";
 import { runPacks } from "./packs.js";
-import { publishESLint } from "./publish.js";
+import { publishReport } from "./publish.js";
 import { runLearningReport, runReport } from "./report.js";
 import { type ReviewOptions, reviewOptions, runBrief, runReviewConfirm, runReviewHistory, runReviewProposals, runReviewRecord, runReviewRule, runTriage } from "./review.js";
 import { recordClaudeStalls } from "./session-end.js";
@@ -34,6 +34,7 @@ import { MAX_KEYFRAMES, runVideoRecord } from "./video.js";
 import { type Screen, liveView, loadView, plainDeterminism, plainLayers, plainView, plainViolations } from "./view.js";
 import { SKILL_HARNESSES } from "../runner/doctor.js";
 import { wardenHome } from "../runner/evidence.js";
+import { checkCandidate } from "../runner/enrollment.js";
 import { DEFAULT_PORT, isAuditOnlyCheckout } from "../runner/daemon.js";
 
 const oneOf = <T extends string>(command: string, name: string, value: string, allowed: readonly T[]): T => {
@@ -41,7 +42,7 @@ const oneOf = <T extends string>(command: string, name: string, value: string, a
   return value as T;
 };
 
-const NEVER_BLOCK = new Set(["check", "audit", "guard", "session-end", "publish"]);
+const NEVER_BLOCK = new Set(["check", "audit", "guard", "session-end", "publish", "candidate"]);
 const reportVerdict = (verdict: number): void => {
   if (verdict !== 0) process.stderr.write(`Warden reported problems (verdict ${verdict}) and exits 0, because Warden never blocks work.\n`);
   process.exitCode = 0;
@@ -139,6 +140,14 @@ program
       tier: oneOf("audit", "tier", o.tier, ["edit", "boundary"] as const),
       format: oneOf("audit", "format", o.format, ["text", "json"] as const),
     }));
+  });
+
+program.command("candidate <project> <ref> <base> <commit>")
+  .description("report a signed enrollment rule's result for an exact Git candidate")
+  .requiredOption("--rule <id>", "boundary Guardrail to run")
+  .action(async (project: string, ref: string, base: string, commit: string, { rule }: { rule: string }) => {
+    const report = await checkCandidate(project, root(), ref, base, commit, rule, { wardenRoot: findWardenRoot() });
+    process.stdout.write(`${JSON.stringify(report)}\n`);
   });
 
 program
@@ -388,9 +397,10 @@ program
 program.command("publish <adapter> <project> <report>")
   .description("publish an external check report for an enrolled Git ref")
   .option("--snapshot <directory>", "Git checkout that produced the report", process.cwd())
-  .action((adapter: string, project: string, report: string, o: { snapshot: string }) => {
-    if (adapter !== "eslint") throw new Error(`Unsupported report adapter ${adapter}. Next action: run warden publish eslint --help.`);
-    const { run, ref, commit, result, files, kinds } = publishESLint(project, report, o.snapshot, findWardenRoot());
+  .option("--format <format>", "eslint or json; use json for a project-contributed adapter")
+  .action((adapter: string, project: string, report: string, o: { snapshot: string; format?: string }) => {
+    const format = o.format === undefined && adapter === "eslint" ? "eslint" : oneOf("publish", "format", o.format ?? "missing", ["eslint", "json"] as const);
+    const { run, ref, commit, result, files, kinds } = publishReport(format, adapter, project, report, o.snapshot, findWardenRoot());
     process.stdout.write(`${JSON.stringify({ project, run, ref, commit, result, files, findings: kinds?.lint })}\n`);
   });
 

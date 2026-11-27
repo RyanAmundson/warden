@@ -1,22 +1,13 @@
 import { isAbsolute, relative, sep } from "node:path";
 
-export interface ESLintReport {
-  files: string[];
-  warnings: number;
-  findings: { file: string; line: number; rule: string; message: string }[];
-}
+import { type ExternalReport, fields } from "./external-report.js";
 
-type Fields = Record<string, unknown>;
-
-const fields = (value: unknown): Fields =>
-  value !== null && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
-
-export function readESLintReport(raw: unknown, root: string, tracked: ReadonlySet<string>): ESLintReport {
+export function readESLintReport(raw: unknown, root: string, tracked: ReadonlySet<string>): ExternalReport {
   if (!Array.isArray(raw) || raw.length === 0) throw new Error("Expected a nonempty ESLint JSON report.");
 
   const seen = new Set<string>();
   const files: string[] = [];
-  const findings: ESLintReport["findings"] = [];
+  const findings: ExternalReport["findings"] = [];
   let warnings = 0;
 
   for (const entry of raw) {

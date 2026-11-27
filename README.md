@@ -610,6 +610,62 @@ descends from the last audited commit, records an `error` receipt for each
 tier, once per distinct message. Automatic hooks and checkout discovery skip
 every worktree of an enrolled repository.
 
+### Contribute checks and report adapters
+
+Use a project-owned pack to contribute rules. Copy the reviewed pack directory
+to the enrolled `policy/packs/<id>/` and enable it by ID in
+`policy/config.yaml`. The directory contains `pack.yaml` and any implementation
+files required by its adapter. For example, an `fs:<id>/<name>` rule calls the
+named function in the default export of `fs.js`. Give each rule a passing and a
+failing example. Compile and sign the enrollment with the existing commands.
+Future edits to the source project do not update that signed copy.
+
+From any linked checkout of the enrolled repository, run a signed boundary rule
+against two full Git commit IDs:
+
+```sh
+warden candidate example refs/remotes/origin/main "$old" "$new" --rule source-layout
+```
+
+Warden reads the commits even if the checkout is dirty or points at another
+revision. It uses a temporary snapshot and writes no watcher registration,
+daemon checkpoint, or published evidence. It prints a version 1 JSON receipt
+with `project`, `ref`, `base`, `candidate`, `rule`, and `result`. The result is
+`pass`, `fail`, or `error`. A Git hook can require a matching `pass` receipt and
+reject a missing or malformed receipt. Warden exits zero on findings and
+errors. The consumer decides whether to proceed.
+
+To report checks that already run outside Warden, add a unique adapter ID to
+`reportAdapters` in the signed `enrollment.json`. Implement the conversion
+in the project and pass its version 1 JSON to Warden:
+
+```json
+{
+  "version": 1,
+  "commit": "<full Git commit ID>",
+  "files": ["src/index.ts"],
+  "warnings": 0,
+  "findings": [
+    {
+      "file": "src/index.ts",
+      "line": 1,
+      "rule": "example-rule",
+      "message": "Describe the finding and how to fix it."
+    }
+  ]
+}
+```
+
+```sh
+warden publish example-adapter example ./report.json --format json --snapshot /path/to/clean/checkout
+```
+
+The report must name the current enrolled commit. List each checked tracked
+file once and attach findings only to those files. Use line zero for a
+file-level finding. Warden records these reports as partial evidence. The
+project runs the check and produces the report. Warden validates the interchange
+format and displays the evidence.
+
 ### What keeps an enrolled policy from being loosened
 
 The signature replaces the signed `.warden` commits that an in-repo

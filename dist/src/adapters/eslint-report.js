@@ -1,5 +1,5 @@
 import { isAbsolute, relative, sep } from "node:path";
-const fields = (value) => value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
+import { fields } from "./external-report.js";
 export function readESLintReport(raw, root, tracked) {
     if (!Array.isArray(raw) || raw.length === 0)
         throw new Error("Expected a nonempty ESLint JSON report.");

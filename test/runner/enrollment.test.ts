@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { serve } from "../../src/cli/daemon.js";
 import { type Evidence, appendEvidence } from "../../src/runner/evidence.js";
-import { auditEnrollment, enrollmentTampering, migrateEnrollment, readEnrollments, signEnrollment } from "../../src/runner/enrollment.js";
+import { auditEnrollment, checkCandidate, compileEnrollment, enrollmentTampering, migrateEnrollment, readEnrollments, signEnrollment } from "../../src/runner/enrollment.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
 const ref = "refs/remotes/origin/main";
@@ -158,6 +158,65 @@ test("runs the real warden audit against a migrated, signed enrollment", { timeo
   ]);
   expect(receipts().every((r) => r.outcome !== "error" && r.outcome !== "tampered")).toBe(true);
   expect(f.state()).toEqual(before);
+});
+
+test("checks a contributed rule on exact commits without enrolling a linked checkout", { timeout: 120_000 }, async () => {
+  const f = fixture();
+  const base = f.commit("enrolled");
+  const { enrolled } = await enroll(f);
+  const policy = join(enrolled.dir, "policy");
+  const pack = join(policy, "packs", "fixture-pack");
+  mkdirSync(pack, { recursive: true });
+  writeFileSync(join(policy, "config.yaml"), config.replace("packs: []", "packs: [{ id: fixture-pack, paths: [\"**/*\"] }]"));
+  writeFileSync(join(pack, "pack.yaml"), `id: fixture-pack
+layer: 10
+terms: []
+practices:
+  - id: fixture-layout
+    statement: Tracked files must stay out of unclassified folders.
+    terms: []
+    paths: []
+    conflictsWith: []
+    guardrails:
+      - id: fixture-source-layout
+        kind: lint
+        runs: [boundary]
+        budgetMs: 5000
+        version: 1
+        implementation: "fs:fixture-pack/layout"
+        scope: project
+        mustPass: { "src/ok.js": "export {}" }
+        mustFail: { "unexpected/bad.js": "export {}" }
+`);
+  writeFileSync(join(pack, "fs.js"), `export default {
+    layout({ files }) {
+      return files.filter((file) => file.startsWith("unexpected/")).map((file) => ({ file, message: "Unclassified source." }));
+    }
+  };`);
+  await compileEnrollment(enrolled.dir, wardenRoot);
+  signEnrollment(enrolled.dir, f.key);
+  const good = f.commit("valid");
+  mkdirSync(join(f.root, "unexpected"));
+  writeFileSync(join(f.root, "unexpected", "bad.js"), "export {}");
+  const bad = f.commit("invalid");
+  const linked = join(scratch, "linked");
+  f.git("worktree", "add", "--detach", linked, good);
+  writeFileSync(join(linked, "example.txt"), "dirty linked checkout");
+  const opts = { wardenRoot, signers: f.signers };
+  const run = (candidate: string, rule = "fixture-source-layout") =>
+    checkCandidate("sample", linked, ref, base, candidate, rule, opts);
+  expect(await run(good)).toMatchObject({ version: 1, base, candidate: good, result: "pass" });
+  expect(await run(bad)).toMatchObject({ base, candidate: bad, result: "fail", findings: [{ file: "unexpected/bad.js" }] });
+  expect(await run(bad, "unknown-rule")).toMatchObject({ result: "error" });
+  expect(await run("HEAD")).toMatchObject({ result: "error" });
+  expect(await checkCandidate("sample", scratch, ref, base, good, "fixture-source-layout", opts)).toMatchObject({ result: "error" });
+  expect(await checkCandidate("sample", linked, ref, base, good, "fixture-source-layout", { ...opts, executable: "/missing-warden" })).toMatchObject({ result: "error" });
+  expect(existsSync(join(enrolled.dir, "checkpoint.json"))).toBe(false);
+  expect(existsSync(join(process.env.WARDEN_HOME as string, "evidence"))).toBe(false);
+  expect(readFileSync(join(linked, "example.txt"), "utf8")).toBe("dirty linked checkout");
+  expect(f.git("rev-parse", ref)).toBe(base);
+  writeFileSync(join(pack, "fs.js"), "export default { layout: () => [] };");
+  expect(await run(bad)).toMatchObject({ result: "error", message: expect.stringContaining("Invalid enrollment") });
 });
 
 test("reports a tampered enrollment instead of auditing it, and accepts a lowered baseline without a new signature", { timeout: 120_000 }, async () => {
@@ -359,3 +418,31 @@ test("publishes validated ESLint evidence to the existing project and notifies i
     await served.close();
   }
 }, 120_000);
+
+
+test("accepts only registered project adapters using the versioned report format", async () => {
+  const { publishReport } = await import("../../src/cli/publish.js");
+  const f = fixture();
+  const commit = f.commit("enrolled");
+  const { enrolled } = await enroll(f);
+  const manifest = join(enrolled.dir, "enrollment.json");
+  writeFileSync(manifest, JSON.stringify({ ...JSON.parse(readFileSync(manifest, "utf8")), reportAdapters: ["project-check"] }));
+  signEnrollment(enrolled.dir, f.key);
+  const signersRoot = join(scratch, "warden");
+  mkdirSync(signersRoot);
+  writeFileSync(join(signersRoot, "trust_signers"), readFileSync(f.signers));
+  const report = join(scratch, "project-report.json");
+  const output = { version: 1, commit, files: ["example.txt"], warnings: 0, findings: [
+    { file: "example.txt", line: 1, rule: "project-rule", message: "Fix this." },
+  ] };
+  writeFileSync(report, JSON.stringify(output));
+  const publish = (adapter: string) => publishReport("json", adapter, "sample", report, f.root, signersRoot);
+  expect(() => publish(" unregistered ")).toThrow("not registered");
+  expect(publish("project-check")).toMatchObject({ commit, result: "fail", report: { adapter: "project-check", warnings: 0 } });
+  writeFileSync(report, JSON.stringify({ ...output, files: ["plugin/contracts.lock.json"] }));
+  expect(() => publish("project-check")).toThrow("Each finding needs a checked file");
+  writeFileSync(report, JSON.stringify({ ...output, commit: "0".repeat(40) }));
+  expect(() => publish("project-check")).toThrow("does not match the checked snapshot");
+  writeFileSync(report, JSON.stringify({ ...output, files: [] }));
+  expect(() => publish("project-check")).toThrow("version 1 Warden report");
+});
