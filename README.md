@@ -544,6 +544,30 @@ the baseline, Git index, and commit approval records intact. The daemon
 continues to record commit-hook and unchecked-commit alerts for enforcement
 through `warden check`.
 
+## Check for blocking calls
+
+Enable the `performance` pack for code that runs on a latency-sensitive
+event loop, such as Electron main and the services it calls. Add this entry
+under `packs` in `.warden/config.yaml` and run `warden compile`.
+
+```yaml
+  - id: performance
+    paths: ["src/main/**", "src/settings/**"]
+```
+
+The pack reports direct synchronous Node filesystem and subprocess calls,
+including aliased named imports, module members, and direct CommonJS bindings.
+Tests and stories are excluded. Scope the paths to the code that runs on the
+event loop. A worker or a command-line script can have different requirements.
+The check uses file-local bindings. Use a live responsiveness test to measure
+event-loop delays and input latency.
+
+Run an advisory check on the paths you want to inspect.
+
+```sh
+warden audit --rule performance-blocking-node-calls --format json src/main
+```
+
 ## Enroll a project from outside
 
 The daemon can audit a repository's published ref without reading policy from

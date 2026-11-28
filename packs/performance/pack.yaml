@@ -1,0 +1,29 @@
+id: performance
+layer: 18
+terms: []
+practices:
+  - id: performance-responsive-event-loop
+    statement: Keep synchronous filesystem and subprocess calls off latency-sensitive event loops.
+    terms: []
+    paths: ["!**/{*.test.*,*.spec.*,*.stories.*,test/**,tests/**,__tests__/**,e2e/**}"]
+    conflictsWith: []
+    guardrails:
+      - id: performance-blocking-node-calls
+        kind: lint
+        runs: [edit, commit, boundary]
+        budgetMs: 5000
+        version: 1
+        implementation: "eslint:performance/blocking-node-calls"
+        mustFail: |
+          import { execFileSync as runGit } from "node:child_process";
+          import fs from "node:fs";
+          runGit("git", ["ls-files"]);
+          fs.fsyncSync(7);
+        mustPass: |
+          import { execFile } from "node:child_process";
+          import { open } from "node:fs/promises";
+          execFile("git", ["ls-files"]);
+          export async function flush(path: string): Promise<void> {
+            const file = await open(path, "r");
+            try { await file.sync(); } finally { await file.close(); }
+          }
