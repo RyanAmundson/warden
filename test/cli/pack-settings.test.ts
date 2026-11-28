@@ -6,6 +6,7 @@ import { expect, it, vi } from "vitest";
 import { serve } from "../../src/cli/daemon.js";
 import { loadRecords, parseConfig } from "../../src/records/load.js";
 import { type Watched } from "../../src/runner/daemon.js";
+import { appendEvidence } from "../../src/runner/evidence.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
 const configSource = (project: string): string => `# Keep this project comment
@@ -20,7 +21,7 @@ tierBudgetMs: { edit: 1000, commit: 5000, boundary: 10000 }
 loopBreakerRepeats: 3
 `;
 
-it("saves pack toggles only to the selected checkout and retains coverage on re-enable", async () => {
+it("saves project pack toggles to the primary repository, retains coverage, and reports recorded results", async () => {
   const scratch = realpathSync(await mkdtemp(join(tmpdir(), "warden-pack-settings-")));
   vi.stubEnv("WARDEN_HOME", join(scratch, "warden-home"));
   const served = await serve(wardenRoot, 0);
@@ -32,23 +33,33 @@ it("saves pack toggles only to the selected checkout and retains coverage on re-
       const project = checkout === other ? "other" : "example";
       await mkdir(join(checkout, ".warden"), { recursive: true });
       await writeFile(join(checkout, ".warden", "config.yaml"), configSource(project));
-      served.daemon.projects.set(checkout, { root: checkout, project, repo: join(root, ".git"), open: new Map(), watchers: new Map() } as unknown as Watched);
+      served.daemon.projects.set(checkout, { root: checkout, project, repo: checkout === other ? join(scratch, "git-metadata", "other.git") : join(root, ".git"), open: new Map(), watchers: new Map() } as unknown as Watched);
     }
     const origin = `http://127.0.0.1:${served.port}`;
     const settings = async () => {
-      const res = await fetch(`${origin}/api/layers?project=example&edit=1&root=${encodeURIComponent(root)}`);
+      const res = await fetch(`${origin}/api/project-checks?project=example`);
       expect(res.status).toBe(200);
-      return (await res.json()).packSettings;
+      return res.json();
     };
-    const save = (changes: { id: string; enabled: boolean }[], revision: string, checkout = root, requestOrigin = origin) =>
-      fetch(`${origin}/api/packs?project=example&root=${encodeURIComponent(checkout)}`, {
+    const save = (changes: { id: string; enabled: boolean }[], revision: string, checkout: string | undefined = undefined, requestOrigin = origin) =>
+      fetch(`${origin}/api/packs?project=example${checkout === undefined ? "" : `&root=${encodeURIComponent(checkout)}`}`, {
         method: "POST",
         headers: { origin: requestOrigin, "content-type": "application/json" },
         body: JSON.stringify({ revision, changes }),
       });
     const file = join(root, ".warden", "config.yaml");
+    const at = "2026-11-27T00:00:00.000Z";
+    appendEvidence("example", { at, kind: "cost", guardrail: "run", outcome: "ran", run: "test-run", root, rules: { "warden-no-comments": 1 }, failedRules: ["warden-no-comments"] });
+    appendEvidence("example", { at: "2026-11-27T00:01:00.000Z", kind: "cost", guardrail: "run", outcome: "ran", run: "unrelated-run", root, cachedRules: ["warden-no-comments", "not-observed"] });
     const before = await settings();
+    expect(before.results).not.toHaveProperty("not-observed");
+    expect(before).not.toHaveProperty("root");
+    expect(before.results).toMatchObject({ "warden-no-comments": { at, run: "test-run", status: "Findings" } });
+    expect(before.bands.flatMap(({ kinds }: { kinds: string[] }) => kinds)).toContain("lint");
     expect(await readFile(file, "utf8")).toBe(configSource("example"));
+    const separateGitDir = await fetch(`${origin}/api/project-checks?project=other`);
+    expect(separateGitDir.status).toBe(200);
+    expect(await separateGitDir.json()).toMatchObject({ packs: expect.arrayContaining([{ id: "review", on: true, required: false }]) });
     const disable = [{ id: "review", enabled: false }];
     expect((await save(disable, before.revision, other)).status).toBe(404);
     expect((await save(disable, before.revision, root, "http://localhost:8888")).status).toBe(403);

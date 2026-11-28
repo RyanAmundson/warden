@@ -17,12 +17,15 @@ const routeAddress = (url) => `${url.pathname}${url.search}${legacyStrength(url)
 const route = (url) => {
   params = new URLSearchParams(url.search);
   page = pageOf(url.pathname);
-  if (page === "configuration") page = "packs";
+  if (page === "configuration" && url.hash === "#pack-config" && params.has("project")) {
+    page = "project";
+    params.set("tab", "checks");
+  }
   if (page === "layers") page = legacyStrength(url) ? "rule-strength" : "packs";
   project = params.get("project") ?? undefined;
   if (page === "runs" && params.has("run")) page = "run";
   at = routeAddress(url);
-  return { root: params.get("root") ?? undefined, run: params.get("run") ?? undefined, outcome: "all", tier: "", file: "", packShortcut: page === "packs" && (url.hash === "#pack-config" || pageOf(url.pathname) === "packs"), paused: false, ruleGroup: "strength", packMessage: undefined };
+  return { tab: params.get("tab"), alertIndex: 0, root: params.get("root") ?? undefined, run: params.get("run") ?? undefined, outcome: "all", tier: "", file: "", packShortcut: page === "packs" && (url.hash === "#pack-config" || pageOf(url.pathname) === "packs"), paused: false, ruleGroup: "strength", packMessage: undefined };
 };
 const root = document.getElementById("app");
 const view = { ...route(location), packDraft: new Map(), fresh: new Set() };
@@ -67,15 +70,29 @@ const loadConfiguration = async (projects, project) => {
         return { layersError: { status: cause.status, ...cause.body } };
       })
     : {};
-  const review = audit ? api(`/api/enrollment-signing?project=${q(project)}`).catch((cause) => ({
-    error: cause.message,
-  })) : undefined;
-  const [settings, packs, signing] = await Promise.all([watch, policy, review]);
-  return { watch: settings, signing, ...packs };
+  const [settings, packs] = await Promise.all([watch, policy]);
+  return { watch: settings, ...packs };
 };
 
 const LOAD = {
   overview: async (ps) => ({ tamper: await api("/api/tamper"), runs: await runsOf(ps, 50) }),
+  projects: async () => ({}),
+  configuration: async () => ({ watch: await api("/api/watch") }),
+  about: async () => ({}),
+  project: async (ps, project) => {
+    const query = `project=${q(project)}`;
+    const editing = params.get("tab") === "checks";
+    const signed = editing && ps.some((entry) => entry.project === project && entry.auditOnly);
+    const [checks, alerts, signing] = await Promise.all([
+      api(`/api/project-checks?${query}`).then((checks) => ({ checks })).catch((cause) => {
+        if (cause.status === undefined) throw cause;
+        return { checksError: { status: cause.status, ...cause.body } };
+      }),
+      editing ? undefined : api(`/api/project-alerts?${query}`).catch((cause) => ({ error: cause.message })),
+      signed ? api(`/api/enrollment-signing?${query}`).catch((cause) => ({ error: cause.message })) : undefined,
+    ]);
+    return { ...checks, alerts, signing };
+  },
   runs: async (ps, project) => ({ runs: await runsFor(project, 100) }),
   run: async (ps, project) => ({ runs: await api(`/api/runs?project=${q(project)}&limit=100${params.has("run") ? `&run=${q(params.get("run"))}` : "&detail=1"}`) }),
   failures: async (ps, project) => ({ failures: await api(`/api/failures?project=${q(project)}`) }),
@@ -132,7 +149,7 @@ const arrive = () => {
   next = undefined;
   const pack = page === "packs"
     ? document.getElementById(location.hash.startsWith("#pack-info-") ? location.hash.slice(1) : view.packShortcut ? "pack-config" : "")
-    : null;
+    : location.hash === "#project-alerts" ? document.getElementById("project-alerts") : null;
   if (pack) {
     pack.focus({ preventScroll: true });
     pack.scrollIntoView();
@@ -165,14 +182,15 @@ const load = async () => {
     if (seq !== loads) return;
     state.health = health;
     state.projects = projects;
-    const needsProject = ["runs", "run", "failures", "rule-strength", "violations"].includes(page);
-    if (needsProject && project !== undefined && projects.length > 0 && !projects.some((p) => p.project === project)) {
+    const needsProject = ["project", "runs", "run", "failures", "rule-strength", "violations"].includes(page);
+    if (needsProject && project !== undefined && (page === "project" || projects.length > 0) && !projects.some((p) => p.project === project)) {
       state.data = null;
       state.lost = false;
       state.error = { status: 404, error: `The daemon has no project named ${project}`, next: "pick a project in the sidebar" };
       return commit();
     }
-    if (project === undefined || !projects.some((p) => p.project === project)) project = projects[0]?.project;
+    if (["overview", "projects", "configuration", "about"].includes(page)) project = undefined;
+    else if (page !== "project" && (project === undefined || !projects.some((p) => p.project === project))) project = projects[0]?.project;
     const selected = projects.find((p) => p.project === project);
     const unavailable = (needsProject && project === undefined) || checkoutPageUnavailable(page, selected);
     const loaded = unavailable ? {} : await (LOAD[page] ?? LOAD.overview)(projects, project);
@@ -182,7 +200,7 @@ const load = async () => {
     if (view.packDraft.size && !view.packSaving &&
         (view.packTarget.project !== project || view.packTarget.root !== loaded.layers?.packSettings?.root)) {
       view.packDraft.clear();
-      view.packMessage = "The selected checkout is unavailable. Your unsaved pack changes were discarded.";
+      view.packMessage = "The selected project policy is unavailable. Your unsaved pack changes were discarded.";
     }
     const ids = runIds(data);
     state.view.fresh = new Set(seen.size === 0 ? [] : ids.filter((id) => !seen.has(id)));
@@ -242,7 +260,7 @@ window.addEventListener("popstate", () => {
 });
 
 const schedule = () => {
-  if (page === "packs" && state.projects.some((entry) => entry.project === project && entry.auditOnly)) return;
+  if (page === "project" && params.get("tab") === "checks" && state.projects.some((entry) => entry.project === project && entry.auditOnly)) return;
   if (state.view.paused || state.view.packDraft.size || state.view.packSaving || state.view.watchSaving) return;
   clearTimeout(pending);
   pending = setTimeout(load, 250);
@@ -279,24 +297,16 @@ window.addEventListener("beforeunload", (e) => {
 
 const changeWatch = async (change) => {
   if (view.watchSaving || view.packSaving || view.packDraft.size) return;
-  const origin = at;
   view.watchSaving = true;
   clearTimeout(pending);
   render();
   try {
-    const { project: changed } = await api("/api/watch", {
+    const { project: changed, cancelled } = await api("/api/watch", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(change),
     });
-    if ("root" in change) view.watchRoot = "";
-    view.watchMessage = change.watching === false ? `Stopped watching ${changed}.` : `Watching ${changed}.`;
-    if (at === origin && ("root" in change || (change.watching === false && changed === project))) {
-      const url = new URL("/configuration", location.href);
-      if ("root" in change) url.searchParams.set("project", changed);
-      history.replaceState(history.state, "", url.href);
-      Object.assign(view, route(url));
-    }
+    view.watchMessage = cancelled ? undefined : change.watching === false ? `Stopped watching ${changed}.` : `Watching ${changed}.`;
     view.watchSaving = false;
     await load();
   } catch (error) {
@@ -311,8 +321,9 @@ root.addEventListener("submit", async (e) => {
   if (e.target.id === "enrollment-signing") {
     e.preventDefault();
     const selected = state.project;
-    const stage = state.data.signing?.stage;
-    if (!stage?.canSign || stage.verified || view.signingProject) return;
+    const onChecks = () => state.page === "project" && view.tab === "checks" && state.project === selected;
+    const stage = state.data?.signing?.stage;
+    if (!onChecks() || !stage?.canSign || stage.verified || view.signingProject) return;
     const { revision } = stage;
     view.signingProject = selected;
     view.signingNotice = undefined;
@@ -323,9 +334,9 @@ root.addEventListener("submit", async (e) => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ revision }),
       });
-      if (state.page === "packs" && state.project === selected) state.data.signing = signing;
+      if (onChecks()) state.data.signing = signing;
     } catch (error) {
-      if (state.page === "packs" && state.project === selected) {
+      if (onChecks()) {
         view.signingNotice = { project: selected, message: error.message };
         await load();
       }
@@ -337,7 +348,7 @@ root.addEventListener("submit", async (e) => {
   }
   if (e.target.id === "watch-add") {
     e.preventDefault();
-    return changeWatch({ root: view.watchRoot ?? "" });
+    return changeWatch({ choose: true });
   }
   if (e.target.id !== "pack-settings") return;
   e.preventDefault();
@@ -347,13 +358,25 @@ root.addEventListener("submit", async (e) => {
   render();
   try {
     const { project, root: checkout, revision } = view.packTarget;
-    await api(`/api/packs?project=${q(project)}&root=${q(checkout)}`, {
+    const query = new URLSearchParams({ project });
+    if (checkout !== undefined) query.set("root", checkout);
+    const saved = await api(`/api/packs?${query}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ revision, changes: [...view.packDraft].map(([id, enabled]) => ({ id, enabled })) }),
     });
+    if (saved.config !== undefined) {
+      const url = URL.createObjectURL(new Blob([saved.config], { type: "application/yaml" }));
+      const download = document.createElement("a");
+      download.href = url;
+      download.download = `${project}-config.yaml`;
+      download.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
     view.packDraft.clear();
-    view.packMessage = "Config saved. Run warden compile in this checkout, then sign the commit.";
+    view.packMessage = saved.config !== undefined
+      ? "Draft downloaded. The policy owner must compile and sign the enrollment to apply it."
+      : saved.changed ? "Pack settings saved. Run warden compile and sign the policy commit in the project repository." : "No changes to save.";
     view.packSaving = false;
     await load();
   } catch (error) {
@@ -377,6 +400,10 @@ root.addEventListener("click", async (e) => {
   }
   const el = e.target.closest("button");
   if (!el) return;
+  if (el.dataset.alert) {
+    view.alertIndex = Number(el.dataset.index);
+    return render();
+  }
   if (el.dataset.watch) return changeWatch({ project: el.dataset.watch, watching: el.dataset.watching === "true" });
   if (el.dataset.copy !== undefined) {
     await navigator.clipboard.writeText(el.dataset.copy);
@@ -417,7 +444,7 @@ root.addEventListener("change", (e) => {
   }
   if (el.dataset.pack !== undefined) {
     const { view } = state;
-    const { root: checkout, revision, packs } = state.data.layers.packSettings;
+    const { root: checkout, revision, packs } = state.data.checks ?? state.data.layers.packSettings;
     if (view.packDraft.size === 0) {
       if (next !== undefined) stay();
       clearTimeout(pending);
@@ -437,7 +464,6 @@ root.addEventListener("change", (e) => {
 });
 
 root.addEventListener("input", (e) => {
-  if (e.target.id === "watch-root") view.watchRoot = e.target.value;
   if (e.target.dataset.action !== "file") return;
   state.view.file = e.target.value;
   render();

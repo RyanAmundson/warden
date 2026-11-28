@@ -1,5 +1,6 @@
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { createReadStream, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { promisify } from "node:util";
 import { pipeline } from "node:stream";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -12,13 +13,13 @@ import { enrollmentPolicyDir } from "../runner/enrollment.js";
 import { isProjectName } from "../runner/watch-settings.js";
 import { readEvidence, wardenHome } from "../runner/evidence.js";
 import { enrollmentReview, signReviewedEnrollment } from "./enrollment-signing.js";
-import { PackSettingsError, packSettings, savePackSettings, settingsBody } from "./pack-settings.js";
+import { PackSettingsError, draftPackSettings, packSettings, savePackSettings, settingsBody } from "./pack-settings.js";
 import { currentRuleDetails, projectFailures, runEvidence } from "./run-evidence.js";
 import { runRecords } from "./runs.js";
 import { SAFE_NAME, VIDEO_FILE, recordingOf, videosRoot } from "./video.js";
 import { BANDS, bandCounts, loadView, packViolations } from "./view.js";
 export const LABEL = "warden.daemon";
-const PAGES = new Set(["/", "/runs", "/run", "/failures", "/configuration", "/packs", "/rule-strength", "/layers", "/violations", "/determinism", "/tamper"]);
+const PAGES = new Set(["/", "/runs", "/run", "/failures", "/configuration", "/projects", "/project", "/about", "/packs", "/rule-strength", "/layers", "/violations", "/determinism", "/tamper"]);
 const ASSETS = {
     "/app.css": "text/css; charset=utf-8",
     "/app.js": "text/javascript; charset=utf-8",
@@ -87,22 +88,66 @@ function projectCheckout(daemon, entry, url) {
         throw new PackSettingsError(409, "The selected project's config is unavailable. Reload the project list.");
     return root;
 }
+function projectPolicyRoot(daemon, entry) {
+    const hasConfig = (root) => existsSync(join(root, ".warden", "config.yaml"));
+    const primary = [...new Set(entry.repositories.map(({ repo }) => dirname(repo)).filter(hasConfig))];
+    const registered = daemon.watchSettings.added.filter(({ project, root }) => project === entry.project && entry.roots.includes(root) && hasConfig(root));
+    const preferred = primary.filter((root) => registered.some((entry) => daemon.projects.get(entry.root)?.repo === join(root, ".git")));
+    const candidates = preferred.length > 0 ? preferred
+        : primary.length > 0 ? primary
+            : [...new Set(registered.length > 0 ? registered.map(({ root }) => root) : entry.roots.filter(hasConfig))];
+    if (candidates.length === 1)
+        return candidates[0];
+    throw new PackSettingsError(409, candidates.length === 0
+        ? "The project has no readable Warden configuration."
+        : "Multiple repositories use this Warden project name. Give each repository a distinct project name.");
+}
+const runFileDialog = promisify(execFile);
+let folderDialogOpen = false;
+async function chooseProjectFolder() {
+    if (process.platform !== "darwin")
+        throw new HttpError(501, "The native folder picker requires the macOS Warden daemon.", "run warden init in the project to register it");
+    if (folderDialogOpen)
+        throw new HttpError(409, "A project folder picker is already open.", "finish choosing a project folder");
+    folderDialogOpen = true;
+    try {
+        const { stdout } = await runFileDialog("/usr/bin/osascript", ["-e", 'POSIX path of (choose folder with prompt "Choose a project for Warden to watch")'], { timeout: 300_000 });
+        return stdout.replace(/\r?\n$/, "");
+    }
+    catch (cause) {
+        if (/-128\)\s*$/.test(cause.stderr ?? ""))
+            return undefined;
+        throw new HttpError(503, "Warden could not open the project folder picker.", "open the dashboard on the Mac running Warden and try again");
+    }
+    finally {
+        folderDialogOpen = false;
+    }
+}
 export async function changeProjectPacks(daemon, wardenRoot, url, request) {
     const { revision, changes } = await settingsBody(request);
     const entry = projectsOf(daemon).find((project) => project.project === url.searchParams.get("project"));
-    if (!entry || !url.searchParams.has("root"))
-        throw new PackSettingsError(404, "Select a watched project and checkout.");
-    const root = projectCheckout(daemon, entry, url);
+    if (!entry)
+        throw new PackSettingsError(404, "Select a watched project.");
+    if (entry.auditOnly) {
+        if (url.searchParams.has("root"))
+            throw new PackSettingsError(409, "Published audits use a signed policy.");
+        return draftPackSettings(entry.auditOnly.root, entry.project, wardenRoot, enrollmentPolicyDir(entry.auditOnly.dir), revision, changes);
+    }
+    const root = url.searchParams.has("root") ? projectCheckout(daemon, entry, url) : projectPolicyRoot(daemon, entry);
     return savePackSettings(root, entry.project, wardenRoot, revision, changes);
 }
 async function changeWatch(daemon, request) {
     const body = await settingsBody(request);
+    if (body.choose === true && Object.keys(body).length === 1) {
+        const root = await chooseProjectFolder();
+        return root === undefined ? { cancelled: true } : { project: await daemon.addWatch(root) };
+    }
     if (typeof body.root === "string" && Object.keys(body).length === 1) {
         return { project: await daemon.addWatch(body.root.trim()) };
     }
     const { project, watching } = body;
     if (!isProjectName(project) || typeof watching !== "boolean" || Object.keys(body).length !== 2) {
-        throw new HttpError(400, "Enter a checkout path or choose a project and watch status.", "open Configuration in the dashboard");
+        throw new HttpError(400, "Choose a project folder or specify a project and watch status.", "open Configuration in the dashboard");
     }
     const { added, paused } = daemon.watchSettings;
     if (!paused.includes(project) && !added.some((entry) => entry.project === project) && !projectsOf(daemon).some((entry) => entry.project === project)) {
@@ -164,6 +209,25 @@ export async function route(daemon, wardenRoot, url) {
                         unwired: [...new Map(openAlerts(daemon, p.project).filter((d) => UNWIRED.has(d.detail)).map((d) => [`${d.repo}\0${d.detail}\0${d.file}`, d])).values()],
                     };
                 }) };
+        case "/api/project-checks": {
+            const entry = pick();
+            const enrollment = entry.auditOnly;
+            const root = enrollment?.root ?? projectPolicyRoot(daemon, entry);
+            const settings = await packSettings(root, entry.project, wardenRoot, enrollment && enrollmentPolicyDir(enrollment.dir));
+            const results = new Map();
+            for (const run of runRecords(projectEvidence(entry))) {
+                if (run.outcome !== "ran")
+                    continue;
+                const failures = new Set([...(run.failedRules ?? []), ...(run.failures ?? []).map(({ guardrail }) => guardrail)]);
+                const killed = new Set(run.killedRules);
+                for (const id of new Set([...Object.keys(run.rules ?? {}), ...failures, ...killed])) {
+                    const status = killed.has(id) ? "Timed out" : failures.has(id) ? "Findings" : "Passed";
+                    results.set(id, { at: run.at, run: run.run, status });
+                }
+            }
+            const { root: _root, ...packs } = settings;
+            return { ...packs, results: Object.fromEntries(results), bands: BANDS, needsSignature: enrollment !== undefined };
+        }
         case "/api/runs": {
             const entry = pick();
             const { project } = entry;
@@ -184,6 +248,10 @@ export async function route(daemon, wardenRoot, url) {
                     const video = run.run === undefined ? undefined : recordingOf(project, run.run);
                     return video === undefined ? run : { ...run, video };
                 }) };
+        }
+        case "/api/project-alerts": {
+            const { project } = pick();
+            return { alerts: openAlerts(daemon, project) };
         }
         case "/api/failures": {
             const entry = pick();

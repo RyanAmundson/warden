@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { parseDocument } from "yaml";
 import { loadRecords, parseConfig } from "../records/load.js";
 import { jevReadiness, packDetails } from "./pack-details.js";
-import { listPacks, packCatalog } from "./packs.js";
+import { packCatalog } from "./packs.js";
 
 export class PackSettingsError extends Error {
   constructor(readonly status: number, message: string) {
@@ -17,21 +17,25 @@ const revisionOf = (text: string): string => createHash("sha256").update(text).d
 
 function readConfig(root: string, project: string) {
   const folder = join(root, ".warden");
-  const file = join(folder, "config.yaml");
   if (!lstatSync(root).isDirectory() || realpathSync(root) !== root || !lstatSync(folder).isDirectory()) {
     throw new PackSettingsError(422, "Use a real project checkout and a regular .warden directory.");
   }
+  return readPolicyConfig(folder, project);
+}
+
+function readPolicyConfig(folder: string, project: string) {
+  const file = join(folder, "config.yaml");
   const stat = lstatSync(file);
   if (!stat.isFile() || stat.nlink !== 1) throw new PackSettingsError(422, "Use a regular project-owned config file.");
   const text = readFileSync(file, "utf8");
   const config = parseConfig(file, text);
-  if (config.project !== project) throw new PackSettingsError(409, "This checkout now belongs to a different Warden project.");
+  if (config.project !== project) throw new PackSettingsError(409, "The configuration belongs to a different Warden project.");
   return { file, folder, text, config, stat, revision: revisionOf(text) };
 }
 
-export async function packSettings(root: string, project: string, wardenRoot: string) {
-  const { text, revision } = readConfig(root, project);
-  const catalog = await packCatalog(root, wardenRoot, text);
+export async function packSettings(root: string, project: string, wardenRoot: string, publishedPolicy?: string) {
+  const { text, revision } = publishedPolicy === undefined ? readConfig(root, project) : readPolicyConfig(publishedPolicy, project);
+  const catalog = await packCatalog(root, wardenRoot, text, publishedPolicy);
   const details = catalog.map(({ pack }) => packDetails(root, pack));
   const jevPackIds = details.filter(({ checks }) => checks.some(({ model }) => model?.startsWith("jev-"))).map(({ id }) => id);
   return {
@@ -57,16 +61,15 @@ function parseChanges(value: unknown): PackChange[] {
   return value;
 }
 
-export async function savePackSettings(root: string, project: string, wardenRoot: string, revision: unknown, input: unknown) {
-  const current = readConfig(root, project);
-  if (current.revision !== revision) throw new PackSettingsError(409, "The config changed. Reload Configuration before saving again.");
+async function editPacks(root: string, wardenRoot: string, current: ReturnType<typeof readConfig>, revision: unknown, input: unknown) {
+  if (current.revision !== revision) throw new PackSettingsError(409, "The config changed. Reload Checks before saving again.");
   const changes = parseChanges(input);
-  const available = new Map((await listPacks(root, wardenRoot, current.text)).map((pack) => [pack.id, pack]));
+  const available = new Map((await packCatalog(root, wardenRoot, current.text, current.folder)).map(({ row }) => [row.id, row]));
   const document = parseDocument(current.text);
   let changed = false;
   for (const { id, enabled } of changes) {
     const pack = available.get(id);
-    if (!pack) throw new PackSettingsError(422, `Pack ${id} is unavailable in this checkout.`);
+    if (!pack) throw new PackSettingsError(422, `Pack ${id} is unavailable for this project.`);
     if (id === "core" && !enabled) throw new PackSettingsError(422, "Core protects the other rules and must stay enabled.");
     if (pack.on === enabled) continue;
     const index = current.config.packs.findIndex((entry) => entry.id === id);
@@ -75,13 +78,29 @@ export async function savePackSettings(root: string, project: string, wardenRoot
     else document.setIn(["packs", index, "enabled"], false);
     changed = true;
   }
-  if (!changed) return { changed: false };
+  if (!changed) return undefined;
   const output = String(document);
-  await loadRecords(root, wardenRoot, output);
+  await loadRecords(root, wardenRoot, output, current.folder);
+  return output;
+}
+
+export async function draftPackSettings(root: string, project: string, wardenRoot: string, publishedPolicy: string, revision: unknown, input: unknown) {
+  const current = readPolicyConfig(publishedPolicy, project);
+  const config = await editPacks(root, wardenRoot, current, revision, input);
+  if (readPolicyConfig(publishedPolicy, project).revision !== current.revision) {
+    throw new PackSettingsError(409, "The config changed. Reload Checks before preparing a draft.");
+  }
+  return config === undefined ? { changed: false } : { changed: true, config };
+}
+
+export async function savePackSettings(root: string, project: string, wardenRoot: string, revision: unknown, input: unknown) {
+  const current = readConfig(root, project);
+  const output = await editPacks(root, wardenRoot, current, revision, input);
+  if (output === undefined) return { changed: false };
   const temp = join(current.folder, `config.pack-${randomUUID()}.tmp`);
   const latest = readConfig(root, project);
   if (latest.revision !== current.revision || latest.stat.ino !== current.stat.ino || latest.stat.dev !== current.stat.dev) {
-    throw new PackSettingsError(409, "The config changed. Reload Configuration before saving again.");
+    throw new PackSettingsError(409, "The config changed. Reload Checks before saving again.");
   }
   const fd = openSync(temp, "wx", current.stat.mode & 0o777);
   try {

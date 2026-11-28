@@ -253,9 +253,7 @@ it("shows published audit coverage and keeps checkout-only pages usable for watc
   bodies["/api/layers"] = layers;
   await boot("/?project=example-project");
   expect(html).toContain("1 project watched · 1 published audit");
-  expect(html).toContain("Automatic audit · origin/main");
-  expect(html).toContain("0 watched checkouts");
-  expect(html).toContain("The daemon is watching its hooks and records");
+  expect(html).toContain("Published audit · origin/main");
   for (const page of ["rule-strength", "violations"]) {
     const before = fetches;
     await click(`/${page}?project=example-project`);
@@ -265,14 +263,14 @@ it("shows published audit coverage and keeps checkout-only pages usable for watc
     expect(html).toContain('href="/runs?project=example-project">Run history');
   }
   await click("/configuration?project=example-project");
-  expect(html).toContain("Pack settings require a watched checkout.");
+  expect(html).not.toContain("pack-settings");
   expect(html).toContain('data-watch="example-project"');
   await click("/packs?project=warden");
   expect(html).toContain("Packs · warden");
   expect(html).not.toContain("Watched checkout required");
 });
 
-it("adds a watched project from Configuration and selects its packs", async () => {
+it("adds a watched project through the folder picker and stays in Configuration", async () => {
   const fetchGet = globalThis.fetch;
   const created = { project: "added", roots: ["/p/added"], lastRun: null, openAlerts: 0 };
   const post = vi.fn(async (_path: string, _body: string) => {
@@ -285,12 +283,11 @@ it("adds a watched project from Configuration and selects its packs", async () =
     options.method === "POST" ? post(path, String(options.body)) : fetchGet(path, options));
   await boot("/configuration");
   expect(html).toContain('id="watch-add"');
-  on.input?.({ target: { id: "watch-root", value: "/p/added", dataset: {} } });
   await on.submit?.({ target: { id: "watch-add" }, preventDefault: vi.fn() });
-  expect(post).toHaveBeenCalledWith("/api/watch", JSON.stringify({ root: "/p/added" }));
-  expect(place.search).toBe("?project=added");
+  expect(post).toHaveBeenCalledWith("/api/watch", JSON.stringify({ choose: true }));
+  expect(place.search).toBe("");
   expect(html).toContain("Watching added.");
-  expect(html).toContain("Packs · added");
+  expect(html).not.toContain("pack-settings");
 });
 
 it("opens run detail from a run row's non-link cell", async () => {
@@ -305,6 +302,15 @@ it("opens run detail from a run row's non-link cell", async () => {
   await vi.advanceTimersByTimeAsync(0);
   expect(e.preventDefault).toHaveBeenCalled();
   expect(document.title).toBe("Run · Warden");
+});
+
+it("opens the previous Configuration pack bookmark in project Checks", async () => {
+  bodies["/api/projects"] = warden;
+  bodies["/api/project-checks"] = { bands: [], details: [], packs: [] };
+  await boot("/configuration?project=warden&root=%2Fp%2Fw#pack-config");
+  expect(document.title).toBe("warden · Warden");
+  expect(html).toContain('tab=checks" aria-current="page">Checks');
+  expect(html).not.toMatch(/Watched projects|data-nav="checkout"/);
 });
 
 it("opens legacy Layers bookmarks and treats Rule strength as a separate page in history", async () => {
@@ -328,10 +334,16 @@ it("keeps the selected checkout when switching between policy pages", async () =
   bodies["/api/projects"] = warden;
   bodies["/api/layers"] = layers;
   await boot("/packs?project=warden&root=%2Fp%2Fw");
-  expect(html).toContain('href="/rule-strength?project=warden&amp;root=%2Fp%2Fw"');
+  expect(html).toContain('Changes apply to this checkout.');
+  const fetchGet = globalThis.fetch;
+  const paths: string[] = [];
+  vi.stubGlobal("fetch", (path: string, options?: RequestInit) => {
+    paths.push(path);
+    return fetchGet(path, options);
+  });
   await click("/rule-strength?project=warden&root=%2Fp%2Fw");
-  expect(html).toContain('href="/configuration?project=warden&amp;root=%2Fp%2Fw#pack-config"');
-  expect(html).toContain('href="/runs?project=warden"');
+  expect(paths).toContain("/api/layers?project=warden&root=%2Fp%2Fw");
+  expect(html).toContain('href="/project?project=warden"');
 });
 
 it("asks before a switch discards unsaved pack changes, and stays when told to", async () => {
@@ -490,14 +502,84 @@ it("keeps focus on the heading when a live update redraws the page", async () =>
   expect(heading.tabIndex).toBe(-1);
 });
 
-it("switches project from the sidebar in place", async () => {
+it("switches project from the sidebar to its own Status tab and scopes Checks saves", async () => {
   bodies["/api/projects"] = { projects: [...warden.projects, { project: "other", roots: ["/p/o"], lastRun: null, openAlerts: 0 }] };
   bodies["/api/runs"] = { project: "warden", runs: [] };
+  bodies["/api/project-alerts"] = { alerts: [] };
+  const rule = { id: "custom-check", name: "Check the build", kind: "runtime", statement: "Build without errors.", runs: ["commit"] };
+  const settings = {
+    bands: [{ name: "DETERMINISTIC", kinds: ["runtime"] }, { name: "JUDGMENT", kinds: ["model"] }],
+    packs: [{ id: "custom", on: true }, { id: "model", on: false }, { id: "configuration-only", on: false }],
+    details: [{ id: "custom", checks: [rule], adapters: [] }, { id: "model", checks: [{ ...rule, id: "model-check", kind: "model" }], adapters: [] }, { id: "configuration-only", checks: [], adapters: [] }],
+    results: { "custom-check": { at: "2026-11-18T17:00:00Z", run: "r1", status: "Passed" } },
+    revision: "r1",
+  };
+  const fetchGet = globalThis.fetch;
+  const posts = vi.fn();
+  vi.stubGlobal("fetch", (path: string, options: RequestInit) => {
+    if (path.startsWith("/api/project-checks?")) return Promise.resolve({ ok: true, json: async () => settings });
+    if (options.method === "POST") {
+      posts(path, JSON.parse(String(options.body)));
+      return Promise.resolve({ ok: true, json: async () => ({ changed: true }) });
+    }
+    return fetchGet(path, options);
+  });
   await boot("/runs?project=warden");
-  expect(html).toContain('href="/runs?project=other"');
-  await click("/runs?project=other");
-  expect(history.pushState).toHaveBeenCalledWith({ n: 1 }, "", `${origin}/runs?project=other`);
+  expect(html).toContain('href="/project?project=other"');
+  await click("/project?project=other");
+  const main = () => html.split("<main")[1];
+  expect(main()).toContain('<h1 class="h1">other</h1>');
+  expect(main()).toContain(">Passed</span>");
+  expect(main()).toContain('project=other&amp;run=r1');
+  expect(main()).not.toMatch(/warden|Watched projects|model-check/);
+  await click("/project?project=other&tab=checks");
+  expect(main()).toContain("Deterministic");
+  expect(main()).toContain("Judgment");
+  expect(main()).toContain("Packs without checks");
+  expect(main()).toContain('data-pack="configuration-only"');
+  expect(main()).not.toMatch(/<select|Watched projects|\/p\/o/);
+  on.change?.({ target: { dataset: { pack: "custom" }, checked: false } });
+  await on.submit?.({ target: { id: "pack-settings" }, preventDefault: vi.fn() });
+  expect(posts).toHaveBeenCalledWith("/api/packs?project=other", { revision: "r1", changes: [{ id: "custom", enabled: false }] });
   expect(FakeSource.all).toHaveLength(1);
+});
+
+it("shows a staged enrollment and signs its exact revision in the owning project's Checks tab", async () => {
+  const auditOnly = { ref: "refs/remotes/origin/main" };
+  bodies["/api/projects"] = { projects: [...warden.projects, { project: "published", roots: [], auditOnly }] };
+  bodies["/api/watch"] = { added: [], paused: [] };
+  bodies["/api/project-checks"] = { packs: [], details: [], bands: [], results: {}, needsSignature: true };
+  bodies["/api/project-alerts"] = { alerts: [] };
+  const stage = { revision: "staged-revision", verified: false, canSign: true, files: [], rules: [], settings: [] };
+  const invoked = vi.fn();
+  const fetchGet = globalThis.fetch;
+  vi.stubGlobal("fetch", (path: string, options: RequestInit) => {
+    if (!path.startsWith("/api/enrollment-signing?")) return fetchGet(path, options);
+    invoked(path, options.body);
+    return Promise.resolve({ ok: true, json: async () => ({ ref: auditOnly.ref, stage: { ...stage, verified: options.method === "POST" } }) });
+  });
+  await boot("/configuration?project=published");
+  expect(html).toContain("Watched projects");
+  expect(invoked).not.toHaveBeenCalled();
+  await click("/project?project=published");
+  expect(invoked).not.toHaveBeenCalled();
+  await click("/project?project=published&tab=checks");
+  expect(html).toContain("Policy signing · published");
+  await on.submit?.({ target: { id: "enrollment-signing" }, preventDefault: vi.fn() });
+  expect(invoked).toHaveBeenLastCalledWith("/api/enrollment-signing?project=published", JSON.stringify({ revision: stage.revision }));
+  expect(html).toContain("Signature verified");
+});
+
+it("moves through alert cards without making a navigation request", async () => {
+  bodies["/api/projects"] = warden;
+  bodies["/api/runs"] = { project: "warden", runs: [] };
+  bodies["/api/tamper"] = { open: [{ project: "warden", detail: "changed" }, { project: "warden", detail: "removed" }] };
+  await boot("/");
+  expect(html).toContain("1 of 2");
+  const before = fetches;
+  on.click?.({ target: { closest: (selector: string) => selector === "button" ? { dataset: { alert: "next", index: "1" } } : null }, button: 0 });
+  expect(html).toContain("2 of 2");
+  expect(fetches).toBe(before);
 });
 
 it("leaves the page alone on a hash-only history change", async () => {

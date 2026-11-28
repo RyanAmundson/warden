@@ -1,6 +1,7 @@
 import { accessSync, constants, statSync } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
 import { type Pack } from "../records/types.js";
+import { describeRules } from "../runner/rule-details.js";
 import { adapters, prefixOf } from "../runner/run.js";
 
 type Readiness = { status: "Ready" | "Needs setup" | "Verify in runner" | "Unavailable"; setup: string };
@@ -85,10 +86,11 @@ const projectSetup = new Map([
 ]);
 
 export function packDetails(root: string, pack: Pack) {
+  const names = describeRules([pack], new Set(pack.practices.flatMap(({ guardrails }) => guardrails.map(({ id }) => id))));
   const checks = pack.practices.flatMap(({ statement, guardrails }) => guardrails.map((g) => {
     const adapter = g.kind === "instruction" ? null : prefixOf(g);
     const model = adapter === "system-one" ? (g.options as { model?: unknown } | undefined)?.model : undefined;
-    return { id: g.id, statement, adapter, runs: g.runs, ...(typeof model === "string" && /^(?:jev|laya)-\d+\.\d+\.\d+$/.test(model) ? { model } : {}) };
+    return { id: g.id, name: names[g.id]?.name ?? g.id, kind: g.kind, statement, adapter, runs: g.runs, ...(typeof model === "string" && /^(?:jev|laya)-\d+\.\d+\.\d+$/.test(model) ? { model } : {}) };
   }));
   const required = new Set(checks.flatMap(({ adapter }) => adapter === null ? [] : [adapter]));
   const settings = pack.settings?.properties;

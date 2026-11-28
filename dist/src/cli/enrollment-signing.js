@@ -48,7 +48,7 @@ function reviewedFile(dir, name, digest) {
     const file = join(dir, name);
     const bytes = readFileSync(file);
     if (sha256(bytes) !== digest) {
-        throw new PackSettingsError(409, "The policy files changed during review. Reload Configuration.");
+        throw new PackSettingsError(409, "The policy files changed during review. Reload the project's Checks tab.");
     }
     return isUtf8(bytes) ? { text: bytes.toString("utf8"), binary: false } : { text: bytes.toString("base64"), binary: true };
 }

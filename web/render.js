@@ -1,13 +1,7 @@
-export const PAGES = { overview: "Overview", runs: "Runs", failures: "Current failures", packs: "Packs", "rule-strength": "Rule strength", violations: "Violations", determinism: "Determinism", tamper: "Tamper" };
-
-const NAV_GROUPS = [
-  ["Activity", ["runs", "failures"]],
-  ["Policy", ["packs", "rule-strength"]],
-  ["Diagnostics", ["violations", "determinism", "tamper"]],
-];
+export const PAGES = { overview: "Overview", configuration: "Configuration", projects: "Projects", project: "Project", about: "About", runs: "Runs", failures: "Current failures", packs: "Packs", "rule-strength": "Rule strength", violations: "Violations", determinism: "Determinism", tamper: "Tamper" };
 
 const CHECKOUT_PAGES = new Set(["rule-strength", "violations"]);
-const PROJECT_PAGES = new Set(["runs", "run", "failures", "packs", ...CHECKOUT_PAGES]);
+const PROJECT_PAGES = new Set(["project", "runs", "run", "failures", "packs", ...CHECKOUT_PAGES]);
 export const checkoutPageUnavailable = (page, project) => project?.auditOnly && CHECKOUT_PAGES.has(page);
 
 export const STEPS = [
@@ -99,8 +93,6 @@ const auditMode = (run) => run.mode === "audit";
 
 const runMode = (run) => isAudit(run) ? "Advisory audit run. It never blocks." : auditMode(run) ? "Audit mode. Warden recorded this run and did not block." : "Enforcing. Failures block.";
 
-const modeTag = (mode) => MODE[mode] ? `<span class="tag mode ${mode}" title="${esc(MODE[mode][1])}">${MODE[mode][0]}</span>` : "";
-
 const checkout = (run) => run.root ?? run.attemptedRoot;
 
 const pathTail = (path) => path.split("/").slice(-2).join("/");
@@ -131,16 +123,6 @@ const ICON_FAIL = '<svg width="14" height="14" viewBox="0 0 14 14" role="img" ar
 const ICON_SKIP = '<svg width="14" height="14" viewBox="0 0 14 14" role="img" aria-label="not run"><circle cx="7" cy="7" r="4.5" stroke="#9AA3AE" stroke-width="1.4" fill="none"/></svg>';
 
 const BRAND = '<svg width="34" height="14" viewBox="0 4 120 24" aria-hidden="true"><rect x="1" y="4" width="26" height="24" rx="7" fill="#C9A04A"/><circle cx="10" cy="16" r="3.5" fill="#1C2A3F"/><path d="M27 10 L112 10 L118 16.5 L112 23 L104 23 L100.5 20.25 L95.5 20.25 L88.5 24 L71.5 24 L64.5 14 L59.5 14 L52.5 21.5 L35.5 21.5 L32 24 L27 24 Z" fill="#C9A04A"/></svg>';
-
-export const keyCuts = (name) => {
-  const cuts = [];
-  for (let i = 0; i < 6; i++) cuts.push(12.75 + ((name.charCodeAt(i % name.length) * (i + 3)) % 6) * 2.25);
-  const xs = [[100.5, 95.5], [88.5, 83.5], [76.5, 71.5], [64.5, 59.5], [52.5, 47.5], [40.5, 35.5]];
-  return `M27 10 L112 10 L118 16.5 L112 23 L104 23 ${xs.map(([a, b], i) => `L${a} ${cuts[i]} L${b} ${cuts[i]}`).join(" ")} L32 24 L27 24 Z`;
-};
-
-const projectKey = (name, open) =>
-  `<svg width="180" height="48" viewBox="0 0 120 32" aria-hidden="true"><rect x="1" y="4" width="26" height="24" rx="7" fill="${open ? "#F3D3CF" : "#C9A04A"}" stroke="${open ? "#8E1B14" : "#6E5013"}" stroke-width="0.6"/><circle cx="10" cy="16" r="3.5" fill="#F8F9FA" stroke="${open ? "#8E1B14" : "#6E5013"}" stroke-width="0.6"/><path d="${keyCuts(name)}" fill="${open ? "#F3D3CF" : "#C9A04A"}" stroke="${open ? "#8E1B14" : "#6E5013"}" stroke-width="0.6"${open ? ' stroke-dasharray="1.5 1"' : ""}/></svg>`;
 
 export const passed = (run) => run.outcome === "ran" && run.result === "pass" && run.alert === undefined;
 
@@ -211,29 +193,16 @@ const homeOf = (file) => (file ? file.replace(/\/daemon\/heartbeat\.json$/, "") 
 
 const sidebar = (state) => {
   const { health, projects = [], page, project, lost, now } = state;
-  const nav = NAV_GROUPS.map(([group, pages]) => {
-    const links = pages.map((id) => {
-      const current = (id === "packs" ? state.view?.packShortcut : id === page) || (id === "runs" && page === "run");
-      const root = id === "packs" || id === "rule-strength" ? state.view?.root : undefined;
-      return `<li><a href="${href(id === "packs" ? "configuration" : id, { project, root })}${id === "packs" ? "#pack-config" : ""}"${current ? ' aria-current="page"' : ""}>${PAGES[id]}</a></li>`;
-    }).join("");
-    return `<div><div class="lbl">${group}</div><ul class="nav" aria-label="${group}">${links}</ul></div>`;
-  }).join("");
-  const projectPage = PROJECT_PAGES.has(page) && page !== "run" ? (page === "packs" ? "configuration" : page) : "runs";
-  const watched = projects
-    .map((p) => {
-      const s = projectStatus(p);
-      const tone = s.cls === "pass" ? "" : s.cls === "idle" ? " none" : " bad";
-      return `<li><a href="${href(projectPage, { project: p.project })}${state.view?.packShortcut ? "#pack-config" : ""}"${PROJECT_PAGES.has(page) && p.project === project ? ' aria-current="true"' : ""}><span class="project-name">${esc(p.project)}</span><small class="${tone.trim()}">${esc(s.text)}</small></a></li>`;
-    })
-    .join("");
+  const nav = ["overview", "configuration", "about"].map((id) =>
+    `<li><a href="${href(id)}"${id === page || id === "overview" && page === "projects" ? ' aria-current="page"' : ""}>${PAGES[id]}</a></li>`).join("");
+  const watched = projects.map((p) =>
+    `<li><a href="${href("project", { project: p.project })}"${PROJECT_PAGES.has(page) && p.project === project ? ' aria-current="page"' : ""}><span class="project-name">${esc(p.project)}</span></a></li>`).join("");
   return `<nav class="side" aria-label="Warden">
 <div class="brand">${BRAND}<span>WARDEN</span></div>
 <div class="daemon${lost ? " lost" : ""}"><b><i aria-hidden="true"></i>${lost ? "Daemon not answering" : "Daemon live"}</b><span id="beat">${esc(beatText(health, now))}</span></div>
 <div class="navs">
-<ul class="nav" aria-label="Dashboard"><li><a href="${href("overview", { project })}"${page === "overview" ? ' aria-current="page"' : ""}>Overview</a></li><li><a href="${href("configuration", { project, root: state.view?.root })}"${page === "packs" && !state.view?.packShortcut ? ' aria-current="page"' : ""}>Configuration</a></li></ul>
-<div><div class="lbl">Projects</div><ul class="nav project-nav" aria-label="Projects">${watched === "" ? '<li class="empty-item">None yet</li>' : watched}</ul></div>
-<div class="nav-menu">${nav}</div></div>
+<ul class="nav" aria-label="Dashboard">${nav}</ul>
+<div><div class="lbl">Projects</div><ul class="nav project-nav" aria-label="Projects">${watched || '<li class="empty-item">None yet</li>'}</ul></div></div>
 <div class="foot">Warden ${esc(health?.version ?? "")} · evidence in ${esc(homeOf(health?.heartbeatFile))}</div>
 </nav>`;
 };
@@ -276,51 +245,27 @@ const selectedProject = (state) => state.projects?.find((p) => p.project === sta
 
 const slot = (html) => `<span class="slot">${html}</span>`;
 
-const alertsSection = (data) => {
-  const rows = [];
-  const byProject = new Map();
-  for (const d of data.tamper.open.filter((d) => !UNWIRED.has(d.detail))) byProject.set(d.project, [...(byProject.get(d.project) ?? []), d]);
-  for (const [project, list] of byProject) {
-    const first = list[0];
-    rows.push(`<div class="alert lit red">${slot(tag({ cls: "tamper", text: "Tamper", icon: true }))}<div><strong>${esc(project)}</strong> · ${plural(list.length, "open detection")}: ${esc(first.detail)} on <span class="mono">${esc(first.file)}</span>${list.length > 1 ? ` and ${num(list.length - 1)} more` : ""}${quiet ? "" : `<div class="why">Next action: <span class="mono">${esc(first.next)}</span></div>`}</div><a href="${href("tamper")}">Open tamper detections</a></div>`);
+const alertCards = (state) => {
+  const { data, view = {} } = state;
+  const cards = [];
+  for (const alert of data.tamper.open) {
+    cards.push({ project: alert.project, title: alertLabel(alert.detail), detail: DETAIL_TEXT[alert.detail] ?? alert.file, target: href("project", { project: alert.project, tab: "status" }) + "#project-alerts", action: "Open project alerts" });
   }
-  for (const p of data.projects) {
-    const run = p.lastRun;
+  for (const { project, lastRun: run } of data.projects) {
     if (!run || !notPassing(run)) continue;
-    const o = outcome(run);
-    rows.push(`<div class="alert lit">${slot(tag(o))}<div><strong>${esc(p.project)}</strong> · ${esc(trigger(run))} · ${esc(clock(run.at))}${run.next && !quiet ? '<div class="why">Its next action is on the project card below</div>' : ""}</div><a href="${href("run", { project: p.project, run: run.run })}">Open the run</a></div>`);
+    cards.push({ project, title: outcome(run).text, detail: `${trigger(run)} · ${clock(run.at)}`, target: href("run", { project, run: run.run }), action: "Open run" });
   }
-  if (rows.length === 0) rows.push(`<div class="alert">${slot(tag({ cls: "idle", text: "Clear" }))}<div class="muted">No open tamper detections, and every project's last run passed or found no changes.</div><a href="${href("tamper")}">Tamper history</a></div>`);
-  return `<section class="mod" aria-labelledby="ov-alerts"><div class="modh"><h2 class="h2" id="ov-alerts">Alerts</h2><span class="muted">Open tamper detections and last runs that did not pass</span></div>${rows.join("")}</section>`;
+  const index = Math.max(0, Math.min(view.alertIndex ?? 0, cards.length - 1));
+  const card = cards[index];
+  return `<section class="mod" aria-labelledby="ov-alerts" aria-roledescription="carousel"><div class="modh"><h2 class="h2" id="ov-alerts">Alerts</h2>
+${cards.length > 1 ? `<div class="carousel-controls"><button id="alert-prev" class="btn" type="button" data-alert="previous" data-index="${(index - 1 + cards.length) % cards.length}" aria-label="Previous alert">Previous</button><span>${index + 1} of ${cards.length}</span><button id="alert-next" class="btn" type="button" data-alert="next" data-index="${(index + 1) % cards.length}" aria-label="Next alert">Next</button></div>` : ""}</div>
+<div class="carousel-card" aria-live="polite">${card ? `<div><strong>${esc(card.project)}</strong><div>${esc(card.title)}</div><p class="muted">${esc(card.detail)}</p></div><a href="${card.target}">${card.action}</a>` : '<p class="muted">No open alerts.</p>'}</div></section>`;
 };
 
-const projectCard = (p, runs) => {
-  const run = p.lastRun;
-  const audits = mainAuditRuns(p);
-  const auditResults = audits.map((audit) => {
-    const name = (audit.tier ?? "Audit").replace(/^./, (letter) => letter.toUpperCase());
-    const label = audit.run ? `<a href="${href("run", { project: p.project, run: audit.run })}">${esc(name)} audit</a>` : `${esc(name)} audit`;
-    return `<li>${label} ${tag(outcome(audit))}</li>`;
-  });
-  const lastPass = runs.find(passed);
-  const ratchet = runs.find((r) => r.ratchet !== undefined)?.ratchet;
-  const s = projectStatus(p);
-  const id = `ov-${p.project.replace(/[^a-z0-9]/gi, "-")}`;
-  const roots = p.auditOnly ? "" : `<span class="muted mono"><span title="${esc(p.roots.join("\n"))}">…/${esc(pathTail(p.roots[0] ?? ""))}</span>${p.roots.length > 1 ? ` and ${plural(p.roots.length - 1, "other checkout")}` : ""}</span>`;
-  const auditRef = p.auditOnly ?? audits[0];
-  const coverage = p.auditOnly ? "0 watched checkouts" : "The daemon is watching its hooks and records";
-  const repositories = p.repositories ?? [];
-  const affected = repositories.filter((repository) => repository.openAlerts > 0).length;
-  const repoCount = repositories.length > 1 ? `<span class="muted">${num(affected)} of ${num(repositories.length)} repositories have open detections</span>` : "";
-  const end = run && notPassing(run) && run.next ? nextBox(run.next) : `<div class="calm">${run === null || run === undefined ? "No check has run here yet." : run.outcome === "empty" ? "The last run found no changes." : passed(run) ? "The last run passed." : "The last run recorded no next action."}</div>`;
-  return `<section class="mod card" aria-labelledby="${id}">
-<div class="modh"><div><h2 class="h2" id="${id}">${esc(p.project)} ${modeTag(p.mode)}</h2>${roots}${auditRef ? `<span class="muted wrap" title="${esc(auditRef.ref)}">Automatic audit · ${auditRefLabel(auditRef)}</span>` : ""}${auditResults.length ? `<ul class="audit-results">${auditResults.join("")}</ul>` : ""}</div>${tag(s)}</div>
-<div class="keyrow">${projectKey(p.project, p.openAlerts > 0)}<div>${p.unwired?.length > 0 ? `<span class="bad">Warden is unwired</span><span class="muted">${esc(DETAIL_TEXT[p.unwired[0].detail] ?? p.unwired[0].detail)}</span><a href="${href("tamper")}">See open alerts</a>` : p.openAlerts > 0 ? `<span class="bad">${plural(p.openAlerts, "open tamper detection")}</span>${repoCount}<a href="${href("tamper")}">See what changed</a>` : `<span class="ok">No open tamper detections</span><span class="muted">${coverage}</span>`}</div></div>
-<div class="stats"><div><div class="lbl">Last run</div><div>${run ? `${esc(clock(run.at))} · ${esc(run.tier ?? "")}` : "–"}</div></div><div><div class="lbl">Last pass</div><div>${lastPass ? `${esc(clock(lastPass.at))} · ${esc(lastPass.tier ?? "")}` : (runs.length === 0 ? "–" : `none in the last ${plural(runs.length, "run")}`)}</div></div><div><div class="lbl">Open alerts</div><div>${num(p.openAlerts)}</div></div><div><div class="lbl">Ratchet left</div><div>${ratchet ? num(ratchet[1]) : "–"}</div></div></div>
-${end}
-<div class="project-links"><a href="${href("failures", { project: p.project })}">Current failures</a><a href="${href("runs", { project: p.project })}">Run history</a></div>
-</section>`;
-};
+const projectGallery = (projects) => `<ul class="project-gallery">${projects.map((p) =>
+  `<li><a class="project-card" href="${href("project", { project: p.project })}"><strong>${esc(p.project)}</strong>${tag(projectStatus(p))}<span class="muted">${p.auditOnly ? `Published audit · ${auditRefLabel(p.auditOnly)}` : p.lastRun ? `Last run ${esc(clock(p.lastRun.at))}` : "Watching repository"}</span></a></li>`).join("")}</ul>`;
+
+const projectsPage = ({ data }) => `${header("Projects", plural(data.projects.length, "project"))}${data.projects.length ? projectGallery(data.projects) : '<p class="muted">No projects are watched yet.</p>'}`;
 
 const runRow = (run, cols, view) => {
   const root = checkout(run);
@@ -349,19 +294,17 @@ const runRow = (run, cols, view) => {
 
 export const overviewPage = (state) => {
   const { data, view = {} } = state;
-  if (data.projects.length === 0) return emptyState(state.page);
-  const all = data.projects.flatMap((p) => (data.runs[p.project] ?? []).map((r) => ({ ...r, project: p.project })));
-  const stream = all.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 25);
+  const all = data.projects.flatMap((p) => (data.runs?.[p.project] ?? []).map((r) => ({ ...r, project: p.project })));
+  const stream = all.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 50);
   const now = new Date(state.loadedAt ?? state.now ?? Date.now());
   const auditOnlyCount = data.projects.filter((p) => p.auditOnly).length;
   const coverage = `${plural(data.projects.length - auditOnlyCount, "project")} watched${auditOnlyCount ? ` · ${plural(auditOnlyCount, "published audit")}` : ""}`;
   const controls = `<button class="btn" type="button" data-action="pause" aria-pressed="${view.paused ? "true" : "false"}">${view.paused ? "Resume live" : "Pause live"}</button>`;
   const cols = ["timeLink", "project", "trigger", "tier", "changed", "outcome", "bar", "ms", "ratchet"];
   return `${header("Overview", `${coverage} · updated ${esc(clock(now.toISOString()))} · ${esc(now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }))}${view.paused ? " · live updates paused" : ""}`, controls)}
-${data.projects.map(unwiredBanner).join("")}
-${alertsSection(data)}
-<div class="cards">${data.projects.map((p) => projectCard(p, data.runs[p.project] ?? [])).join("")}</div>
-<section class="mod" aria-labelledby="ov-stream"><div class="modh"><h2 class="h2" id="ov-stream">Live check runs</h2>${stepLegend()}</div>
+${alertCards(state)}
+<section aria-labelledby="ov-projects"><div class="overview-section"><h2 class="h2" id="ov-projects">Projects</h2><a href="/projects">See more</a></div>${data.projects.length ? projectGallery(data.projects.slice(0, 6)) : '<p class="muted">No projects are watched yet. <a href="/configuration">Add a project</a></p>'}</section>
+<section class="mod" aria-labelledby="ov-stream"><div class="modh"><h2 class="h2" id="ov-stream">Recent runs</h2>${stepLegend()}</div>
 <div class="scroll fit-table"><table class="recent-runs-table"><thead><tr><th scope="col">Time</th><th scope="col">Project</th><th scope="col">Trigger</th><th scope="col">Tier</th><th scope="col">Changed</th><th scope="col">Outcome</th><th scope="col">Duration</th><th scope="col" class="r">ms</th><th scope="col" class="r">Ratchet left</th></tr></thead>
 <tbody>${stream.length === 0 ? '<tr><td colspan="9" class="muted">No check has run yet. Runs appear here as agents edit and commit.</td></tr>' : stream.map((r) => runRow({ ...r, project: r.project }, cols, { fresh: view.fresh })).join("")}</tbody></table></div></section>`;
 };
@@ -652,21 +595,20 @@ ${settings?.jev ? `<section class="pack-evaluator" aria-labelledby="jev-evaluato
 
 const watchPanel = (state) => {
   const { projects, watch = { added: [], paused: [] } } = state.data;
-  const { watchSaving, watchRoot, watchMessage, packSaving, packDraft } = state.view ?? {};
-  const blockedByPack = packSaving || packDraft?.size;
-  const disabled = watchSaving || blockedByPack ? ' aria-disabled="true"' : "";
+  const { watchSaving, watchMessage } = state.view ?? {};
+  const disabled = watchSaving ? ' aria-disabled="true"' : "";
   const active = new Map(projects.map((entry) => [entry.project, entry]));
   const names = [...new Set([...active.keys(), ...watch.added.map(({ project }) => project), ...watch.paused])].sort();
   const rows = names.map((project) => {
     const entry = active.get(project);
     const paused = watch.paused.includes(project);
-    const status = paused ? "Stopped" : entry?.auditOnly ? "Published audit" : entry ? "Watching" : "Checkout unavailable";
+    const status = paused ? "Stopped" : entry?.auditOnly ? "Published audit" : entry ? "Watching" : "Project folder unavailable";
     return `<li><strong>${esc(project)}</strong><span class="muted">${status}</span><button type="button" class="btn" id="watch-toggle-${esc(encodeURIComponent(project))}" data-watch="${esc(project)}" data-watching="${paused}" aria-label="${paused ? "Resume watching" : "Stop watching"} ${esc(project)}"${disabled}>${paused ? "Resume watching" : "Stop watching"}</button></li>`;
   }).join("");
   return `<section class="mod" aria-labelledby="watch-heading">
 <div class="modh"><h2 class="h2" id="watch-heading">Watched projects</h2></div>
+<form id="watch-add" class="watch-form"><div><button id="watch-submit" class="btn" type="submit"${disabled}>Choose project folder</button></div><p class="muted">Choose the root folder of a Git project set up with <code>warden init</code>. Stopping a watch pauses daemon checks and scheduled audits. Git hooks and recorded runs stay in place.</p><p role="status">${esc(watchSaving ? "Updating watched projects…" : watchMessage ?? "")}</p></form>
 ${rows ? `<ul class="watch-list">${rows}</ul>` : '<p class="pad muted">No watched projects yet.</p>'}
-<form id="watch-add" class="watch-form"><label for="watch-root">Checkout path</label><div class="controls"><input id="watch-root" name="root" required placeholder="/path/to/project" value="${esc(watchRoot ?? "")}"${blockedByPack ? " disabled" : watchSaving ? " readonly" : ""}><button id="watch-submit" class="btn" type="submit"${disabled}>Add project</button></div><p class="muted">Run <code>warden init</code> in a new checkout before adding it. Stopping a watch pauses daemon checks and scheduled audits. Existing runs and checkout hooks stay in place.</p><p role="status">${esc(watchSaving ? "Updating watched projects…" : watchMessage ?? "")}</p></form>
 </section>`;
 };
 
@@ -704,8 +646,87 @@ export const packsPage = (state) => {
   const packContent = data.layersError ? apiError(data.layersError)
     : data.layers ? packCatalog(state, data.layers)
     : `<section class="mod" aria-labelledby="pack-config"><div class="modh"><h2 class="h2" id="pack-config" tabindex="-1">Packs${selected ? ` · ${esc(selected.project)}` : ""}</h2></div><p class="pad muted">${selected?.auditOnly ? "Pack settings require a watched checkout. This project uses a published audit." : "Add a project with a watched checkout to manage its packs."}</p></section>`;
-  return `${header("Configuration", "Manage watched projects and packs.")}${watchPanel(state)}${selected?.auditOnly ? signingPanel(state, selected) : ""}${packContent}`;
+  return `${header("Configuration", "Manage watched projects and packs.")}${watchPanel(state)}${packContent}`;
 };
+
+const configurationPage = (state) => `${header("Configuration", "Manage the projects Warden watches.")}${watchPanel(state)}`;
+
+const aboutPage = () => `${header("About Warden", "Advisory checks for the projects you work on.")}
+<article class="mod about-content">
+<section><h2>What Warden does</h2><p>Warden records checks from edits, commits, and scheduled audits of published branches. It surfaces rule findings and setup problems while work continues.</p></section>
+<section><h2>Packs</h2><p>A pack is a set of related checks you can enable for a project. A check can need a tool, project configuration, or credentials in the runner. Open a project's Checks tab to see the checks and setup for each pack.</p></section>
+<section><h2>Rule strength</h2><dl><dt>Deterministic</dt><dd>Code applies a check you can repeat, such as a compiler check, a lint rule, or a test.</dd><dt>Judgment</dt><dd>A model or reviewer evaluates a rule that calls for interpretation.</dd><dt>Prose</dt><dd>Written guidance describes what to do. A prose rule alone produces no automated test result.</dd></dl></section>
+<section><h2>Tamper alerts</h2><p>Warden compares policy files, signatures, and check setup with their expected state. An alert points to what changed and what to inspect.</p></section>
+</article>`;
+
+const projectCheckRow = (rule, result, project) => {
+  const automated = rule.kind !== "instruction" && rule.runs.length > 0;
+  const text = automated ? result?.status ?? "No run recorded" : rule.kind === "instruction" ? "Written guidance" : "No automated check";
+  const status = !automated || !result ? "idle" : result.status === "Passed" ? "pass" : "err";
+  return `<li><div><strong title="${esc(rule.id)}">${esc(rule.name)}</strong><p class="muted">${esc(rule.statement)}</p></div><div class="project-check-result">${tag({ cls: status, text })}${automated ? `<span class="muted">Runs on ${esc(rule.runs.join(", "))}</span>` : ""}${automated && result?.run ? `<a href="${href("run", { project, run: result.run })}" title="${esc(result.at)}">Last result</a>` : ""}</div></li>`;
+};
+
+const projectStatusPanel = ({ data, project }, entry) => {
+  const { checks } = data;
+  const active = checks?.packs.filter((pack) => pack.on) ?? [];
+  const sections = active.map(({ id }) => {
+    const details = checks.details.find((entry) => entry.id === id);
+    const rows = details.checks.map((rule) => projectCheckRow(rule, Object.hasOwn(checks.results, rule.id) ? checks.results[rule.id] : undefined, project)).join("");
+    return `<section class="mod" aria-label="${esc(id)}"><div class="modh"><h2 class="h2">${esc(id)}</h2>${tag({ cls: "pass", text: "Enabled" })}</div>${rows ? `<ul class="project-check-list">${rows}</ul>` : '<p class="pad muted">This pack has no checks.</p>'}</section>`;
+  }).join("");
+  const alerts = data.alerts?.alerts ?? [];
+  const audits = mainAuditRuns(entry);
+  const audit = audits.length ? `<section class="mod" aria-label="Latest scheduled audit"><div class="modh"><h2 class="h2">Latest scheduled audit</h2><span class="muted" title="${esc(audits[0].ref)}">${auditRefLabel(audits[0])}</span></div><ul class="audit-results pad">${audits.map((run) => `<li>${run.run ? `<a href="${href("run", { project, run: run.run })}">${esc(run.tier ? `${titleCase(run.tier)} audit` : "Audit run")}</a>` : "Audit run"} ${tag(outcome(run))}</li>`).join("")}</ul></section>` : "";
+  return `${audit}${checks ? sections || '<p class="muted">No packs are enabled.</p>' : ""}
+<section class="mod" id="project-alerts" tabindex="-1" aria-labelledby="project-alert-heading"><div class="modh"><h2 class="h2" id="project-alert-heading">Project alerts</h2><a href="${href("failures", { project })}">Current failures</a></div>${data.alerts?.error ? `<p class="pad" role="alert">${esc(data.alerts.error)}</p>` : alerts.length ? `<ul class="project-alert-list">${alerts.map((alert) => `<li><strong>${esc(alertLabel(alert.detail))}</strong><div class="muted wrap">${esc(alert.file)}</div><p>${esc(alert.next)}</p></li>`).join("")}</ul>` : '<p class="pad muted">No open tamper detections.</p>'}</section>`;
+};
+
+const projectChecksPanel = ({ data, view }) => {
+  const { checks } = data;
+  if (!checks) return "";
+  const seen = new Set();
+  const renderPack = (pack, rules) => {
+    const setting = checks.packs.find((entry) => entry.id === pack.id);
+    const enabled = view.packDraft?.get(pack.id) ?? setting.on;
+    const first = !seen.has(pack.id);
+    seen.add(pack.id);
+    const toggle = first && !setting.required
+      ? `<label class="pack-toggle"><input id="pack-${esc(pack.id)}" data-pack="${esc(pack.id)}" type="checkbox" aria-label="${esc(pack.id)} pack"${enabled ? " checked" : ""}${view.packSaving ? " disabled" : ""}>${enabled ? "On" : "Off"}</label>`
+      : tag({ cls: enabled ? "pass" : "idle", text: enabled ? setting.required ? "Required" : "On" : "Off" });
+    const rows = rules.map((rule) => `<li><div><strong title="${esc(rule.id)}">${esc(rule.name)}</strong><p class="muted">${esc(rule.statement)}</p></div><span class="muted">${rule.kind !== "instruction" ? esc(rule.runs.join(" · ")) : ""}</span></li>`).join("");
+    const setup = first ? [pack.setup, ...pack.adapters.filter((adapter) => adapter.status === "Needs setup" || adapter.status === "Unavailable").map((adapter) => adapter.setup)].filter(Boolean) : [];
+    return `<section class="mod project-pack"><div class="modh"><h3 class="h2">${esc(pack.id)}</h3>${toggle}</div>${rows ? `<ul class="project-check-list">${rows}</ul>` : ""}${setup.map((note) => `<p class="pad muted project-setup">${esc(note)}</p>`).join("")}</section>`;
+  };
+  const bands = checks.bands.map((band) => {
+    const groups = checks.details.map((pack) => {
+      const rules = pack.checks.filter((rule) => band.kinds.includes(rule.kind));
+      return rules.length ? renderPack(pack, rules) : "";
+    }).join("");
+    const label = titleCase(band.name.toLowerCase());
+    return groups ? `<section class="check-band"><div><h2>${esc(label)}</h2><div class="muted">${esc(BAND_TEXT[label.toLowerCase()])}</div></div>${groups}</section>` : "";
+  }).join("");
+  const withoutChecks = checks.details.filter((pack) => pack.checks.length === 0).map((pack) => renderPack(pack, [])).join("");
+  return `<form id="pack-settings" class="project-check-form">
+${checks.needsSignature ? '<p class="muted">Download the updated config for the policy owner to compile and stage. Review and sign the staged policy below.</p>' : ""}
+<div class="mod pack-save controls"><button id="pack-save" class="btn" type="submit"${!view.packDraft?.size || view.packSaving ? " disabled" : ""}>${checks.needsSignature ? "Download pack changes" : "Save pack changes"}</button><button class="btn" data-action="discard-packs" type="button"${!view.packDraft?.size || view.packSaving ? " disabled" : ""}>Discard changes</button><span role="status">${esc(view.packMessage ?? (view.packDraft?.size ? plural(view.packDraft.size, "unsaved change") : ""))}</span></div>
+${bands}${withoutChecks ? `<section class="check-band"><h2>Packs without checks</h2>${withoutChecks}</section>` : ""}${bands || withoutChecks ? "" : '<p class="muted">No packs are available.</p>'}</form>`;
+};
+
+const projectPage = (state) => {
+  const { data, project, view = {} } = state;
+  const p = selectedProject(state);
+  if (!p) return state.projects.length ? `${header("Project unavailable", "Choose a project in the sidebar.")}` : emptyState("project");
+  const tab = view.tab === "checks" ? "checks" : "status";
+  const tabs = ["status", "checks"].map((name) => `<a href="${href("project", { project, tab: name })}"${name === tab ? ' aria-current="page"' : ""}>${titleCase(name)}</a>`).join("");
+  const description = p.auditOnly ? `Published audit · ${auditRefLabel(p.auditOnly)}` : "Watched project";
+  return `${header(esc(project), description, `<a href="${href("runs", { project })}">Run history</a>`)}
+<nav class="project-tabs" aria-label="Project tabs">${tabs}</nav>
+${data.checksError ? apiError(data.checksError) : ""}
+${tab === "checks" ? projectChecksPanel(state) : projectStatusPanel(state, p)}
+${tab === "checks" && p.auditOnly ? signingPanel(state, p) : ""}`;
+};
+
+const titleCase = (value) => value[0].toUpperCase() + value.slice(1);
 
 const ruleRows = (rules, context) => `<ul class="policy-rules">${rules.map((r) => `<li>
 <div><strong>${esc(r.name ?? r.guardrail)}</strong>${context && r.statement ? `<p>${esc(r.statement)}</p>` : ""}</div>
@@ -857,9 +878,9 @@ export const tamperPage = (state) => {
 ${history}`;
 };
 
-const RENDER = { overview: overviewPage, runs: runsPage, run: runPage, failures: failuresPage, packs: packsPage, "rule-strength": ruleStrengthPage, violations: violationsPage, determinism: determinismPage, tamper: tamperPage };
+const RENDER = { overview: overviewPage, projects: projectsPage, project: projectPage, configuration: configurationPage, about: aboutPage, runs: runsPage, run: runPage, failures: failuresPage, packs: packsPage, "rule-strength": ruleStrengthPage, violations: violationsPage, determinism: determinismPage, tamper: tamperPage };
 
-export const pageTitle = (state) => `${state.page === "run" ? "Run" : state.page === "packs" ? "Configuration" : (PAGES[state.page] ?? "Warden")} · Warden`;
+export const pageTitle = (state) => `${state.page === "run" ? "Run" : state.page === "project" && state.project ? state.project : state.page === "packs" ? "Configuration" : (PAGES[state.page] ?? "Warden")} · Warden`;
 
 export const mainHtml = (state) => {
   if (state.error) return apiError(state.error);

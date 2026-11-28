@@ -144,12 +144,12 @@ describe("pages render from API responses", () => {
     const html = renderApp(state("overview", { tamper, runs: { "example-project": exRuns, warden: [run({ run: "w-1" })] } }));
     expect(html).toContain('<h1 class="h1">Overview</h1>');
     expect(html).toContain("2 projects watched");
-    expect(html).toContain("1 open detection: source-drift");
+    expect(html).toContain("source-drift");
+    expect(html).toContain("1 of 2");
+    expect(html.match(/class="carousel-card"/g)).toHaveLength(1);
     expect(html).toContain(`href="/run?project=example-project&amp;run=r-err2"`);
     expect(html).toContain("Error · rules intact");
-    expect(html).toContain("…/p/w</span> and 1 other checkout");
     expect(html).toContain("43,634");
-    expect(nextActions(html)).toEqual([ERROR_NEXT]);
     expect((html.match(/<tr data-run-row class="held">/g) ?? []).length).toBe(3);
     expect(html).toContain('aria-current="page">Overview');
   });
@@ -177,11 +177,9 @@ describe("pages render from API responses", () => {
   it("shows which ref is automatically audited even after a later manual run", () => {
     const audit = run({ run: "r-main", trigger: "main audit", ref: "refs/remotes/origin/main" });
     const watched = [{ ...projects[0], lastRun: exRuns[0], lastMainAudit: audit }, { ...projects[1], repositories: [{ repo: "/p/w/.git", roots: ["/p/w", "/p/w2"], openAlerts: 0 }, { repo: "/p/copy/.git", roots: ["/p/copy"], openAlerts: 1 }] }];
-    const html = renderApp(state("overview", { projects: watched, tamper, runs: { "example-project": [...exRuns, audit], warden: [] } }, { projects: watched }));
-    expect(html).toContain('title="refs/remotes/origin/main">Automatic audit · origin/main');
+    const html = renderApp(state("project", { failures: { alerts: [] } }, { projects: watched }));
+    expect(html).toContain('title="refs/remotes/origin/main">origin/main');
     expect(html).toContain('href="/run?project=example-project&amp;run=r-main">Edit audit');
-    expect(html).toContain('href="/run?project=example-project&amp;run=r-main"');
-    expect(html).toContain("1 of 2 repositories have open detections");
   });
 
   it("keeps edit findings and the passing boundary audit visible after a later manual check", () => {
@@ -190,7 +188,7 @@ describe("pages render from API responses", () => {
     const boundary = run({ ...shared, tier: "boundary", run: "main-boundary" });
     const manual = run({ run: "manual", trigger: "manual", at: at(50) });
     const watched = [{ ...projects[0], lastRun: manual, lastMainAudit: boundary, mainAuditRuns: [edit, boundary] }];
-    const html = renderApp(state("overview", { projects: watched, tamper, runs: { "example-project": [manual, boundary, edit] } }, { projects: watched }));
+    const html = renderApp(state("project", { failures: { alerts: [] } }, { projects: watched }));
     const sidebar = html.match(/<ul class="nav project-nav" aria-label="Projects">([\s\S]*?)<\/ul>/)?.[1] ?? "";
     expect(sidebar).toContain('class="project-name">example-project</span>');
     expect(sidebar).not.toMatch(/Automatic audit|edit ·|boundary ·/);
@@ -299,27 +297,40 @@ describe("pages render from API responses", () => {
     for (const page of ["runs", "failures", "packs", "rule-strength", "violations"]) {
       const html = renderApp(state(page, data));
       const sidebar = html.match(/<ul class="nav project-nav" aria-label="Projects">([\s\S]*?)<\/ul>/)?.[1] ?? "";
-      expect(sidebar).toContain(`href="/${page === "packs" ? "configuration" : page}?project=example-project" aria-current="true"`);
-      expect(sidebar).toContain(`href="/${page === "packs" ? "configuration" : page}?project=warden"`);
+      expect(sidebar).toContain('href="/project?project=example-project" aria-current="page"');
+      expect(sidebar).toContain('href="/project?project=warden"');
       expect(html).not.toContain('data-nav="project"');
     }
   });
 
-  it("gives pack settings and rule strength separate destinations", () => {
-    const packs = renderApp(state("packs", { layers }, { project: "warden" }));
-    const strength = renderApp(state("rule-strength", { layers }, { project: "warden" }));
-    expect(packs).toContain('aria-label="Policy"');
-    expect(packs).toContain('href="/configuration?project=warden" aria-current="page">Configuration');
-    expect(packs).toContain('href="/configuration?project=warden#pack-config">Packs');
-    expect(packs).toContain("Watched projects");
-    expect(packs).toContain('href="/rule-strength?project=warden">Rule strength');
-    expect(packs).toContain('id="pack-settings"');
-    expect(packs).not.toContain("Weakest practice");
-    expect(strength).not.toContain('id="pack-settings"');
-    expect(strength).toContain("Explain the reason for the change. · strongest rule uses instruction.");
-    expect(strength).toContain("<strong>No comments</strong>");
-    expect(strength).toContain("Keep source free of comments.");
-    expect(strength).toContain("Promote");
+  it("keeps watch management in Configuration and describes Warden on About without activity", () => {
+    const configuration = renderApp(state("configuration", { layers, tamper }));
+    const about = renderApp(state("about", { layers, tamper }));
+    expect(configuration).toContain('aria-label="Dashboard"');
+    expect(configuration).toContain('href="/configuration" aria-current="page">Configuration');
+    expect(configuration).toContain("Choose project folder");
+    expect(configuration).toContain("Watched projects");
+    expect(configuration).not.toMatch(/pack-settings|watch-root|aria-label="Policy"/);
+    expect(about).toContain("What Warden does");
+    expect(about).toContain("<dt>Deterministic</dt>");
+    expect(about).toContain("<dt>Judgment</dt>");
+    expect(about).toContain("<dt>Prose</dt>");
+    expect(about).toContain("Tamper alerts");
+    expect(about).not.toMatch(/source-drift|pack-settings/);
+  });
+
+  it("bounds Overview to six projects and 50 recent runs, with a separate full gallery", () => {
+    const watched = Array.from({ length: 8 }, (_, i) => ({ project: `repo-${i}`, openAlerts: 0 }));
+    const runs = { "repo-0": Array.from({ length: 52 }, (_, i) => run({ run: `entry-${i}`, at: at(i) })) };
+    const all = { projects: watched, tamper: { open: [] }, runs };
+    const overview = renderApp(state("overview", all, { projects: watched }));
+    const gallery = renderApp(state("projects", all, { projects: watched }));
+    expect(overview.match(/class="project-card"/g)).toHaveLength(6);
+    expect(overview.match(/<tr data-run-row/g)).toHaveLength(50);
+    expect(overview).toContain('href="/projects">See more');
+    expect(overview).not.toContain('run=entry-1"');
+    expect(gallery.match(/class="project-card"/g)).toHaveLength(8);
+    expect(gallery).not.toMatch(/Recent runs|carousel-card/);
   });
 
   it("keeps the same watch button identity when a project is stopped", () => {
@@ -490,7 +501,10 @@ describe("pages render from API responses", () => {
   });
 
   it("renders the empty state on every project page when nothing is watched", () => {
-    for (const page of ["overview", "runs", "run", "rule-strength", "violations", "determinism", "tamper"]) {
+    const overview = renderApp({ ...state("overview", {}), projects: [], data: { projects: [], tamper: { open: [] } } });
+    expect(overview).toContain("No projects are watched yet");
+    expect(overview).toContain('href="/configuration">Add a project');
+    for (const page of ["project", "runs", "run", "rule-strength", "violations", "determinism", "tamper"]) {
       const html = renderApp({ ...state(page, {}), projects: [], data: { projects: [] } });
       expect(html).toContain("No projects are watched yet");
       expect(nextActions(html)).toEqual(["run warden init in a project"]);
@@ -529,12 +543,11 @@ describe("an unwired project and audit mode", () => {
 
   it("shows an unwired project as its own setup error, apart from tamper alerts and rule results", () => {
     const overview = renderApp(at2("overview", { tamper: { open: [hook, unchecked], recent: [] }, runs: { "example-project": [unwiredRun], warden: [] } }));
-    expect(overview).toContain("Warden is unwired in example-project");
-    expect(overview).toContain("Git must invoke Warden’s generated pre-commit hook through the configured Git hooks path. Commits land without a Warden check. While this alert is open, Warden refuses checks that would otherwise pass. This is a setup problem, not a rule failure. Fix it first, then review the remaining open alerts on the Tamper page.");
-    expect(overview).toContain("unchecked-commit on");
-    expect(overview).not.toContain("hook-unwired on");
-    expect(overview).toContain('>Warden unwired</small>');
-    expect(overview).toContain('<span class="tag mode enforce"');
+    expect(overview).toContain("Git pre-commit hook is not wired to Warden");
+    expect(overview).toContain("1 of 3");
+    const otherCard = renderApp(at2("overview", { tamper: { open: [hook, unchecked], recent: [] }, runs: { "example-project": [unwiredRun], warden: [] } }, { alertIndex: 1 }));
+    expect(otherCard).toContain("2 of 3");
+    expect(otherCard).toContain("unchecked-commit");
     const page = renderApp(at2("run", { runs: { project: "example-project", runs: [unwiredRun] } }, { run: "r-unwired" }));
     expect(page).toContain("Git pre-commit hook is not wired to Warden");
     expect(checks(page)).toEqual([
@@ -600,15 +613,15 @@ describe("UI QA fixes", () => {
 
   it("marks the current watched project in the sidebar, and the stylesheet styles it", async () => {
     const html = renderApp(state("runs", { runs: { project: "example-project", runs: exRuns } }));
-    expect(html).toContain('href="/runs?project=example-project" aria-current="true"');
+    expect(html).toContain('href="/project?project=example-project" aria-current="page"');
     const css = await readFile(join(wardenRoot, "web/app.css"), "utf8");
     expect(css).toContain(".nav a[aria-current]{");
   });
 
-  it("shows a dash for the last pass of a project with no runs", () => {
-    const html = renderApp(state("overview", { tamper: { open: [], recent: [] }, runs: { "example-project": [], warden: [run({ run: "w-1" })] } }));
-    expect(html).not.toContain("in the last 0 runs");
-    expect(html).toMatch(/Last pass<\/div><div>–<\/div>/);
+  it("labels a project with no run in the gallery", () => {
+    const watched = projects.map((entry) => ({ ...entry, lastRun: null, openAlerts: 0 }));
+    const html = renderApp(state("overview", { projects: watched, tamper: { open: [] }, runs: {} }, { projects: watched }));
+    expect(html.match(/>No runs yet<\/span>/g)).toHaveLength(2);
   });
 
   it("offers no dead link from the empty state and words None yet as plain text", () => {
@@ -640,7 +653,6 @@ describe("review and UI QA round 2", () => {
 
   it("shows only the banner's next action while the daemon is lost, over a real failing page", () => {
     const overview = lost("overview", { tamper, runs: { "example-project": exRuns, warden: [] } });
-    expect(renderApp(state("overview", { tamper, runs: { "example-project": exRuns, warden: [] } }))).toContain(`<code>${ERROR_NEXT}</code>`);
     expect(overview).toContain("example-project");
     expect(nextActions(overview)).toEqual(["run warden daemon install"]);
     expect(overview).not.toContain("Next action:");
@@ -653,12 +665,6 @@ describe("review and UI QA round 2", () => {
     expect(list).not.toContain(BLOCK_NEXT);
     expect(list).not.toContain(ERROR_NEXT);
     expect(list).not.toContain("See run details");
-  });
-
-  it("shows each overview run's next action once", () => {
-    const html = renderApp(state("overview", { tamper: { open: [], recent: [] }, runs: { "example-project": exRuns, warden: [] } }));
-    expect(nextActions(html)).toEqual([ERROR_NEXT]);
-    expect(html).not.toContain(`Next action: <span class="mono">${ERROR_NEXT}`);
   });
 
   it("wraps long rule identifiers and recorded finding paths", async () => {
@@ -675,12 +681,16 @@ describe("review and UI QA round 2", () => {
     expect(css.slice(css.indexOf("@media (max-width:779px)"))).toContain(".alert>.slot{flex-basis:100%}");
   });
 
-  it("puts every overview alert tag in a fixed-width slot", async () => {
-    const html = renderApp(state("overview", { tamper, runs: { "example-project": exRuns, warden: [] } }));
-    const rows = html.match(/<div class="alert[^"]*">/g) ?? [];
-    expect(rows.length).toBeGreaterThan(1);
-    expect(html.match(/<div class="alert[^"]*"><span class="slot"><span class="tag /g)).toHaveLength(rows.length);
-    expect(await readFile(join(wardenRoot, "web/app.css"), "utf8")).toMatch(/\.alert>\.slot\{flex:0 0 \d+px/);
+  it("only renders the current alert card and wraps the carousel controls", () => {
+    const data = { tamper, runs: { "example-project": exRuns, warden: [] } };
+    const first = renderApp(state("overview", data));
+    expect(first).toContain('data-alert="previous" data-index="1"');
+    expect(first).toContain("Open project alerts");
+    expect(first).not.toContain(">Open run</a>");
+    const second = renderApp(state("overview", data, { view: { alertIndex: 1 } }));
+    expect(second).toContain('data-alert="next" data-index="0"');
+    expect(second).toContain('run=r-err2">Open run</a>');
+    expect(second).not.toContain("Open project alerts");
   });
 
   it("names the time the data loaded, not the time of the last draw", () => {
@@ -739,7 +749,7 @@ describe("the daemon serves the web UI", () => {
     const project = "retained-audit";
     const policy = join(dir, "policy");
     await mkdir(policy, { recursive: true });
-    await writeFile(join(policy, "config.yaml"), `project: ${project}
+    const config = `project: ${project}
 warden: "0.1.0"
 base: main
 packs:
@@ -747,7 +757,8 @@ packs:
     paths: ["**/*"]
 tierBudgetMs: { edit: 2000, commit: 10000, boundary: 120000 }
 loopBreakerRepeats: 3
-`);
+`;
+    await writeFile(join(policy, "config.yaml"), config);
     const enrollments = served.daemon.auditOnly as Map<string, { project: string; root: string; dir: string; ref: string; data: string[]; links: string[] }>;
     enrollments.set(project, { project, root, dir, ref, data: [], links: [] });
     try {
@@ -761,6 +772,23 @@ loopBreakerRepeats: 3
         runs: [{ run: "retained", rules: { "warden-pq-sdk-1": 1, "removed-rule": 2 } }],
         currentRuleDetails: { "warden-pq-sdk-1": { name: "Single plugin declaration", description: expect.stringContaining("The plugin declares itself once") } },
       });
+      const checks = await get(`/api/project-checks?project=${project}`);
+      expect(checks.status).toBe(200);
+      const settings = JSON.parse(checks.body);
+      expect(settings).toMatchObject({
+        needsSignature: true,
+        packs: expect.arrayContaining([{ id: "plugin-compliance", on: true, required: false }]),
+        results: { "warden-pq-sdk-1": { run: "retained", status: "Passed" } },
+      });
+      const origin = `http://127.0.0.1:${served.port}`;
+      const draft = await fetch(`${origin}/api/packs?project=${project}`, {
+        method: "POST",
+        headers: { origin, "content-type": "application/json" },
+        body: JSON.stringify({ revision: settings.revision, changes: [{ id: "plugin-compliance", enabled: false }] }),
+      });
+      expect(draft.status).toBe(200);
+      expect(await draft.json()).toMatchObject({ changed: true, config: expect.stringContaining("enabled: false") });
+      expect(await readFile(join(policy, "config.yaml"), "utf8")).toBe(config);
       await rm(join(policy, "config.yaml"));
       const missing = await get(`/api/runs?project=${project}&run=retained`);
       expect(missing.status).toBe(200);
