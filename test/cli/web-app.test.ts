@@ -35,6 +35,7 @@ let up = true;
 let on: Record<string, (e: unknown) => unknown> = {};
 let fetches = 0;
 const heading = { tagName: "H1", tabIndex: 0, focus: vi.fn() };
+const focusedCatalogLink = { focus: vi.fn() };
 const packAnchor = { focus: vi.fn(), scrollIntoView: vi.fn() };
 const origin = "http://127.0.0.1:7419";
 const place = { pathname: "/", search: "", hash: "", origin, get href() { return `${origin}${this.pathname}${this.search}${this.hash}`; }, assign: vi.fn(), reload: vi.fn() };
@@ -95,10 +96,11 @@ beforeEach(() => {
   vi.stubGlobal("confirm", vi.fn(() => false));
   fetches = 0;
   heading.focus = vi.fn();
+  focusedCatalogLink.focus.mockClear();
   packAnchor.focus.mockClear();
   packAnchor.scrollIntoView.mockClear();
   bodies = { "/api/health": health, "/api/projects": { projects: [] }, "/api/tamper": { open: [], recent: [] }, "/api/watch": { added: [], paused: [] }, "/api/determinism": { projects: [] } };
-  const root = { set innerHTML(v: string) { html = v; }, get innerHTML() { return html; }, addEventListener(name: string, f: (e: unknown) => unknown) { on[name] = f; }, querySelector(sel: string) { return sel === "h1" ? heading : null; }, querySelectorAll() { return []; } };
+  const root = { set innerHTML(v: string) { html = v; }, get innerHTML() { return html; }, addEventListener(name: string, f: (e: unknown) => unknown) { on[name] = f; }, querySelector(sel: string) { return sel === "h1" ? heading : sel === '#pack-core a[href="#adapter-eslint"]' ? focusedCatalogLink : null; }, querySelectorAll() { return []; } };
   vi.stubGlobal("document", { getElementById: (id: string) => id === "app" ? root : id === "pack-info-core" ? packAnchor : null, activeElement: null, title: "" });
   heading.tabIndex = 0;
   vi.stubGlobal("window", { addEventListener(name: string, f: (e: unknown) => unknown) { on[name] = f; }, scrollTo: vi.fn() });
@@ -140,6 +142,42 @@ it("reloads on an evidence event while lost", async () => {
   es.fire("evidence", JSON.stringify({ project: "warden" }));
   await vi.advanceTimersByTimeAsync(300);
   expect(html).not.toContain("stopped answering");
+});
+
+it("reuses the bundled catalog during evidence refreshes and reloads it after a daemon restart", async () => {
+  bodies["/api/health"] = { ...health, startedAt: "2026-11-18T17:00:00Z" };
+  bodies["/api/pack-catalog"] = {
+    packs: [{ id: "core", rules: 2, adapters: ["eslint"] }],
+    adapters: [{ id: "eslint", description: "Runs lint rules.", packs: ["core"] }],
+  };
+  const requests = vi.spyOn(globalThis, "fetch");
+  const catalogRequests = () => requests.mock.calls.filter(([path]) => path === "/api/pack-catalog");
+  const es = await boot("/pack-catalog");
+  expect(html).toContain('href="#adapter-eslint"');
+  expect(catalogRequests()).toHaveLength(1);
+
+  Object.assign(document, { activeElement: {
+    matches: (selector: string) => selector.includes(".catalog-grid a"),
+    closest: () => ({ id: "pack-core" }),
+    getAttribute: () => "#adapter-eslint",
+  } });
+  bodies["/api/projects"] = { projects: [{ project: "new-project" }] };
+  es.fire("evidence");
+  es.fire("tamper");
+  await vi.advanceTimersByTimeAsync(300);
+  expect(html).toContain("new-project");
+  expect(focusedCatalogLink.focus).toHaveBeenCalledOnce();
+  expect(catalogRequests()).toHaveLength(1);
+
+  es.readyState = FakeSource.CONNECTING;
+  es.fire("error");
+  bodies["/api/health"] = { ...health, startedAt: "2026-11-18T17:01:00Z" };
+  bodies["/api/pack-catalog"] = { packs: [{ id: "new-pack", rules: 0, adapters: [] }], adapters: [] };
+  es.readyState = FakeSource.OPEN;
+  es.fire("open");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(html).toContain("new-pack");
+  expect(catalogRequests()).toHaveLength(2);
 });
 
 it("shows the empty state on a run page when no project is watched", async () => {

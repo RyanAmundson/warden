@@ -74,12 +74,21 @@ const loadConfiguration = async (projects, project) => {
   return { watch: settings, ...packs };
 };
 
+let cachedCatalog;
+const loadPackCatalog = async () => {
+  const { startedAt } = state.health;
+  if (cachedCatalog === undefined || cachedCatalog.startedAt !== startedAt) {
+    cachedCatalog = { startedAt, catalog: await api("/api/pack-catalog") };
+  }
+  return { catalog: cachedCatalog.catalog };
+};
+
 const LOAD = {
   overview: async (ps) => ({ tamper: await api("/api/tamper"), runs: await runsOf(ps, 50) }),
   projects: async () => ({}),
   configuration: async () => ({ watch: await api("/api/watch") }),
   about: async () => ({}),
-  "pack-catalog": async () => ({ catalog: await api("/api/pack-catalog") }),
+  "pack-catalog": loadPackCatalog,
   project: async (ps, project) => {
     const query = `project=${q(project)}`;
     const editing = params.get("tab") === "checks";
@@ -106,7 +115,14 @@ const LOAD = {
 
 const runIds = (data) => (data.runs?.runs ?? Object.values(data.runs ?? {}).flat()).map((r) => r.run);
 
-const focusKey = (el) => (el?.tagName === "H1" ? "h1" : el?.id ? `#${CSS.escape(el.id)}` : el?.dataset?.outcome ? `[data-outcome="${el.dataset.outcome}"]` : el?.dataset?.action ? `[data-action="${el.dataset.action}"]` : null);
+const focusKey = (el) => {
+  if (el?.matches?.(".catalog-grid a, .head a[href='#catalog-adapters'], .about-content a")) {
+    const row = el.closest(".catalog-list li");
+    const container = row ? `#${CSS.escape(row.id)}` : "main";
+    return `${container} a[href="${CSS.escape(el.getAttribute("href"))}"]`;
+  }
+  return (el?.tagName === "H1" ? "h1" : el?.id ? `#${CSS.escape(el.id)}` : el?.dataset?.outcome ? `[data-outcome="${el.dataset.outcome}"]` : el?.dataset?.action ? `[data-action="${el.dataset.action}"]` : null);
+};
 
 const render = () => {
   state.now = Date.now();
