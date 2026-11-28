@@ -1,11 +1,12 @@
 import { Linter, type Rule } from "eslint";
+import tseslint from "typescript-eslint";
 import { describe, expect, it } from "vitest";
 
 const { default: rules }: { default: Record<string, Rule.RuleModule> } =
   await import(new URL("../packs/performance/eslint.js", import.meta.url).href);
 
 const lint = (code: string) => new Linter().verify(code, [{
-  languageOptions: { globals: { require: "readonly" } },
+  languageOptions: { parser: tseslint.parser, globals: { require: "readonly" } },
   plugins: { performance: { rules } },
   rules: { "performance/blocking-node-calls": "error" },
 }]);
@@ -15,6 +16,9 @@ describe("performance-blocking-node-calls", () => {
     ['import { execFileSync as git } from "child_process"; git("git");', "execFileSync"],
     ['import * as child from "node:child_process"; child.spawnSync("git");', "spawnSync"],
     ['import fs from "node:fs"; fs.fsyncSync(7);', "fsyncSync"],
+    ['import fs = require("node:fs"); fs.fsyncSync(7);', "fsyncSync"],
+    ['import fs from "node:fs"; function run() { type fs = unknown; fs.fsyncSync(7); }', "fsyncSync"],
+    ['import { default as disk } from "node:fs"; disk.fsyncSync(7);', "fsyncSync"],
     ['import * as fs from "fs"; fs["writeFileSync"]("file", "data");', "writeFileSync"],
     ['const fs = require("fs"); fs.fdatasyncSync(7);', "fdatasyncSync"],
     ['const { fsyncSync: flush } = require("node:fs"); flush(7);', "fsyncSync"],
@@ -26,6 +30,8 @@ describe("performance-blocking-node-calls", () => {
   it.each([
     'import { execFile } from "node:child_process"; execFile("git");',
     'import fs from "node:fs/promises"; await fs.writeFile("file", "data");',
+    'import fs = require("node:fs/promises"); await fs.writeFile("file", "data");',
+    'import type { execFileSync } from "node:child_process"; const use = (): typeof execFileSync => { throw Error(); };',
     'import fs from "node:fs"; await fs.promises.writeFile("file", "data");',
     'import { execFileSync as git } from "node:child_process"; const cache = { git };',
     'import { execFileSync } from "./mock.js"; execFileSync("git");',

@@ -6,7 +6,7 @@ const propertyName = (node) => node.computed ? node.property.value : staticName(
 function definitionOf(node, sourceCode) {
   for (let scope = sourceCode.getScope(node); scope !== null; scope = scope.upper) {
     const binding = scope.set.get(node.name);
-    if (binding !== undefined) return binding.defs[0];
+    if (binding !== undefined && binding.isValueVariable !== false) return binding.defs[0];
   }
   return undefined;
 }
@@ -21,10 +21,15 @@ function bindingOf(node, sourceCode) {
   if (node.type !== "Identifier") return { module: requiredModule(node, sourceCode) };
   const definition = definitionOf(node, sourceCode);
   if (definition?.type === "ImportBinding") {
-    return {
-      module: definition.parent.source.value,
-      member: staticName(definition.node.imported),
-    };
+    const declaration = definition.node;
+    const parent = definition.parent;
+    if (declaration.importKind === "type" || parent?.importKind === "type") return {};
+    if (declaration.type === "TSImportEqualsDeclaration") {
+      const reference = declaration.moduleReference;
+      return { module: reference.type === "TSExternalModuleReference" ? reference.expression.value : undefined };
+    }
+    const member = staticName(declaration.imported);
+    return { module: parent?.source?.value, member: member === "default" ? undefined : member };
   }
   if (definition?.type !== "Variable" || definition.parent.kind !== "const") return {};
   const { id, init } = definition.node;

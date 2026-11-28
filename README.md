@@ -556,8 +556,8 @@ under `packs` in `.warden/config.yaml` and run `warden compile`.
 ```
 
 The pack reports direct synchronous Node filesystem and subprocess calls,
-including aliased named imports, module members, and direct CommonJS bindings.
-Tests and stories are excluded. Scope the paths to the code that runs on the
+including aliased imports, module members, and direct CommonJS bindings.
+Tests, test fixtures, and stories are excluded. Scope the paths to code on the
 event loop. A worker or a command-line script can have different requirements.
 The check uses file-local bindings. Use a live responsiveness test to measure
 event-loop delays and input latency.
