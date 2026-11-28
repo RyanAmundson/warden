@@ -200,7 +200,7 @@ input::placeholder{color:#5E6773}
 @media (min-width:1050px){.facts{grid-template-columns:max-content minmax(0,1fr) max-content minmax(0,1fr);column-gap:16px}}
 .rule-timings th:last-child{width:90px}
 .banner{display:flex;flex-direction:column;gap:12px;padding:18px 20px}
-.banner p{margin:0;font-size:14px;line-height:21px;max-width:75ch}
+.banner p{margin:0;font-size:14px;line-height:21px;max-width:75ch;overflow-wrap:anywhere}
 .banner h1,.banner h2{margin:0;font-stretch:87%;font-weight:750;font-size:20px;line-height:26px;text-wrap:balance}
 .banner .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .banner.amber{background:var(--amberbg);border:1px solid var(--amberln);color:var(--amberink)}
