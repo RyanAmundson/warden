@@ -655,20 +655,32 @@ const catalogAnchor = (type, id) => `${type}-${id}`;
 const catalogLink = (type, id) => `<a href="#${encodeURIComponent(catalogAnchor(type, id))}"><code>${esc(id)}</code></a>`;
 
 const packCatalogPage = ({ data: { catalog } }) => {
-  const registered = new Set(catalog.adapters.map(({ id }) => id));
-  const packs = catalog.packs.map(({ id, rules, adapters }) => `<li id="${esc(catalogAnchor("pack", id))}" tabindex="-1">
+  const groups = [
+    { type: "adapter", title: "Execution adapters", key: "adapters" },
+    { type: "review-adapter", title: "Review adapters", key: "reviewAdapters" },
+  ].map((group) => ({ ...group, registered: new Set(catalog[group.key].map(({ id }) => id)) }));
+  const packRows = catalog.packs.map((pack) => {
+    const { id, rules } = pack;
+    const links = groups.flatMap(({ key, type, registered }) => pack[key].map((id) =>
+      registered.has(id) ? catalogLink(type, id) : `<span><code>${esc(id)}</code> (unregistered)</span>`));
+    return `<li id="${esc(catalogAnchor("pack", id))}" tabindex="-1">
 <h3><code>${esc(id)}</code></h3>
-<div class="catalog-links"><span class="muted">${rules} ${rules === 1 ? "rule" : "rules"}</span>
-${adapters.length ? adapters.map((id) => registered.has(id) ? catalogLink("adapter", id) : `<span><code>${esc(id)}</code> (unregistered)</span>`).join("") : '<span class="muted">No execution adapters</span>'}</div></li>`).join("");
-  const adapters = catalog.adapters.map(({ id, description, packs }) => `<li id="${esc(catalogAnchor("adapter", id))}" tabindex="-1">
-<h3><code>${esc(id)}</code></h3><p>${esc(description)}</p>
+<div class="catalog-links"><span class="muted">${plural(rules, "rule")}</span>
+${links.length ? links.join("") : '<span class="muted">No adapters declared</span>'}</div></li>`;
+  }).join("");
+  const adapterGroups = groups.map(({ key, type, title }) => {
+    const list = catalog[key].map(({ id, description, packs }) => `<li id="${esc(catalogAnchor(type, id))}" tabindex="-1">
+<h4><code>${esc(id)}</code></h4><p>${esc(description)}</p>
 <div class="catalog-links">${packs.length ? packs.map((id) => catalogLink("pack", id)).join("") : '<span class="muted">No bundled packs use this adapter</span>'}</div></li>`).join("");
-  return `${header("Pack catalog", "Browse bundled packs and the execution adapters registered in this Warden build.", '<a href="#catalog-adapters">Jump to adapters</a>')}
+    return `<section aria-labelledby="catalog-${type}"><h3 class="catalog-group-heading" id="catalog-${type}" tabindex="-1">${title}</h3>
+${list ? `<ul class="catalog-list">${list}</ul>` : '<p class="pad muted">This build has none registered.</p>'}</section>`;
+  }).join("");
+  return `${header("Pack catalog", "Browse bundled packs and the adapters registered in this Warden build.", '<a href="#catalog-adapters">Jump to adapters</a>')}
 <div class="catalog-grid">
 <section class="mod" aria-labelledby="catalog-packs"><div class="modh"><h2 class="h2" id="catalog-packs">Packs</h2><span class="muted">${catalog.packs.length}</span></div>
-${packs ? `<ul class="catalog-list">${packs}</ul>` : '<p class="pad muted">No bundled packs are available.</p>'}</section>
-<section class="mod" aria-labelledby="catalog-adapters"><div class="modh"><h2 class="h2" id="catalog-adapters" tabindex="-1">Adapters</h2><span class="muted">${catalog.adapters.length}</span></div>
-${adapters ? `<ul class="catalog-list">${adapters}</ul>` : '<p class="pad muted">This build has no execution adapters.</p>'}</section>
+${packRows ? `<ul class="catalog-list">${packRows}</ul>` : '<p class="pad muted">No bundled packs are available.</p>'}</section>
+<section class="mod" aria-labelledby="catalog-adapters"><div class="modh"><h2 class="h2" id="catalog-adapters" tabindex="-1">Adapters</h2><span class="muted">${catalog.adapters.length + catalog.reviewAdapters.length}</span></div>
+${adapterGroups}</section>
 </div>`;
 };
 
@@ -702,7 +714,7 @@ const aboutPage = () => `${header("About Warden", "Advisory checks for the proje
 <dt>Static analysis</dt><dd>ESLint inspects source syntax, TypeScript checks types, and graph rules inspect imports. These checks can report findings without running the application.</dd>
 <dt>Runtime checks</dt><dd>The command adapter can run tests or builds. The Machines pack can validate recorded transitions against a machine definition.</dd>
 <dt>Models and proofs</dt><dd>The TLA pack checks a model with TLC. The Proofs pack builds Lean proofs and can compare implementation results with a proved model.</dd>
-<dt>Judgment and review</dt><dd>The System One adapter evaluates a question against selected inputs with a pinned model. A review can contribute findings that call for interpretation.</dd>
+<dt>Judgment and review</dt><dd>The System One adapter evaluates a question against selected inputs with a pinned model. A review capability selects a <a href="${href("pack-catalog")}#catalog-review-adapter">review adapter</a> to prepare the review and normalize its findings.</dd>
 <dt>Written guidance</dt><dd>An <code>instruction</code> rule describes a practice without invoking an execution adapter.</dd>
 </dl></section>
 <section><h2>How a rule runs</h2><p>Warden calls a rule a Guardrail. A pack groups Guardrails under practices that describe what to check and which paths to include.</p>

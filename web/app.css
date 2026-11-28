@@ -317,7 +317,9 @@ input::placeholder{color:#5E6773}
 .catalog-list li{padding:10px 14px;scroll-margin-top:12px;overflow-wrap:anywhere}
 .catalog-list li+li{border-top:1px solid var(--rule)}
 .catalog-list li:target{background:var(--paper);box-shadow:inset 0 0 0 1px var(--brass2)}
-.catalog-list h3,.catalog-list p{margin:0 0 4px;font-size:13px}
+.catalog-list h3,.catalog-list h4,.catalog-list p{margin:0 0 4px;font-size:13px}
+.catalog-group-heading{margin:0;padding:8px 14px;border-bottom:1px solid var(--rule);background:var(--paper);font-size:13px;scroll-margin-top:12px}
+.catalog-grid section+section>.catalog-group-heading{border-top:1px solid var(--line)}
 .catalog-links{display:flex;flex-wrap:wrap;gap:4px 12px}
 @media(max-width:780px){.catalog-grid{grid-template-columns:minmax(0,1fr)}}
 .project-tabs{display:flex;gap:4px;border-bottom:1px solid var(--line)}

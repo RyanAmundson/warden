@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Served, serve } from "../../src/cli/daemon.js";
 import { projectFailures, runEvidence } from "../../src/cli/run-evidence.js";
+import { reviewAdapters } from "../../src/review/adapter.js";
 import { adapters } from "../../src/runner/run.js";
 import { type Evidence, appendEvidence } from "../../src/runner/evidence.js";
 
@@ -762,22 +763,28 @@ describe("the daemon serves the web UI", () => {
     const result = await get("/api/pack-catalog?project=missing");
     expect(result.status).toBe(200);
     const catalog: {
-      packs: { id: string; adapters: string[]; rules: number }[];
+      packs: { id: string; adapters: string[]; reviewAdapters: string[]; rules: number }[];
       adapters: { id: string; description: string; packs: string[] }[];
+      reviewAdapters: { id: string; description: string; packs: string[] }[];
     } = JSON.parse(result.body);
     const dirs = await readdir(join(wardenRoot, "packs"), { withFileTypes: true });
     expect(catalog.packs.map(({ id }) => id).sort()).toEqual(dirs.filter((dir) => dir.isDirectory()).map(({ name }) => name).sort());
     expect(catalog.adapters.map(({ id }) => id).sort()).toEqual([...adapters.keys()].sort());
-    expect(catalog.packs.find(({ id }) => id === "performance")).toEqual({ id: "performance", rules: 1, adapters: ["eslint"] });
+    expect(catalog.reviewAdapters.map(({ id }) => id).sort()).toEqual([...reviewAdapters.keys()].sort());
+    expect(catalog.packs.find(({ id }) => id === "performance")).toEqual({ id: "performance", rules: 1, adapters: ["eslint"], reviewAdapters: [] });
+    expect(catalog.packs.find(({ id }) => id === "review")).toMatchObject({ adapters: ["cmd"], reviewAdapters: ["superpowers-review"] });
 
     const html = renderApp(state("pack-catalog", { catalog }, { projects: [], project: undefined }));
     expect(html).toContain('href="/pack-catalog" aria-current="page">Pack catalog');
     expect(html).toContain('href="#adapter-eslint"><code>eslint</code>');
     expect(html).toContain('href="#pack-performance"><code>performance</code>');
-    for (const adapter of catalog.adapters) {
-      expect(adapter.description).not.toBe("");
-      expect(adapter.packs).toEqual(catalog.packs.filter((pack) => pack.adapters.includes(adapter.id)).map(({ id }) => id));
-      expect(html).toContain(`id="adapter-${adapter.id}"`);
+    expect(html).toContain('href="#review-adapter-superpowers-review"><code>superpowers-review</code>');
+    for (const [key, anchor] of [["adapters", "adapter"], ["reviewAdapters", "review-adapter"]] as const) {
+      for (const adapter of catalog[key]) {
+        expect(adapter.description).not.toBe("");
+        expect(adapter.packs).toEqual(catalog.packs.filter((pack) => pack[key].includes(adapter.id)).map(({ id }) => id));
+        expect(html).toContain(`id="${anchor}-${adapter.id}"`);
+      }
     }
   });
 

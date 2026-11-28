@@ -147,8 +147,9 @@ it("reloads on an evidence event while lost", async () => {
 it("reuses the bundled catalog during evidence refreshes and reloads it after a daemon restart", async () => {
   bodies["/api/health"] = { ...health, startedAt: "2026-11-18T17:00:00Z" };
   bodies["/api/pack-catalog"] = {
-    packs: [{ id: "core", rules: 2, adapters: ["eslint"] }],
+    packs: [{ id: "core", rules: 2, adapters: ["eslint"], reviewAdapters: [] }],
     adapters: [{ id: "eslint", description: "Runs lint rules.", packs: ["core"] }],
+    reviewAdapters: [],
   };
   const requests = vi.spyOn(globalThis, "fetch");
   const catalogRequests = () => requests.mock.calls.filter(([path]) => path === "/api/pack-catalog");
@@ -172,7 +173,7 @@ it("reuses the bundled catalog during evidence refreshes and reloads it after a 
   es.readyState = FakeSource.CONNECTING;
   es.fire("error");
   bodies["/api/health"] = { ...health, startedAt: "2026-11-18T17:01:00Z" };
-  bodies["/api/pack-catalog"] = { packs: [{ id: "new-pack", rules: 0, adapters: [] }], adapters: [] };
+  bodies["/api/pack-catalog"] = { packs: [{ id: "new-pack", rules: 0, adapters: [], reviewAdapters: [] }], adapters: [], reviewAdapters: [] };
   es.readyState = FakeSource.OPEN;
   es.fire("open");
   await vi.advanceTimersByTimeAsync(0);

@@ -2,6 +2,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { KIND_LADDER } from "../records/types.js";
 import { parseConfig, readBundledPacks, readPack, readText } from "../records/load.js";
+import { builtInReviewAdapters } from "../review/adapter.js";
 import { builtInAdapters, prefixOf } from "../runner/run.js";
 const ids = (dir) => (existsSync(dir) ? readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name) : []);
 export async function packCatalog(root, wardenRoot, source, policyDir = join(root, ".warden")) {
@@ -23,14 +24,15 @@ export async function bundledPackCatalog(wardenRoot) {
     const packs = bundled.map((pack) => {
         const rules = pack.practices.flatMap(({ guardrails }) => guardrails);
         const adapters = [...new Set(rules.filter(({ kind }) => kind !== "instruction").map(prefixOf))].sort();
-        return { id: pack.id, rules: rules.length, adapters };
+        const reviewAdapters = [...new Set(pack.capabilities.flatMap(({ review }) => review ? [review.adapter] : []))].sort();
+        return { id: pack.id, rules: rules.length, adapters, reviewAdapters };
     }).sort((a, b) => a.id.localeCompare(b.id));
-    const adapters = builtInAdapters.map(([adapter, description]) => ({
-        id: adapter.id,
+    const describe = (registered, key) => registered.map(([{ id }, description]) => ({
+        id,
         description,
-        packs: packs.filter((pack) => pack.adapters.includes(adapter.id)).map(({ id }) => id),
+        packs: packs.filter((pack) => pack[key].includes(id)).map((pack) => pack.id),
     })).sort((a, b) => a.id.localeCompare(b.id));
-    return { packs, adapters };
+    return { packs, adapters: describe(builtInAdapters, "adapters"), reviewAdapters: describe(builtInReviewAdapters, "reviewAdapters") };
 }
 export async function listPacks(root, wardenRoot, source) {
     return (await packCatalog(root, wardenRoot, source)).map(({ row }) => row);
