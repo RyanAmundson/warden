@@ -283,14 +283,13 @@ Codex asks you to review the plugin's hooks before they run. Once trusted:
 ## Read your project's published audit
 
 The Warden plugin includes the `main-audit` skill in Claude Code and
-Codex. Install or update the plugin at user scope to make the skill available
-without adding files to your project. Ask your agent what Warden found on
-published main from the registered checkout or one of its Git worktrees.
+Codex. Install or update it at user scope. From a registered checkout or a
+linked worktree, ask the agent for published findings relevant to its task.
+The skill scopes results to the files you name or the current Git change.
+Use the dashboard to inspect complete receipts.
 
-The skill reads the local daemon's existing audit receipts. It reports the
-audited ref and commit, each audit tier's result, and findings with file
-locations and guidance. Compare findings with the code in your worktree and
-run the project's checks to verify any fix.
+Each finding identifies its published revision. Run the project's targeted
+checks in your worktree to verify your change.
 
 ## Publish an external check
 
@@ -308,9 +307,9 @@ report and is responsible for running the checker against that checkout.
 The receipt covers the files in the report. Publishing creates no watch
 and does not change repository files.
 
-Read the receipt through the dashboard's Runs page, the `main-audit` skill,
-or `GET /api/runs?project=PROJECT`. Use the skill helper's `--watch` option
-from any linked worktree to receive updates.
+Read the full receipt through the dashboard's Runs page or
+`GET /api/runs?project=PROJECT`. Use the `main-audit` skill from a linked
+worktree for findings about your task files. Add `--watch` for scoped updates.
 
 ## Unit records
 
