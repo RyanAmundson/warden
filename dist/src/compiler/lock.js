@@ -102,10 +102,11 @@ export function computeLock(set, generated, sources, warden) {
         config: { project, base, tierBudgetMs, loopBreakerRepeats, ...(mode === "audit" ? { mode } : {}), bench: benchSettings(set.config) },
     };
 }
-export function readLock(root) {
-    const lock = JSON.parse(readFileSync(join(root, LOCK_PATH), "utf8"));
+export const readLock = (root) => readLockFile(join(root, LOCK_PATH));
+export function readLockFile(file) {
+    const lock = JSON.parse(readFileSync(file, "utf8"));
     if ((lock.format ?? 0) > LOCK_FORMAT) {
-        throw new RecordError(LOCK_PATH, "/format", `has format ${lock.format}; this Warden reads formats up to ${LOCK_FORMAT}. Next action: install Warden ${lock.warden}, the release that wrote the lock.`);
+        throw new RecordError(file, "/format", `has format ${lock.format}; this Warden reads formats up to ${LOCK_FORMAT}. Next action: install Warden ${lock.warden}, the release that wrote the lock.`);
     }
     return lock;
 }

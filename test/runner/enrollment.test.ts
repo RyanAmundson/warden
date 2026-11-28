@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { serve } from "../../src/cli/daemon.js";
+import { enrollmentReview, signReviewedEnrollment, stagedEnrollmentDir } from "../../src/cli/enrollment-signing.js";
 import { type Evidence, appendEvidence } from "../../src/runner/evidence.js";
 import { auditEnrollment, checkCandidate, compileEnrollment, enrollmentTampering, migrateEnrollment, readEnrollments, signEnrollment } from "../../src/runner/enrollment.js";
 
@@ -92,6 +93,55 @@ const enroll = async (f: ReturnType<typeof fixture>) => {
 };
 
 const receipts = () => readFileSync(join(process.env.WARDEN_HOME as string, "evidence", "sample.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+
+test("reviews and signs only the staged enrollment, rejecting changes during approval", { timeout: 120_000 }, async () => {
+  const f = fixture();
+  f.commit("enrolled");
+  const { enrolled } = await enroll(f);
+  const trust = join(scratch, "trust_signers");
+  const key = join(scratch, "protected-owner");
+  execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "disposable-fixture-passphrase", "-f", key]);
+  writeFileSync(trust, `owner ${readFileSync(`${key}.pub`, "utf8")}`);
+  expect(enrollmentReview(enrolled, scratch)).toEqual({ ref, stage: null });
+  const stage = stagedEnrollmentDir(enrolled);
+  cpSync(enrolled.dir, stage, { recursive: true });
+  const file = join(stage, "policy", "config.yaml");
+  writeFileSync(file, config + "# prepared\n");
+  const review = enrollmentReview(enrolled, scratch);
+  expect(review.stage).toMatchObject({ verified: false, files: [{ change: "Changed", name: "policy/config.yaml" }] });
+  const dashboard = await serve(wardenRoot, 0, { enrolledAudits: false });
+  try {
+    const origin = `http://127.0.0.1:${dashboard.port}`;
+    const url = `${origin}/api/enrollment-signing?project=sample`;
+    expect(await (await fetch(url)).json()).toMatchObject({ stage: { revision: review.stage?.revision } });
+    const post = (site: string) => fetch(url, {
+      method: "POST", headers: { origin: site, "content-type": "application/json" },
+      body: JSON.stringify({ revision: "stale" }),
+    });
+    expect((await post("https://example.test")).status).toBe(403);
+    expect((await post(origin)).status).toBe(409);
+  } finally {
+    await dashboard.close();
+  }
+  const approve = async (text: string) => {
+    const message = join(scratch, "reviewed");
+    writeFileSync(message, text);
+    execFileSync("ssh-keygen", ["-q", "-Y", "sign", "-P", "disposable-fixture-passphrase", "-f", key, "-n", "warden-enrollment", message]);
+    return readFileSync(`${message}.sig`, "utf8");
+  };
+  await expect(signReviewedEnrollment(enrolled, scratch, "stale", approve, key)).rejects.toThrow("Review the current changes");
+  await expect(signReviewedEnrollment(enrolled, scratch, review.stage?.revision, async () => {
+    writeFileSync(file, config + "# different\n");
+    return "unexpected signature";
+  }, key)).rejects.toThrow("changed while you were signing");
+  expect(existsSync(join(stage, "signed.json"))).toBe(false);
+  writeFileSync(file, config + "# prepared\n");
+  const result = await signReviewedEnrollment(enrolled, scratch, review.stage?.revision, approve, key);
+  expect(result.stage).toMatchObject({ verified: true, revision: review.stage?.revision });
+  expect(enrollmentTampering(stage, trust)).toEqual([]);
+  expect(existsSync(join(enrolled.dir, "signed.json"))).toBe(false);
+  expect(readFileSync(join(enrolled.dir, "policy", "config.yaml"), "utf8")).toBe(config);
+});
 
 test("migrates an in-repo enrollment into WARDEN_HOME with the same baseline counts and leaves the repository as it was", { timeout: 120_000 }, async () => {
   const f = fixture();

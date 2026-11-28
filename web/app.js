@@ -60,14 +60,18 @@ const loadPolicy = async (project, edit) => {
 
 const loadConfiguration = async (projects, project) => {
   const watch = api("/api/watch");
-  const policy = project && !projects.find((entry) => entry.project === project)?.auditOnly
+  const audit = projects.find((entry) => entry.project === project)?.auditOnly;
+  const policy = project && !audit
     ? loadPolicy(project, true).catch((cause) => {
         if (cause.network || cause.status === undefined) throw cause;
         return { layersError: { status: cause.status, ...cause.body } };
       })
     : {};
-  const [settings, packs] = await Promise.all([watch, policy]);
-  return { watch: settings, ...packs };
+  const review = audit ? api(`/api/enrollment-signing?project=${q(project)}`).catch((cause) => ({
+    error: cause.message,
+  })) : undefined;
+  const [settings, packs, signing] = await Promise.all([watch, policy, review]);
+  return { watch: settings, signing, ...packs };
 };
 
 const LOAD = {
@@ -303,6 +307,32 @@ const changeWatch = async (change) => {
 
 root.addEventListener("submit", async (e) => {
   const { view } = state;
+  if (e.target.id === "enrollment-signing") {
+    e.preventDefault();
+    const selected = state.project;
+    const revision = state.data.signing?.stage?.revision;
+    if (!revision || view.signingProject) return;
+    view.signingProject = selected;
+    view.signingNotice = undefined;
+    render();
+    try {
+      const signing = await api(`/api/enrollment-signing?project=${q(selected)}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ revision }),
+      });
+      if (state.page === "packs" && state.project === selected) state.data.signing = signing;
+    } catch (error) {
+      if (state.page === "packs" && state.project === selected) {
+        view.signingNotice = { project: selected, message: error.message };
+        await load();
+      }
+    } finally {
+      view.signingProject = undefined;
+      render();
+    }
+    return;
+  }
   if (e.target.id === "watch-add") {
     e.preventDefault();
     return changeWatch({ root: view.watchRoot ?? "" });

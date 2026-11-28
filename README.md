@@ -634,6 +634,18 @@ descends from the last audited commit, records an `error` receipt for each
 tier, once per distinct message. Automatic hooks and checkout discovery skip
 every worktree of an enrolled repository.
 
+### Review and sign a staged enrollment
+
+For a project with a published audit, put its prepared, compiled enrollment in
+`$WARDEN_HOME/staged-enrollments/<enrollment-id>/`. Use the same enrollment ID
+as the active copy in `$WARDEN_HOME/enrollments/`.
+
+In Warden, open **Configuration**, select the project, and review the rule and
+file changes in **Policy signing**. Select **Sign reviewed policy** on macOS
+and unlock `~/.ssh/warden_owner` in the system prompt. Warden verifies the
+owner signature and saves it alongside the staged policy. Promote the signed
+enrollment and enable any project-owned publication enforcement separately.
+
 ### Contribute checks and report adapters
 
 Use a project-owned pack to contribute rules. Copy the reviewed pack directory

@@ -153,11 +153,15 @@ const manifestOf = (dir: string): Manifest => {
   return { enrollment: readEnrollment(dir), files: Object.fromEntries(files.map((file) => [file, sha256(readFileSync(join(dir, file)))])), baseline };
 };
 
-const manifestText = (dir: string): string => `${canonicalJson(manifestOf(dir))}\n`;
+export const enrollmentManifest = (dir: string): string => `${canonicalJson(manifestOf(dir))}\n`;
 
 export function signEnrollment(dir: string, key: string): void {
-  const text = manifestText(dir);
+  const text = enrollmentManifest(dir);
   const signature = signText(key, ENROLLMENT_NAMESPACE, text, "run warden enroll sign again");
+  writeEnrollmentSignature(dir, text, signature);
+}
+
+export function writeEnrollmentSignature(dir: string, text: string, signature: string): void {
   writeAtomic(join(dir, SIGNED), text);
   writeAtomic(join(dir, `${SIGNED}.sig`), signature);
 }

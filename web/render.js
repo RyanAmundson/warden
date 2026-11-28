@@ -670,13 +670,37 @@ ${rows ? `<ul class="watch-list">${rows}</ul>` : '<p class="pad muted">No watche
 </section>`;
 };
 
+const signingPanel = (state, selected) => {
+  const { signing } = state.data;
+  const { signingProject, signingNotice } = state.view ?? {};
+  const pending = signingProject === selected.project;
+  const status = signingNotice?.project === selected.project ? signingNotice.message : "";
+  const stage = signing?.stage;
+  const changes = (items, empty) => items.length
+    ? `<ul>${items.map(({ name, change }) => `<li><strong>${esc(change)}</strong> <code>${esc(name)}</code></li>`).join("")}</ul>`
+    : `<p class="muted">${empty}</p>`;
+  return `<section class="mod" aria-labelledby="policy-signing">
+<div class="modh"><h2 class="h2" id="policy-signing">Policy signing · ${esc(selected.project)}</h2></div>
+<div class="watch-form signing-review">
+${signing?.error ? `<p role="alert">${esc(signing.error)}</p>`
+  : !stage ? '<p class="muted">No policy is staged for signing.</p>'
+    : `<p>Published audit branch <code>${esc(signing.ref)}</code></p>
+<h3>Rule changes</h3>${changes(stage.rules, "No rule changes.")}
+<details><summary>Changed policy files (${stage.files.length})</summary>${changes(stage.files, "No file changes.")}</details>
+<p>Policy revision <code>${esc(stage.revision)}</code></p>
+<form id="enrollment-signing">
+<button class="btn" type="submit" id="sign-policy"${pending || stage.verified || !stage.canSign ? " disabled" : ""}>${stage.verified ? "Signature verified" : pending ? "Waiting for approval…" : "Sign reviewed policy"}</button>
+</form>
+<p role="status">${esc(status || (pending ? "Complete or cancel the local signing prompt." : stage.verified ? "The staged policy is signed. Activate it separately." : stage.canSign ? "Unlock your owner key in the local prompt." : "Native policy signing is available on macOS."))}</p>`}</div></section>`;
+};
+
 export const packsPage = (state) => {
   const { data } = state;
   const selected = selectedProject(state);
   const packContent = data.layersError ? apiError(data.layersError)
     : data.layers ? packCatalog(state, data.layers)
     : `<section class="mod" aria-labelledby="pack-config"><div class="modh"><h2 class="h2" id="pack-config" tabindex="-1">Packs${selected ? ` · ${esc(selected.project)}` : ""}</h2></div><p class="pad muted">${selected?.auditOnly ? "Pack settings require a watched checkout. This project uses a published audit." : "Add a project with a watched checkout to manage its packs."}</p></section>`;
-  return `${header("Configuration", "Manage watched projects and packs.")}${watchPanel(state)}${packContent}`;
+  return `${header("Configuration", "Manage watched projects and packs.")}${watchPanel(state)}${selected?.auditOnly ? signingPanel(state, selected) : ""}${packContent}`;
 };
 
 const ruleRows = (rules, context) => `<ul class="policy-rules">${rules.map((r) => `<li>

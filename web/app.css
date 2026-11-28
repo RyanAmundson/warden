@@ -48,6 +48,10 @@ a{color:var(--link);text-underline-offset:3px}a:hover{color:#0E2747}
 .modh>div:not(.legend){display:flex;flex-direction:column}
 .h2{margin:0;font-stretch:87%;font-weight:700;font-size:15px;line-height:20px}
 .pad{padding:12px 14px}
+.signing-review{overflow-wrap:anywhere}
+.signing-review h3{margin:0;font-size:13px}
+.signing-review ul{margin:0;padding-inline-start:20px}
+.signing-review details ul{margin-block-start:6px}
 .scroll{overflow-x:auto}
 .fit-table{container-type:inline-size}
 .strength-project{width:200px}

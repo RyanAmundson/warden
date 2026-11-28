@@ -11,6 +11,7 @@ import { type AuditOnlyProject, DEFAULT_PORT, type Daemon, type Detection, HEART
 import { enrollmentPolicyDir } from "../runner/enrollment.js";
 import { isProjectName } from "../runner/watch-settings.js";
 import { type Evidence, readEvidence, wardenHome } from "../runner/evidence.js";
+import { enrollmentReview, signReviewedEnrollment } from "./enrollment-signing.js";
 import { PackSettingsError, packSettings, savePackSettings, settingsBody } from "./pack-settings.js";
 import { currentRuleDetails, projectFailures, runEvidence } from "./run-evidence.js";
 import { runRecords } from "./runs.js";
@@ -134,6 +135,20 @@ async function changeWatch(daemon: Daemon, request: IncomingMessage): Promise<un
   return { project };
 }
 
+function signingEntry(daemon: Daemon, url: URL): AuditOnlyProject {
+  const entry = daemon.auditOnly.get(url.searchParams.get("project") ?? "");
+  if (entry === undefined) throw new PackSettingsError(404, "Select a project with a published audit.");
+  return entry;
+}
+
+async function signPolicy(daemon: Daemon, wardenRoot: string, url: URL, request: IncomingMessage) {
+  const body = await settingsBody(request);
+  if (Object.keys(body).length !== 1 || typeof body.revision !== "string") {
+    throw new PackSettingsError(400, "Send the reviewed policy revision.");
+  }
+  return signReviewedEnrollment(signingEntry(daemon, url), wardenRoot, body.revision);
+}
+
 export async function route(daemon: Daemon, wardenRoot: string, url: URL): Promise<unknown> {
   const projects = projectsOf(daemon);
   const pick = (): ProjectEntry => {
@@ -148,6 +163,8 @@ export async function route(daemon: Daemon, wardenRoot: string, url: URL): Promi
       const beat = readHeartbeat();
       return { status: "ok", pid: process.pid, version: await wardenVersion(wardenRoot), startedAt: daemon.startedAt, heartbeatAt: beat?.at ?? null, heartbeatFile: heartbeatFile(), intervalMs: HEARTBEAT_MS, staleAfterMs: STALE_MS, port: beat?.port ?? null, projects: projects.length, openAlerts: openAlerts(daemon).length };
     }
+    case "/api/enrollment-signing":
+      return enrollmentReview(signingEntry(daemon, url), wardenRoot);
     case "/api/watch":
       return daemon.watchSettings;
     case "/api/projects":
@@ -327,7 +344,8 @@ export async function serve(wardenRoot: string, port: number, opts: { intervalMs
     }
     const writePacks = req.method === "POST" && url.pathname === "/api/packs";
     const writeWatch = req.method === "POST" && url.pathname === "/api/watch";
-    if (req.method !== "GET" && !writePacks && !writeWatch) {
+    const writeSignature = req.method === "POST" && url.pathname === "/api/enrollment-signing";
+    if (req.method !== "GET" && !writePacks && !writeWatch && !writeSignature) {
       res.writeHead(405, { "content-type": "application/json" }).end(`${JSON.stringify({ error: `${req.method} is not supported`, next: "send a GET request" })}\n`);
       return;
     }
@@ -356,6 +374,7 @@ export async function serve(wardenRoot: string, port: number, opts: { intervalMs
     }
     const result = writePacks ? changeProjectPacks(daemon, wardenRoot, url, req)
       : writeWatch ? changeWatch(daemon, req)
+      : writeSignature ? signPolicy(daemon, wardenRoot, url, req)
       : route(daemon, wardenRoot, url);
     result.then(
       (body) => res.writeHead(200, { "content-type": "application/json" }).end(`${JSON.stringify(body)}\n`),
