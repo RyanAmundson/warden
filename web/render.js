@@ -676,8 +676,11 @@ const signingPanel = (state, selected) => {
   const pending = signingProject === selected.project;
   const status = signingNotice?.project === selected.project ? signingNotice.message : "";
   const stage = signing?.stage;
-  const changes = (items, empty) => items.length
-    ? `<ul>${items.map(({ name, change }) => `<li><strong>${esc(change)}</strong> <code>${esc(name)}</code></li>`).join("")}</ul>`
+  const value = (label, content, file) => content === undefined ? ""
+    : `<div><strong>${label}${file && content.binary ? " (base64)" : ""}</strong><pre>${esc(file ? content.text : JSON.stringify(content, null, 2))}</pre></div>`;
+  const changes = (items, empty, file = false) => items.length
+    ? `<ul>${items.map(({ name, change, before, after }) => `<li><details><summary><strong>${esc(change)}</strong> <code>${esc(name)}</code></summary>
+<div class="signing-values">${value("Current", before, file)}${value("Staged", after, file)}</div></details></li>`).join("")}</ul>`
     : `<p class="muted">${empty}</p>`;
   return `<section class="mod" aria-labelledby="policy-signing">
 <div class="modh"><h2 class="h2" id="policy-signing">Policy signing · ${esc(selected.project)}</h2></div>
@@ -686,10 +689,11 @@ ${signing?.error ? `<p role="alert">${esc(signing.error)}</p>`
   : !stage ? '<p class="muted">No policy is staged for signing.</p>'
     : `<p>Published audit branch <code>${esc(signing.ref)}</code></p>
 <h3>Rule changes</h3>${changes(stage.rules, "No rule changes.")}
-<details><summary>Changed policy files (${stage.files.length})</summary>${changes(stage.files, "No file changes.")}</details>
+<details${stage.settings.length ? " open" : ""}><summary>Enrollment settings (${stage.settings.length})</summary>${changes(stage.settings, "No enrollment setting changes.")}</details>
+<details><summary>Changed policy files (${stage.files.length})</summary>${changes(stage.files, "No file changes.", true)}</details>
 <p>Policy revision <code>${esc(stage.revision)}</code></p>
 <form id="enrollment-signing">
-<button class="btn" type="submit" id="sign-policy"${pending || stage.verified || !stage.canSign ? " disabled" : ""}>${stage.verified ? "Signature verified" : pending ? "Waiting for approval…" : "Sign reviewed policy"}</button>
+<button class="btn" type="submit" id="sign-policy"${pending || stage.verified || !stage.canSign ? ' aria-disabled="true"' : ""}>${stage.verified ? "Signature verified" : pending ? "Waiting for approval…" : "Sign reviewed policy"}</button>
 </form>
 <p role="status">${esc(status || (pending ? "Complete or cancel the local signing prompt." : stage.verified ? "The staged policy is signed. Activate it separately." : stage.canSign ? "Unlock your owner key in the local prompt." : "Native policy signing is available on macOS."))}</p>`}</div></section>`;
 };

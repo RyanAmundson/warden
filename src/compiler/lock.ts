@@ -151,8 +151,8 @@ export function computeLock(
 
 export const readLock = (root: string): Lock => readLockFile(join(root, LOCK_PATH));
 
-export function readLockFile(file: string): Lock {
-  const lock = JSON.parse(readFileSync(file, "utf8")) as Lock;
+export function readLockFile(file: string, text = readFileSync(file, "utf8")): Lock {
+  const lock = JSON.parse(text) as Lock;
   if ((lock.format ?? 0) > LOCK_FORMAT) {
     throw new RecordError(file, "/format", `has format ${lock.format}; this Warden reads formats up to ${LOCK_FORMAT}. Next action: install Warden ${lock.warden}, the release that wrote the lock.`);
   }

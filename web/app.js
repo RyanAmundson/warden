@@ -242,6 +242,7 @@ window.addEventListener("popstate", () => {
 });
 
 const schedule = () => {
+  if (page === "packs" && state.projects.some((entry) => entry.project === project && entry.auditOnly)) return;
   if (state.view.paused || state.view.packDraft.size || state.view.packSaving || state.view.watchSaving) return;
   clearTimeout(pending);
   pending = setTimeout(load, 250);
@@ -310,8 +311,9 @@ root.addEventListener("submit", async (e) => {
   if (e.target.id === "enrollment-signing") {
     e.preventDefault();
     const selected = state.project;
-    const revision = state.data.signing?.stage?.revision;
-    if (!revision || view.signingProject) return;
+    const stage = state.data.signing?.stage;
+    if (!stage?.canSign || stage.verified || view.signingProject) return;
+    const { revision } = stage;
     view.signingProject = selected;
     view.signingNotice = undefined;
     render();

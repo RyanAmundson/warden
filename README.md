@@ -640,11 +640,12 @@ For a project with a published audit, put its prepared, compiled enrollment in
 `$WARDEN_HOME/staged-enrollments/<enrollment-id>/`. Use the same enrollment ID
 as the active copy in `$WARDEN_HOME/enrollments/`.
 
-In Warden, open **Configuration**, select the project, and review the rule and
-file changes in **Policy signing**. Select **Sign reviewed policy** on macOS
-and unlock `~/.ssh/warden_owner` in the system prompt. Warden verifies the
-owner signature and saves it alongside the staged policy. Promote the signed
-enrollment and enable any project-owned publication enforcement separately.
+In Warden, open **Configuration**, select the project, and review changed rules,
+enrollment settings, and policy files in **Policy signing**. Select **Sign
+reviewed policy** on macOS and unlock `~/.ssh/warden_owner` in the system prompt.
+Warden verifies the owner signature and saves the exact signed snapshot under
+`$WARDEN_HOME/approved-enrollments/<enrollment-id>/<revision>/`. Promote the signed
+snapshot and enable any project-owned publication enforcement separately.
 
 ### Contribute checks and report adapters
 

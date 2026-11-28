@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { serve } from "../../src/cli/daemon.js";
-import { enrollmentReview, signReviewedEnrollment, stagedEnrollmentDir } from "../../src/cli/enrollment-signing.js";
+import { approvedEnrollmentDir, enrollmentReview, signReviewedEnrollment, stagedEnrollmentDir } from "../../src/cli/enrollment-signing.js";
 import { type Evidence, appendEvidence } from "../../src/runner/evidence.js";
 import { auditEnrollment, checkCandidate, compileEnrollment, enrollmentTampering, migrateEnrollment, readEnrollments, signEnrollment } from "../../src/runner/enrollment.js";
 
@@ -107,8 +107,18 @@ test("reviews and signs only the staged enrollment, rejecting changes during app
   cpSync(enrolled.dir, stage, { recursive: true });
   const file = join(stage, "policy", "config.yaml");
   writeFileSync(file, config + "# prepared\n");
+  const enrollmentFile = join(stage, "enrollment.json");
+  const enrollment = JSON.parse(readFileSync(enrollmentFile, "utf8"));
+  writeFileSync(enrollmentFile, JSON.stringify({ ...enrollment, reportAdapters: ["extra-reporter"] }));
   const review = enrollmentReview(enrolled, scratch);
-  expect(review.stage).toMatchObject({ verified: false, files: [{ change: "Changed", name: "policy/config.yaml" }] });
+  expect(review.stage).toMatchObject({
+    verified: false,
+    settings: [{ change: "Added", name: "reportAdapters", after: ["extra-reporter"] }],
+    files: [{ change: "Changed", name: "policy/config.yaml", before: { text: config }, after: { text: config + "# prepared\n" } }],
+  });
+  writeFileSync(file, config + "# different\n");
+  expect(enrollmentReview(enrolled, scratch).stage?.files[0]?.after).toMatchObject({ text: config + "# different\n" });
+  writeFileSync(file, config + "# prepared\n");
   const dashboard = await serve(wardenRoot, 0, { enrolledAudits: false });
   try {
     const origin = `http://127.0.0.1:${dashboard.port}`;
@@ -136,9 +146,26 @@ test("reviews and signs only the staged enrollment, rejecting changes during app
   }, key)).rejects.toThrow("changed while you were signing");
   expect(existsSync(join(stage, "signed.json"))).toBe(false);
   writeFileSync(file, config + "# prepared\n");
+  const moved = stage + "-moved";
+  try {
+    await expect(signReviewedEnrollment(enrolled, scratch, review.stage?.revision, async () => {
+      renameSync(stage, moved);
+      symlinkSync(enrolled.dir, stage);
+      return "unexpected signature";
+    }, key)).rejects.toThrow("requires regular files and directories");
+    expect(existsSync(join(enrolled.dir, "signed.json"))).toBe(false);
+  } finally {
+    if (existsSync(moved)) {
+      unlinkSync(stage);
+      renameSync(moved, stage);
+    }
+  }
   const result = await signReviewedEnrollment(enrolled, scratch, review.stage?.revision, approve, key);
   expect(result.stage).toMatchObject({ verified: true, revision: review.stage?.revision });
-  expect(enrollmentTampering(stage, trust)).toEqual([]);
+  expect(existsSync(join(stage, "signed.json"))).toBe(false);
+  const approved = approvedEnrollmentDir(enrolled, review.stage!.revision);
+  expect(enrollmentTampering(approved, trust)).toEqual([]);
+  expect(enrollmentReview(enrolled, scratch).stage?.verified).toBe(true);
   expect(existsSync(join(enrolled.dir, "signed.json"))).toBe(false);
   expect(readFileSync(join(enrolled.dir, "policy", "config.yaml"), "utf8")).toBe(config);
 });

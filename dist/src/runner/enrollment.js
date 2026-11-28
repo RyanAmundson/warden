@@ -89,8 +89,14 @@ const filesUnder = (dir, prefix) => {
 };
 const manifestOf = (dir) => {
     const files = [...filesUnder(dir, POLICY), ...filesUnder(dir, DATA)].sort();
-    const baseline = existsSync(join(dir, BASELINE)) ? JSON.parse(readFileSync(join(dir, BASELINE), "utf8")) : {};
-    return { enrollment: readEnrollment(dir), files: Object.fromEntries(files.map((file) => [file, sha256(readFileSync(join(dir, file)))])), baseline };
+    let baseline = {};
+    const digests = files.map((file) => {
+        const bytes = readFileSync(join(dir, file));
+        if (file === BASELINE)
+            baseline = JSON.parse(bytes.toString("utf8"));
+        return [file, sha256(bytes)];
+    });
+    return { enrollment: readEnrollment(dir), files: Object.fromEntries(digests), baseline };
 };
 export const enrollmentManifest = (dir) => `${canonicalJson(manifestOf(dir))}\n`;
 export function signEnrollment(dir, key) {

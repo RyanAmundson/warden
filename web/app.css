@@ -52,6 +52,8 @@ a{color:var(--link);text-underline-offset:3px}a:hover{color:#0E2747}
 .signing-review h3{margin:0;font-size:13px}
 .signing-review ul{margin:0;padding-inline-start:20px}
 .signing-review details ul{margin-block-start:6px}
+.signing-values{display:grid;gap:8px;margin:6px 0}
+.signing-values pre{margin:4px 0 0;padding:8px;border:1px solid var(--line);max-height:22rem;overflow:auto;white-space:pre-wrap}
 .scroll{overflow-x:auto}
 .fit-table{container-type:inline-size}
 .strength-project{width:200px}
