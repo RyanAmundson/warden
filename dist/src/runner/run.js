@@ -6,9 +6,17 @@ import { systemOneAdapter } from "../adapters/system-one.js";
 import { toolRegistrationAdapter } from "../adapters/tool-registration.js";
 import { RecordError } from "../records/load.js";
 import { declaredUnits } from "../records/units.js";
-export const adapters = new Map([
-    eslintAdapter, tscAdapter, cmdAdapter, fsAdapter, graphAdapter, moduleAdapter, systemOneAdapter, toolRegistrationAdapter,
-].map((a) => [a.id, a]));
+export const builtInAdapters = [
+    [eslintAdapter, "Runs ESLint rules on matching source files."],
+    [tscAdapter, "Checks TypeScript diagnostics for the project."],
+    [cmdAdapter, "Runs commands declared by a pack, such as tests or model checkers."],
+    [fsAdapter, "Checks files and directory structure."],
+    [graphAdapter, "Checks relationships between files in the import graph."],
+    [moduleAdapter, "Loads project modules and checks their exports and behavior."],
+    [systemOneAdapter, "Sends a rule question and selected inputs to a configured model for judgment."],
+    [toolRegistrationAdapter, "Checks how a project declares and registers its tools."],
+];
+export const adapters = new Map(builtInAdapters.map(([adapter]) => [adapter.id, adapter]));
 export const prefixOf = (g) => g.implementation.slice(0, g.implementation.indexOf(":"));
 export const unknownAdapters = (set) => {
     const known = [...adapters.keys()];

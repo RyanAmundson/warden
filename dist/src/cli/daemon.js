@@ -14,12 +14,13 @@ import { isProjectName } from "../runner/watch-settings.js";
 import { readEvidence, wardenHome } from "../runner/evidence.js";
 import { enrollmentReview, signReviewedEnrollment } from "./enrollment-signing.js";
 import { PackSettingsError, draftPackSettings, packSettings, savePackSettings, settingsBody } from "./pack-settings.js";
+import { bundledPackCatalog } from "./packs.js";
 import { currentRuleDetails, projectFailures, runEvidence } from "./run-evidence.js";
 import { runRecords } from "./runs.js";
 import { SAFE_NAME, VIDEO_FILE, recordingOf, videosRoot } from "./video.js";
 import { BANDS, bandCounts, loadView, packViolations } from "./view.js";
 export const LABEL = "warden.daemon";
-const PAGES = new Set(["/", "/runs", "/run", "/failures", "/configuration", "/projects", "/project", "/about", "/packs", "/rule-strength", "/layers", "/violations", "/determinism", "/tamper"]);
+const PAGES = new Set(["/", "/runs", "/run", "/failures", "/configuration", "/projects", "/project", "/about", "/pack-catalog", "/packs", "/rule-strength", "/layers", "/violations", "/determinism", "/tamper"]);
 const ASSETS = {
     "/app.css": "text/css; charset=utf-8",
     "/app.js": "text/javascript; charset=utf-8",
@@ -187,6 +188,8 @@ export async function route(daemon, wardenRoot, url) {
         }
         case "/api/enrollment-signing":
             return enrollmentReview(signingEntry(daemon, url), wardenRoot);
+        case "/api/pack-catalog":
+            return bundledPackCatalog(wardenRoot);
         case "/api/watch":
             return daemon.watchSettings;
         case "/api/projects":

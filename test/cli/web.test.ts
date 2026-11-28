@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Served, serve } from "../../src/cli/daemon.js";
 import { projectFailures, runEvidence } from "../../src/cli/run-evidence.js";
+import { adapters } from "../../src/runner/run.js";
 import { type Evidence, appendEvidence } from "../../src/runner/evidence.js";
 
 const wardenRoot = resolve(import.meta.dirname, "../..");
@@ -316,6 +317,17 @@ describe("pages render from API responses", () => {
     expect(about).toContain("<dt>Judgment</dt>");
     expect(about).toContain("<dt>Prose</dt>");
     expect(about).toContain("Tamper alerts");
+    expect(about).toContain('href="/pack-catalog">Browse packs and adapters');
+    expect(about).toContain('href="/pack-catalog#adapter-eslint"');
+    expect(about).toContain('implementation: &quot;eslint:warden/no-comments&quot;');
+    expect(about).toContain("mustFail: |");
+    expect(about).toContain("mustPass: |");
+    for (const term of ["Edit", "Commit", "Boundary", "Published branch", "After the fact", "Static analysis", "Runtime checks", "Models and proofs", "Judgment and review", "Written guidance"]) {
+      expect(about).toContain(`<dt>${term}</dt>`);
+    }
+    expect(about).toContain("warden audit --tier boundary");
+    expect(about).toContain("warden candidate");
+    expect(about).toContain("warden publish");
     expect(about).not.toMatch(/source-drift|pack-settings/);
   });
 
@@ -741,6 +753,33 @@ describe("the daemon serves the web UI", () => {
         .on("error", fail)
         .end();
     });
+
+  it("serves the complete bundled pack and adapter catalog without a project", async () => {
+    const page = await get("/pack-catalog");
+    expect(page.status).toBe(200);
+    expect(page.type).toContain("text/html");
+
+    const result = await get("/api/pack-catalog?project=missing");
+    expect(result.status).toBe(200);
+    const catalog: {
+      packs: { id: string; adapters: string[]; rules: number }[];
+      adapters: { id: string; description: string; packs: string[] }[];
+    } = JSON.parse(result.body);
+    const dirs = await readdir(join(wardenRoot, "packs"), { withFileTypes: true });
+    expect(catalog.packs.map(({ id }) => id).sort()).toEqual(dirs.filter((dir) => dir.isDirectory()).map(({ name }) => name).sort());
+    expect(catalog.adapters.map(({ id }) => id).sort()).toEqual([...adapters.keys()].sort());
+    expect(catalog.packs.find(({ id }) => id === "performance")).toEqual({ id: "performance", rules: 1, adapters: ["eslint"] });
+
+    const html = renderApp(state("pack-catalog", { catalog }, { projects: [], project: undefined }));
+    expect(html).toContain('href="/pack-catalog" aria-current="page">Pack catalog');
+    expect(html).toContain('href="#adapter-eslint"><code>eslint</code>');
+    expect(html).toContain('href="#pack-performance"><code>performance</code>');
+    for (const adapter of catalog.adapters) {
+      expect(adapter.description).not.toBe("");
+      expect(adapter.packs).toEqual(catalog.packs.filter((pack) => pack.adapters.includes(adapter.id)).map(({ id }) => id));
+      expect(html).toContain(`id="adapter-${adapter.id}"`);
+    }
+  });
 
   it("reads labels for a retained published audit from its enrollment policy", async () => {
     const root = join(scratch, "source");

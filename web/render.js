@@ -1,4 +1,4 @@
-export const PAGES = { overview: "Overview", configuration: "Configuration", projects: "Projects", project: "Project", about: "About", runs: "Runs", failures: "Current failures", packs: "Packs", "rule-strength": "Rule strength", violations: "Violations", determinism: "Determinism", tamper: "Tamper" };
+export const PAGES = { overview: "Overview", configuration: "Configuration", projects: "Projects", project: "Project", about: "About", "pack-catalog": "Pack catalog", runs: "Runs", failures: "Current failures", packs: "Packs", "rule-strength": "Rule strength", violations: "Violations", determinism: "Determinism", tamper: "Tamper" };
 
 const CHECKOUT_PAGES = new Set(["rule-strength", "violations"]);
 const PROJECT_PAGES = new Set(["project", "runs", "run", "failures", "packs", ...CHECKOUT_PAGES]);
@@ -193,7 +193,7 @@ const homeOf = (file) => (file ? file.replace(/\/daemon\/heartbeat\.json$/, "") 
 
 const sidebar = (state) => {
   const { health, projects = [], page, project, lost, now } = state;
-  const nav = ["overview", "configuration", "about"].map((id) =>
+  const nav = ["overview", "configuration", "pack-catalog", "about"].map((id) =>
     `<li><a href="${href(id)}"${id === page || id === "overview" && page === "projects" ? ' aria-current="page"' : ""}>${PAGES[id]}</a></li>`).join("");
   const watched = projects.map((p) =>
     `<li><a href="${href("project", { project: p.project })}"${PROJECT_PAGES.has(page) && p.project === project ? ' aria-current="page"' : ""}><span class="project-name">${esc(p.project)}</span></a></li>`).join("");
@@ -651,10 +651,64 @@ export const packsPage = (state) => {
 
 const configurationPage = (state) => `${header("Configuration", "Manage the projects Warden watches.")}${watchPanel(state)}`;
 
+const catalogAnchor = (type, id) => `${type}-${id}`;
+const catalogLink = (type, id) => `<a href="#${encodeURIComponent(catalogAnchor(type, id))}"><code>${esc(id)}</code></a>`;
+
+const packCatalogPage = ({ data: { catalog } }) => {
+  const registered = new Set(catalog.adapters.map(({ id }) => id));
+  const packs = catalog.packs.map(({ id, rules, adapters }) => `<li id="${esc(catalogAnchor("pack", id))}" tabindex="-1">
+<h3><code>${esc(id)}</code></h3>
+<div class="catalog-links"><span class="muted">${rules} ${rules === 1 ? "rule" : "rules"}</span>
+${adapters.length ? adapters.map((id) => registered.has(id) ? catalogLink("adapter", id) : `<span><code>${esc(id)}</code> (unregistered)</span>`).join("") : '<span class="muted">No execution adapters</span>'}</div></li>`).join("");
+  const adapters = catalog.adapters.map(({ id, description, packs }) => `<li id="${esc(catalogAnchor("adapter", id))}" tabindex="-1">
+<h3><code>${esc(id)}</code></h3><p>${esc(description)}</p>
+<div class="catalog-links">${packs.length ? packs.map((id) => catalogLink("pack", id)).join("") : '<span class="muted">No bundled packs use this adapter</span>'}</div></li>`).join("");
+  return `${header("Pack catalog", "Browse bundled packs and the execution adapters registered in this Warden build.", '<a href="#catalog-adapters">Jump to adapters</a>')}
+<div class="catalog-grid">
+<section class="mod" aria-labelledby="catalog-packs"><div class="modh"><h2 class="h2" id="catalog-packs">Packs</h2><span class="muted">${catalog.packs.length}</span></div>
+${packs ? `<ul class="catalog-list">${packs}</ul>` : '<p class="pad muted">No bundled packs are available.</p>'}</section>
+<section class="mod" aria-labelledby="catalog-adapters"><div class="modh"><h2 class="h2" id="catalog-adapters" tabindex="-1">Adapters</h2><span class="muted">${catalog.adapters.length}</span></div>
+${adapters ? `<ul class="catalog-list">${adapters}</ul>` : '<p class="pad muted">This build has no execution adapters.</p>'}</section>
+</div>`;
+};
+
+const ruleExample = `id: warden-no-comments
+kind: lint
+runs: [edit, commit]
+budgetMs: 5000
+version: 1
+implementation: "eslint:warden/no-comments"
+mustFail: |
+  // A greeting
+  export const greeting = "Hello";
+mustPass: |
+  export const greeting = "Hello";`;
+
 const aboutPage = () => `${header("About Warden", "Advisory checks for the projects you work on.")}
 <article class="mod about-content">
 <section><h2>What Warden does</h2><p>Warden records checks from edits, commits, and scheduled audits of published branches. It surfaces rule findings and setup problems while work continues.</p></section>
-<section><h2>Packs</h2><p>A pack is a set of related checks you can enable for a project. A check can need a tool, project configuration, or credentials in the runner. Open a project's Checks tab to see the checks and setup for each pack.</p></section>
+<section><h2>Packs</h2><p>A pack is a set of related checks you can enable for a project. A check can need a tool, project configuration, or credentials in the runner. Open a project's Checks tab to see the checks and setup for each pack.</p><p><a href="${href("pack-catalog")}">Browse packs and adapters</a></p></section>
+<section aria-labelledby="check-timing"><h2 id="check-timing">When checks run</h2>
+<p>A Guardrail lists its eligible tiers in <code>runs</code>. Warden selects rules from enabled packs for the tier it is running.</p>
+<dl class="about-reference">
+<dt>Edit</dt><dd>Trusted Claude Code edit hooks and the Codex patch hook run <code>edit</code> rules. Core checks matching source files for comments and inline suppressions.</dd>
+<dt>Commit</dt><dd>The Git pre-commit hook runs <code>commit</code> rules for the proposed commit. For example, the TypeScript pack checks compiler diagnostics.</dd>
+<dt>Boundary</dt><dd>Run <code>warden audit --tier boundary</code> to evaluate <code>boundary</code> rules. Packs can run tests, validate project structure, check a model, or request a judgment. For a signed enrollment, <code>warden candidate</code> evaluates one boundary rule against exact base and candidate commits.</dd>
+<dt>Published branch</dt><dd>When an enrolled ref such as <code>origin/main</code> advances locally, the daemon runs <code>edit</code> and <code>boundary</code> rules from the signed policy in a temporary checkout. Each receipt identifies the ref, commit, base, and enabled packs.</dd>
+<dt>After the fact</dt><dd>The daemon checks watched repositories for missing commit verification and policy drift. At Claude Code session end, Warden records unresolved edit findings when the judged file still matches the recorded evidence. You can also publish an external check report for an enrolled ref with <code>warden publish</code>.</dd>
+</dl></section>
+<section aria-labelledby="check-methods"><h2 id="check-methods">How checks evaluate code and evidence</h2>
+<dl class="about-reference">
+<dt>Static analysis</dt><dd>ESLint inspects source syntax, TypeScript checks types, and graph rules inspect imports. These checks can report findings without running the application.</dd>
+<dt>Runtime checks</dt><dd>The command adapter can run tests or builds. The Machines pack can validate recorded transitions against a machine definition.</dd>
+<dt>Models and proofs</dt><dd>The TLA pack checks a model with TLC. The Proofs pack builds Lean proofs and can compare implementation results with a proved model.</dd>
+<dt>Judgment and review</dt><dd>The System One adapter evaluates a question against selected inputs with a pinned model. A review can contribute findings that call for interpretation.</dd>
+<dt>Written guidance</dt><dd>An <code>instruction</code> rule describes a practice without invoking an execution adapter.</dd>
+</dl></section>
+<section><h2>How a rule runs</h2><p>Warden calls a rule a Guardrail. A pack groups Guardrails under practices that describe what to check and which paths to include.</p>
+<pre class="rule-example mono"><code>${esc(ruleExample)}</code></pre>
+<p>For the rule above, Warden selects <a href="${href("pack-catalog")}#adapter-eslint"><code>eslint</code></a> from <code>implementation</code>. The adapter runs <code>warden/no-comments</code> on matching files at edit and commit time. Warden reports any findings and tracks the run against <code>budgetMs</code>. Some adapters also read rule-specific <code>options</code>.</p>
+<p><code>version</code> identifies the rule revision. During policy compilation, Warden checks that <code>mustFail</code> produces a finding and <code>mustPass</code> passes.</p></section>
 <section><h2>Rule strength</h2><dl><dt>Deterministic</dt><dd>Code applies a check you can repeat, such as a compiler check, a lint rule, or a test.</dd><dt>Judgment</dt><dd>A model or reviewer evaluates a rule that calls for interpretation.</dd><dt>Prose</dt><dd>Written guidance describes what to do. A prose rule alone produces no automated test result.</dd></dl></section>
 <section><h2>Tamper alerts</h2><p>Warden compares policy files, signatures, and check setup with their expected state. An alert points to what changed and what to inspect.</p></section>
 </article>`;
@@ -878,7 +932,7 @@ export const tamperPage = (state) => {
 ${history}`;
 };
 
-const RENDER = { overview: overviewPage, projects: projectsPage, project: projectPage, configuration: configurationPage, about: aboutPage, runs: runsPage, run: runPage, failures: failuresPage, packs: packsPage, "rule-strength": ruleStrengthPage, violations: violationsPage, determinism: determinismPage, tamper: tamperPage };
+const RENDER = { overview: overviewPage, projects: projectsPage, project: projectPage, configuration: configurationPage, about: aboutPage, "pack-catalog": packCatalogPage, runs: runsPage, run: runPage, failures: failuresPage, packs: packsPage, "rule-strength": ruleStrengthPage, violations: violationsPage, determinism: determinismPage, tamper: tamperPage };
 
 export const pageTitle = (state) => `${state.page === "run" ? "Run" : state.page === "project" && state.project ? state.project : state.page === "packs" ? "Configuration" : (PAGES[state.page] ?? "Warden")} · Warden`;
 

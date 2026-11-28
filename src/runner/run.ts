@@ -10,9 +10,18 @@ import { declaredUnits } from "../records/units.js";
 import type { Guardrail, RecordSet } from "../records/types.js";
 import type { Finding } from "../compiler/consistency.js";
 
-export const adapters = new Map<string, Adapter>([
-  eslintAdapter, tscAdapter, cmdAdapter, fsAdapter, graphAdapter, moduleAdapter, systemOneAdapter, toolRegistrationAdapter,
-].map((a) => [a.id, a]));
+export const builtInAdapters: ReadonlyArray<readonly [Adapter, string]> = [
+  [eslintAdapter, "Runs ESLint rules on matching source files."],
+  [tscAdapter, "Checks TypeScript diagnostics for the project."],
+  [cmdAdapter, "Runs commands declared by a pack, such as tests or model checkers."],
+  [fsAdapter, "Checks files and directory structure."],
+  [graphAdapter, "Checks relationships between files in the import graph."],
+  [moduleAdapter, "Loads project modules and checks their exports and behavior."],
+  [systemOneAdapter, "Sends a rule question and selected inputs to a configured model for judgment."],
+  [toolRegistrationAdapter, "Checks how a project declares and registers its tools."],
+];
+
+export const adapters = new Map(builtInAdapters.map(([adapter]) => [adapter.id, adapter]));
 
 export const prefixOf = (g: Guardrail): string => g.implementation.slice(0, g.implementation.indexOf(":"));
 

@@ -79,6 +79,7 @@ const LOAD = {
   projects: async () => ({}),
   configuration: async () => ({ watch: await api("/api/watch") }),
   about: async () => ({}),
+  "pack-catalog": async () => ({ catalog: await api("/api/pack-catalog") }),
   project: async (ps, project) => {
     const query = `project=${q(project)}`;
     const editing = params.get("tab") === "checks";
@@ -147,12 +148,17 @@ const arrive = () => {
   if (arrived && !navigating) return;
   arrived = true;
   next = undefined;
+  const fragment = location.hash.slice(1);
+  const catalogRow = page === "pack-catalog" && fragment
+    ? [...root.querySelectorAll(".catalog-grid [id]")].find((row) => encodeURIComponent(row.id) === fragment)
+    : null;
   const pack = page === "packs"
     ? document.getElementById(location.hash.startsWith("#pack-info-") ? location.hash.slice(1) : view.packShortcut ? "pack-config" : "")
     : location.hash === "#project-alerts" ? document.getElementById("project-alerts") : null;
-  if (pack) {
-    pack.focus({ preventScroll: true });
-    pack.scrollIntoView();
+  const target = catalogRow ?? pack;
+  if (target) {
+    target.focus({ preventScroll: true });
+    target.scrollIntoView();
     return;
   }
   if (!navigating) return;
@@ -189,7 +195,7 @@ const load = async () => {
       state.error = { status: 404, error: `The daemon has no project named ${project}`, next: "pick a project in the sidebar" };
       return commit();
     }
-    if (["overview", "projects", "configuration", "about"].includes(page)) project = undefined;
+    if (["overview", "projects", "configuration", "about", "pack-catalog"].includes(page)) project = undefined;
     else if (page !== "project" && (project === undefined || !projects.some((p) => p.project === project))) project = projects[0]?.project;
     const selected = projects.find((p) => p.project === project);
     const unavailable = (needsProject && project === undefined) || checkoutPageUnavailable(page, selected);

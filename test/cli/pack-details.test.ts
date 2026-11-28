@@ -71,8 +71,8 @@ practices:
     expect(configured.details.find(({ id }) => id === "typescript")?.adapters).toContainEqual(expect.objectContaining({ id: "tsc", status: "Verify in runner" }));
     expect(JSON.stringify(configured)).not.toContain("fixture-key-never-serialized");
 
-    const { layersPage } = await import(pathToFileURL(join(wardenRoot, "web/render.js")).href);
-    const html = layersPage({
+    const { packsPage } = await import(pathToFileURL(join(wardenRoot, "web/render.js")).href);
+    const html = packsPage({
       data: {
         projects: [{ project: "example" }],
         layers: { project: "example", bands: [], practices: [], packs: [{ id: "custom", source: "local", on: false, rules: 1 }], packSettings: configured },
@@ -80,12 +80,13 @@ practices:
       projects: [],
       view: { packDraft: new Map() },
     });
-    expect(html).toContain("Checks and setup for custom");
+    expect(html).toContain("Checks and setup");
+    expect(html).toContain('id="pack-info-custom" aria-labelledby="pack-title-custom"');
     expect(html).toContain("check-with-jev");
     expect(html).toContain("jev-1.14.0");
     expect(html).toContain("Declared in custom.");
     expect(html).toContain("Jev live calls (TypeSafe)");
-    expect(html).toContain("Readiness reflects this checkout and the dashboard process.");
+    expect(html).toContain("Readiness is measured in this checkout and dashboard process.");
     expect(html).toContain("id=\"pack-custom\"");
   } finally {
     vi.unstubAllEnvs();

@@ -305,7 +305,21 @@ input::placeholder{color:#5E6773}
 .about-content p{margin:6px 0 0}
 .about-content dl{display:grid;gap:10px 18px;grid-template-columns:max-content minmax(0,1fr);margin:12px 0 0}
 .about-content dt{font-weight:650}
-.about-content dd{margin:0}
+.about-content dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.about-content .about-reference{grid-template-columns:minmax(0,10rem) minmax(0,1fr)}
+@media(max-width:560px){
+  .about-content .about-reference{grid-template-columns:minmax(0,1fr);row-gap:4px}
+  .about-reference dd+dt{margin-top:8px}
+}
+.rule-example{margin:12px 0;padding:12px 14px;border:1px solid var(--rule);background:var(--paper);white-space:pre-wrap;overflow-wrap:anywhere}
+.catalog-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+.catalog-list{list-style:none;margin:0;padding:0}
+.catalog-list li{padding:10px 14px;scroll-margin-top:12px;overflow-wrap:anywhere}
+.catalog-list li+li{border-top:1px solid var(--rule)}
+.catalog-list li:target{background:var(--paper);box-shadow:inset 0 0 0 1px var(--brass2)}
+.catalog-list h3,.catalog-list p{margin:0 0 4px;font-size:13px}
+.catalog-links{display:flex;flex-wrap:wrap;gap:4px 12px}
+@media(max-width:780px){.catalog-grid{grid-template-columns:minmax(0,1fr)}}
 .project-tabs{display:flex;gap:4px;border-bottom:1px solid var(--line)}
 .project-tabs a{padding:10px 16px;border-bottom:3px solid transparent;color:var(--muted);text-decoration:none;font-weight:650}
 .project-tabs a:hover{background:var(--card)}

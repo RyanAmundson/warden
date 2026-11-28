@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ajv } from "ajv";
@@ -155,6 +155,17 @@ export async function readPack(projectRoot, wardenRoot, id, configFile, policyDi
     if (text === undefined) {
         throw new RecordError(configFile, "/packs", `pack ${id} not found in ${bundled} or ${local}`);
     }
+    return { pack: parsePack(id, file, text), source: inBundled !== undefined ? "bundled" : "local" };
+}
+export async function readBundledPacks(wardenRoot) {
+    const folder = join(wardenRoot, "packs");
+    const entries = await readdir(folder, { withFileTypes: true });
+    return Promise.all(entries.filter((entry) => entry.isDirectory()).map(async ({ name }) => {
+        const file = join(folder, name, "pack.yaml");
+        return parsePack(name, file, await readFile(file, "utf8"));
+    }));
+}
+function parsePack(id, file, text) {
     const value = parseYaml(file, text);
     check(file, validatePack, value);
     const pack = value;
@@ -195,7 +206,7 @@ export async function readPack(projectRoot, wardenRoot, id, configFile, policyDi
     pack.capabilities ??= [];
     for (const capability of pack.capabilities)
         capability.pack = pack.id;
-    return { pack, source: inBundled !== undefined ? "bundled" : "local" };
+    return pack;
 }
 const settingsAjv = new Ajv({ useDefaults: true });
 export function resolveSettings(pack, value, file, pointer) {

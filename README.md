@@ -38,8 +38,8 @@ checks. You can run `warden daemon` in the foreground instead. In an existing
 Warden project, run `warden compile` and commit the regenerated policy lock
 when you switch Warden versions.
 
-The install includes all bundled pack definitions and built-in adapters. Open
-**Layers > Packs > Checks and setup** to see the prerequisites for each pack.
+Open **Pack catalog** to browse bundled packs and their execution adapters.
+Open a project’s **Checks** tab to see its pack settings and prerequisites.
 Set project-specific paths and settings before compiling a new selection.
 For example, give RxJS Declarative and Signals separate folder scopes if you
 enable both.
